@@ -23,6 +23,10 @@ class Book(str, Enum):
     BETCENTER = "betcenter"
 
 
+BETANO_OPERATOR_ID = "22"
+BETANO_LANGUAGE_ID_FR = "9"
+
+
 @dataclass(frozen=True)
 class Event:
     sport: str

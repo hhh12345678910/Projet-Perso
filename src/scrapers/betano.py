@@ -1,0 +1,339 @@
+from __future__ import annotations
+
+import os
+from datetime import datetime, timezone
+from typing import Any, Iterator
+
+import httpx
+from tenacity import retry, stop_after_attempt, wait_exponential
+
+from ..matcher import event_key
+from ..models import Book, MarketType, OddQuote, Outcome
+
+
+BASE = "https://www.betanosports.be/fr/danae-webapi/api"
+
+
+class BetanoAuthError(RuntimeError):
+    """Raised when Cloudflare/DataDome rejects the request (cookie expired)."""
+
+
+def _headers(user_agent: str, x_language: str, x_operator: str) -> dict[str, str]:
+    return {
+        "Accept": "application/json, text/plain, */*",
+        "Accept-Language": "fr-FR,fr;q=0.9,en-US;q=0.8,en;q=0.7",
+        "User-Agent": user_agent,
+        "Referer": "https://www.betanosports.be/fr/",
+        "Sec-Fetch-Dest": "empty",
+        "Sec-Fetch-Mode": "cors",
+        "Sec-Fetch-Site": "same-origin",
+        "x-language": x_language,
+        "x-operator": x_operator,
+    }
+
+
+class BetanoScraper:
+    book = Book.BETANO_BE
+
+    def __init__(
+        self,
+        cookie: str | None = None,
+        user_agent: str | None = None,
+        x_language: str | None = None,
+        x_operator: str | None = None,
+        timeout: float = 15.0,
+    ):
+        cookie = cookie or os.getenv("BETANO_COOKIE", "")
+        if not cookie:
+            raise BetanoAuthError(
+                "BETANO_COOKIE not set. Capture cf_clearance + datadome from your "
+                "browser (DevTools → Network → any /danae-webapi/ request → Copy as cURL)."
+            )
+        ua = user_agent or os.getenv(
+            "BETANO_USER_AGENT",
+            "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 "
+            "(KHTML, like Gecko) Chrome/148.0.0.0 Safari/537.36",
+        )
+        xl = x_language or os.getenv("BETANO_X_LANGUAGE", "9")
+        xo = x_operator or os.getenv("BETANO_X_OPERATOR", "22")
+
+        self._client = httpx.Client(
+            base_url=BASE,
+            timeout=timeout,
+            headers=_headers(ua, xl, xo),
+            cookies=_parse_cookie_header(cookie),
+            http2=False,
+        )
+
+    def close(self) -> None:
+        self._client.close()
+
+    def __enter__(self) -> "BetanoScraper":
+        return self
+
+    def __exit__(self, *_: object) -> None:
+        self.close()
+
+    @retry(stop=stop_after_attempt(3), wait=wait_exponential(multiplier=1, min=1, max=8))
+    def _get(self, path: str, params: dict | None = None) -> dict:
+        r = self._client.get(path, params=params)
+        if r.status_code in (401, 403):
+            raise BetanoAuthError(
+                f"{r.status_code} from Betano — your cookie likely expired. "
+                "Re-capture cf_clearance + datadome from your browser."
+            )
+        r.raise_for_status()
+        return r.json()
+
+    def fetch_live_overview(self, content_version: int = 0, is_init: bool = True) -> dict:
+        params = {
+            "isInit": "true" if is_init else "false",
+            "includeVirtuals": "true",
+        }
+        return self._get(f"/live/overview/{content_version}", params=params)
+
+    def fetch_prematch_overview(self, content_version: int = 0, is_init: bool = True) -> dict:
+        """Best-effort: sibling path of /live/overview. Adjust path here once
+        confirmed by capturing a prematch XHR (e.g. on a competition page)."""
+        params = {
+            "isInit": "true" if is_init else "false",
+            "includeVirtuals": "true",
+        }
+        for path in (
+            f"/prematch/overview/{content_version}",
+            f"/overview/{content_version}",
+            f"/sport/overview/{content_version}",
+        ):
+            try:
+                return self._get(path, params=params)
+            except httpx.HTTPStatusError as e:
+                if e.response.status_code == 404:
+                    continue
+                raise
+        raise RuntimeError(
+            "Could not discover the prematch overview path. Capture a prematch "
+            "XHR in DevTools and add its path to fetch_prematch_overview()."
+        )
+
+
+def _parse_cookie_header(cookie_header: str) -> dict[str, str]:
+    out: dict[str, str] = {}
+    for part in cookie_header.split(";"):
+        part = part.strip()
+        if not part or "=" not in part:
+            continue
+        k, _, v = part.partition("=")
+        out[k.strip()] = v.strip()
+    return out
+
+
+# Field aliases — the danae-webapi has a few naming conventions across endpoints.
+_FIELDS_EVENT_START = ("startTime", "startDate", "kickoff", "eventDate", "date")
+_FIELDS_EVENT_PARTICIPANTS = ("participants", "competitors", "teams")
+_FIELDS_PARTICIPANT_NAME = ("name", "shortName", "displayName")
+_FIELDS_PARTICIPANT_ROLE = ("type", "role", "alignment", "side")
+_FIELDS_MARKET_NAME = ("name", "type", "marketType", "code")
+_FIELDS_SELECTION_LABEL = ("name", "label", "outcome", "shortName")
+_FIELDS_SELECTION_ODD = ("odds", "price", "decimalOdds", "value")
+
+
+def _first(d: dict, keys: tuple[str, ...], default: Any = None) -> Any:
+    for k in keys:
+        if k in d and d[k] is not None:
+            return d[k]
+    return default
+
+
+def _parse_datetime(v: Any) -> datetime | None:
+    if v is None:
+        return None
+    if isinstance(v, (int, float)):
+        # Milliseconds or seconds since epoch
+        ts = float(v)
+        if ts > 1e12:
+            ts /= 1000.0
+        return datetime.fromtimestamp(ts, tz=timezone.utc)
+    if isinstance(v, str):
+        try:
+            return datetime.fromisoformat(v.replace("Z", "+00:00")).astimezone(timezone.utc)
+        except ValueError:
+            return None
+    return None
+
+
+_MARKET_TYPE_MAP = {
+    "1X2": MarketType.H2H,
+    "MR3W": MarketType.H2H,           # match result 3-way
+    "MR2W": MarketType.H2H,
+    "ML": MarketType.H2H,
+    "MONEYLINE": MarketType.H2H,
+    "OU": MarketType.TOTALS,
+    "TOTAL": MarketType.TOTALS,
+    "OVER_UNDER": MarketType.TOTALS,
+    "AH": MarketType.HANDICAP,
+    "HANDICAP": MarketType.HANDICAP,
+    "SPREAD": MarketType.HANDICAP,
+    "BTTS": MarketType.BTTS,
+    "GG": MarketType.BTTS,
+}
+
+
+def _map_market(name: Any) -> MarketType | None:
+    if not name:
+        return None
+    s = str(name).upper()
+    s_compact = s.replace(" ", "").replace("-", "_").replace("/", "_")
+    if s_compact in _MARKET_TYPE_MAP:
+        return _MARKET_TYPE_MAP[s_compact]
+    if "1X2" in s_compact or "MATCH_RESULT" in s_compact or "VAINQUEUR" in s:
+        return MarketType.H2H
+    if "OVER" in s and "UNDER" in s:
+        return MarketType.TOTALS
+    if "PLUS" in s and "MOINS" in s:
+        return MarketType.TOTALS
+    if "TOTAL" in s:
+        return MarketType.TOTALS
+    if "HANDICAP" in s or "SPREAD" in s:
+        return MarketType.HANDICAP
+    if "BTTS" in s_compact or "MARQUERONT" in s:
+        return MarketType.BTTS
+    return None
+
+
+def _normalise_outcome_label(label: str, market: MarketType) -> str:
+    s = label.strip().lower()
+    if market == MarketType.H2H:
+        return {
+            "1": "home", "home": "home", "domicile": "home", "local": "home",
+            "x": "draw", "draw": "draw", "nul": "draw", "match nul": "draw",
+            "2": "away", "away": "away", "exterieur": "away", "visiteur": "away",
+        }.get(s, s)
+    if market == MarketType.TOTALS:
+        if s.startswith(("o", "+", "plus")):
+            return "over"
+        if s.startswith(("u", "-", "moins")):
+            return "under"
+    return s
+
+
+def parse_overview(data: dict) -> Iterator[OddQuote]:
+    """Walk a danae-webapi overview JSON and yield OddQuote objects.
+
+    Structure (Redux-store style, fully normalised):
+        data["events"][event_id]    -> event details
+        data["leagues"][league_id]  -> league with eventIdList
+        data["markets"][market_id]  -> market details + selectionIdList
+        data["selections"][sel_id]  -> selection with odds
+    """
+    events = data.get("events") or {}
+    markets = data.get("markets") or {}
+    selections = data.get("selections") or {}
+
+    if not (events and markets and selections):
+        return
+
+    now = datetime.now(timezone.utc)
+
+    # Index: market_id -> event_id (preferred via market.eventId; fall back to event.marketIdList)
+    market_to_event: dict[str, str] = {}
+    for mid, m in markets.items():
+        eid = m.get("eventId") or m.get("event_id")
+        if eid is not None:
+            market_to_event[str(mid)] = str(eid)
+    for eid, ev in events.items():
+        for mid in (ev.get("marketIdList") or ev.get("markets") or []):
+            market_to_event.setdefault(str(mid), str(eid))
+
+    # Index: selection_id -> market_id
+    selection_to_market: dict[str, str] = {}
+    for sid, s in selections.items():
+        mid = s.get("marketId") or s.get("market_id")
+        if mid is not None:
+            selection_to_market[str(sid)] = str(mid)
+    for mid, m in markets.items():
+        for sid in (m.get("selectionIdList") or m.get("selections") or []):
+            selection_to_market.setdefault(str(sid), str(mid))
+
+    for sid, sel in selections.items():
+        mid = selection_to_market.get(str(sid))
+        if mid is None:
+            continue
+        market = markets.get(mid) or markets.get(int(mid)) if isinstance(mid, str) else None
+        if market is None:
+            continue
+
+        eid = market_to_event.get(str(mid))
+        if eid is None:
+            continue
+        ev = events.get(eid) or (events.get(int(eid)) if eid.isdigit() else None)
+        if ev is None:
+            continue
+
+        market_type = _map_market(_first(market, _FIELDS_MARKET_NAME))
+        if market_type is None:
+            continue
+
+        start = _parse_datetime(_first(ev, _FIELDS_EVENT_START))
+        if start is None:
+            continue
+
+        participants = _first(ev, _FIELDS_EVENT_PARTICIPANTS, default=[])
+        home, away = _extract_home_away(participants)
+        if not (home and away):
+            continue
+
+        odd_raw = _first(sel, _FIELDS_SELECTION_ODD)
+        if odd_raw is None:
+            continue
+        try:
+            decimal_odd = float(odd_raw)
+        except (TypeError, ValueError):
+            continue
+        if decimal_odd <= 1.0:
+            continue
+
+        label = _first(sel, _FIELDS_SELECTION_LABEL, default="?")
+        line = sel.get("line") or sel.get("handicap") or market.get("line")
+        try:
+            line_val = float(line) if line is not None else None
+        except (TypeError, ValueError):
+            line_val = None
+
+        yield OddQuote(
+            event_key=event_key(home, away, start),
+            book=Book.BETANO_BE,
+            market=market_type,
+            outcome=Outcome(
+                label=_normalise_outcome_label(str(label), market_type),
+                line=line_val,
+            ),
+            decimal_odd=decimal_odd,
+            fetched_at=now,
+            source_event_id=str(eid),
+        )
+
+
+def _extract_home_away(participants: Any) -> tuple[str | None, str | None]:
+    if not isinstance(participants, list) or len(participants) < 2:
+        return None, None
+    home = away = None
+    for p in participants:
+        if not isinstance(p, dict):
+            continue
+        name = _first(p, _FIELDS_PARTICIPANT_NAME)
+        role = _first(p, _FIELDS_PARTICIPANT_ROLE)
+        if role is None or name is None:
+            continue
+        r = str(role).lower()
+        if r in ("home", "1", "domicile", "h"):
+            home = name
+        elif r in ("away", "2", "exterieur", "visiteur", "a"):
+            away = name
+    if home and away:
+        return home, away
+    # Fallback: positional
+    names = [_first(p, _FIELDS_PARTICIPANT_NAME) for p in participants if isinstance(p, dict)]
+    names = [n for n in names if n]
+    if len(names) >= 2:
+        return names[0], names[1]
+    return None, None

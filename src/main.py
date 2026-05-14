@@ -12,6 +12,7 @@ from .config import ScanConfig
 from .devig import devig
 from .ev import ev_pct, fair_odd, kelly_fraction, kelly_stake
 from .models import Book, FairLine, MarketType, OddQuote, ValueBet
+from .scrapers.betano import BetanoScraper, parse_overview as betano_parse_overview
 from .scrapers.pinnacle import PinnacleScraper
 from .storage import Storage
 
@@ -119,6 +120,49 @@ def scan(
 
     bets = find_value_bets(quotes, fair, cfg)
     console.print(f"[bold]Value bets vs Pinnacle: {len(bets)}[/bold] (will be >0 once soft books are wired)")
+
+
+@app.command(name="inspect-betano")
+def inspect_betano(path: str):
+    """Inspect a saved Betano overview JSON dump (DevTools → Response → save).
+
+    Prints the shape of one event / league / market / selection so the parser
+    can be refined for the exact field names that endpoint uses.
+    """
+    import json as _json
+    from pathlib import Path as _Path
+
+    data = _json.loads(_Path(path).read_text())
+
+    def _peek(label: str, container: dict | None, n: int = 1) -> None:
+        console.print(f"\n[bold cyan]{label}[/bold cyan] (count={len(container or {})})")
+        if not container:
+            return
+        for i, (k, v) in enumerate(container.items()):
+            console.print(f"  key={k!r}  fields={sorted((v or {}).keys()) if isinstance(v, dict) else type(v).__name__}")
+            if isinstance(v, dict):
+                console.print(f"  sample={_json.dumps(v, indent=2, ensure_ascii=False)[:600]}")
+            if i + 1 >= n:
+                break
+
+    console.print(f"[bold]Top-level keys[/bold]: {sorted(data.keys())}")
+    if "contentVersion" in data:
+        console.print(f"contentVersion: {data['contentVersion']}")
+    if "sports" in data and isinstance(data["sports"], dict):
+        ids = data["sports"].get("allIds")
+        if ids:
+            console.print(f"sport ids: {ids}")
+
+    _peek("events", data.get("events"))
+    _peek("leagues", data.get("leagues"))
+    _peek("markets", data.get("markets"), n=2)
+    _peek("selections", data.get("selections"), n=2)
+    _peek("zones", data.get("zones"))
+
+    quotes = list(betano_parse_overview(data))
+    console.print(f"\n[bold]Parser produced {len(quotes)} OddQuote(s).[/bold]")
+    for q in quotes[:5]:
+        console.print(f"  {q.event_key} | {q.market.value} | {q.outcome.label} @ {q.decimal_odd}")
 
 
 @app.command()

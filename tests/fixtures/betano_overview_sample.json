@@ -1,0 +1,50 @@
+{
+  "contentVersion": 261340001037399,
+  "sports": {
+    "byId": {"FOOT": {"id": "FOOT", "name": "Football"}},
+    "allIds": ["FOOT"]
+  },
+  "events": {
+    "81204717": {
+      "id": 81204717,
+      "leagueId": 200420,
+      "sportId": "FOOT",
+      "startTime": "2026-05-17T18:30:00Z",
+      "participants": [
+        {"name": "Valencia CF", "type": "home"},
+        {"name": "Rayo Vallecano", "type": "away"}
+      ],
+      "marketIdList": [10001, 10002]
+    }
+  },
+  "leagues": {
+    "200420": {
+      "id": 200420,
+      "name": "La Liga",
+      "sportId": "FOOT",
+      "eventIdList": [81204717]
+    }
+  },
+  "markets": {
+    "10001": {
+      "id": 10001,
+      "eventId": 81204717,
+      "name": "1X2",
+      "selectionIdList": [1, 2, 3]
+    },
+    "10002": {
+      "id": 10002,
+      "eventId": 81204717,
+      "name": "Plus/Moins buts",
+      "line": 2.5,
+      "selectionIdList": [4, 5]
+    }
+  },
+  "selections": {
+    "1": {"id": 1, "marketId": 10001, "name": "1", "odds": 2.10},
+    "2": {"id": 2, "marketId": 10001, "name": "X", "odds": 3.40},
+    "3": {"id": 3, "marketId": 10001, "name": "2", "odds": 3.80},
+    "4": {"id": 4, "marketId": 10002, "name": "Plus", "odds": 2.05},
+    "5": {"id": 5, "marketId": 10002, "name": "Moins", "odds": 1.75}
+  }
+}
