@@ -85,11 +85,15 @@ class BetanoScraper:
         r.raise_for_status()
         return r.json()
 
-    def fetch_live_overview(self, content_version: int = 0, is_init: bool = True) -> dict:
-        params = {
-            "isInit": "true" if is_init else "false",
-            "includeVirtuals": "true",
-        }
+    def fetch_live_overview(self, content_version: int | str = "latest", is_init: bool = True) -> dict:
+        """Fetch the live overview. Use 'latest' for an initial bulk fetch,
+        or pass a previous contentVersion (with is_init=False) to receive a delta."""
+        params: dict[str, str] = {"includeVirtuals": "true"}
+        if is_init:
+            params["queryLanguageId"] = os.getenv("BETANO_X_LANGUAGE", "9")
+            params["queryOperatorId"] = os.getenv("BETANO_X_OPERATOR", "22")
+        else:
+            params["isInit"] = "false"
         return self._get(f"/live/overview/{content_version}", params=params)
 
     def fetch_prematch_overview(self, content_version: int = 0, is_init: bool = True) -> dict:
