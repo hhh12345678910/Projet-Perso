@@ -5,7 +5,7 @@ from datetime import datetime, timezone
 from typing import Any, Iterator
 
 import httpx
-from tenacity import retry, stop_after_attempt, wait_exponential
+from tenacity import retry, retry_if_exception, stop_after_attempt, wait_exponential
 
 from ..matcher import event_key
 from ..models import Book, MarketType, OddQuote, Outcome
@@ -16,6 +16,20 @@ BASE = "https://www.betanosports.be/fr/danae-webapi/api"
 
 class BetanoAuthError(RuntimeError):
     """Raised when Cloudflare/DataDome rejects the request (cookie expired)."""
+
+
+def _is_retryable(exc: BaseException) -> bool:
+    """Retry only transient failures. A rejected cookie (BetanoAuthError) or a
+    4xx won't recover on retry, so surface it immediately instead of burying it
+    in a RetryError after pointless re-attempts."""
+    if isinstance(exc, BetanoAuthError):
+        return False
+    if isinstance(exc, httpx.TransportError):
+        return True
+    if isinstance(exc, httpx.HTTPStatusError):
+        code = exc.response.status_code
+        return code == 429 or code >= 500
+    return False
 
 
 def _headers(user_agent: str, x_language: str, x_operator: str) -> dict[str, str]:
@@ -74,7 +88,11 @@ class BetanoScraper:
     def __exit__(self, *_: object) -> None:
         self.close()
 
-    @retry(stop=stop_after_attempt(3), wait=wait_exponential(multiplier=1, min=1, max=8))
+    @retry(
+        retry=retry_if_exception(_is_retryable),
+        stop=stop_after_attempt(3),
+        wait=wait_exponential(multiplier=1, min=1, max=8),
+    )
     def _get(self, path: str, params: dict | None = None) -> dict:
         r = self._client.get(path, params=params)
         if r.status_code in (401, 403):

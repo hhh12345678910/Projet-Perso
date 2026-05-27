@@ -3,9 +3,13 @@ from __future__ import annotations
 import json
 from pathlib import Path
 
+import httpx
+
 from src.models import Book, MarketType
 from src.scrapers.betano import (
+    BetanoAuthError,
     _extract_home_away,
+    _is_retryable,
     _map_market,
     _normalise_outcome_label,
     _parse_cookie_header,
@@ -93,3 +97,17 @@ def test_parse_datetime_iso_and_epoch():
 def test_parse_cookie_header():
     c = _parse_cookie_header("a=1; b=2; c = 3")
     assert c == {"a": "1", "b": "2", "c": "3"}
+
+
+def test_is_retryable_skips_auth_and_4xx():
+    req = httpx.Request("GET", "https://x")
+    forbidden = httpx.HTTPStatusError(
+        "e", request=req, response=httpx.Response(403, request=req)
+    )
+    server_err = httpx.HTTPStatusError(
+        "e", request=req, response=httpx.Response(503, request=req)
+    )
+    assert _is_retryable(BetanoAuthError("nope")) is False
+    assert _is_retryable(forbidden) is False
+    assert _is_retryable(server_err) is True
+    assert _is_retryable(httpx.ConnectError("boom")) is True
