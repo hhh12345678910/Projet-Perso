@@ -5,6 +5,7 @@ from dataclasses import replace
 from datetime import datetime, timezone
 from typing import Iterable
 
+import httpx
 import typer
 from rich.console import Console
 from rich.table import Table
@@ -16,6 +17,7 @@ from .matcher import reconcile_event_keys
 from .models import Book, FairLine, MarketType, OddQuote, ValueBet
 from .scrapers.betano import BetanoAuthError, BetanoScraper, parse_overview as betano_parse_overview
 from .scrapers.pinnacle import PinnacleScraper
+from .scrapers.unibet import UnibetScraper, parse_listview as unibet_parse_listview
 from .storage import Storage
 
 
@@ -119,13 +121,24 @@ def fetch_betano_quotes() -> list[OddQuote]:
         return []
 
 
+def fetch_unibet_quotes(sport: str) -> list[OddQuote]:
+    """Fetch + parse the Unibet (Kambi) list view for a sport."""
+    try:
+        with UnibetScraper() as uni:
+            data = uni.fetch_listview(sport)
+        return list(unibet_parse_listview(data))
+    except httpx.HTTPError as e:
+        console.print(f"[yellow]Unibet skipped:[/yellow] {e}")
+        return []
+
+
 @app.command()
 def scan(
     sport: str = "soccer",
     min_ev: float = 2.0,
     bankroll: float = 1000.0,
 ):
-    """Fetch Pinnacle + Betano, compute fair lines, print top value bets."""
+    """Fetch Pinnacle + soft books (Betano, Unibet), compute fair lines, print top value bets."""
     cfg = ScanConfig(sport=sport, min_ev_pct=min_ev, bankroll=bankroll)
     storage = Storage(cfg.db_path)
 
@@ -140,10 +153,14 @@ def scan(
     for q in quotes:
         storage.insert_quote(q)
 
-    console.print("[bold]Fetching Betano live overview...[/bold]")
+    console.print("[bold]Fetching soft books...[/bold]")
     betano_quotes = fetch_betano_quotes()
     console.print(f"  → {len(betano_quotes)} Betano quotes")
-    soft_quotes = remap_to_reference(betano_quotes, {fl.event_key for fl in fair.values()})
+    unibet_quotes = fetch_unibet_quotes(sport)
+    console.print(f"  → {len(unibet_quotes)} Unibet quotes")
+
+    ref_keys = {fl.event_key for fl in fair.values()}
+    soft_quotes = remap_to_reference(betano_quotes + unibet_quotes, ref_keys)
     console.print(f"  → {len(soft_quotes)} matched to a Pinnacle event")
     for q in soft_quotes:
         storage.insert_quote(q)

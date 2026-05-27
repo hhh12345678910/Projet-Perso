@@ -1,0 +1,130 @@
+{
+  "events": [
+    {
+      "event": {
+        "id": 1027724120,
+        "homeName": "Heips (W)",
+        "awayName": "Coritiba FC PR (W)",
+        "start": "2026-05-27T18:00:00Z",
+        "group": "Copa do Brasil (F)"
+      },
+      "betOffers": [
+        {
+          "betOfferType": {
+            "id": 2,
+            "englishName": "Match"
+          },
+          "criterion": {
+            "englishLabel": "Full Time"
+          },
+          "outcomes": [
+            {
+              "type": "OT_ONE",
+              "odds": 61000,
+              "line": null,
+              "label": "1"
+            },
+            {
+              "type": "OT_CROSS",
+              "odds": 10000,
+              "line": null,
+              "label": "X"
+            },
+            {
+              "type": "OT_TWO",
+              "odds": 1050,
+              "line": null,
+              "label": "2"
+            }
+          ]
+        },
+        {
+          "betOfferType": {
+            "id": 6,
+            "englishName": "Over/Under"
+          },
+          "criterion": {
+            "englishLabel": "Total Goals"
+          },
+          "outcomes": [
+            {
+              "type": "OT_OVER",
+              "odds": 1750,
+              "line": 1500,
+              "label": "Plus de"
+            },
+            {
+              "type": "OT_UNDER",
+              "odds": 1900,
+              "line": 1500,
+              "label": "Moins de"
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "event": {
+        "id": 1026435642,
+        "homeName": "IF Vestri",
+        "awayName": "Njardvík",
+        "start": "2026-05-27T18:00:00Z",
+        "group": "1. Deild"
+      },
+      "betOffers": [
+        {
+          "betOfferType": {
+            "id": 2,
+            "englishName": "Match"
+          },
+          "criterion": {
+            "englishLabel": "Full Time"
+          },
+          "outcomes": [
+            {
+              "type": "OT_ONE",
+              "odds": 401000,
+              "line": null,
+              "label": "1"
+            },
+            {
+              "type": "OT_CROSS",
+              "odds": 56000,
+              "line": null,
+              "label": "X"
+            },
+            {
+              "type": "OT_TWO",
+              "odds": null,
+              "line": null,
+              "label": "2"
+            }
+          ]
+        },
+        {
+          "betOfferType": {
+            "id": 6,
+            "englishName": "Over/Under"
+          },
+          "criterion": {
+            "englishLabel": "Total Goals"
+          },
+          "outcomes": [
+            {
+              "type": "OT_OVER",
+              "odds": 1540,
+              "line": 3500,
+              "label": "Plus de"
+            },
+            {
+              "type": "OT_UNDER",
+              "odds": 2230,
+              "line": 3500,
+              "label": "Moins de"
+            }
+          ]
+        }
+      ]
+    }
+  ]
+}
