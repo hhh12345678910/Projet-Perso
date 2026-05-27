@@ -2,7 +2,14 @@ from __future__ import annotations
 
 from datetime import datetime, timedelta, timezone
 
-from src.matcher import event_key, match_event, normalize_team, team_similarity
+from src.matcher import (
+    event_key,
+    match_event,
+    normalize_team,
+    parse_event_key,
+    reconcile_event_keys,
+    team_similarity,
+)
 from src.models import Book, Event
 
 
@@ -57,3 +64,33 @@ def test_event_key_is_deterministic_and_normalised():
     k1 = event_key("Standard Liège", "RSC Anderlecht", t)
     k2 = event_key("standard de liege", "Anderlecht", t)
     assert k1 == k2
+
+
+def test_parse_event_key_roundtrip():
+    t = datetime(2026, 5, 14, 20, 0, tzinfo=timezone.utc)
+    k = event_key("Valencia CF", "Rayo Vallecano", t)
+    start, home, away = parse_event_key(k)
+    assert start == t
+    assert home == "valencia"
+    assert away == "rayovallecano"
+    assert parse_event_key("garbage") is None
+
+
+def test_reconcile_keeps_exact_match():
+    t = datetime(2026, 5, 14, 20, 0, tzinfo=timezone.utc)
+    k = event_key("Valencia", "Rayo Vallecano", t)
+    assert reconcile_event_keys([k], [k]) == {k: k}
+
+
+def test_reconcile_maps_soft_key_within_time_window():
+    t = datetime(2026, 5, 14, 20, 0, tzinfo=timezone.utc)
+    ref = event_key("Standard Liège", "RSC Anderlecht", t)
+    soft = event_key("Standard de Liege", "Anderlecht", t + timedelta(minutes=4))
+    assert reconcile_event_keys([ref], [soft]) == {soft: ref}
+
+
+def test_reconcile_rejects_outside_time_window():
+    t = datetime(2026, 5, 14, 20, 0, tzinfo=timezone.utc)
+    ref = event_key("Standard Liège", "Anderlecht", t)
+    soft = event_key("Standard Liège", "Anderlecht", t + timedelta(hours=3))
+    assert reconcile_event_keys([ref], [soft]) == {}

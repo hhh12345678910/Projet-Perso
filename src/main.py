@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from collections import defaultdict
+from dataclasses import replace
 from datetime import datetime, timezone
 from typing import Iterable
 
@@ -11,8 +12,9 @@ from rich.table import Table
 from .config import ScanConfig
 from .devig import devig
 from .ev import ev_pct, fair_odd, kelly_fraction, kelly_stake
+from .matcher import reconcile_event_keys
 from .models import Book, FairLine, MarketType, OddQuote, ValueBet
-from .scrapers.betano import BetanoScraper, parse_overview as betano_parse_overview
+from .scrapers.betano import BetanoAuthError, BetanoScraper, parse_overview as betano_parse_overview
 from .scrapers.pinnacle import PinnacleScraper
 from .storage import Storage
 
@@ -86,13 +88,44 @@ def find_value_bets(
     return out
 
 
+def remap_to_reference(
+    soft_quotes: list[OddQuote],
+    reference_keys: Iterable[str],
+) -> list[OddQuote]:
+    """Re-key soft-book quotes onto the matching Pinnacle event_key via fuzzy
+    matching, so they line up with the fair lines. Unmatched quotes are dropped."""
+    soft_to_ref = reconcile_event_keys(
+        reference_keys=list(reference_keys),
+        candidate_keys={q.event_key for q in soft_quotes},
+    )
+    out: list[OddQuote] = []
+    for q in soft_quotes:
+        ref = soft_to_ref.get(q.event_key)
+        if ref is None:
+            continue
+        out.append(replace(q, event_key=ref) if ref != q.event_key else q)
+    return out
+
+
+def fetch_betano_quotes() -> list[OddQuote]:
+    """Fetch + parse Betano live overview. Returns [] (with a warning) if the
+    BETANO_COOKIE is missing or expired, so scan still runs on Pinnacle alone."""
+    try:
+        with BetanoScraper() as bet:
+            data = bet.fetch_live_overview()
+        return list(betano_parse_overview(data))
+    except BetanoAuthError as e:
+        console.print(f"[yellow]Betano skipped:[/yellow] {e}")
+        return []
+
+
 @app.command()
 def scan(
     sport: str = "soccer",
     min_ev: float = 2.0,
     bankroll: float = 1000.0,
 ):
-    """Fetch Pinnacle, compute fair lines, print top value bets (no soft books wired yet)."""
+    """Fetch Pinnacle + Betano, compute fair lines, print top value bets."""
     cfg = ScanConfig(sport=sport, min_ev_pct=min_ev, bankroll=bankroll)
     storage = Storage(cfg.db_path)
 
@@ -107,19 +140,34 @@ def scan(
     for q in quotes:
         storage.insert_quote(q)
 
-    # No Belgian books yet — show fair lines preview only.
-    table = Table(title=f"Pinnacle fair lines preview ({sport})", show_lines=False)
-    table.add_column("event_key", overflow="fold")
-    table.add_column("market")
-    table.add_column("line")
-    table.add_column("outcomes")
-    for (ek, m, line), fl in list(fair.items())[:15]:
-        outs = ", ".join(f"{k}={v:.3f}" for k, v in fl.outcomes.items())
-        table.add_row(ek, m.value, str(line) if line is not None else "-", outs)
-    console.print(table)
+    console.print("[bold]Fetching Betano live overview...[/bold]")
+    betano_quotes = fetch_betano_quotes()
+    console.print(f"  → {len(betano_quotes)} Betano quotes")
+    soft_quotes = remap_to_reference(betano_quotes, {fl.event_key for fl in fair.values()})
+    console.print(f"  → {len(soft_quotes)} matched to a Pinnacle event")
+    for q in soft_quotes:
+        storage.insert_quote(q)
 
-    bets = find_value_bets(quotes, fair, cfg)
-    console.print(f"[bold]Value bets vs Pinnacle: {len(bets)}[/bold] (will be >0 once soft books are wired)")
+    bets = find_value_bets(soft_quotes, fair, cfg)
+    bets.sort(key=lambda b: b.ev_pct, reverse=True)
+    console.print(f"[bold]Value bets: {len(bets)}[/bold]")
+
+    table = Table(title=f"Value bets ({sport}, min_ev={min_ev}%)", show_lines=False)
+    table.add_column("event_key", overflow="fold")
+    table.add_column("book")
+    table.add_column("market")
+    table.add_column("outcome")
+    table.add_column("odd", justify="right")
+    table.add_column("fair", justify="right")
+    table.add_column("EV%", justify="right")
+    table.add_column("stake%", justify="right")
+    for b in bets[:25]:
+        line = f" {b.outcome.line}" if b.outcome.line is not None else ""
+        table.add_row(
+            b.event_key, b.book.value, b.market.value, f"{b.outcome.label}{line}",
+            f"{b.odd_taken:.2f}", f"{b.fair_odd:.2f}", f"{b.ev_pct:.2f}", f"{b.kelly_stake_pct:.2f}",
+        )
+    console.print(table)
 
 
 @app.command(name="inspect-betano")

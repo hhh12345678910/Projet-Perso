@@ -262,7 +262,9 @@ def parse_overview(data: dict) -> Iterator[OddQuote]:
         mid = selection_to_market.get(str(sid))
         if mid is None:
             continue
-        market = markets.get(mid) or markets.get(int(mid)) if isinstance(mid, str) else None
+        market = markets.get(mid)
+        if market is None and mid.isdigit():
+            market = markets.get(int(mid))
         if market is None:
             continue
 
