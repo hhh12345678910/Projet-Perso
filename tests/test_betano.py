@@ -9,11 +9,13 @@ from src.models import Book, MarketType
 from src.scrapers.betano import (
     BetanoAuthError,
     _extract_home_away,
+    _h2h_label,
     _is_retryable,
-    _map_market,
+    _market_type,
     _normalise_outcome_label,
     _parse_cookie_header,
     _parse_datetime,
+    _side_from_team,
     parse_overview,
 )
 
@@ -25,29 +27,43 @@ def _load() -> dict:
     return json.loads(FIXTURE.read_text())
 
 
-def test_parse_overview_extracts_h2h_and_totals():
+def test_parse_overview_extracts_1x2_with_correct_labels():
     quotes = list(parse_overview(_load()))
-    assert len(quotes) == 5
-
-    by_market = {(q.market, q.outcome.label): q for q in quotes}
-    assert by_market[(MarketType.H2H, "home")].decimal_odd == 2.10
-    assert by_market[(MarketType.H2H, "draw")].decimal_odd == 3.40
-    assert by_market[(MarketType.H2H, "away")].decimal_odd == 3.80
-    assert by_market[(MarketType.TOTALS, "over")].decimal_odd == 2.05
-    assert by_market[(MarketType.TOTALS, "under")].decimal_odd == 1.75
-
-
-def test_parse_overview_sets_book_and_event_key():
-    quotes = list(parse_overview(_load()))
-    assert all(q.book == Book.BETANO_BE for q in quotes)
-    assert all("valencia" in q.event_key for q in quotes)
-    assert all("rayovallecano" in q.event_key for q in quotes)
+    catania = {
+        (q.market, q.outcome.label): q
+        for q in quotes
+        if "calciocatania" in q.event_key
+    }
+    assert catania[(MarketType.H2H, "home")].decimal_odd == 1.45
+    assert catania[(MarketType.H2H, "draw")].decimal_odd == 3.65
+    assert catania[(MarketType.H2H, "away")].decimal_odd == 8.25
+    assert catania[(MarketType.TOTALS, "over")].decimal_odd == 2.22
+    assert catania[(MarketType.TOTALS, "under")].decimal_odd == 1.57
 
 
 def test_parse_overview_carries_totals_line():
-    quotes = list(parse_overview(_load()))
-    totals = [q for q in quotes if q.market == MarketType.TOTALS]
+    totals = [q for q in parse_overview(_load()) if q.market == MarketType.TOTALS]
     assert totals and all(q.outcome.line == 2.5 for q in totals)
+
+
+def test_parse_overview_handicap_labels_and_signed_line():
+    hc = {q.outcome.label: q for q in parse_overview(_load()) if q.market == MarketType.HANDICAP}
+    assert hc["home"].outcome.line == -1.5
+    assert hc["away"].outcome.line == 1.5
+    assert hc["home"].decimal_odd == 3.7
+
+
+def test_parse_overview_two_way_winner_mapped_to_home_away():
+    # H2HT market labelled with team names -> resolved to home/away.
+    monaco = {q.outcome.label: q for q in parse_overview(_load()) if "monaco" in q.event_key}
+    assert monaco["home"].decimal_odd == 5.8   # Bourg-en-Bresse (isHome)
+    assert monaco["away"].decimal_odd == 1.11  # Monaco
+    assert "draw" not in monaco
+
+
+def test_parse_overview_sets_book():
+    quotes = list(parse_overview(_load()))
+    assert quotes and all(q.book == Book.BETANO_BE for q in quotes)
 
 
 def test_parse_overview_handles_empty():
@@ -55,21 +71,41 @@ def test_parse_overview_handles_empty():
     assert list(parse_overview({"events": {}, "markets": {}, "selections": {}})) == []
 
 
-def test_map_market_french_labels():
-    assert _map_market("1X2") == MarketType.H2H
-    assert _map_market("Vainqueur du match") == MarketType.H2H
-    assert _map_market("Plus/Moins buts") == MarketType.TOTALS
-    assert _map_market("Handicap") == MarketType.HANDICAP
-    assert _map_market("BTTS") == MarketType.BTTS
-    assert _map_market("inconnu") is None
+def test_market_type_by_code():
+    assert _market_type({"type": "MRES"}) == MarketType.H2H
+    assert _market_type({"type": "H2HT"}) == MarketType.H2H
+    assert _market_type({"type": "HCTG"}) == MarketType.TOTALS
+    assert _market_type({"type": "HCAP"}) == MarketType.HANDICAP
+    assert _market_type({"type": "DNOB"}) is None       # draw-no-bet, not moneyline
+    assert _market_type({"type": "BTSC"}) is None        # BTTS, no Pinnacle reference
+    assert _market_type({"type": None}) is None
+
+
+def test_h2h_label_direct_and_by_team():
+    assert _h2h_label("1", "Catania", "Ascoli") == "home"
+    assert _h2h_label("X", "Catania", "Ascoli") == "draw"
+    assert _h2h_label("2", "Catania", "Ascoli") == "away"
+    assert _h2h_label("Monaco", "Bourg-en-Bresse", "Monaco") == "away"
+
+
+def test_side_from_team():
+    assert _side_from_team("Toronto Blue Jays -1.5", "Toronto Blue Jays", "Miami Marlins") == "home"
+    assert _side_from_team("Miami Marlins +1.5", "Toronto Blue Jays", "Miami Marlins") == "away"
+    assert _side_from_team("Unrelated FC", "Toronto Blue Jays", "Miami Marlins") is None
 
 
 def test_normalise_outcome_label():
-    assert _normalise_outcome_label("1", MarketType.H2H) == "home"
-    assert _normalise_outcome_label("X", MarketType.H2H) == "draw"
-    assert _normalise_outcome_label("Match nul", MarketType.H2H) == "draw"
-    assert _normalise_outcome_label("Plus", MarketType.TOTALS) == "over"
-    assert _normalise_outcome_label("Moins", MarketType.TOTALS) == "under"
+    assert _normalise_outcome_label("Plus de 2.5", MarketType.TOTALS) == "over"
+    assert _normalise_outcome_label("Moins de 2.5", MarketType.TOTALS) == "under"
+
+
+def test_extract_home_away_by_is_home_flag():
+    home, away = _extract_home_away([
+        {"name": "Calcio Catania", "isHome": True},
+        {"name": "Ascoli Calcio 1898"},
+    ])
+    assert home == "Calcio Catania"
+    assert away == "Ascoli Calcio 1898"
 
 
 def test_extract_home_away_by_role():

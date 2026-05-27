@@ -7,7 +7,7 @@ from typing import Any, Iterator
 import httpx
 from tenacity import retry, retry_if_exception, stop_after_attempt, wait_exponential
 
-from ..matcher import event_key
+from ..matcher import event_key, team_similarity
 from ..models import Book, MarketType, OddQuote, Outcome
 
 
@@ -154,7 +154,6 @@ _FIELDS_EVENT_START = ("startTime", "startDate", "kickoff", "eventDate", "date")
 _FIELDS_EVENT_PARTICIPANTS = ("participants", "competitors", "teams")
 _FIELDS_PARTICIPANT_NAME = ("name", "shortName", "displayName")
 _FIELDS_PARTICIPANT_ROLE = ("type", "role", "alignment", "side")
-_FIELDS_MARKET_NAME = ("name", "type", "marketType", "code")
 _FIELDS_SELECTION_LABEL = ("name", "label", "outcome", "shortName")
 _FIELDS_SELECTION_ODD = ("odds", "price", "decimalOdds", "value")
 
@@ -183,53 +182,53 @@ def _parse_datetime(v: Any) -> datetime | None:
     return None
 
 
-_MARKET_TYPE_MAP = {
-    "1X2": MarketType.H2H,
-    "MR3W": MarketType.H2H,           # match result 3-way
-    "MR2W": MarketType.H2H,
-    "ML": MarketType.H2H,
-    "MONEYLINE": MarketType.H2H,
-    "OU": MarketType.TOTALS,
-    "TOTAL": MarketType.TOTALS,
-    "OVER_UNDER": MarketType.TOTALS,
-    "AH": MarketType.HANDICAP,
-    "HANDICAP": MarketType.HANDICAP,
-    "SPREAD": MarketType.HANDICAP,
-    "BTTS": MarketType.BTTS,
-    "GG": MarketType.BTTS,
+# Betano's danae-webapi tags each market with a stable, language-independent
+# `type` code. Map only the markets that line up with Pinnacle's references
+# (1X2 / moneyline, total goals, handicap). Period/prop markets are skipped.
+_MARKET_BY_TYPE = {
+    "MRES": MarketType.H2H,        # Résultat de match — 1X2 (3-way)
+    "H2HT": MarketType.H2H,        # Vainqueur — 2-way winner / moneyline
+    "HCTG": MarketType.TOTALS,     # Total des buts Plus de/Moins de
+    "HCAP": MarketType.HANDICAP,   # Handicap
+    "FAHC": MarketType.HANDICAP,
+    "FHOT": MarketType.HANDICAP,
 }
 
 
-def _map_market(name: Any) -> MarketType | None:
-    if not name:
+def _market_type(market: dict) -> MarketType | None:
+    return _MARKET_BY_TYPE.get(str(market.get("type") or "").upper())
+
+
+_H2H_DIRECT = {
+    "1": "home", "home": "home", "domicile": "home", "local": "home",
+    "x": "draw", "draw": "draw", "nul": "draw", "match nul": "draw",
+    "2": "away", "away": "away", "exterieur": "away", "visiteur": "away",
+}
+
+
+def _side_from_team(name: str, home: str | None, away: str | None) -> str | None:
+    """Map a selection labelled with a team/player name (2-way winner or
+    handicap) onto 'home'/'away' by matching against the event participants."""
+    if not (home and away):
         return None
-    s = str(name).upper()
-    s_compact = s.replace(" ", "").replace("-", "_").replace("/", "_")
-    if s_compact in _MARKET_TYPE_MAP:
-        return _MARKET_TYPE_MAP[s_compact]
-    if "1X2" in s_compact or "MATCH_RESULT" in s_compact or "VAINQUEUR" in s:
-        return MarketType.H2H
-    if "OVER" in s and "UNDER" in s:
-        return MarketType.TOTALS
-    if "PLUS" in s and "MOINS" in s:
-        return MarketType.TOTALS
-    if "TOTAL" in s:
-        return MarketType.TOTALS
-    if "HANDICAP" in s or "SPREAD" in s:
-        return MarketType.HANDICAP
-    if "BTTS" in s_compact or "MARQUERONT" in s:
-        return MarketType.BTTS
-    return None
+    sh = team_similarity(name, home)
+    sa = team_similarity(name, away)
+    if max(sh, sa) < 60:
+        return None
+    return "home" if sh >= sa else "away"
+
+
+def _h2h_label(label: str, home: str | None, away: str | None) -> str | None:
+    s = label.strip().lower()
+    if s in _H2H_DIRECT:
+        return _H2H_DIRECT[s]
+    return _side_from_team(label, home, away)
 
 
 def _normalise_outcome_label(label: str, market: MarketType) -> str:
     s = label.strip().lower()
     if market == MarketType.H2H:
-        return {
-            "1": "home", "home": "home", "domicile": "home", "local": "home",
-            "x": "draw", "draw": "draw", "nul": "draw", "match nul": "draw",
-            "2": "away", "away": "away", "exterieur": "away", "visiteur": "away",
-        }.get(s, s)
+        return _H2H_DIRECT.get(s, s)
     if market == MarketType.TOTALS:
         if s.startswith(("o", "+", "plus")):
             return "over"
@@ -293,7 +292,7 @@ def parse_overview(data: dict) -> Iterator[OddQuote]:
         if ev is None:
             continue
 
-        market_type = _map_market(_first(market, _FIELDS_MARKET_NAME))
+        market_type = _market_type(market)
         if market_type is None:
             continue
 
@@ -316,7 +315,16 @@ def parse_overview(data: dict) -> Iterator[OddQuote]:
         if decimal_odd <= 1.0:
             continue
 
-        label = _first(sel, _FIELDS_SELECTION_LABEL, default="?")
+        raw_label = str(_first(sel, _FIELDS_SELECTION_LABEL, default=""))
+        if market_type == MarketType.H2H:
+            label = _h2h_label(raw_label, home, away)
+        elif market_type == MarketType.HANDICAP:
+            label = _side_from_team(raw_label, home, away)
+        else:
+            label = _normalise_outcome_label(raw_label, market_type)
+        if label is None:
+            continue
+
         line = sel.get("line") or sel.get("handicap") or market.get("line")
         try:
             line_val = float(line) if line is not None else None
@@ -327,10 +335,7 @@ def parse_overview(data: dict) -> Iterator[OddQuote]:
             event_key=event_key(home, away, start),
             book=Book.BETANO_BE,
             market=market_type,
-            outcome=Outcome(
-                label=_normalise_outcome_label(str(label), market_type),
-                line=line_val,
-            ),
+            outcome=Outcome(label=label, line=line_val),
             decimal_odd=decimal_odd,
             fetched_at=now,
             source_event_id=str(eid),
@@ -338,26 +343,30 @@ def parse_overview(data: dict) -> Iterator[OddQuote]:
 
 
 def _extract_home_away(participants: Any) -> tuple[str | None, str | None]:
-    if not isinstance(participants, list) or len(participants) < 2:
+    if not isinstance(participants, list):
         return None, None
+    named = [(p, _first(p, _FIELDS_PARTICIPANT_NAME)) for p in participants if isinstance(p, dict)]
+    named = [(p, n) for p, n in named if n]
+    if len(named) < 2:
+        return None, None
+    names = [n for _, n in named]
+
     home = away = None
-    for p in participants:
-        if not isinstance(p, dict):
-            continue
-        name = _first(p, _FIELDS_PARTICIPANT_NAME)
+    # 1) `isHome` boolean flag (current danae-webapi shape).
+    for p, n in named:
+        if p.get("isHome") is True:
+            home = n
+    # 2) explicit role/alignment field.
+    for p, n in named:
         role = _first(p, _FIELDS_PARTICIPANT_ROLE)
-        if role is None or name is None:
-            continue
-        r = str(role).lower()
+        r = str(role).lower() if role is not None else ""
         if r in ("home", "1", "domicile", "h"):
-            home = name
+            home = home or n
         elif r in ("away", "2", "exterieur", "visiteur", "a"):
-            away = name
-    if home and away:
-        return home, away
-    # Fallback: positional
-    names = [_first(p, _FIELDS_PARTICIPANT_NAME) for p in participants if isinstance(p, dict)]
-    names = [n for n in names if n]
-    if len(names) >= 2:
-        return names[0], names[1]
-    return None, None
+            away = away or n
+    # 3) positional fallback.
+    if home is None:
+        home = names[0]
+    if away is None:
+        away = next((n for n in names if n != home), None)
+    return home, away

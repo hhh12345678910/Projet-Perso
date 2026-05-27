@@ -1,50 +1,168 @@
 {
-  "contentVersion": 261340001037399,
-  "sports": {
-    "byId": {"FOOT": {"id": "FOOT", "name": "Football"}},
-    "allIds": ["FOOT"]
-  },
+  "contentVersion": 261470000440373,
   "events": {
-    "81204717": {
-      "id": 81204717,
-      "leagueId": 200420,
+    "86150080": {
+      "id": 86150080,
       "sportId": "FOOT",
-      "startTime": "2026-05-17T18:30:00Z",
+      "leagueId": 17714,
+      "startTime": 1779908400000,
       "participants": [
-        {"name": "Valencia CF", "type": "home"},
-        {"name": "Rayo Vallecano", "type": "away"}
+        {
+          "name": "Calcio Catania",
+          "isHome": true
+        },
+        {
+          "name": "Ascoli Calcio 1898"
+        }
       ],
-      "marketIdList": [10001, 10002]
-    }
-  },
-  "leagues": {
-    "200420": {
-      "id": 200420,
-      "name": "La Liga",
-      "sportId": "FOOT",
-      "eventIdList": [81204717]
+      "marketIdList": [
+        2773749027,
+        2780531920
+      ]
+    },
+    "84222780": {
+      "id": 84222780,
+      "sportId": "BASE",
+      "leagueId": 1662,
+      "startTime": 1779901620000,
+      "participants": [
+        {
+          "name": "Toronto Blue Jays",
+          "isHome": true
+        },
+        {
+          "name": "Miami Marlins"
+        }
+      ],
+      "marketIdList": [
+        2781022808
+      ]
+    },
+    "86111660": {
+      "id": 86111660,
+      "sportId": "BASK",
+      "leagueId": 11686,
+      "startTime": 1779908400000,
+      "participants": [
+        {
+          "name": "Bourg-en-Bresse",
+          "isHome": true
+        },
+        {
+          "name": "Monaco"
+        }
+      ],
+      "marketIdList": [
+        2772616709
+      ]
     }
   },
   "markets": {
-    "10001": {
-      "id": 10001,
-      "eventId": 81204717,
-      "name": "1X2",
-      "selectionIdList": [1, 2, 3]
+    "2773749027": {
+      "id": 2773749027,
+      "type": "MRES",
+      "name": "Résultat de match",
+      "selectionIdList": [
+        9658666231,
+        9658666232,
+        9658666233
+      ]
     },
-    "10002": {
-      "id": 10002,
-      "eventId": 81204717,
-      "name": "Plus/Moins buts",
-      "line": 2.5,
-      "selectionIdList": [4, 5]
+    "2780531920": {
+      "id": 2780531920,
+      "type": "HCTG",
+      "name": "Total des buts Plus de/Moins de",
+      "selectionIdList": [
+        9686182358,
+        9686182359
+      ]
+    },
+    "2781022808": {
+      "id": 2781022808,
+      "type": "HCAP",
+      "name": "Handicap",
+      "selectionIdList": [
+        9688104447,
+        9688104448
+      ]
+    },
+    "2772616709": {
+      "id": 2772616709,
+      "type": "H2HT",
+      "name": "Vainqueur",
+      "selectionIdList": [
+        9654100239,
+        9654100240
+      ]
     }
   },
   "selections": {
-    "1": {"id": 1, "marketId": 10001, "name": "1", "odds": 2.10},
-    "2": {"id": 2, "marketId": 10001, "name": "X", "odds": 3.40},
-    "3": {"id": 3, "marketId": 10001, "name": "2", "odds": 3.80},
-    "4": {"id": 4, "marketId": 10002, "name": "Plus", "odds": 2.05},
-    "5": {"id": 5, "marketId": 10002, "name": "Moins", "odds": 1.75}
+    "9658666231": {
+      "id": 9658666231,
+      "marketId": 2773749027,
+      "name": "1",
+      "price": 1.45,
+      "columnIndex": 0
+    },
+    "9658666232": {
+      "id": 9658666232,
+      "marketId": 2773749027,
+      "name": "X",
+      "price": 3.65,
+      "columnIndex": 1
+    },
+    "9658666233": {
+      "id": 9658666233,
+      "marketId": 2773749027,
+      "name": "2",
+      "price": 8.25,
+      "columnIndex": 2
+    },
+    "9686182358": {
+      "id": 9686182358,
+      "marketId": 2780531920,
+      "name": "Plus de 2.5",
+      "price": 2.22,
+      "columnIndex": 0,
+      "handicap": 2.5
+    },
+    "9686182359": {
+      "id": 9686182359,
+      "marketId": 2780531920,
+      "name": "Moins de 2.5",
+      "price": 1.57,
+      "columnIndex": 1,
+      "handicap": 2.5
+    },
+    "9688104447": {
+      "id": 9688104447,
+      "marketId": 2781022808,
+      "name": "Toronto Blue Jays -1.5",
+      "price": 3.7,
+      "columnIndex": 0,
+      "handicap": -1.5
+    },
+    "9688104448": {
+      "id": 9688104448,
+      "marketId": 2781022808,
+      "name": "Miami Marlins +1.5",
+      "price": 1.22,
+      "columnIndex": 1,
+      "handicap": 1.5
+    },
+    "9654100239": {
+      "id": 9654100239,
+      "marketId": 2772616709,
+      "name": "Bourg-en-Bresse",
+      "price": 5.8,
+      "columnIndex": 0
+    },
+    "9654100240": {
+      "id": 9654100240,
+      "marketId": 2772616709,
+      "name": "Monaco",
+      "price": 1.11,
+      "columnIndex": 1
+    }
   }
 }
