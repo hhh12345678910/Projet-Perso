@@ -34,6 +34,22 @@ python -m src.main scan --sport soccer --min-ev 2.0
 pytest
 ```
 
+## Including Betano in a scan
+
+Betano sits behind Cloudflare + DataDome that bind their session cookie to the
+browser IP, so live fetching only works from the machine that solved the
+challenge. Workaround: capture the response once and feed it to `scan`.
+
+1. In Chrome on `betanosports.be` (logged in), open the URL directly:
+   `https://www.betanosports.be/fr/danae-webapi/api/live/overview/latest?includeVirtuals=true&queryLanguageId=9&queryOperatorId=22`
+2. Save the JSON the page returns (Ctrl+S) to e.g. `betano.json`.
+3. Run with the flag:
+   ```bash
+   python -m src.main scan --sport soccer --min-ev 2.0 --betano-file betano.json
+   ```
+
+Refresh the file whenever you want fresh Betano odds.
+
 ## Roadmap
 
 1. Math core + Pinnacle scraper + SQLite (done).

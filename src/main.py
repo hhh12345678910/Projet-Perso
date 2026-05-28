@@ -111,9 +111,21 @@ def remap_to_reference(
     return out
 
 
-def fetch_betano_quotes() -> list[OddQuote]:
-    """Fetch + parse Betano live overview. Returns [] (with a warning) if the
-    BETANO_COOKIE is missing or expired, so scan still runs on Pinnacle alone."""
+def fetch_betano_quotes(betano_file: str | None = None) -> list[OddQuote]:
+    """Parse Betano data. If `betano_file` is given, load the JSON from disk
+    (the response body the user captured in their browser) instead of doing a
+    live fetch — Cloudflare+DataDome bind cookies to the browser IP, so the
+    live path only works from that machine. Returns [] with a warning if no
+    file is given and the cookie is missing/expired."""
+    if betano_file:
+        import json as _json
+        from pathlib import Path as _Path
+        try:
+            data = _json.loads(_Path(betano_file).read_text())
+        except (OSError, ValueError) as e:
+            console.print(f"[yellow]Betano file unreadable:[/yellow] {e}")
+            return []
+        return list(betano_parse_overview(data))
     try:
         with BetanoScraper() as bet:
             data = bet.fetch_live_overview()
@@ -163,6 +175,12 @@ def scan(
     sport: str = "soccer",
     min_ev: float = 2.0,
     bankroll: float = 1000.0,
+    betano_file: str = typer.Option(
+        None,
+        "--betano-file",
+        help="Path to a JSON dump of Betano's /danae-webapi/.../live/overview/latest "
+        "response, captured from your browser. Bypasses the IP-bound cookie check.",
+    ),
 ):
     """Fetch Pinnacle + soft books (Betano, Unibet, BetFirst, Ladbrokes), compute fair lines, print top value bets."""
     cfg = ScanConfig(sport=sport, min_ev_pct=min_ev, bankroll=bankroll)
@@ -180,7 +198,7 @@ def scan(
         storage.insert_quote(q)
 
     console.print("[bold]Fetching soft books...[/bold]")
-    betano_quotes = fetch_betano_quotes()
+    betano_quotes = fetch_betano_quotes(betano_file=betano_file)
     console.print(f"  → {len(betano_quotes)} Betano quotes")
     unibet_quotes = fetch_unibet_quotes(sport)
     console.print(f"  → {len(unibet_quotes)} Unibet quotes")
