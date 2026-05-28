@@ -74,6 +74,74 @@ class LadbrokesScraper:
         """Fetch the curated featured prematch events."""
         return self._get("/prematch-homepage-service/sport-schedule/services/prematch-homepage/highlight")
 
+    def fetch_prematch_menu(self) -> dict:
+        """Fetch the navigation tree: disciplines -> regions -> meetings."""
+        return self._get(
+            "/prematch-menu-service/sport-schedule/services/prematch-menu",
+            params={"prematch": 1, "live": 0},
+        )
+
+    def fetch_meeting(self, sport_alias: str, meeting_alias: str) -> dict:
+        """Fetch every prematch event of one competition (1X2 + Totals + BTTS)."""
+        return self._get(
+            f"/detail-service/sport-schedule/services/meeting/{sport_alias}/{meeting_alias}",
+            params={"prematch": 1, "live": 0},
+        )
+
+    def iter_leaf_meetings(
+        self, menu_payload: dict, sport_description: str = "FOOTBALL"
+    ) -> Iterator[tuple[str, str, int]]:
+        """Walk the menu tree under one discipline and yield every leaf meeting
+        as (sport_alias, meeting_alias, eventsNr)."""
+        sport_list = (menu_payload.get("result") or {}).get("sportList") or []
+        sport = next(
+            (s for s in sport_list if str(s.get("description") or "").upper() == sport_description.upper()),
+            None,
+        )
+        if sport is None:
+            return
+        sport_alias = sport.get("aliasUrl") or ""
+
+        def _walk(node: dict) -> Iterator[tuple[str, str, int]]:
+            if str(node.get("itemType") or "").lower() == "meeting":
+                events_nr = int(node.get("eventsNr") or 0)
+                alias = node.get("aliasUrl") or ""
+                if alias and events_nr > 0:
+                    yield sport_alias, alias, events_nr
+                return
+            for child in node.get("itemList") or []:
+                yield from _walk(child)
+
+        yield from _walk(sport)
+
+    def fetch_all_meetings(
+        self,
+        sport_description: str = "FOOTBALL",
+        *,
+        max_meetings: int = 40,
+        min_events: int = 1,
+    ) -> dict:
+        """Discover every meeting of a sport and fetch each one. Returns a
+        merged {'result': {'events': [...]}} payload so parse_prematch consumes
+        it directly. Best-effort: HTTP errors on a single meeting are skipped."""
+        menu = self.fetch_prematch_menu()
+        leaves = [
+            (s, m, n) for s, m, n in self.iter_leaf_meetings(menu, sport_description)
+            if n >= min_events
+        ]
+        leaves.sort(key=lambda t: t[2], reverse=True)
+        leaves = leaves[:max_meetings]
+
+        merged_events: list = []
+        for sport_alias, meeting_alias, _ in leaves:
+            try:
+                payload = self.fetch_meeting(sport_alias, meeting_alias)
+            except httpx.HTTPError:
+                continue
+            for group in (payload.get("result") or {}).get("dataGroupList") or []:
+                merged_events.extend(group.get("itemList") or [])
+        return {"result": {"events": merged_events}}
+
 
 # Map Eurobet bet group ids / alternativeDescriptions to our market types.
 # betId is stable across language; alternativeDescription is the SPA's display

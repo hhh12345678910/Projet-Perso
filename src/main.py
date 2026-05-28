@@ -146,14 +146,13 @@ def fetch_betfirst_quotes(sport: str) -> list[OddQuote]:
 
 
 def fetch_ladbrokes_quotes(sport: str) -> list[OddQuote]:
-    """Fetch + parse the Ladbrokes prematch homepage (next + highlight tabs)."""
+    """Fetch + parse every Ladbrokes football meeting via the detail-service."""
     if sport != "soccer":
         return []
     try:
         with LadbrokesScraper() as lb:
-            next_data = lb.fetch_prematch_next()
-            high_data = lb.fetch_prematch_highlight()
-        return list(ladbrokes_parse_prematch(next_data)) + list(ladbrokes_parse_prematch(high_data))
+            data = lb.fetch_all_meetings("FOOTBALL", max_meetings=40)
+        return list(ladbrokes_parse_prematch(data))
     except httpx.HTTPError as e:
         console.print(f"[yellow]Ladbrokes skipped:[/yellow] {e}")
         return []
