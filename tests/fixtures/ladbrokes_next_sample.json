@@ -1,0 +1,798 @@
+{
+  "result": {
+    "events": [
+      {
+        "eventInfo": {
+          "disciplineDescription": "FOOTBALL",
+          "eventDescription": "CD Real Santander - Once Caldas Sa",
+          "eventData": 1779998400000,
+          "live": false,
+          "teamHome": {
+            "description": "CD Real Santander"
+          },
+          "teamAway": {
+            "description": "Once Caldas Sa"
+          },
+          "meetingDescription": "COLOMBIE - 1ère DIVISION FÉM.",
+          "eventCode": 36350,
+          "programCode": 36224
+        },
+        "betGroupList": [
+          {
+            "oddGroupList": [
+              {
+                "betId": 24,
+                "oddGroupDescription": "RÉSULTAT FINAL",
+                "alternativeDescription": "1X2",
+                "oddList": [
+                  {
+                    "boxTitle": "1",
+                    "oddValue": 240
+                  },
+                  {
+                    "boxTitle": "X",
+                    "oddValue": 285
+                  },
+                  {
+                    "boxTitle": "2",
+                    "oddValue": 265
+                  }
+                ]
+              },
+              {
+                "betId": 4243,
+                "oddGroupDescription": "PLUS/MOINS DE BUTS 2.5",
+                "alternativeDescription": "Totals",
+                "oddList": [
+                  {
+                    "boxTitle": "PLUS DE",
+                    "oddValue": 210
+                  },
+                  {
+                    "boxTitle": "MOINS DE",
+                    "oddValue": 148
+                  }
+                ]
+              },
+              {
+                "betId": 1550,
+                "oddGroupDescription": "LES DEUX ÉQUIPES MARQUENT",
+                "alternativeDescription": null,
+                "oddList": [
+                  {
+                    "boxTitle": "OUI",
+                    "oddValue": 180
+                  },
+                  {
+                    "boxTitle": "NON",
+                    "oddValue": 172
+                  }
+                ]
+              }
+            ]
+          }
+        ]
+      },
+      {
+        "eventInfo": {
+          "disciplineDescription": "FOOTBALL",
+          "eventDescription": "Llaneros FC - Independiente Santa Fe",
+          "eventData": 1780000200000,
+          "live": false,
+          "teamHome": {
+            "description": "Llaneros FC"
+          },
+          "teamAway": {
+            "description": "Independiente Santa Fe"
+          },
+          "meetingDescription": "COLOMBIE - 1ère DIVISION FÉM.",
+          "eventCode": 36351,
+          "programCode": 36224
+        },
+        "betGroupList": [
+          {
+            "oddGroupList": [
+              {
+                "betId": 24,
+                "oddGroupDescription": "RÉSULTAT FINAL",
+                "alternativeDescription": "1X2",
+                "oddList": [
+                  {
+                    "boxTitle": "1",
+                    "oddValue": 580
+                  },
+                  {
+                    "boxTitle": "X",
+                    "oddValue": 390
+                  },
+                  {
+                    "boxTitle": "2",
+                    "oddValue": 140
+                  }
+                ]
+              },
+              {
+                "betId": 4243,
+                "oddGroupDescription": "PLUS/MOINS DE BUTS 2.5",
+                "alternativeDescription": "Totals",
+                "oddList": [
+                  {
+                    "boxTitle": "PLUS DE",
+                    "oddValue": 165
+                  },
+                  {
+                    "boxTitle": "MOINS DE",
+                    "oddValue": 183
+                  }
+                ]
+              },
+              {
+                "betId": 1550,
+                "oddGroupDescription": "LES DEUX ÉQUIPES MARQUENT",
+                "alternativeDescription": null,
+                "oddList": [
+                  {
+                    "boxTitle": "OUI",
+                    "oddValue": 175
+                  },
+                  {
+                    "boxTitle": "NON",
+                    "oddValue": 177
+                  }
+                ]
+              }
+            ]
+          }
+        ]
+      },
+      {
+        "eventInfo": {
+          "disciplineDescription": "FOOTBALL",
+          "eventDescription": "CR Vasco da Gama RJ - America MG",
+          "eventData": 1780002000000,
+          "live": false,
+          "teamHome": {
+            "description": "CR Vasco da Gama RJ"
+          },
+          "teamAway": {
+            "description": "America MG"
+          },
+          "meetingDescription": "BRÉSIL - COUPE F.",
+          "eventCode": 36342,
+          "programCode": 36224
+        },
+        "betGroupList": [
+          {
+            "oddGroupList": [
+              {
+                "betId": 24,
+                "oddGroupDescription": "RÉSULTAT FINAL",
+                "alternativeDescription": "1X2",
+                "oddList": [
+                  {
+                    "boxTitle": "1",
+                    "oddValue": 157
+                  },
+                  {
+                    "boxTitle": "X",
+                    "oddValue": 370
+                  },
+                  {
+                    "boxTitle": "2",
+                    "oddValue": 430
+                  }
+                ]
+              },
+              {
+                "betId": 4243,
+                "oddGroupDescription": "PLUS/MOINS DE BUTS 2.5",
+                "alternativeDescription": "Totals",
+                "oddList": [
+                  {
+                    "boxTitle": "PLUS DE",
+                    "oddValue": 160
+                  },
+                  {
+                    "boxTitle": "MOINS DE",
+                    "oddValue": 192
+                  }
+                ]
+              },
+              {
+                "betId": 1550,
+                "oddGroupDescription": "LES DEUX ÉQUIPES MARQUENT",
+                "alternativeDescription": null,
+                "oddList": [
+                  {
+                    "boxTitle": "OUI",
+                    "oddValue": 157
+                  },
+                  {
+                    "boxTitle": "NON",
+                    "oddValue": 200
+                  }
+                ]
+              }
+            ]
+          }
+        ]
+      },
+      {
+        "eventInfo": {
+          "disciplineDescription": "FOOTBALL",
+          "eventDescription": "EC Cruzeiro MG - Doce Mel EC BA",
+          "eventData": 1780003800000,
+          "live": false,
+          "teamHome": {
+            "description": "EC Cruzeiro MG"
+          },
+          "teamAway": {
+            "description": "Doce Mel EC BA"
+          },
+          "meetingDescription": "BRÉSIL - COUPE F.",
+          "eventCode": 36336,
+          "programCode": 36224
+        },
+        "betGroupList": [
+          {
+            "oddGroupList": [
+              {
+                "betId": 24,
+                "oddGroupDescription": "RÉSULTAT FINAL",
+                "alternativeDescription": "1X2",
+                "oddList": [
+                  {
+                    "boxTitle": "1",
+                    "oddValue": 101
+                  },
+                  {
+                    "boxTitle": "X",
+                    "oddValue": 1100
+                  },
+                  {
+                    "boxTitle": "2",
+                    "oddValue": 1650
+                  }
+                ]
+              },
+              {
+                "betId": 4243,
+                "oddGroupDescription": "PLUS/MOINS DE BUTS 2.5",
+                "alternativeDescription": "Totals",
+                "oddList": [
+                  {
+                    "boxTitle": "PLUS DE",
+                    "oddValue": 118
+                  },
+                  {
+                    "boxTitle": "MOINS DE",
+                    "oddValue": 335
+                  }
+                ]
+              },
+              {
+                "betId": 1550,
+                "oddGroupDescription": "LES DEUX ÉQUIPES MARQUENT",
+                "alternativeDescription": null,
+                "oddList": [
+                  {
+                    "boxTitle": "OUI",
+                    "oddValue": 100
+                  },
+                  {
+                    "boxTitle": "NON",
+                    "oddValue": 100
+                  }
+                ]
+              }
+            ]
+          }
+        ]
+      },
+      {
+        "eventInfo": {
+          "disciplineDescription": "FOOTBALL",
+          "eventDescription": "Cerro Porteno - Sporting Cristal",
+          "eventData": 1780005600000,
+          "live": false,
+          "teamHome": {
+            "description": "Cerro Porteno"
+          },
+          "teamAway": {
+            "description": "Sporting Cristal"
+          },
+          "meetingDescription": "CONMEBOL Copa Libertadores",
+          "eventCode": 8527,
+          "programCode": 36221
+        },
+        "betGroupList": [
+          {
+            "oddGroupList": [
+              {
+                "betId": 24,
+                "oddGroupDescription": "RÉSULTAT FINAL",
+                "alternativeDescription": "1X2",
+                "oddList": [
+                  {
+                    "boxTitle": "1",
+                    "oddValue": 165
+                  },
+                  {
+                    "boxTitle": "X",
+                    "oddValue": 350
+                  },
+                  {
+                    "boxTitle": "2",
+                    "oddValue": 580
+                  }
+                ]
+              },
+              {
+                "betId": 4243,
+                "oddGroupDescription": "PLUS/MOINS DE BUTS 2.5",
+                "alternativeDescription": "Totals",
+                "oddList": [
+                  {
+                    "boxTitle": "PLUS DE",
+                    "oddValue": 220
+                  },
+                  {
+                    "boxTitle": "MOINS DE",
+                    "oddValue": 162
+                  }
+                ]
+              },
+              {
+                "betId": 1550,
+                "oddGroupDescription": "LES DEUX ÉQUIPES MARQUENT",
+                "alternativeDescription": null,
+                "oddList": [
+                  {
+                    "boxTitle": "OUI",
+                    "oddValue": 210
+                  },
+                  {
+                    "boxTitle": "NON",
+                    "oddValue": 165
+                  }
+                ]
+              }
+            ]
+          }
+        ]
+      },
+      {
+        "eventInfo": {
+          "disciplineDescription": "FOOTBALL",
+          "eventDescription": "Palmeiras SP - CD Junior",
+          "eventData": 1780005600000,
+          "live": false,
+          "teamHome": {
+            "description": "Palmeiras SP"
+          },
+          "teamAway": {
+            "description": "CD Junior"
+          },
+          "meetingDescription": "CONMEBOL Copa Libertadores",
+          "eventCode": 8528,
+          "programCode": 36221
+        },
+        "betGroupList": [
+          {
+            "oddGroupList": [
+              {
+                "betId": 24,
+                "oddGroupDescription": "RÉSULTAT FINAL",
+                "alternativeDescription": "1X2",
+                "oddList": [
+                  {
+                    "boxTitle": "1",
+                    "oddValue": 120
+                  },
+                  {
+                    "boxTitle": "X",
+                    "oddValue": 640
+                  },
+                  {
+                    "boxTitle": "2",
+                    "oddValue": 1250
+                  }
+                ]
+              },
+              {
+                "betId": 4243,
+                "oddGroupDescription": "PLUS/MOINS DE BUTS 2.5",
+                "alternativeDescription": "Totals",
+                "oddList": [
+                  {
+                    "boxTitle": "PLUS DE",
+                    "oddValue": 153
+                  },
+                  {
+                    "boxTitle": "MOINS DE",
+                    "oddValue": 235
+                  }
+                ]
+              },
+              {
+                "betId": 1550,
+                "oddGroupDescription": "LES DEUX ÉQUIPES MARQUENT",
+                "alternativeDescription": null,
+                "oddList": [
+                  {
+                    "boxTitle": "OUI",
+                    "oddValue": 225
+                  },
+                  {
+                    "boxTitle": "NON",
+                    "oddValue": 160
+                  }
+                ]
+              }
+            ]
+          }
+        ]
+      },
+      {
+        "eventInfo": {
+          "disciplineDescription": "FOOTBALL",
+          "eventDescription": "CA River Plate (Arg) Reserve - San Lorenzo de Almagro Reserve",
+          "eventData": 1780005600000,
+          "live": false,
+          "teamHome": {
+            "description": "CA River Plate"
+          },
+          "teamAway": {
+            "description": "ARG Reserve - San Lorenzo de Almagro Reserve"
+          },
+          "meetingDescription": "Reserve League",
+          "eventCode": 26405,
+          "programCode": 36221
+        },
+        "betGroupList": [
+          {
+            "oddGroupList": [
+              {
+                "betId": 24,
+                "oddGroupDescription": "RÉSULTAT FINAL",
+                "alternativeDescription": "1X2",
+                "oddList": [
+                  {
+                    "boxTitle": "1",
+                    "oddValue": 170
+                  },
+                  {
+                    "boxTitle": "X",
+                    "oddValue": 335
+                  },
+                  {
+                    "boxTitle": "2",
+                    "oddValue": 400
+                  }
+                ]
+              },
+              {
+                "betId": 4243,
+                "oddGroupDescription": "PLUS/MOINS DE BUTS 2.5",
+                "alternativeDescription": "Totals",
+                "oddList": [
+                  {
+                    "boxTitle": "PLUS DE",
+                    "oddValue": 175
+                  },
+                  {
+                    "boxTitle": "MOINS DE",
+                    "oddValue": 173
+                  }
+                ]
+              },
+              {
+                "betId": 1550,
+                "oddGroupDescription": "LES DEUX ÉQUIPES MARQUENT",
+                "alternativeDescription": null,
+                "oddList": [
+                  {
+                    "boxTitle": "OUI",
+                    "oddValue": 165
+                  },
+                  {
+                    "boxTitle": "NON",
+                    "oddValue": 188
+                  }
+                ]
+              }
+            ]
+          }
+        ]
+      },
+      {
+        "eventInfo": {
+          "disciplineDescription": "FOOTBALL",
+          "eventDescription": "Paradise SC - Kickstart Rush",
+          "eventData": 1780009200000,
+          "live": false,
+          "teamHome": {
+            "description": "Paradise SC"
+          },
+          "teamAway": {
+            "description": "Kickstart Rush"
+          },
+          "meetingDescription": "BARBADE - DIVISION",
+          "eventCode": 59370,
+          "programCode": 36224
+        },
+        "betGroupList": [
+          {
+            "oddGroupList": [
+              {
+                "betId": 24,
+                "oddGroupDescription": "RÉSULTAT FINAL",
+                "alternativeDescription": "1X2",
+                "oddList": [
+                  {
+                    "boxTitle": "1",
+                    "oddValue": 200
+                  },
+                  {
+                    "boxTitle": "X",
+                    "oddValue": 355
+                  },
+                  {
+                    "boxTitle": "2",
+                    "oddValue": 280
+                  }
+                ]
+              },
+              {
+                "betId": 4243,
+                "oddGroupDescription": "PLUS/MOINS DE BUTS 2.5",
+                "alternativeDescription": "Totals",
+                "oddList": [
+                  {
+                    "boxTitle": "PLUS DE",
+                    "oddValue": 135
+                  },
+                  {
+                    "boxTitle": "MOINS DE",
+                    "oddValue": 245
+                  }
+                ]
+              },
+              {
+                "betId": 1550,
+                "oddGroupDescription": "LES DEUX ÉQUIPES MARQUENT",
+                "alternativeDescription": null,
+                "oddList": [
+                  {
+                    "boxTitle": "OUI",
+                    "oddValue": 130
+                  },
+                  {
+                    "boxTitle": "NON",
+                    "oddValue": 270
+                  }
+                ]
+              }
+            ]
+          }
+        ]
+      },
+      {
+        "eventInfo": {
+          "disciplineDescription": "FOOTBALL",
+          "eventDescription": "CD El Nacional - Universite catholique d'Equateur",
+          "eventData": 1780009200000,
+          "live": false,
+          "teamHome": {
+            "description": "CD El Nacional"
+          },
+          "teamAway": {
+            "description": "Universite catholique d'Equateur"
+          },
+          "meetingDescription": "Coupe",
+          "eventCode": 26466,
+          "programCode": 36221
+        },
+        "betGroupList": [
+          {
+            "oddGroupList": [
+              {
+                "betId": 24,
+                "oddGroupDescription": "RÉSULTAT FINAL",
+                "alternativeDescription": "1X2",
+                "oddList": [
+                  {
+                    "boxTitle": "1",
+                    "oddValue": 760
+                  },
+                  {
+                    "boxTitle": "X",
+                    "oddValue": 470
+                  },
+                  {
+                    "boxTitle": "2",
+                    "oddValue": 127
+                  }
+                ]
+              },
+              {
+                "betId": 4243,
+                "oddGroupDescription": "PLUS/MOINS DE BUTS 2.5",
+                "alternativeDescription": "Totals",
+                "oddList": [
+                  {
+                    "boxTitle": "PLUS DE",
+                    "oddValue": 152
+                  },
+                  {
+                    "boxTitle": "MOINS DE",
+                    "oddValue": 205
+                  }
+                ]
+              },
+              {
+                "betId": 1550,
+                "oddGroupDescription": "LES DEUX ÉQUIPES MARQUENT",
+                "alternativeDescription": null,
+                "oddList": [
+                  {
+                    "boxTitle": "OUI",
+                    "oddValue": 180
+                  },
+                  {
+                    "boxTitle": "NON",
+                    "oddValue": 172
+                  }
+                ]
+              }
+            ]
+          }
+        ]
+      },
+      {
+        "eventInfo": {
+          "disciplineDescription": "FOOTBALL",
+          "eventDescription": "Edgewater Castle - Sueno FC",
+          "eventData": 1780012800000,
+          "live": false,
+          "teamHome": {
+            "description": "Edgewater Castle"
+          },
+          "teamAway": {
+            "description": "Sueno FC"
+          },
+          "meetingDescription": "USL League Two",
+          "eventCode": 29678,
+          "programCode": 36221
+        },
+        "betGroupList": [
+          {
+            "oddGroupList": [
+              {
+                "betId": 24,
+                "oddGroupDescription": "RÉSULTAT FINAL",
+                "alternativeDescription": "1X2",
+                "oddList": [
+                  {
+                    "boxTitle": "1",
+                    "oddValue": 940
+                  },
+                  {
+                    "boxTitle": "X",
+                    "oddValue": 840
+                  },
+                  {
+                    "boxTitle": "2",
+                    "oddValue": 112
+                  }
+                ]
+              },
+              {
+                "betId": 4243,
+                "oddGroupDescription": "PLUS/MOINS DE BUTS 2.5",
+                "alternativeDescription": "Totals",
+                "oddList": [
+                  {
+                    "boxTitle": "PLUS DE",
+                    "oddValue": 108
+                  },
+                  {
+                    "boxTitle": "MOINS DE",
+                    "oddValue": 520
+                  }
+                ]
+              },
+              {
+                "betId": 1550,
+                "oddGroupDescription": "LES DEUX ÉQUIPES MARQUENT",
+                "alternativeDescription": null,
+                "oddList": [
+                  {
+                    "boxTitle": "OUI",
+                    "oddValue": 140
+                  },
+                  {
+                    "boxTitle": "NON",
+                    "oddValue": 250
+                  }
+                ]
+              }
+            ]
+          }
+        ]
+      },
+      {
+        "eventInfo": {
+          "disciplineDescription": "FOOTBALL",
+          "eventDescription": "Houston FC - Laredo Heat",
+          "eventData": 1780012800000,
+          "live": false,
+          "teamHome": {
+            "description": "Houston FC"
+          },
+          "teamAway": {
+            "description": "Laredo Heat"
+          },
+          "meetingDescription": "USL League Two",
+          "eventCode": 29737,
+          "programCode": 36221
+        },
+        "betGroupList": [
+          {
+            "oddGroupList": [
+              {
+                "betId": 24,
+                "oddGroupDescription": "RÉSULTAT FINAL",
+                "alternativeDescription": "1X2",
+                "oddList": [
+                  {
+                    "boxTitle": "1",
+                    "oddValue": 355
+                  },
+                  {
+                    "boxTitle": "X",
+                    "oddValue": 390
+                  },
+                  {
+                    "boxTitle": "2",
+                    "oddValue": 172
+                  }
+                ]
+              },
+              {
+                "betId": 4243,
+                "oddGroupDescription": "PLUS/MOINS DE BUTS 2.5",
+                "alternativeDescription": "Totals",
+                "oddList": [
+                  {
+                    "boxTitle": "PLUS DE",
+                    "oddValue": 152
+                  },
+                  {
+                    "boxTitle": "MOINS DE",
+                    "oddValue": 220
+                  }
+                ]
+              },
+              {
+                "betId": 1550,
+                "oddGroupDescription": "LES DEUX ÉQUIPES MARQUENT",
+                "alternativeDescription": null,
+                "oddList": [
+                  {
+                    "boxTitle": "OUI",
+                    "oddValue": 147
+                  },
+                  {
+                    "boxTitle": "NON",
+                    "oddValue": 230
+                  }
+                ]
+              }
+            ]
+          }
+        ]
+      }
+    ]
+  }
+}

@@ -17,6 +17,7 @@ from .matcher import reconcile_event_keys
 from .models import Book, FairLine, MarketType, OddQuote, ValueBet
 from .scrapers.betano import BetanoAuthError, BetanoScraper, parse_overview as betano_parse_overview
 from .scrapers.betfirst import BetFirstScraper, parse_events_table as betfirst_parse_events_table
+from .scrapers.ladbrokes import LadbrokesScraper, parse_prematch as ladbrokes_parse_prematch
 from .scrapers.pinnacle import PinnacleScraper
 from .scrapers.unibet import UnibetScraper, parse_listview as unibet_parse_listview
 from .storage import Storage
@@ -144,13 +145,27 @@ def fetch_betfirst_quotes(sport: str) -> list[OddQuote]:
         return []
 
 
+def fetch_ladbrokes_quotes(sport: str) -> list[OddQuote]:
+    """Fetch + parse the Ladbrokes prematch homepage (next + highlight tabs)."""
+    if sport != "soccer":
+        return []
+    try:
+        with LadbrokesScraper() as lb:
+            next_data = lb.fetch_prematch_next()
+            high_data = lb.fetch_prematch_highlight()
+        return list(ladbrokes_parse_prematch(next_data)) + list(ladbrokes_parse_prematch(high_data))
+    except httpx.HTTPError as e:
+        console.print(f"[yellow]Ladbrokes skipped:[/yellow] {e}")
+        return []
+
+
 @app.command()
 def scan(
     sport: str = "soccer",
     min_ev: float = 2.0,
     bankroll: float = 1000.0,
 ):
-    """Fetch Pinnacle + soft books (Betano, Unibet, BetFirst), compute fair lines, print top value bets."""
+    """Fetch Pinnacle + soft books (Betano, Unibet, BetFirst, Ladbrokes), compute fair lines, print top value bets."""
     cfg = ScanConfig(sport=sport, min_ev_pct=min_ev, bankroll=bankroll)
     storage = Storage(cfg.db_path)
 
@@ -172,10 +187,12 @@ def scan(
     console.print(f"  → {len(unibet_quotes)} Unibet quotes")
     betfirst_quotes = fetch_betfirst_quotes(sport)
     console.print(f"  → {len(betfirst_quotes)} BetFirst quotes")
+    ladbrokes_quotes = fetch_ladbrokes_quotes(sport)
+    console.print(f"  → {len(ladbrokes_quotes)} Ladbrokes quotes")
 
     ref_keys = {fl.event_key for fl in fair.values()}
     soft_quotes = remap_to_reference(
-        betano_quotes + unibet_quotes + betfirst_quotes, ref_keys
+        betano_quotes + unibet_quotes + betfirst_quotes + ladbrokes_quotes, ref_keys
     )
     console.print(f"  → {len(soft_quotes)} matched to a Pinnacle event")
     for q in soft_quotes:
