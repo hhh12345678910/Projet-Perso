@@ -21,6 +21,7 @@ class Book(str, Enum):
     CIRCUS_BE = "circus_be"
     BETFIRST = "betfirst"
     BETCENTER = "betcenter"
+    GOLDEN_PALACE = "golden_palace"
 
 
 BETANO_OPERATOR_ID = "22"

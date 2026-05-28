@@ -1,0 +1,768 @@
+{
+  "events": [
+    {
+      "marketIds": [
+        1555176499,
+        1555176555,
+        1555176488,
+        1555176502,
+        1555176446,
+        1555176479
+      ],
+      "isBooked": true,
+      "isParlay": false,
+      "offers": [
+        {
+          "type": 0,
+          "parameter": 2
+        },
+        {
+          "type": 6
+        }
+      ],
+      "code": 6498,
+      "hasStream": false,
+      "extId": "fp32_ar:match:534412",
+      "extraInfo": "Sur terrain neutre",
+      "sc": 15471,
+      "mc": 402,
+      "rc": false,
+      "pId": 32,
+      "et": 0,
+      "hasStats": true,
+      "competitorIds": [
+        43671,
+        43699
+      ],
+      "sportId": 66,
+      "catId": 1133,
+      "champId": 16808,
+      "status": 0,
+      "startDate": "2026-05-30T16:00:00Z",
+      "id": 16435230,
+      "name": "Paris Saint-Germain vs. Arsenal FC"
+    },
+    {
+      "marketIds": [
+        1527182410,
+        1527182378,
+        1527182417,
+        1527182369,
+        1527182392
+      ],
+      "isBooked": true,
+      "isParlay": false,
+      "offers": [
+        {
+          "type": 6
+        }
+      ],
+      "hasStream": false,
+      "extId": "fp62_ls:match:18654235",
+      "sc": 136,
+      "mc": 28,
+      "rc": false,
+      "pId": 62,
+      "et": 0,
+      "hasStats": false,
+      "competitorIds": [
+        46226,
+        46211
+      ],
+      "sportId": 66,
+      "catId": 1133,
+      "champId": 5098,
+      "status": 0,
+      "startDate": "2026-09-24T18:45:00Z",
+      "id": 15601893,
+      "name": "Serbie vs. Grèce"
+    },
+    {
+      "marketIds": [
+        1586723262,
+        1586723310,
+        1586723254,
+        1586723265,
+        1586723224,
+        1586723246
+      ],
+      "isBooked": true,
+      "isParlay": false,
+      "offers": [
+        {
+          "type": 6
+        }
+      ],
+      "code": 3924,
+      "hasStream": false,
+      "extId": "fp32_ar:match:552825",
+      "sc": 1652,
+      "mc": 200,
+      "rc": false,
+      "pId": 32,
+      "et": 0,
+      "hasStats": true,
+      "competitorIds": [
+        47703,
+        47727
+      ],
+      "sportId": 66,
+      "catId": 1134,
+      "champId": 3645,
+      "status": 0,
+      "startDate": "2026-05-29T12:00:00Z",
+      "id": 16455139,
+      "name": "Iran vs. Gambie"
+    }
+  ],
+  "markets": [
+    {
+      "oddIds": [
+        3943952910,
+        3943952911,
+        3943952912
+      ],
+      "typeId": 1,
+      "sportMarketId": 70472,
+      "id": 1555176499,
+      "name": "1x2"
+    },
+    {
+      "oddIds": [
+        3943953116,
+        3943953118,
+        3943953117
+      ],
+      "typeId": 8,
+      "sportMarketId": 70491,
+      "sv": "1",
+      "sn": "Premier But",
+      "id": 1555176555,
+      "name": "Premier but"
+    },
+    {
+      "oddIds": [
+        3943952855,
+        3943952853,
+        3943952854
+      ],
+      "typeId": 10,
+      "sportMarketId": 70495,
+      "id": 1555176488,
+      "name": "Double chance"
+    },
+    {
+      "oddIds": [
+        3943952919,
+        3943952920
+      ],
+      "typeId": 11,
+      "sportMarketId": 70500,
+      "id": 1555176502,
+      "name": "Remboursé si match nul"
+    },
+    {
+      "oddIds": [
+        3943952719,
+        3943952720
+      ],
+      "typeId": 18,
+      "sportMarketId": 70520,
+      "sv": "2.5",
+      "sn": "2.5",
+      "id": 1555176446,
+      "name": "Total de buts"
+    },
+    {
+      "oddIds": [
+        3943952785,
+        3943952786
+      ],
+      "typeId": 29,
+      "sportMarketId": 70545,
+      "id": 1555176479,
+      "name": "Les 2 équipes marquent"
+    },
+    {
+      "oddIds": [
+        3856609424,
+        3856609426,
+        3856609425
+      ],
+      "typeId": 1,
+      "sportMarketId": 70472,
+      "id": 1527182410,
+      "name": "1x2"
+    },
+    {
+      "oddIds": [
+        3856609346,
+        3856609347,
+        3856609348
+      ],
+      "typeId": 10,
+      "sportMarketId": 70495,
+      "id": 1527182378,
+      "name": "Double chance"
+    },
+    {
+      "oddIds": [
+        3856609441,
+        3856609442
+      ],
+      "typeId": 11,
+      "sportMarketId": 70500,
+      "id": 1527182417,
+      "name": "Remboursé si match nul"
+    },
+    {
+      "oddIds": [
+        3856609329,
+        3856609328
+      ],
+      "typeId": 18,
+      "sportMarketId": 70520,
+      "sv": "2.5",
+      "sn": "2.5",
+      "id": 1527182369,
+      "name": "Total de buts"
+    },
+    {
+      "oddIds": [
+        3856609378,
+        3856609377
+      ],
+      "typeId": 29,
+      "sportMarketId": 70545,
+      "id": 1527182392,
+      "name": "Les 2 équipes marquent"
+    },
+    {
+      "oddIds": [
+        4042141607,
+        4042141608,
+        4042141609
+      ],
+      "typeId": 1,
+      "sportMarketId": 70472,
+      "id": 1586723262,
+      "name": "1x2"
+    },
+    {
+      "oddIds": [
+        4042141772,
+        4042141774,
+        4042141773
+      ],
+      "typeId": 8,
+      "sportMarketId": 70491,
+      "sv": "1",
+      "sn": "Premier But",
+      "id": 1586723310,
+      "name": "Premier but"
+    },
+    {
+      "oddIds": [
+        4042141570,
+        4042141568,
+        4042141569
+      ],
+      "typeId": 10,
+      "sportMarketId": 70495,
+      "id": 1586723254,
+      "name": "Double chance"
+    },
+    {
+      "oddIds": [
+        4042141616,
+        4042141617
+      ],
+      "typeId": 11,
+      "sportMarketId": 70500,
+      "id": 1586723265,
+      "name": "Remboursé si match nul"
+    },
+    {
+      "oddIds": [
+        4042141462,
+        4042141463
+      ],
+      "typeId": 18,
+      "sportMarketId": 70520,
+      "sv": "2.5",
+      "sn": "2.5",
+      "id": 1586723224,
+      "name": "Total de buts"
+    },
+    {
+      "oddIds": [
+        4042141506,
+        4042141507
+      ],
+      "typeId": 29,
+      "sportMarketId": 70545,
+      "id": 1586723246,
+      "name": "Les 2 équipes marquent"
+    }
+  ],
+  "odds": [
+    {
+      "typeId": 1,
+      "price": 2.2,
+      "boostInfo": {
+        "id": 12800214,
+        "isLimitedTime": false,
+        "isBetOfTheDay": false,
+        "property": 3,
+        "endDate": "2026-05-30T16:00:00Z",
+        "price": 4.0,
+        "isWelcome": false
+      },
+      "priceType": 3,
+      "isMB": false,
+      "oddStatus": 0,
+      "offers": [
+        {
+          "type": 0,
+          "parameter": 2
+        }
+      ],
+      "competitorId": 43671,
+      "isDBB": true,
+      "id": 3943952910,
+      "name": "Paris Saint-Germain"
+    },
+    {
+      "typeId": 2,
+      "price": 3.4,
+      "isMB": false,
+      "oddStatus": 0,
+      "isDBB": true,
+      "id": 3943952911,
+      "name": "Nul"
+    },
+    {
+      "typeId": 3,
+      "price": 3.0,
+      "isMB": false,
+      "oddStatus": 0,
+      "offers": [
+        {
+          "type": 0,
+          "parameter": 2
+        }
+      ],
+      "competitorId": 43699,
+      "isDBB": true,
+      "id": 3943952912,
+      "name": "Arsenal FC"
+    },
+    {
+      "typeId": 1,
+      "price": 1.7858,
+      "isMB": false,
+      "oddStatus": 0,
+      "competitorId": 43671,
+      "isDBB": true,
+      "id": 3943953116,
+      "name": "Paris Saint-Germain"
+    },
+    {
+      "typeId": 7,
+      "price": 10.0,
+      "isMB": false,
+      "oddStatus": 0,
+      "isDBB": true,
+      "id": 3943953118,
+      "name": "Aucun"
+    },
+    {
+      "typeId": 3,
+      "price": 2.125,
+      "isMB": false,
+      "oddStatus": 0,
+      "competitorId": 43699,
+      "isDBB": true,
+      "id": 3943953117,
+      "name": "Arsenal FC"
+    },
+    {
+      "typeId": 9,
+      "price": 1.35,
+      "isMB": false,
+      "oddStatus": 0,
+      "competitorId": 43671,
+      "isDBB": true,
+      "id": 3943952855,
+      "name": "Paris Saint-Germain ou X"
+    },
+    {
+      "typeId": 10,
+      "price": 1.2858,
+      "isMB": false,
+      "oddStatus": 0,
+      "isDBB": true,
+      "id": 3943952853,
+      "name": "Paris Saint-Germain ou Arsenal FC"
+    },
+    {
+      "typeId": 11,
+      "price": 1.5556,
+      "isMB": false,
+      "oddStatus": 0,
+      "competitorId": 43699,
+      "isDBB": true,
+      "id": 3943952854,
+      "name": "X ou Arsenal FC"
+    },
+    {
+      "typeId": 1,
+      "price": 1.625,
+      "isMB": false,
+      "oddStatus": 0,
+      "competitorId": 43671,
+      "id": 3943952919,
+      "name": "Paris Saint-Germain"
+    },
+    {
+      "typeId": 3,
+      "price": 2.2,
+      "isMB": false,
+      "oddStatus": 0,
+      "competitorId": 43699,
+      "id": 3943952920,
+      "name": "Arsenal FC"
+    },
+    {
+      "typeId": 12,
+      "price": 1.9524,
+      "boostInfo": {
+        "id": 12799566,
+        "isLimitedTime": false,
+        "isBetOfTheDay": false,
+        "property": 1,
+        "endDate": "2026-05-30T16:00:00Z",
+        "price": 2.06,
+        "isWelcome": false
+      },
+      "priceType": 3,
+      "isMB": true,
+      "oddStatus": 0,
+      "isDBB": true,
+      "id": 3943952719,
+      "name": "Plus de 2.5"
+    },
+    {
+      "typeId": 13,
+      "price": 1.7408,
+      "isMB": true,
+      "oddStatus": 0,
+      "isDBB": true,
+      "id": 3943952720,
+      "name": "Moins de 2.5"
+    },
+    {
+      "typeId": 74,
+      "price": 1.7778,
+      "isMB": false,
+      "oddStatus": 0,
+      "isDBB": true,
+      "id": 3943952785,
+      "name": "Oui"
+    },
+    {
+      "typeId": 76,
+      "price": 1.9334,
+      "isMB": false,
+      "oddStatus": 0,
+      "isDBB": true,
+      "id": 3943952786,
+      "name": "Non"
+    },
+    {
+      "typeId": 1,
+      "price": 2.0,
+      "isMB": false,
+      "oddStatus": 0,
+      "competitorId": 46226,
+      "isDBB": true,
+      "id": 3856609424,
+      "name": "Serbie"
+    },
+    {
+      "typeId": 2,
+      "price": 3.0,
+      "isMB": false,
+      "oddStatus": 0,
+      "isDBB": true,
+      "id": 3856609426,
+      "name": "Nul"
+    },
+    {
+      "typeId": 3,
+      "price": 3.75,
+      "isMB": false,
+      "oddStatus": 0,
+      "competitorId": 46211,
+      "isDBB": true,
+      "id": 3856609425,
+      "name": "Grèce"
+    },
+    {
+      "typeId": 9,
+      "price": 1.25,
+      "isMB": false,
+      "oddStatus": 0,
+      "competitorId": 46226,
+      "isDBB": true,
+      "id": 3856609346,
+      "name": "Serbie ou X"
+    },
+    {
+      "typeId": 10,
+      "price": 1.3,
+      "isMB": false,
+      "oddStatus": 0,
+      "isDBB": true,
+      "id": 3856609347,
+      "name": "Serbie ou Grèce"
+    },
+    {
+      "typeId": 11,
+      "price": 1.75,
+      "isMB": false,
+      "oddStatus": 0,
+      "competitorId": 46211,
+      "isDBB": true,
+      "id": 3856609348,
+      "name": "X ou Grèce"
+    },
+    {
+      "typeId": 1,
+      "price": 1.4167,
+      "isMB": false,
+      "oddStatus": 0,
+      "competitorId": 46226,
+      "id": 3856609441,
+      "name": "Serbie"
+    },
+    {
+      "typeId": 3,
+      "price": 2.5455,
+      "isMB": false,
+      "oddStatus": 0,
+      "competitorId": 46211,
+      "id": 3856609442,
+      "name": "Grèce"
+    },
+    {
+      "typeId": 12,
+      "price": 2.0,
+      "isMB": true,
+      "oddStatus": 0,
+      "isDBB": true,
+      "id": 3856609329,
+      "name": "Plus de 2.5"
+    },
+    {
+      "typeId": 13,
+      "price": 1.6667,
+      "isMB": true,
+      "oddStatus": 0,
+      "isDBB": true,
+      "id": 3856609328,
+      "name": "Moins de 2.5"
+    },
+    {
+      "typeId": 74,
+      "price": 1.8,
+      "isMB": false,
+      "oddStatus": 0,
+      "isDBB": true,
+      "id": 3856609378,
+      "name": "Oui"
+    },
+    {
+      "typeId": 76,
+      "price": 1.875,
+      "isMB": false,
+      "oddStatus": 0,
+      "isDBB": true,
+      "id": 3856609377,
+      "name": "Non"
+    },
+    {
+      "typeId": 1,
+      "price": 1.5715,
+      "isMB": false,
+      "oddStatus": 0,
+      "competitorId": 47703,
+      "isDBB": true,
+      "id": 4042141607,
+      "name": "Iran"
+    },
+    {
+      "typeId": 2,
+      "price": 3.8,
+      "isMB": false,
+      "oddStatus": 0,
+      "isDBB": true,
+      "id": 4042141608,
+      "name": "Nul"
+    },
+    {
+      "typeId": 3,
+      "price": 5.5,
+      "isMB": false,
+      "oddStatus": 0,
+      "competitorId": 47727,
+      "isDBB": true,
+      "id": 4042141609,
+      "name": "Gambie"
+    },
+    {
+      "typeId": 1,
+      "price": 1.4167,
+      "isMB": false,
+      "oddStatus": 0,
+      "competitorId": 47703,
+      "isDBB": true,
+      "id": 4042141772,
+      "name": "Iran"
+    },
+    {
+      "typeId": 7,
+      "price": 10.0,
+      "isMB": false,
+      "oddStatus": 0,
+      "isDBB": true,
+      "id": 4042141774,
+      "name": "Aucun"
+    },
+    {
+      "typeId": 3,
+      "price": 3.0,
+      "isMB": false,
+      "oddStatus": 0,
+      "competitorId": 47727,
+      "isDBB": true,
+      "id": 4042141773,
+      "name": "Gambie"
+    },
+    {
+      "typeId": 9,
+      "price": 1.1539,
+      "isMB": false,
+      "oddStatus": 0,
+      "competitorId": 47703,
+      "isDBB": true,
+      "id": 4042141570,
+      "name": "Iran ou X"
+    },
+    {
+      "typeId": 10,
+      "price": 1.2308,
+      "isMB": false,
+      "oddStatus": 0,
+      "isDBB": true,
+      "id": 4042141568,
+      "name": "Iran ou Gambie"
+    },
+    {
+      "typeId": 11,
+      "price": 2.1667,
+      "isMB": false,
+      "oddStatus": 0,
+      "competitorId": 47727,
+      "isDBB": true,
+      "id": 4042141569,
+      "name": "X ou Gambie"
+    },
+    {
+      "typeId": 1,
+      "price": 1.2,
+      "isMB": false,
+      "oddStatus": 0,
+      "competitorId": 47703,
+      "id": 4042141616,
+      "name": "Iran"
+    },
+    {
+      "typeId": 3,
+      "price": 3.8,
+      "isMB": false,
+      "oddStatus": 0,
+      "competitorId": 47727,
+      "id": 4042141617,
+      "name": "Gambie"
+    },
+    {
+      "typeId": 12,
+      "price": 1.95,
+      "isMB": true,
+      "oddStatus": 0,
+      "isDBB": true,
+      "id": 4042141462,
+      "name": "Plus de 2.5"
+    },
+    {
+      "typeId": 13,
+      "price": 1.7,
+      "isMB": true,
+      "oddStatus": 0,
+      "isDBB": true,
+      "id": 4042141463,
+      "name": "Moins de 2.5"
+    },
+    {
+      "typeId": 74,
+      "price": 2.05,
+      "isMB": false,
+      "oddStatus": 0,
+      "isDBB": true,
+      "id": 4042141506,
+      "name": "Oui"
+    },
+    {
+      "typeId": 76,
+      "price": 1.6667,
+      "isMB": false,
+      "oddStatus": 0,
+      "isDBB": true,
+      "id": 4042141507,
+      "name": "Non"
+    }
+  ],
+  "competitors": [
+    {
+      "hasConfigJersey": true,
+      "id": 43671,
+      "name": "Paris Saint-Germain"
+    },
+    {
+      "hasConfigJersey": true,
+      "id": 43699,
+      "name": "Arsenal FC"
+    },
+    {
+      "hasConfigJersey": true,
+      "id": 46226,
+      "name": "Serbie"
+    },
+    {
+      "hasConfigJersey": true,
+      "id": 46211,
+      "name": "Grèce"
+    },
+    {
+      "hasConfigJersey": true,
+      "id": 47703,
+      "name": "Iran"
+    },
+    {
+      "hasConfigJersey": true,
+      "id": 47727,
+      "name": "Gambie"
+    }
+  ]
+}

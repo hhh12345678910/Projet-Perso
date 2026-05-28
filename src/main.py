@@ -17,6 +17,7 @@ from .matcher import reconcile_event_keys
 from .models import Book, FairLine, MarketType, OddQuote, ValueBet
 from .scrapers.betano import BetanoAuthError, BetanoScraper, parse_overview as betano_parse_overview
 from .scrapers.betfirst import BetFirstScraper, parse_events_table as betfirst_parse_events_table
+from .scrapers.goldenpalace import GoldenPalaceScraper, parse_get_events as goldenpalace_parse_get_events
 from .scrapers.ladbrokes import LadbrokesScraper, parse_prematch as ladbrokes_parse_prematch
 from .scrapers.pinnacle import PinnacleScraper
 from .scrapers.unibet import UnibetScraper, parse_listview as unibet_parse_listview
@@ -170,6 +171,17 @@ def fetch_ladbrokes_quotes(sport: str) -> list[OddQuote]:
         return []
 
 
+def fetch_goldenpalace_quotes(sport: str) -> list[OddQuote]:
+    """Bulk-fetch every Golden Palace event for a sport via the Altenar widget."""
+    try:
+        with GoldenPalaceScraper() as gp:
+            data = gp.fetch_events(sport)
+        return list(goldenpalace_parse_get_events(data))
+    except httpx.HTTPError as e:
+        console.print(f"[yellow]Golden Palace skipped:[/yellow] {e}")
+        return []
+
+
 @app.command()
 def scan(
     sport: str = "soccer",
@@ -182,7 +194,7 @@ def scan(
         "response, captured from your browser. Bypasses the IP-bound cookie check.",
     ),
 ):
-    """Fetch Pinnacle + soft books (Betano, Unibet, BetFirst, Ladbrokes), compute fair lines, print top value bets."""
+    """Fetch Pinnacle + soft books (Betano, Unibet, BetFirst, Ladbrokes, Golden Palace), compute fair lines, print top value bets."""
     cfg = ScanConfig(sport=sport, min_ev_pct=min_ev, bankroll=bankroll)
     storage = Storage(cfg.db_path)
 
@@ -206,10 +218,13 @@ def scan(
     console.print(f"  → {len(betfirst_quotes)} BetFirst quotes")
     ladbrokes_quotes = fetch_ladbrokes_quotes(sport)
     console.print(f"  → {len(ladbrokes_quotes)} Ladbrokes quotes")
+    goldenpalace_quotes = fetch_goldenpalace_quotes(sport)
+    console.print(f"  → {len(goldenpalace_quotes)} Golden Palace quotes")
 
     ref_keys = {fl.event_key for fl in fair.values()}
     soft_quotes = remap_to_reference(
-        betano_quotes + unibet_quotes + betfirst_quotes + ladbrokes_quotes, ref_keys
+        betano_quotes + unibet_quotes + betfirst_quotes + ladbrokes_quotes + goldenpalace_quotes,
+        ref_keys,
     )
     console.print(f"  → {len(soft_quotes)} matched to a Pinnacle event")
     for q in soft_quotes:

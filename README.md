@@ -21,6 +21,7 @@ src/
     unibet.py     Unibet.be (Kambi offering API; guest)
     betfirst.py   BetFirst.be (Entain sportsbook API; guest)
     ladbrokes.py  Ladbrokes.be (Eurobet sport-schedule; guest)
+    goldenpalace.py Golden Palace (Altenar GetEvents widget; guest)
   main.py         orchestration loop + CLI
 tests/            unit tests for math
 ```
