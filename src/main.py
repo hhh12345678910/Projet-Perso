@@ -138,10 +138,11 @@ def fetch_betano_quotes(betano_file: str | None = None) -> list[OddQuote]:
 
 
 def fetch_unibet_quotes(sport: str) -> list[OddQuote]:
-    """Fetch + parse the Unibet (Kambi) list view for a sport."""
+    """Fetch + parse every Unibet (Kambi) event by iterating each leaf termKey
+    under the sport's group — far better coverage than the bare listView."""
     try:
         with UnibetScraper() as uni:
-            data = uni.fetch_listview(sport)
+            data = uni.fetch_all_events(sport)
         return list(unibet_parse_listview(data))
     except httpx.HTTPError as e:
         console.print(f"[yellow]Unibet skipped:[/yellow] {e}")
