@@ -1,0 +1,145 @@
+{
+  "data": {
+    "events": [
+      {
+        "globalId": "event.1.13.19.f-rdwm7m-uK0yqVgGGcW5KIg",
+        "categoryId": "1",
+        "categoryName": "Football",
+        "regionName": "France",
+        "competitionId": "19",
+        "competitionName": "Ligue 1",
+        "slug": "football/france/ligue-1/nice-saint-etienne",
+        "startDate": "2026-05-29T18:45:00Z",
+        "participants": [
+          {
+            "label": "Nice",
+            "side": 1,
+            "sortOrder": 1
+          },
+          {
+            "label": "Saint-Etienne",
+            "side": 2,
+            "sortOrder": 2
+          }
+        ]
+      }
+    ],
+    "markets": [
+      {
+        "eventId": "f-rdwm7m-uK0yqVgGGcW5KIg",
+        "marketTemplateId": "MW3W",
+        "lineValue": "",
+        "lineValueRaw": 0.0,
+        "status": "Open",
+        "validationRule": {
+          "code": 1,
+          "value": "NotWithinSameEvent"
+        },
+        "deadline": "2026-05-29T18:45:00Z",
+        "isCashoutAvailable": true,
+        "columnLayout": 3,
+        "helpText": "",
+        "isGroupableByMarketTemplate": true,
+        "betGroupDescription": "",
+        "marketTemplateTags": [
+          7,
+          128,
+          42,
+          73,
+          55,
+          48,
+          137,
+          59,
+          71,
+          69,
+          4,
+          16,
+          36,
+          127,
+          63,
+          66,
+          29,
+          133
+        ],
+        "marketSpecifics": {
+          "groupSortBy": [],
+          "groupLabels": {},
+          "groupTranslations": {}
+        },
+        "sortOrder": 1,
+        "marketFriendlyName": "Vainqueur",
+        "marketVersion": 2,
+        "betBuilderAvailability": {
+          "state": 1,
+          "data": {},
+          "isHomeTeam": false
+        },
+        "originSelections": {},
+        "id": "m-f-rdwm7m-uK0yqVgGGcW5KIg-MW3W",
+        "label": "Vainqueur",
+        "isHomeTeam": false
+      }
+    ],
+    "selections": [
+      {
+        "marketId": "m-f-rdwm7m-uK0yqVgGGcW5KIg-MW3W",
+        "odds": 2.02,
+        "alternateLabel": "Nice",
+        "status": "Open",
+        "sortOrder": 1,
+        "participantId": "824",
+        "participantLabel": "Nice",
+        "selectionTemplateId": "HOME",
+        "participant": "Nice",
+        "marketSelectionPriceFormats": {
+          "1": "2.02"
+        },
+        "selectionSpecifics": {
+          "values": {}
+        },
+        "id": "s-m-f-rdwm7m-uK0yqVgGGcW5KIg-MW3W-home",
+        "label": "Nice",
+        "isHomeTeam": true
+      },
+      {
+        "marketId": "m-f-rdwm7m-uK0yqVgGGcW5KIg-MW3W",
+        "odds": 3.25,
+        "alternateLabel": "Égalité",
+        "status": "Open",
+        "sortOrder": 2,
+        "participantLabel": "Égalité",
+        "selectionTemplateId": "DRAW",
+        "participant": "Égalité",
+        "marketSelectionPriceFormats": {
+          "1": "3.25"
+        },
+        "selectionSpecifics": {
+          "values": {}
+        },
+        "id": "s-m-f-rdwm7m-uK0yqVgGGcW5KIg-MW3W-draw",
+        "label": "Égalité",
+        "isHomeTeam": false
+      },
+      {
+        "marketId": "m-f-rdwm7m-uK0yqVgGGcW5KIg-MW3W",
+        "odds": 3.9,
+        "alternateLabel": "Saint-Etienne",
+        "status": "Open",
+        "sortOrder": 3,
+        "participantId": "825",
+        "participantLabel": "Saint-Etienne",
+        "selectionTemplateId": "AWAY",
+        "participant": "Saint-Etienne",
+        "marketSelectionPriceFormats": {
+          "1": "3.90"
+        },
+        "selectionSpecifics": {
+          "values": {}
+        },
+        "id": "s-m-f-rdwm7m-uK0yqVgGGcW5KIg-MW3W-away",
+        "label": "Saint-Etienne",
+        "isHomeTeam": false
+      }
+    ]
+  }
+}

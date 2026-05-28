@@ -19,6 +19,7 @@ src/
     pinnacle.py   Pinnacle public guest API (sharp reference)
     betano.py     Betano.be (danae-webapi; needs cookie)
     unibet.py     Unibet.be (Kambi offering API; guest)
+    betfirst.py   BetFirst.be (Entain sportsbook API; guest)
   main.py         orchestration loop + CLI
 tests/            unit tests for math
 ```
@@ -35,8 +36,8 @@ pytest
 ## Roadmap
 
 1. Math core + Pinnacle scraper + SQLite (done).
-2. Belgian scrapers: Betano.be (done), Unibet.be (done), Ladbrokes.be (next).
-3. Circus, BetFirst, Betcenter (custom reverse-engineering needed).
+2. Belgian scrapers: Betano.be (done), Unibet.be (done), BetFirst.be (done).
+3. Ladbrokes.be, Circus, Betcenter (custom reverse-engineering needed).
 4. Telegram alerter + CLV dashboard.
 
 ## Disclaimer

@@ -16,6 +16,7 @@ from .ev import ev_pct, fair_odd, kelly_fraction, kelly_stake
 from .matcher import reconcile_event_keys
 from .models import Book, FairLine, MarketType, OddQuote, ValueBet
 from .scrapers.betano import BetanoAuthError, BetanoScraper, parse_overview as betano_parse_overview
+from .scrapers.betfirst import BetFirstScraper, parse_events_table as betfirst_parse_events_table
 from .scrapers.pinnacle import PinnacleScraper
 from .scrapers.unibet import UnibetScraper, parse_listview as unibet_parse_listview
 from .storage import Storage
@@ -132,13 +133,24 @@ def fetch_unibet_quotes(sport: str) -> list[OddQuote]:
         return []
 
 
+def fetch_betfirst_quotes(sport: str) -> list[OddQuote]:
+    """Fetch + parse the BetFirst events-table for a sport (paginated)."""
+    try:
+        with BetFirstScraper() as bf:
+            data = bf.fetch_all_events(sport, days_ahead=2, max_market_count=10)
+        return list(betfirst_parse_events_table(data))
+    except httpx.HTTPError as e:
+        console.print(f"[yellow]BetFirst skipped:[/yellow] {e}")
+        return []
+
+
 @app.command()
 def scan(
     sport: str = "soccer",
     min_ev: float = 2.0,
     bankroll: float = 1000.0,
 ):
-    """Fetch Pinnacle + soft books (Betano, Unibet), compute fair lines, print top value bets."""
+    """Fetch Pinnacle + soft books (Betano, Unibet, BetFirst), compute fair lines, print top value bets."""
     cfg = ScanConfig(sport=sport, min_ev_pct=min_ev, bankroll=bankroll)
     storage = Storage(cfg.db_path)
 
@@ -158,9 +170,13 @@ def scan(
     console.print(f"  → {len(betano_quotes)} Betano quotes")
     unibet_quotes = fetch_unibet_quotes(sport)
     console.print(f"  → {len(unibet_quotes)} Unibet quotes")
+    betfirst_quotes = fetch_betfirst_quotes(sport)
+    console.print(f"  → {len(betfirst_quotes)} BetFirst quotes")
 
     ref_keys = {fl.event_key for fl in fair.values()}
-    soft_quotes = remap_to_reference(betano_quotes + unibet_quotes, ref_keys)
+    soft_quotes = remap_to_reference(
+        betano_quotes + unibet_quotes + betfirst_quotes, ref_keys
+    )
     console.print(f"  → {len(soft_quotes)} matched to a Pinnacle event")
     for q in soft_quotes:
         storage.insert_quote(q)
