@@ -22,6 +22,7 @@ src/
     betfirst.py   BetFirst.be (Entain sportsbook API; guest)
     ladbrokes.py  Ladbrokes.be (Eurobet sport-schedule; guest)
     goldenpalace.py Golden Palace (Altenar GetEvents widget; guest)
+    starcasinosport.py StarCasino Sport (same Altenar API, different operator)
   main.py         orchestration loop + CLI
 tests/            unit tests for math
 ```

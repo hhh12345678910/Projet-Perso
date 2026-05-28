@@ -45,9 +45,14 @@ def _headers() -> dict[str, str]:
 
 class GoldenPalaceScraper:
     book = Book.GOLDEN_PALACE
+    integration = "goldenpalace"
+    origin = "https://www.goldenpalacesports.be"
 
     def __init__(self, timeout: float = 20.0):
-        self._client = httpx.Client(timeout=timeout, headers=_headers())
+        headers = _headers()
+        headers["Origin"] = self.origin
+        headers["Referer"] = self.origin + "/"
+        self._client = httpx.Client(timeout=timeout, headers=headers)
 
     def close(self) -> None:
         self._client.close()
@@ -79,7 +84,7 @@ class GoldenPalaceScraper:
             params={
                 "culture": "fr-FR",
                 "timezoneOffset": -120,
-                "integration": INTEGRATION,
+                "integration": self.integration,
                 "deviceType": 1,
                 "numFormat": "en-GB",
                 "countryCode": "BE",
@@ -132,12 +137,14 @@ def _parse_event_time(raw: Any) -> datetime | None:
         return None
 
 
-def parse_get_events(payload: dict) -> Iterator[OddQuote]:
+def parse_get_events(payload: dict, book: Book = Book.GOLDEN_PALACE) -> Iterator[OddQuote]:
     """Walk a GetEvents payload and yield OddQuote objects.
 
     Shape: payload has flat lists events/markets/odds/competitors. Events join
     to competitors via competitorIds[] (index 0 = home, 1 = away), to markets
-    via marketIds[], and markets join to odds via oddIds[]."""
+    via marketIds[], and markets join to odds via oddIds[]. The same Altenar
+    response shape is shared by every operator on the platform — pass `book`
+    to tag the resulting quotes with the right one."""
     events = payload.get("events") or []
     markets = {m["id"]: m for m in (payload.get("markets") or []) if "id" in m}
     odds = {o["id"]: o for o in (payload.get("odds") or []) if "id" in o}
@@ -185,7 +192,7 @@ def parse_get_events(payload: dict) -> Iterator[OddQuote]:
                 line = _extract_line(odd.get("name") or "") if market_type == MarketType.TOTALS else None
                 yield OddQuote(
                     event_key=ek,
-                    book=Book.GOLDEN_PALACE,
+                    book=book,
                     market=market_type,
                     outcome=Outcome(label=label, line=line),
                     decimal_odd=decimal_odd,
