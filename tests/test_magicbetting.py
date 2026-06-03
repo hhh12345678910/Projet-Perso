@@ -52,12 +52,16 @@ def test_parse_events_handicap_signed_line():
     quotes = list(parse_events(_load()))
     hc = [q for q in quotes if q.market == MarketType.HANDICAP]
     assert hc
-    # Home handicap line is negated, away stays positive.
+    # BetConstruct already signs each side of a handicap line correctly: for
+    # every (event, |line|) pair, the home/away lines are opposite signs.
+    by_abs: dict = {}
     for q in hc:
-        if q.outcome.label == "home":
-            assert q.outcome.line is None or q.outcome.line <= 0
-        elif q.outcome.label == "away":
-            assert q.outcome.line is None or q.outcome.line >= 0
+        if q.outcome.line is None:
+            continue
+        by_abs.setdefault((q.event_key, abs(q.outcome.line)), {})[q.outcome.label] = q.outcome.line
+    for pair in by_abs.values():
+        if "home" in pair and "away" in pair:
+            assert pair["home"] == -pair["away"]
 
 
 def test_parse_events_sets_book_tag():
