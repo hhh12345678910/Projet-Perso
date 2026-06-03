@@ -24,6 +24,7 @@ from .scrapers.pinnacle import PinnacleScraper
 from .scrapers.starcasinosport import StarCasinoSportScraper, parse_get_events as starcasinosport_parse_get_events
 from .scrapers.unibet import UnibetScraper, parse_listview as unibet_parse_listview
 from .storage import Storage
+from .surebet import find_surebets
 
 
 app = typer.Typer(add_completion=False)
@@ -288,6 +289,36 @@ def scan(
             f"{b.odd_taken:.2f}", f"{b.fair_odd:.2f}", f"{b.ev_pct:.2f}", f"{b.kelly_stake_pct:.2f}",
         )
     console.print(table)
+
+    # Cross-book surebet detection on the soft-book quotes (no Pinnacle needed).
+    surebets = find_surebets(soft_quotes)
+    plausible = [s for s in surebets if not s.suspicious]
+    flagged = [s for s in surebets if s.suspicious]
+    console.print(
+        f"[bold]Surebets: {len(plausible)} plausible[/bold]"
+        + (f" (+ {len(flagged)} flagged as suspicious — likely matching bugs)" if flagged else "")
+    )
+    if plausible:
+        st = Table(title=f"Surebets ({sport})", show_lines=False)
+        st.add_column("event_key", overflow="fold")
+        st.add_column("market")
+        st.add_column("line")
+        st.add_column("legs", overflow="fold")
+        st.add_column("margin%", justify="right")
+        st.add_column("ROI%", justify="right")
+        for s in plausible[:15]:
+            legs_str = " | ".join(
+                f"{label}={odd:.2f} ({book.value})" for label, (odd, book) in s.legs.items()
+            )
+            st.add_row(
+                s.event_key,
+                s.market.value,
+                str(s.line) if s.line is not None else "-",
+                legs_str,
+                f"{s.margin * 100:.2f}",
+                f"{s.roi * 100:.2f}",
+            )
+        console.print(st)
 
 
 @app.command(name="inspect-betano")
