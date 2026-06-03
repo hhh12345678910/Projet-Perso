@@ -53,6 +53,28 @@ challenge. Workaround: capture the response once and feed it to `scan`.
 
 Refresh the file whenever you want fresh Betano odds.
 
+## Closing Line Value tracking
+
+Each `scan` persists every detected value bet to the local SQLite. Once an
+event has kicked off, snapshot the Pinnacle closing price for the same
+outcome, then aggregate CLV stats:
+
+```bash
+# during the day — detect + persist value bets
+python -m src.main scan
+
+# after kickoffs (e.g. cron 5 past every hour) — record closing lines
+python -m src.main close-lines
+
+# anytime — see how well the engine is beating the close
+python -m src.main clv-report
+```
+
+Mean CLV is the single most reliable indicator of long-run profitability:
+roughly positive and stable -> the engine is finding real edges; around
+zero -> the +EV signals are noise; negative -> you're paying the soft
+book's margin without any sharp justification.
+
 ## Roadmap
 
 1. Math core + Pinnacle scraper + SQLite (done).

@@ -25,6 +25,13 @@ from .scrapers.starcasinosport import StarCasinoSportScraper, parse_get_events a
 from .scrapers.unibet import UnibetScraper, parse_listview as unibet_parse_listview
 from .storage import Storage
 from .surebet import find_surebets
+from .clv import (
+    aggregate as clv_aggregate,
+    clv_pct,
+    event_started,
+    group_by as clv_group_by,
+    index_quotes_by_market,
+)
 
 
 app = typer.Typer(add_completion=False)
@@ -273,6 +280,19 @@ def scan(
     bets.sort(key=lambda b: b.ev_pct, reverse=True)
     console.print(f"[bold]Value bets: {len(bets)}[/bold]")
 
+    # Persist every detected value bet so close-lines / clv-report can track
+    # whether the engine actually beats the closing line over time.
+    new_bets = 0
+    for b in bets:
+        before = storage.find_value_bet_id(
+            b.event_key, b.book.value, b.market.value, b.outcome.label, b.outcome.line
+        )
+        storage.insert_value_bet(b)
+        if before is None:
+            new_bets += 1
+    if new_bets:
+        console.print(f"  → {new_bets} new bets persisted for CLV tracking")
+
     table = Table(title=f"Value bets ({sport}, min_ev={min_ev}%)", show_lines=False)
     table.add_column("event_key", overflow="fold")
     table.add_column("book")
@@ -319,6 +339,90 @@ def scan(
                 f"{s.roi * 100:.2f}",
             )
         console.print(st)
+
+
+@app.command(name="close-lines")
+def close_lines(sport: str = "soccer"):
+    """For every detected value bet whose event has kicked off, snapshot the
+    last Pinnacle price as the closing line. Run this once after kickoff
+    (e.g. via cron a few minutes past every hour) — the closing snapshot is
+    what `clv-report` then aggregates."""
+    cfg = ScanConfig(sport=sport)
+    storage = Storage(cfg.db_path)
+    open_bets = storage.open_value_bets()
+    if not open_bets:
+        console.print("[bold]No open value bets to close.[/bold]")
+        return
+
+    now = datetime.now(timezone.utc)
+    due = [b for b in open_bets if event_started(b["event_key"], now=now)]
+    console.print(f"[bold]{len(open_bets)} open bets, {len(due)} past kickoff.[/bold]")
+    if not due:
+        return
+
+    console.print(f"[bold]Fetching Pinnacle {sport} for closing-line snapshots...[/bold]")
+    with PinnacleScraper() as pin:
+        quotes = list(pin.fetch_market_quotes(sport))
+    pin_index = index_quotes_by_market(quotes)
+
+    closed = 0
+    missing = 0
+    for b in due:
+        q = pin_index.get((b["event_key"], b["market"], b["outcome_label"], b["line"]))
+        if q is None:
+            missing += 1
+            continue
+        # Use the inverse of the closing odd as a quick implied-prob estimate
+        # — for CLV we just need the price; the fair_prob column is informational.
+        storage.insert_clv_snapshot(
+            value_bet_id=int(b["id"]),
+            pinnacle_odd=q.decimal_odd,
+            pinnacle_prob=1.0 / q.decimal_odd,
+            snapshot_at=now,
+            closing=True,
+        )
+        closed += 1
+    console.print(f"  → {closed} closing snapshots written; {missing} bets with no Pinnacle match")
+
+
+@app.command(name="clv-report")
+def clv_report():
+    """Aggregate Closing Line Value over every closed value bet. CLV is the
+    single most reliable indicator of long-run profitability — if your mean
+    CLV is positive and stable, the engine is finding real edges."""
+    cfg = ScanConfig()
+    storage = Storage(cfg.db_path)
+    rows = [dict(r) for r in storage.all_closed_bets()]
+    if not rows:
+        console.print("[bold]No closed bets yet — run `close-lines` after kickoffs.[/bold]")
+        return
+
+    pairs = [(r["odd_taken"], r["closing_odd"]) for r in rows]
+    overall = clv_aggregate(pairs)
+    console.print(
+        f"[bold]Overall:[/bold] n={overall.n}  mean CLV {overall.mean_clv_pct:+.2f}%  "
+        f"median {overall.median_clv_pct:+.2f}%  positive {overall.positive_rate * 100:.1f}%"
+    )
+
+    for dim in ("book", "market"):
+        groups = clv_group_by(rows, dim)
+        stats = {k: clv_aggregate(v) for k, v in groups.items() if v}
+        if not stats:
+            continue
+        t = Table(title=f"CLV by {dim}", show_lines=False)
+        t.add_column(dim)
+        t.add_column("n", justify="right")
+        t.add_column("mean CLV%", justify="right")
+        t.add_column("median%", justify="right")
+        t.add_column("positive%", justify="right")
+        for k in sorted(stats, key=lambda k: stats[k].mean_clv_pct, reverse=True):
+            s = stats[k]
+            t.add_row(
+                k, str(s.n),
+                f"{s.mean_clv_pct:+.2f}", f"{s.median_clv_pct:+.2f}",
+                f"{s.positive_rate * 100:.1f}",
+            )
+        console.print(t)
 
 
 @app.command(name="inspect-betano")

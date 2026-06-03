@@ -114,6 +114,15 @@ class Storage:
             )
 
     def insert_value_bet(self, vb: ValueBet, stake: Optional[float] = None) -> int:
+        """Persist a detected value bet. Returns the new row id, or the
+        existing row id if the same (event, book, market, outcome, line) tuple
+        is already on file — we want one tracking record per opportunity, not
+        one per scan that re-surfaced it."""
+        existing = self.find_value_bet_id(
+            vb.event_key, vb.book.value, vb.market.value, vb.outcome.label, vb.outcome.line
+        )
+        if existing is not None:
+            return existing
         with self._conn() as c:
             cur = c.execute(
                 "INSERT INTO value_bets(event_key, book, market, outcome_label, line, odd_taken, "
@@ -135,6 +144,52 @@ class Storage:
                 ),
             )
             return int(cur.lastrowid or 0)
+
+    def find_value_bet_id(
+        self, event_key: str, book: str, market: str, outcome_label: str,
+        line: Optional[float],
+    ) -> Optional[int]:
+        with self._conn() as c:
+            if line is None:
+                row = c.execute(
+                    "SELECT id FROM value_bets WHERE event_key=? AND book=? AND market=? "
+                    "AND outcome_label=? AND line IS NULL",
+                    (event_key, book, market, outcome_label),
+                ).fetchone()
+            else:
+                row = c.execute(
+                    "SELECT id FROM value_bets WHERE event_key=? AND book=? AND market=? "
+                    "AND outcome_label=? AND line=?",
+                    (event_key, book, market, outcome_label, line),
+                ).fetchone()
+            return int(row["id"]) if row else None
+
+    def open_value_bets(self) -> list[sqlite3.Row]:
+        """Bets that don't have a closing snapshot yet."""
+        with self._conn() as c:
+            return list(c.execute(
+                "SELECT vb.* FROM value_bets vb "
+                "LEFT JOIN clv_snapshots cs ON cs.value_bet_id = vb.id AND cs.closing = 1 "
+                "WHERE cs.id IS NULL ORDER BY vb.detected_at"
+            ))
+
+    def closing_snapshot(self, value_bet_id: int) -> Optional[sqlite3.Row]:
+        with self._conn() as c:
+            return c.execute(
+                "SELECT * FROM clv_snapshots WHERE value_bet_id=? AND closing=1 "
+                "ORDER BY snapshot_at DESC LIMIT 1",
+                (value_bet_id,),
+            ).fetchone()
+
+    def all_closed_bets(self) -> list[sqlite3.Row]:
+        """Bets joined with their closing snapshot, ready for CLV aggregation."""
+        with self._conn() as c:
+            return list(c.execute(
+                "SELECT vb.*, cs.pinnacle_odd AS closing_odd, cs.snapshot_at AS closed_at "
+                "FROM value_bets vb "
+                "JOIN clv_snapshots cs ON cs.value_bet_id = vb.id AND cs.closing = 1 "
+                "ORDER BY vb.detected_at DESC"
+            ))
 
     def insert_clv_snapshot(
         self, value_bet_id: int, pinnacle_odd: float, pinnacle_prob: float,
