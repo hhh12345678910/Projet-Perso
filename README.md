@@ -75,6 +75,23 @@ roughly positive and stable -> the engine is finding real edges; around
 zero -> the +EV signals are noise; negative -> you're paying the soft
 book's margin without any sharp justification.
 
+## Telegram alerts
+
+Set two env vars and `scan` will push a notification for every newly
+detected value bet above the EV threshold (re-detections of the same
+opportunity are deduped, so you won't get spammed).
+
+```bash
+export TELEGRAM_BOT_TOKEN=<token from @BotFather>
+export TELEGRAM_CHAT_ID=<your chat id>
+export TELEGRAM_MIN_EV=3.0          # optional, defaults to 3.0
+python -m src.main alert-test       # one-off sanity check
+python -m src.main scan             # alerts fire automatically
+```
+
+To get your chat id: message your bot once, then visit
+`https://api.telegram.org/bot<TOKEN>/getUpdates` and read `message.chat.id`.
+
 ## Roadmap
 
 1. Math core + Pinnacle scraper + SQLite (done).

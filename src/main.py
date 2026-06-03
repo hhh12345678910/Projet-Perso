@@ -32,6 +32,7 @@ from .clv import (
     group_by as clv_group_by,
     index_quotes_by_market,
 )
+from .alerter import TelegramConfig, send_alerts
 
 
 app = typer.Typer(add_completion=False)
@@ -282,16 +283,24 @@ def scan(
 
     # Persist every detected value bet so close-lines / clv-report can track
     # whether the engine actually beats the closing line over time.
-    new_bets = 0
+    newly_detected: list[ValueBet] = []
     for b in bets:
         before = storage.find_value_bet_id(
             b.event_key, b.book.value, b.market.value, b.outcome.label, b.outcome.line
         )
         storage.insert_value_bet(b)
         if before is None:
-            new_bets += 1
-    if new_bets:
-        console.print(f"  → {new_bets} new bets persisted for CLV tracking")
+            newly_detected.append(b)
+    if newly_detected:
+        console.print(f"  → {len(newly_detected)} new bets persisted for CLV tracking")
+
+    # Telegram notifications go out for fresh detections only — re-surfacing
+    # the same opportunity on every scan would spam the user's phone.
+    tg_cfg = TelegramConfig.from_env()
+    if tg_cfg is not None:
+        sent = send_alerts(newly_detected, tg_cfg, print_fn=lambda s: console.print(f"[yellow]{s}[/yellow]"))
+        if sent:
+            console.print(f"  → {sent} Telegram alerts sent (EV ≥ {tg_cfg.min_ev_pct:.1f}%)")
 
     table = Table(title=f"Value bets ({sport}, min_ev={min_ev}%)", show_lines=False)
     table.add_column("event_key", overflow="fold")
@@ -339,6 +348,37 @@ def scan(
                 f"{s.roi * 100:.2f}",
             )
         console.print(st)
+
+
+@app.command(name="alert-test")
+def alert_test():
+    """Send a dummy value bet alert to verify the Telegram bot setup."""
+    cfg = TelegramConfig.from_env()
+    if cfg is None:
+        console.print(
+            "[yellow]TELEGRAM_BOT_TOKEN and/or TELEGRAM_CHAT_ID are not set "
+            "— nothing to send.[/yellow]"
+        )
+        return
+    sample = ValueBet(
+        event_key="202606010000::testteamA__vs__testteamB",
+        book=Book.UNIBET_BE,
+        market=MarketType.H2H,
+        outcome=Outcome(label="home"),
+        odd_taken=1.86,
+        fair_prob=0.5650,
+        fair_odd=1.77,
+        ev_pct=5.17,
+        kelly_stake_pct=1.50,
+        detected_at=datetime.now(timezone.utc),
+    )
+    sent = send_alerts(
+        [sample], cfg, print_fn=lambda s: console.print(f"[yellow]{s}[/yellow]")
+    )
+    if sent:
+        console.print(f"[bold]Sent 1 test alert to chat {cfg.chat_id}.[/bold]")
+    else:
+        console.print("[red]Test alert was not sent — check the messages above.[/red]")
 
 
 @app.command(name="close-lines")
