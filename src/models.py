@@ -23,6 +23,7 @@ class Book(str, Enum):
     BETCENTER = "betcenter"
     GOLDEN_PALACE = "golden_palace"
     STARCASINO_SPORT = "starcasino_sport"
+    MAGIC_BETTING = "magic_betting"
 
 
 BETANO_OPERATOR_ID = "22"

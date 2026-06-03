@@ -19,6 +19,7 @@ from .scrapers.betano import BetanoAuthError, BetanoScraper, parse_overview as b
 from .scrapers.betfirst import BetFirstScraper, parse_events_table as betfirst_parse_events_table
 from .scrapers.goldenpalace import GoldenPalaceScraper, parse_get_events as goldenpalace_parse_get_events
 from .scrapers.ladbrokes import LadbrokesScraper, parse_prematch as ladbrokes_parse_prematch
+from .scrapers.magicbetting import load_file as magicbetting_load_file, parse_events as magicbetting_parse_events
 from .scrapers.pinnacle import PinnacleScraper
 from .scrapers.starcasinosport import StarCasinoSportScraper, parse_get_events as starcasinosport_parse_get_events
 from .scrapers.unibet import UnibetScraper, parse_listview as unibet_parse_listview
@@ -195,6 +196,19 @@ def fetch_starcasinosport_quotes(sport: str) -> list[OddQuote]:
         return []
 
 
+def fetch_magicbetting_quotes(magicbetting_file: str | None) -> list[OddQuote]:
+    """Magic Betting sits behind Cloudflare from datacenter IPs, so live fetch
+    is impossible from cloud. Reads a saved response body via the file flag."""
+    if not magicbetting_file:
+        return []
+    try:
+        data = magicbetting_load_file(magicbetting_file)
+    except (OSError, ValueError) as e:
+        console.print(f"[yellow]Magic Betting file unreadable:[/yellow] {e}")
+        return []
+    return list(magicbetting_parse_events(data))
+
+
 @app.command()
 def scan(
     sport: str = "soccer",
@@ -206,8 +220,14 @@ def scan(
         help="Path to a JSON dump of Betano's /danae-webapi/.../live/overview/latest "
         "response, captured from your browser. Bypasses the IP-bound cookie check.",
     ),
+    magicbetting_file: str = typer.Option(
+        None,
+        "--magicbetting-file",
+        help="Path to a Magic Betting capture (raw XOR-encoded body or already-decoded JSON). "
+        "Same workaround as --betano-file: Cloudflare blocks live fetch from datacenters.",
+    ),
 ):
-    """Fetch Pinnacle + soft books (Betano, Unibet, BetFirst, Ladbrokes, Golden Palace, StarCasino), compute fair lines, print top value bets."""
+    """Fetch Pinnacle + soft books (Betano, Unibet, BetFirst, Ladbrokes, Golden Palace, StarCasino, Magic Betting), compute fair lines, print top value bets."""
     cfg = ScanConfig(sport=sport, min_ev_pct=min_ev, bankroll=bankroll)
     storage = Storage(cfg.db_path)
 
@@ -235,11 +255,13 @@ def scan(
     console.print(f"  → {len(goldenpalace_quotes)} Golden Palace quotes")
     starcasinosport_quotes = fetch_starcasinosport_quotes(sport)
     console.print(f"  → {len(starcasinosport_quotes)} StarCasino Sport quotes")
+    magicbetting_quotes = fetch_magicbetting_quotes(magicbetting_file)
+    console.print(f"  → {len(magicbetting_quotes)} Magic Betting quotes")
 
     ref_keys = {fl.event_key for fl in fair.values()}
     soft_quotes = remap_to_reference(
         betano_quotes + unibet_quotes + betfirst_quotes + ladbrokes_quotes
-        + goldenpalace_quotes + starcasinosport_quotes,
+        + goldenpalace_quotes + starcasinosport_quotes + magicbetting_quotes,
         ref_keys,
     )
     console.print(f"  → {len(soft_quotes)} matched to a Pinnacle event")
