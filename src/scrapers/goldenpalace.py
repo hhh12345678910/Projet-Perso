@@ -98,11 +98,18 @@ class GoldenPalaceScraper:
         )
 
 
-# Altenar tags each market with a stable typeId. Map only those that line up
-# with Pinnacle (1X2 / moneyline + total goals).
+# Altenar tags each market with a stable typeId. Each sport has its own
+# typeId for the match-winner and total markets — they all reduce to H2H /
+# TOTALS downstream. Discovered via real HARs on /api/widget/GetEvents.
 _MARKET_BY_TYPE_ID = {
-    1: MarketType.H2H,       # 1x2
-    18: MarketType.TOTALS,   # Total de buts
+    1: MarketType.H2H,       # Soccer 1x2 (also Hockey regulation 3-way)
+    186: MarketType.H2H,     # Tennis "Vainqueur"
+    219: MarketType.H2H,     # Basketball "Vainqueur (prol. incl.)"
+    406: MarketType.H2H,     # Hockey "Vainqueur (prol. + TAB incl.)"
+    18: MarketType.TOTALS,   # Soccer Total de buts
+    189: MarketType.TOTALS,  # Tennis "Total jeux"
+    225: MarketType.TOTALS,  # Basketball "Total de points (prol. incl.)"
+    412: MarketType.TOTALS,  # Hockey "Total de buts (prol. + TAB incl.)"
 }
 
 
