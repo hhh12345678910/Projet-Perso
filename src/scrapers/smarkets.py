@@ -29,9 +29,11 @@ SPORT_DOMAINS = {
 }
 
 # Smarkets carries dozens of derivative markets per match (correct score,
-# half-time, BTTS, ...). Stick to the two that map cleanly to Pinnacle's
+# half-time, BTTS, ...). Stick to the few that map cleanly to Pinnacle's
 # moneyline + total goals; everything else is filtered server-side.
-MAIN_MARKET_TYPES = "WINNER_3_WAY,OVER_UNDER"
+# WINNER_3_WAY is used for sports with a draw (football, hockey reg-time),
+# WINNER_2_WAY for sports without (tennis, basketball moneyline).
+MAIN_MARKET_TYPES = "WINNER_3_WAY,WINNER_2_WAY,OVER_UNDER"
 
 
 def _is_retryable(exc: BaseException) -> bool:
@@ -57,9 +59,11 @@ class SmarketsScraper:
     def __init__(self, timeout: float = 20.0, request_delay: float | None = None):
         self._client = httpx.Client(timeout=timeout, headers=_headers())
         # Smarkets enforces a per-IP rate limit on its public API; a small
-        # delay between calls keeps a multi-event scrape under the cap.
+        # inter-request delay keeps a multi-sport scrape under the cap.
+        # 0.3s seems to be the sustainable floor — anything lower trips 429s
+        # mid-tennis after a full football pass.
         self._delay = request_delay if request_delay is not None else float(
-            os.getenv("SMARKETS_REQUEST_DELAY", "0.15")
+            os.getenv("SMARKETS_REQUEST_DELAY", "0.3")
         )
 
     def close(self) -> None:
@@ -73,8 +77,10 @@ class SmarketsScraper:
 
     @retry(
         retry=retry_if_exception(_is_retryable),
-        stop=stop_after_attempt(3),
-        wait=wait_exponential(multiplier=1, min=1, max=8),
+        stop=stop_after_attempt(5),
+        # Longer max wait so 429s get a real cool-down — the public Smarkets
+        # rate limit resets on a ~30 s window.
+        wait=wait_exponential(multiplier=2, min=2, max=30),
     )
     def _get(self, path: str, params: dict | None = None) -> dict:
         if self._delay:
@@ -210,7 +216,8 @@ def _outcome_label(
 
 
 _MARKET_TYPE_MAP = {
-    "WINNER_3_WAY": MarketType.H2H,
+    "WINNER_3_WAY": MarketType.H2H,    # sports with a regulation draw
+    "WINNER_2_WAY": MarketType.H2H,    # tennis, basketball, etc.
     "OVER_UNDER": MarketType.TOTALS,
 }
 
