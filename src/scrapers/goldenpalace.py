@@ -19,7 +19,11 @@ INTEGRATION = "goldenpalace"
 
 # Altenar sportId codes (observed via the GetSportMenu call in the captured HAR).
 SPORT_IDS = {
-    "soccer": 66,
+    "soccer": 66,        # Football
+    "tennis": 68,
+    "basketball": 67,
+    "hockey": 70,        # Hockey sur glace
+    "esports": 145,      # E-sports (all)
 }
 
 

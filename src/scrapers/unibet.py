@@ -22,6 +22,8 @@ SPORT_TERMS = {
     "soccer": "football",
     "tennis": "tennis",
     "basketball": "basketball",
+    "hockey": "ice_hockey",
+    "esports": "esports",
 }
 
 
@@ -57,9 +59,15 @@ class UnibetScraper:
         r.raise_for_status()
         return r.json()
 
-    # Kambi's top-level termKey -> internal group ID. The football group ID is
-    # used to enumerate every country/competition termKey under it.
-    SPORT_GROUP_IDS = {"soccer": "1000093190"}
+    # Kambi top-level termKey -> internal group ID (discovered via /group.json).
+    # Each is used to enumerate every leaf termKey under that sport.
+    SPORT_GROUP_IDS = {
+        "soccer": "1000093190",      # football
+        "tennis": "1000093193",
+        "basketball": "1000093204",
+        "hockey": "1000093191",      # ice_hockey
+        "esports": "2000077768",
+    }
 
     def fetch_listview(self, sport: str = "soccer", path_suffix: str = "") -> dict:
         """Fetch the list view for a sport. The optional `path_suffix` lets us
@@ -80,10 +88,13 @@ class UnibetScraper:
             },
         )
 
-    def fetch_football_term_keys(self) -> list[str]:
-        """Walk the football group tree and return every depth-1 termKey
-        (countries + cross-region tournaments like 'champions_league')."""
-        group_id = self.SPORT_GROUP_IDS["soccer"]
+    def fetch_sport_term_keys(self, sport: str = "soccer") -> list[str]:
+        """Walk a sport's group tree and return every depth-1 termKey
+        (countries + cross-region tournaments like 'champions_league'). Drives
+        the bulk listView fetch in fetch_all_events."""
+        group_id = self.SPORT_GROUP_IDS.get(sport)
+        if group_id is None:
+            return []
         payload = self._get(
             f"/group/{group_id}.json",
             params={"lang": "fr_BE", "market": "BE"},
@@ -95,12 +106,16 @@ class UnibetScraper:
             if child.get("termKey")
         ]
 
+    # Back-compat alias for callers that already used the football-only name.
+    def fetch_football_term_keys(self) -> list[str]:
+        return self.fetch_sport_term_keys("soccer")
+
     def fetch_all_events(self, sport: str = "soccer", *, max_terms: int = 100) -> dict:
-        """Iterate over every football termKey (country / competition) and
+        """Iterate over every termKey of a sport (country / competition) and
         merge the events lists into a single payload. Returns the same shape
         parse_listview consumes."""
         try:
-            term_keys = self.fetch_football_term_keys()
+            term_keys = self.fetch_sport_term_keys(sport)
         except httpx.HTTPError:
             term_keys = []
         # Always include the bare term as a sentinel so we still ship something

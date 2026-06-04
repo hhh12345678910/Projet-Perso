@@ -171,12 +171,10 @@ def fetch_betfirst_quotes(sport: str) -> list[OddQuote]:
 
 
 def fetch_ladbrokes_quotes(sport: str) -> list[OddQuote]:
-    """Fetch + parse every Ladbrokes football meeting via the detail-service."""
-    if sport != "soccer":
-        return []
+    """Fetch + parse every Ladbrokes meeting of a sport via the detail-service."""
     try:
         with LadbrokesScraper() as lb:
-            data = lb.fetch_all_meetings("FOOTBALL", max_meetings=40)
+            data = lb.fetch_all_meetings(sport, max_meetings=40)
         return list(ladbrokes_parse_prematch(data))
     except httpx.HTTPError as e:
         console.print(f"[yellow]Ladbrokes skipped:[/yellow] {e}")
@@ -236,118 +234,136 @@ def scan(
         "Same workaround as --betano-file: Cloudflare blocks live fetch from datacenters.",
     ),
 ):
-    """Fetch Pinnacle + soft books (Betano, Unibet, BetFirst, Ladbrokes, Golden Palace, StarCasino, Magic Betting), compute fair lines, print top value bets."""
-    cfg = ScanConfig(sport=sport, min_ev_pct=min_ev, bankroll=bankroll)
-    storage = Storage(cfg.db_path)
+    """Fetch Pinnacle + soft books (Betano, Unibet, BetFirst, Ladbrokes, Golden Palace, StarCasino, Magic Betting), compute fair lines, print top value bets.
 
-    console.print(f"[bold]Fetching Pinnacle {sport} markets...[/bold]")
-    with PinnacleScraper() as pin:
-        quotes = list(pin.fetch_market_quotes(sport))
-    console.print(f"  → {len(quotes)} Pinnacle quotes")
+    --sport accepts a comma-separated list (e.g. 'soccer,tennis,basketball').
+    The full pipeline runs per sport and results are tagged in their own
+    section so per-sport coverage stays visible."""
+    sports = [s.strip() for s in sport.split(",") if s.strip()]
+    storage = Storage(ScanConfig().db_path)
 
-    fair = build_fair_lines(quotes, cfg.devig_method)
-    console.print(f"  → {len(fair)} fair lines (devig={cfg.devig_method})")
+    for current_sport in sports:
+        cfg = ScanConfig(sport=current_sport, min_ev_pct=min_ev, bankroll=bankroll)
+        console.print()
+        console.print(f"[bold green]══ {current_sport.upper()} ══[/bold green]")
 
-    for q in quotes:
-        storage.insert_quote(q)
+        console.print(f"[bold]Fetching Pinnacle {current_sport} markets...[/bold]")
+        with PinnacleScraper() as pin:
+            quotes = list(pin.fetch_market_quotes(current_sport))
+        console.print(f"  → {len(quotes)} Pinnacle quotes")
 
-    console.print("[bold]Fetching soft books...[/bold]")
-    betano_quotes = fetch_betano_quotes(betano_file=betano_file)
-    console.print(f"  → {len(betano_quotes)} Betano quotes")
-    unibet_quotes = fetch_unibet_quotes(sport)
-    console.print(f"  → {len(unibet_quotes)} Unibet quotes")
-    betfirst_quotes = fetch_betfirst_quotes(sport)
-    console.print(f"  → {len(betfirst_quotes)} BetFirst quotes")
-    ladbrokes_quotes = fetch_ladbrokes_quotes(sport)
-    console.print(f"  → {len(ladbrokes_quotes)} Ladbrokes quotes")
-    goldenpalace_quotes = fetch_goldenpalace_quotes(sport)
-    console.print(f"  → {len(goldenpalace_quotes)} Golden Palace quotes")
-    starcasinosport_quotes = fetch_starcasinosport_quotes(sport)
-    console.print(f"  → {len(starcasinosport_quotes)} StarCasino Sport quotes")
-    magicbetting_quotes = fetch_magicbetting_quotes(magicbetting_file)
-    console.print(f"  → {len(magicbetting_quotes)} Magic Betting quotes")
+        fair = build_fair_lines(quotes, cfg.devig_method)
+        console.print(f"  → {len(fair)} fair lines (devig={cfg.devig_method})")
 
-    ref_keys = {fl.event_key for fl in fair.values()}
-    soft_quotes = remap_to_reference(
-        betano_quotes + unibet_quotes + betfirst_quotes + ladbrokes_quotes
-        + goldenpalace_quotes + starcasinosport_quotes + magicbetting_quotes,
-        ref_keys,
-    )
-    console.print(f"  → {len(soft_quotes)} matched to a Pinnacle event")
-    for q in soft_quotes:
-        storage.insert_quote(q)
+        for q in quotes:
+            storage.insert_quote(q)
 
-    bets = find_value_bets(soft_quotes, fair, cfg)
-    bets.sort(key=lambda b: b.ev_pct, reverse=True)
-    console.print(f"[bold]Value bets: {len(bets)}[/bold]")
-
-    # Persist every detected value bet so close-lines / clv-report can track
-    # whether the engine actually beats the closing line over time.
-    newly_detected: list[ValueBet] = []
-    for b in bets:
-        before = storage.find_value_bet_id(
-            b.event_key, b.book.value, b.market.value, b.outcome.label, b.outcome.line
+        console.print("[bold]Fetching soft books...[/bold]")
+        # Betano/Magic Betting are file-mode books; only consume them on the
+        # first sport iteration so we don't double-parse the same dump.
+        betano_quotes = (
+            fetch_betano_quotes(betano_file=betano_file)
+            if current_sport == sports[0] else []
         )
-        storage.insert_value_bet(b)
-        if before is None:
-            newly_detected.append(b)
-    if newly_detected:
-        console.print(f"  → {len(newly_detected)} new bets persisted for CLV tracking")
-
-    # Telegram notifications go out for fresh detections only — re-surfacing
-    # the same opportunity on every scan would spam the user's phone.
-    tg_cfg = TelegramConfig.from_env()
-    if tg_cfg is not None:
-        sent = send_alerts(newly_detected, tg_cfg, print_fn=lambda s: console.print(f"[yellow]{s}[/yellow]"))
-        if sent:
-            console.print(f"  → {sent} Telegram alerts sent (EV ≥ {tg_cfg.min_ev_pct:.1f}%)")
-
-    table = Table(title=f"Value bets ({sport}, min_ev={min_ev}%)", show_lines=False)
-    table.add_column("event_key", overflow="fold")
-    table.add_column("book")
-    table.add_column("market")
-    table.add_column("outcome")
-    table.add_column("odd", justify="right")
-    table.add_column("fair", justify="right")
-    table.add_column("EV%", justify="right")
-    table.add_column("stake%", justify="right")
-    for b in bets[:25]:
-        line = f" {b.outcome.line}" if b.outcome.line is not None else ""
-        table.add_row(
-            b.event_key, b.book.value, b.market.value, f"{b.outcome.label}{line}",
-            f"{b.odd_taken:.2f}", f"{b.fair_odd:.2f}", f"{b.ev_pct:.2f}", f"{b.kelly_stake_pct:.2f}",
+        console.print(f"  → {len(betano_quotes)} Betano quotes")
+        unibet_quotes = fetch_unibet_quotes(current_sport)
+        console.print(f"  → {len(unibet_quotes)} Unibet quotes")
+        betfirst_quotes = fetch_betfirst_quotes(current_sport)
+        console.print(f"  → {len(betfirst_quotes)} BetFirst quotes")
+        ladbrokes_quotes = fetch_ladbrokes_quotes(current_sport)
+        console.print(f"  → {len(ladbrokes_quotes)} Ladbrokes quotes")
+        goldenpalace_quotes = fetch_goldenpalace_quotes(current_sport)
+        console.print(f"  → {len(goldenpalace_quotes)} Golden Palace quotes")
+        starcasinosport_quotes = fetch_starcasinosport_quotes(current_sport)
+        console.print(f"  → {len(starcasinosport_quotes)} StarCasino Sport quotes")
+        magicbetting_quotes = (
+            fetch_magicbetting_quotes(magicbetting_file)
+            if current_sport == sports[0] else []
         )
-    console.print(table)
+        console.print(f"  → {len(magicbetting_quotes)} Magic Betting quotes")
+        sport = current_sport  # keep local var name for downstream prints
 
-    # Cross-book surebet detection on the soft-book quotes (no Pinnacle needed).
-    surebets = find_surebets(soft_quotes)
-    plausible = [s for s in surebets if not s.suspicious]
-    flagged = [s for s in surebets if s.suspicious]
-    console.print(
-        f"[bold]Surebets: {len(plausible)} plausible[/bold]"
-        + (f" (+ {len(flagged)} flagged as suspicious — likely matching bugs)" if flagged else "")
-    )
-    if plausible:
-        st = Table(title=f"Surebets ({sport})", show_lines=False)
-        st.add_column("event_key", overflow="fold")
-        st.add_column("market")
-        st.add_column("line")
-        st.add_column("legs", overflow="fold")
-        st.add_column("margin%", justify="right")
-        st.add_column("ROI%", justify="right")
-        for s in plausible[:15]:
-            legs_str = " | ".join(
-                f"{label}={odd:.2f} ({book.value})" for label, (odd, book) in s.legs.items()
+        ref_keys = {fl.event_key for fl in fair.values()}
+        soft_quotes = remap_to_reference(
+            betano_quotes + unibet_quotes + betfirst_quotes + ladbrokes_quotes
+            + goldenpalace_quotes + starcasinosport_quotes + magicbetting_quotes,
+            ref_keys,
+        )
+        console.print(f"  → {len(soft_quotes)} matched to a Pinnacle event")
+        for q in soft_quotes:
+            storage.insert_quote(q)
+
+        bets = find_value_bets(soft_quotes, fair, cfg)
+        bets.sort(key=lambda b: b.ev_pct, reverse=True)
+        console.print(f"[bold]Value bets: {len(bets)}[/bold]")
+
+        # Persist every detected value bet so close-lines / clv-report can track
+        # whether the engine actually beats the closing line over time.
+        newly_detected: list[ValueBet] = []
+        for b in bets:
+            before = storage.find_value_bet_id(
+                b.event_key, b.book.value, b.market.value, b.outcome.label, b.outcome.line
             )
-            st.add_row(
-                s.event_key,
-                s.market.value,
-                str(s.line) if s.line is not None else "-",
-                legs_str,
-                f"{s.margin * 100:.2f}",
-                f"{s.roi * 100:.2f}",
+            storage.insert_value_bet(b)
+            if before is None:
+                newly_detected.append(b)
+        if newly_detected:
+            console.print(f"  → {len(newly_detected)} new bets persisted for CLV tracking")
+
+        # Telegram notifications go out for fresh detections only — re-surfacing
+        # the same opportunity on every scan would spam the user's phone.
+        tg_cfg = TelegramConfig.from_env()
+        if tg_cfg is not None:
+            sent = send_alerts(newly_detected, tg_cfg, print_fn=lambda s: console.print(f"[yellow]{s}[/yellow]"))
+            if sent:
+                console.print(f"  → {sent} Telegram alerts sent (EV ≥ {tg_cfg.min_ev_pct:.1f}%)")
+
+        table = Table(title=f"Value bets ({sport}, min_ev={min_ev}%)", show_lines=False)
+        table.add_column("event_key", overflow="fold")
+        table.add_column("book")
+        table.add_column("market")
+        table.add_column("outcome")
+        table.add_column("odd", justify="right")
+        table.add_column("fair", justify="right")
+        table.add_column("EV%", justify="right")
+        table.add_column("stake%", justify="right")
+        for b in bets[:25]:
+            line = f" {b.outcome.line}" if b.outcome.line is not None else ""
+            table.add_row(
+                b.event_key, b.book.value, b.market.value, f"{b.outcome.label}{line}",
+                f"{b.odd_taken:.2f}", f"{b.fair_odd:.2f}", f"{b.ev_pct:.2f}", f"{b.kelly_stake_pct:.2f}",
             )
-        console.print(st)
+        console.print(table)
+
+        # Cross-book surebet detection on the soft-book quotes (no Pinnacle needed).
+        surebets = find_surebets(soft_quotes)
+        plausible = [s for s in surebets if not s.suspicious]
+        flagged = [s for s in surebets if s.suspicious]
+        console.print(
+            f"[bold]Surebets: {len(plausible)} plausible[/bold]"
+            + (f" (+ {len(flagged)} flagged as suspicious — likely matching bugs)" if flagged else "")
+        )
+        if plausible:
+            st = Table(title=f"Surebets ({sport})", show_lines=False)
+            st.add_column("event_key", overflow="fold")
+            st.add_column("market")
+            st.add_column("line")
+            st.add_column("legs", overflow="fold")
+            st.add_column("margin%", justify="right")
+            st.add_column("ROI%", justify="right")
+            for s in plausible[:15]:
+                legs_str = " | ".join(
+                    f"{label}={odd:.2f} ({book.value})" for label, (odd, book) in s.legs.items()
+                )
+                st.add_row(
+                    s.event_key,
+                    s.market.value,
+                    str(s.line) if s.line is not None else "-",
+                    legs_str,
+                    f"{s.margin * 100:.2f}",
+                    f"{s.roi * 100:.2f}",
+                )
+            console.print(st)
 
 
 @app.command(name="alert-test")

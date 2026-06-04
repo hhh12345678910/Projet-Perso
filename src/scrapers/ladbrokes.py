@@ -16,6 +16,15 @@ from ..models import Book, MarketType, OddQuote, Outcome
 # highlighted events with their main markets (1X2 + Totals + BTTS).
 BASE = "https://www.ladbrokes.be"
 
+# Our sport name -> Eurobet's discipline description (displayed in the menu).
+SPORT_DESCRIPTIONS = {
+    "soccer": "FOOTBALL",
+    "tennis": "TENNIS",
+    "basketball": "BASKETBALL",
+    "hockey": "HOCKEY",
+    "esports": "ESPORTS",   # best-effort; Eurobet may not expose it for BE.
+}
+
 
 def _is_retryable(exc: BaseException) -> bool:
     if isinstance(exc, httpx.TransportError):
@@ -116,7 +125,7 @@ class LadbrokesScraper:
 
     def fetch_all_meetings(
         self,
-        sport_description: str = "FOOTBALL",
+        sport: str = "soccer",
         *,
         max_meetings: int = 40,
         min_events: int = 1,
@@ -124,6 +133,9 @@ class LadbrokesScraper:
         """Discover every meeting of a sport and fetch each one. Returns a
         merged {'result': {'events': [...]}} payload so parse_prematch consumes
         it directly. Best-effort: HTTP errors on a single meeting are skipped."""
+        # Accept both our sport keys ("soccer") and Eurobet descriptions
+        # ("FOOTBALL") so older callers keep working.
+        sport_description = SPORT_DESCRIPTIONS.get(sport, sport)
         menu = self.fetch_prematch_menu()
         leaves = [
             (s, m, n) for s, m, n in self.iter_leaf_meetings(menu, sport_description)
@@ -230,20 +242,29 @@ def _home_away(event_info: dict) -> tuple[str | None, str | None]:
     return None, None
 
 
-def parse_prematch(payload: dict) -> Iterator[OddQuote]:
-    """Walk a Ladbrokes prematch-homepage payload and yield OddQuote objects."""
+def parse_prematch(
+    payload: dict, *, sport_description: str | None = None
+) -> Iterator[OddQuote]:
+    """Walk a Ladbrokes prematch-homepage payload and yield OddQuote objects.
+
+    Pass `sport_description` (e.g. 'FOOTBALL', 'TENNIS') to filter out events
+    from other disciplines — needed when consuming `/prematch-homepage/next`
+    or `/prematch-homepage/highlight`, both of which mix sports. The
+    detail-service per-meeting payloads are already sport-scoped, so the
+    parameter can be left None for them."""
     result = payload.get("result") or {}
     events = result.get("events") or []
     if not events:
         return
 
     now = datetime.now(timezone.utc)
+    expected = sport_description.upper() if sport_description else None
     for ev in events:
         ei = ev.get("eventInfo") or {}
         # Skip live events; the engine compares to Pinnacle prematch fair lines.
         if ei.get("live"):
             continue
-        if (ei.get("disciplineDescription") or "").upper() != "FOOTBALL":
+        if expected is not None and (ei.get("disciplineDescription") or "").upper() != expected:
             continue
 
         home, away = _home_away(ei)

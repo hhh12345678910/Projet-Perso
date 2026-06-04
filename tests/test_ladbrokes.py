@@ -82,7 +82,9 @@ def test_parse_prematch_skips_live_and_non_football():
             ]
         }
     }
-    assert list(parse_prematch(payload)) == []
+    # Without a sport filter the live event is still skipped; the tennis event
+    # only gets dropped when we explicitly scope to football.
+    assert list(parse_prematch(payload, sport_description="FOOTBALL")) == []
 
 
 def test_parse_prematch_handles_empty():
