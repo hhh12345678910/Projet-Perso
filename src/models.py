@@ -24,6 +24,7 @@ class Book(str, Enum):
     GOLDEN_PALACE = "golden_palace"
     STARCASINO_SPORT = "starcasino_sport"
     MAGIC_BETTING = "magic_betting"
+    SMARKETS = "smarkets"        # London exchange, used as a secondary sharp reference
 
 
 BETANO_OPERATOR_ID = "22"

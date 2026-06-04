@@ -21,6 +21,7 @@ from .scrapers.goldenpalace import GoldenPalaceScraper, parse_get_events as gold
 from .scrapers.ladbrokes import LadbrokesScraper, parse_prematch as ladbrokes_parse_prematch
 from .scrapers.magicbetting import load_file as magicbetting_load_file, parse_events as magicbetting_parse_events
 from .scrapers.pinnacle import PinnacleScraper
+from .scrapers.smarkets import SmarketsScraper, iter_all_quotes as smarkets_iter_quotes
 from .scrapers.starcasinosport import StarCasinoSportScraper, parse_get_events as starcasinosport_parse_get_events
 from .scrapers.unibet import UnibetScraper, parse_listview as unibet_parse_listview
 from .storage import Storage
@@ -47,25 +48,73 @@ def _group_quotes(quotes: Iterable[OddQuote]) -> dict[tuple[str, MarketType, flo
     return groups
 
 
-def build_fair_lines(pinnacle_quotes: list[OddQuote], method: str) -> dict[tuple[str, MarketType, float | None], FairLine]:
+def _devig_group(group: list[OddQuote], method: str) -> dict[str, float] | None:
+    """Run a devig on one (event, market, line) group's odds. Returns the
+    label -> fair probability map, or None if the group is too thin or
+    numerically degenerate."""
+    if len(group) < 2:
+        return None
+    try:
+        probs = devig([q.decimal_odd for q in group], method=method)
+    except Exception:
+        return None
+    return {q.outcome.label: p for q, p in zip(group, probs)}
+
+
+def build_fair_lines(
+    pinnacle_quotes: list[OddQuote],
+    method: str,
+    *,
+    secondary_quotes: list[OddQuote] | None = None,
+    primary_weight: float = 0.7,
+) -> dict[tuple[str, MarketType, float | None], FairLine]:
+    """Build fair lines from Pinnacle, optionally blending with a secondary
+    sharp source (Smarkets exchange) to cross-validate. Pinnacle keeps the
+    higher weight by default because its volume and stability are higher;
+    Smarkets fills in events Pinnacle doesn't price and gently pulls the
+    estimate where the two disagree."""
+    primary_groups = _group_quotes(pinnacle_quotes)
+    secondary_groups = _group_quotes(secondary_quotes or [])
+
     fair: dict[tuple[str, MarketType, float | None], FairLine] = {}
-    for key, group in _group_quotes(pinnacle_quotes).items():
-        if len(group) < 2:
-            continue
-        labels = [q.outcome.label for q in group]
-        odds = [q.decimal_odd for q in group]
-        try:
-            probs = devig(odds, method=method)
-        except Exception:
-            continue
+    now = datetime.now(timezone.utc)
+    for key in primary_groups.keys() | secondary_groups.keys():
         event_key_, market, line = key
+        pin_probs = _devig_group(primary_groups.get(key, []), method)
+        sec_probs = _devig_group(secondary_groups.get(key, []), method)
+
+        if pin_probs and sec_probs:
+            # Weighted blend on outcomes that both sources price; fall back to
+            # the available source when only one carries a given label.
+            blended: dict[str, float] = {}
+            for label in set(pin_probs) | set(sec_probs):
+                p, s = pin_probs.get(label), sec_probs.get(label)
+                if p is not None and s is not None:
+                    blended[label] = primary_weight * p + (1 - primary_weight) * s
+                else:
+                    blended[label] = p if p is not None else s
+            # Renormalise so the row still sums to 1 after the blend.
+            total = sum(blended.values())
+            if total > 0:
+                blended = {k: v / total for k, v in blended.items()}
+            outcomes = blended
+            ref_book = Book.PINNACLE
+        elif pin_probs:
+            outcomes = pin_probs
+            ref_book = Book.PINNACLE
+        else:
+            outcomes = sec_probs  # type: ignore[assignment]
+            ref_book = Book.SMARKETS
+
+        if not outcomes:
+            continue
         fair[key] = FairLine(
             event_key=event_key_,
             market=market,
-            outcomes={lbl: p for lbl, p in zip(labels, probs)},
+            outcomes=outcomes,
             method=method,
-            reference_book=Book.PINNACLE,
-            computed_at=datetime.now(timezone.utc),
+            reference_book=ref_book,
+            computed_at=now,
         )
     return fair
 
@@ -203,6 +252,18 @@ def fetch_starcasinosport_quotes(sport: str) -> list[OddQuote]:
         return []
 
 
+def fetch_smarkets_quotes(sport: str, max_events: int = 200) -> list[OddQuote]:
+    """Snapshot Smarkets exchange prices for a sport. Used as a secondary
+    sharp reference (Pinnacle stays primary); a failure here only weakens
+    the fair-line blend, never aborts the scan."""
+    try:
+        with SmarketsScraper() as sm:
+            return list(smarkets_iter_quotes(sm, sport, max_events=max_events))
+    except httpx.HTTPError as e:
+        console.print(f"[yellow]Smarkets skipped:[/yellow] {e}")
+        return []
+
+
 def fetch_magicbetting_quotes(magicbetting_file: str | None) -> list[OddQuote]:
     """Magic Betting sits behind Cloudflare from datacenter IPs, so live fetch
     is impossible from cloud. Reads a saved response body via the file flag."""
@@ -252,8 +313,22 @@ def scan(
             quotes = list(pin.fetch_market_quotes(current_sport))
         console.print(f"  → {len(quotes)} Pinnacle quotes")
 
-        fair = build_fair_lines(quotes, cfg.devig_method)
-        console.print(f"  → {len(fair)} fair lines (devig={cfg.devig_method})")
+        # Smarkets exchange as a secondary sharp reference (margin-free
+        # peer-to-peer prices). Pinnacle stays primary in the blend.
+        smarkets_quotes = fetch_smarkets_quotes(current_sport)
+        console.print(f"  → {len(smarkets_quotes)} Smarkets quotes")
+
+        # Match Smarkets event keys onto Pinnacle's so the blend per
+        # (event, market, line) actually lands on the same row.
+        if smarkets_quotes:
+            smarkets_quotes = remap_to_reference(
+                smarkets_quotes, {q.event_key for q in quotes}
+            )
+
+        fair = build_fair_lines(
+            quotes, cfg.devig_method, secondary_quotes=smarkets_quotes,
+        )
+        console.print(f"  → {len(fair)} fair lines (devig={cfg.devig_method}, sharp=Pinnacle+Smarkets)")
 
         for q in quotes:
             storage.insert_quote(q)
