@@ -14,10 +14,15 @@ from ..models import Book, MarketType, OddQuote, Outcome
 BASE = "https://d-cf.betfirstplayground.net/api/sb/v1"
 
 # Our sport name -> BetFirst categoryId.
+# BetFirst categoryIds discovered by walking widgets/categories/v2 and probing
+# events-table responses for each — every ID below was confirmed live.
+# Esports has no dedicated BetFirst category (the eSoccer offering is mixed
+# into football, surfaced via ESF* marketTemplateIds we currently skip).
 CATEGORY_IDS = {
     "soccer": 1,
-    "tennis": 2,
-    "basketball": 3,
+    "hockey": 2,
+    "basketball": 4,
+    "tennis": 11,
 }
 
 
