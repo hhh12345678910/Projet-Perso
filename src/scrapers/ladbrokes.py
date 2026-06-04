@@ -103,8 +103,9 @@ class LadbrokesScraper:
         """Walk the menu tree under one discipline and yield every leaf meeting
         as (sport_alias, meeting_alias, eventsNr)."""
         sport_list = (menu_payload.get("result") or {}).get("sportList") or []
+        target = sport_description.strip().upper()
         sport = next(
-            (s for s in sport_list if str(s.get("description") or "").upper() == sport_description.upper()),
+            (s for s in sport_list if str(s.get("description") or "").strip().upper() == target),
             None,
         )
         if sport is None:
@@ -157,13 +158,22 @@ class LadbrokesScraper:
 
 # Map Eurobet bet group ids / alternativeDescriptions to our market types.
 # betId is stable across language; alternativeDescription is the SPA's display
-# name and is a useful fallback (e.g. "1X2", "Totals").
+# name and is a useful fallback ("1X2", "Totals", "Winner"). Each sport has
+# its own betIds for the "match winner" market (soccer 24 = 1X2 with draw,
+# tennis 15288 = 2-way winner, etc.); they all reduce to H2H downstream.
 _MARKET_BY_BET_ID = {
-    24: MarketType.H2H,         # RÉSULTAT FINAL (1X2)
-    4243: MarketType.TOTALS,    # Plus/Moins de buts (over/under)
+    24: MarketType.H2H,         # Soccer RÉSULTAT FINAL (1X2)
+    98: MarketType.H2H,         # Basketball MONEYLINE
+    478: MarketType.H2H,        # Hockey VAINQUEUR (2-way moneyline)
+    15288: MarketType.H2H,      # Tennis "Winner" (2-way moneyline)
+    4243: MarketType.TOTALS,    # Soccer Plus/Moins de buts (over/under)
+    1532: MarketType.TOTALS,    # Basketball Plus/Moins de (line in description)
+    19388: MarketType.TOTALS,   # Hockey Plus/Moins de (incl. OT)
 }
 _MARKET_BY_ALT_DESC = {
     "1X2": MarketType.H2H,
+    "Winner": MarketType.H2H,
+    "H/H": MarketType.H2H,      # basketball moneyline shorthand
     "Totals": MarketType.TOTALS,
 }
 
