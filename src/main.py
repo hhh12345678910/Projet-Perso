@@ -14,7 +14,7 @@ from .config import ScanConfig
 from .devig import devig
 from .ev import ev_pct, fair_odd, kelly_fraction, kelly_stake
 from .matcher import reconcile_event_keys
-from .models import Book, FairLine, MarketType, OddQuote, ValueBet
+from .models import Book, FairLine, MarketType, OddQuote, Outcome, ValueBet
 from .scrapers.betano import BetanoAuthError, BetanoScraper, parse_overview as betano_parse_overview
 from .scrapers.betfirst import BetFirstScraper, parse_events_table as betfirst_parse_events_table
 from .scrapers.goldenpalace import GoldenPalaceScraper, parse_get_events as goldenpalace_parse_get_events
