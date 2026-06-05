@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import os
 import re
 
 
@@ -26,12 +27,24 @@ _NOISE_TOKEN_RE = re.compile(
 _BRACKET_HANDLE_RE = re.compile(r"\([A-Za-z][A-Za-z0-9 .\-']{1,30}\)")
 
 
+def _filter_enabled() -> bool:
+    """Read NOISE_FILTER_ENABLED at call time so an .env edit takes effect on
+    the next cron tick without redeploying — and stays opt-in by default so a
+    fresh setup sees the full raw stream until the user decides to trim it."""
+    return os.getenv("NOISE_FILTER_ENABLED", "0") == "1"
+
+
 def is_noise_event(*texts: str) -> bool:
     """Return True if any of the provided strings (team names, league name,
     competition label) match a known low-quality / unrealisable pattern. The
     scrapers call this just before they emit OddQuotes so the rest of the
     pipeline never sees the event at all — much cheaper than trying to clean
-    it up after fuzzy-matching has already wired it to a real Pinnacle event."""
+    it up after fuzzy-matching has already wired it to a real Pinnacle event.
+
+    Disabled by default so the user can see the raw alert stream first; flip
+    NOISE_FILTER_ENABLED=1 in .env once you've decided the noise is real."""
+    if not _filter_enabled():
+        return False
     for t in texts:
         if not t:
             continue
