@@ -63,7 +63,7 @@ class SmarketsScraper:
         # 0.3s seems to be the sustainable floor — anything lower trips 429s
         # mid-tennis after a full football pass.
         self._delay = request_delay if request_delay is not None else float(
-            os.getenv("SMARKETS_REQUEST_DELAY", "0.3")
+            os.getenv("SMARKETS_REQUEST_DELAY", "0.5")
         )
 
     def close(self) -> None:
