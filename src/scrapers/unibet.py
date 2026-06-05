@@ -7,6 +7,7 @@ from typing import Any, Iterator
 import httpx
 from tenacity import retry, stop_after_attempt, wait_exponential
 
+from ..filter import is_noise_event
 from ..matcher import event_key
 from ..models import Book, MarketType, OddQuote, Outcome
 
@@ -197,6 +198,8 @@ def parse_listview(data: dict) -> Iterator[OddQuote]:
         away = ev.get("awayName")
         start = _parse_datetime(ev.get("start"))
         if not (home and away and start):
+            continue
+        if is_noise_event(home, away, ev.get("group", "")):
             continue
         ek = event_key(home, away, start)
         source_id = str(ev.get("id", ""))

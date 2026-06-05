@@ -8,6 +8,7 @@ from typing import Iterable, Iterator
 import httpx
 from tenacity import retry, retry_if_exception, stop_after_attempt, wait_exponential
 
+from ..filter import is_noise_event
 from ..matcher import event_key
 from ..models import Book, Event, MarketType, OddQuote, Outcome
 
@@ -167,6 +168,8 @@ class PinnacleScraper:
                 away = next((p["name"] for p in participants if p.get("alignment") == "away"), None)
                 start_raw = matchup.get("startTime")
                 if not (home and away and start_raw):
+                    continue
+                if is_noise_event(home, away, league.get("name", "")):
                     continue
                 start = datetime.fromisoformat(start_raw.replace("Z", "+00:00")).astimezone(timezone.utc)
                 ek = event_key(home, away, start)

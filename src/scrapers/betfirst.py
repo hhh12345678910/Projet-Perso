@@ -6,6 +6,7 @@ from typing import Any, Iterator
 import httpx
 from tenacity import retry, retry_if_exception, stop_after_attempt, wait_exponential
 
+from ..filter import is_noise_event
 from ..matcher import event_key
 from ..models import Book, MarketType, OddQuote, Outcome
 
@@ -257,6 +258,8 @@ def parse_events_table(payload: dict) -> Iterator[OddQuote]:
         home, away = _extract_home_away(ev.get("participants") or [])
         start = _parse_datetime(ev.get("startDate"))
         if not (home and away and start):
+            continue
+        if is_noise_event(home, away, ev.get("competitionName", "")):
             continue
         event_index[eid] = (event_key(home, away, start), eid)
 

@@ -7,6 +7,7 @@ from typing import Any, Iterator
 import httpx
 from tenacity import retry, retry_if_exception, stop_after_attempt, wait_exponential
 
+from ..filter import is_noise_event
 from ..matcher import event_key
 from ..models import Book, MarketType, OddQuote, Outcome
 
@@ -280,6 +281,8 @@ def parse_prematch(
         home, away = _home_away(ei)
         start = _parse_event_time(ei)
         if not (home and away and start):
+            continue
+        if is_noise_event(home, away, ei.get("meetingDescription", "")):
             continue
         ek = event_key(home, away, start)
         source_id = str(ei.get("eventCode") or ei.get("programCode") or "")
