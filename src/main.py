@@ -419,32 +419,34 @@ def scan(
             + (f" (+ {len(flagged)} flagged as suspicious — likely matching bugs)" if flagged else "")
         )
 
-        # Telegram surebet alerts: only push each (event, market, line) once
-        # — the dedupe table keeps the chat quiet on repeated scans of the
-        # same opportunity. Suspicious + sub-margin entries are filtered in
-        # the alerter itself.
-        if tg_cfg is not None and plausible:
-            fresh_surebets = []
-            for s in plausible:
-                if storage.surebet_already_notified(s.event_key, s.market.value, s.line):
-                    continue
-                fresh_surebets.append(s)
-            if fresh_surebets:
+        # Telegram surebet alerts. The candidate pool depends on whether the
+        # user opted into seeing suspicious ones; dedup is configurable too,
+        # so a user who wants every scan to re-confirm can disable it.
+        # Final per-margin filtering happens inside the alerter.
+        if tg_cfg is not None and surebets:
+            candidates = surebets if tg_cfg.include_suspicious_surebets else plausible
+            if tg_cfg.surebet_dedup:
+                candidates = [
+                    s for s in candidates
+                    if not storage.surebet_already_notified(
+                        s.event_key, s.market.value, s.line
+                    )
+                ]
+            if candidates:
                 sent = send_surebet_alerts(
-                    fresh_surebets, tg_cfg,
+                    candidates, tg_cfg,
                     print_fn=lambda x: console.print(f"[yellow]{x}[/yellow]"),
                 )
-                # Mark all fresh ones — even the ones the alerter filtered
-                # out (sub-margin) — so we don't recheck them constantly.
+                # Track every candidate (even sub-margin) so the table is a
+                # complete history we can audit later — only useful for the
+                # dedup path, but cheap enough to do unconditionally.
                 now = datetime.now(timezone.utc)
-                for s in fresh_surebets:
+                for s in candidates:
                     storage.mark_surebet_notified(
                         s.event_key, s.market.value, s.line, s.margin * 100, now,
                     )
                 if sent:
-                    console.print(
-                        f"  → {sent} surebet alerts sent (margin ≥ {tg_cfg.min_surebet_margin_pct:.1f}%)"
-                    )
+                    console.print(f"  → {sent} surebet alerts sent")
         if plausible:
             st = Table(title=f"Surebets ({sport})", show_lines=False)
             st.add_column("event_key", overflow="fold")

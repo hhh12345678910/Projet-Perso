@@ -156,7 +156,9 @@ def _surebet(margin: float = 0.025, suspicious: bool = False,
 
 def test_format_surebet_lists_every_leg_with_book_name():
     msg = format_surebet(_surebet(margin=0.0234))
-    assert "SUREBET +2.34%" in msg
+    assert "SUREBET" in msg and "+2.34%" in msg
+    assert "💰" in msg            # normal surebet emoji
+    assert "⚠️" not in msg       # non-suspicious, no warning
     assert "Boise vs Sarasota" in msg
     # Each leg appears with its book name (friendly form, not the enum value).
     assert "Unibet" in msg
@@ -164,6 +166,16 @@ def test_format_surebet_lists_every_leg_with_book_name():
     assert "Ladbrokes" in msg
     assert "1.95" in msg and "3.85" in msg and "4.20" in msg
     assert "📅" in msg
+
+
+def test_format_surebet_marks_suspicious_in_header_and_footer():
+    sb = _surebet(margin=0.61, suspicious=True)
+    msg = format_surebet(sb)
+    # Different header emoji + "SUSPECT" word so it stands out in chat preview.
+    assert "⚠️" in msg
+    assert "SUSPECT" in msg
+    # Footer reminder to verify before acting on a suspect signal.
+    assert "Marge inhabituelle" in msg
 
 
 def test_format_surebet_shows_line_for_totals():

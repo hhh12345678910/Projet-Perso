@@ -72,6 +72,8 @@ class TelegramConfig:
     chat_id: str
     min_ev_pct: float = 3.0              # value bets below this stay silent
     min_surebet_margin_pct: float = 1.0  # surebets below this margin stay silent
+    include_suspicious_surebets: bool = False  # opt-in to see flagged ones too
+    surebet_dedup: bool = True           # off -> alert every scan even if seen before
     parse_mode: str = "HTML"
 
     @classmethod
@@ -85,13 +87,17 @@ class TelegramConfig:
             chat_id=chat,
             min_ev_pct=float(os.getenv("TELEGRAM_MIN_EV", "3.0")),
             min_surebet_margin_pct=float(os.getenv("TELEGRAM_MIN_SUREBET", "1.0")),
+            include_suspicious_surebets=os.getenv("TELEGRAM_INCLUDE_SUSPICIOUS", "0") == "1",
+            surebet_dedup=os.getenv("TELEGRAM_SUREBET_DEDUP", "1") == "1",
         )
 
 
 def format_surebet(sb: Surebet) -> str:
     """Surebet messages need to list every leg with its book — that's the
     whole point — so the format is taller than a value bet alert. Visually
-    distinct (💰 vs 🎯) so the user can tell them apart in the chat preview."""
+    distinct (💰 vs 🎯) so the user can tell them apart in the chat preview.
+    Suspicious flagged surebets are prefixed with ⚠️ so the user knows the
+    pipeline thinks this is probably a phantom — verify before acting."""
     parsed = parse_event_key(sb.event_key)
     if parsed is not None:
         start, home_norm, away_norm = parsed
@@ -106,12 +112,19 @@ def format_surebet(sb: Surebet) -> str:
         f"  • <b>{label}</b> @ {odd:.2f} — {_BOOK_NAMES.get(book, book.value)}"
         for label, (odd, book) in sb.legs.items()
     )
+    header_emoji = "⚠️ <b>SUREBET SUSPECT</b>" if sb.suspicious else "💰 <b>SUREBET</b>"
+    suspect_footer = (
+        "\n<i>⚠️ Marge inhabituelle — vérifie les équipes et les cotes "
+        "avant de jouer.</i>"
+        if sb.suspicious else ""
+    )
 
     return (
-        f"💰 <b>SUREBET +{sb.margin * 100:.2f}%</b> (ROI {sb.roi * 100:.2f}%)\n"
+        f"{header_emoji} +{sb.margin * 100:.2f}% (ROI {sb.roi * 100:.2f}%)\n"
         f"{matchup} — {sb.market.value}{line_suffix}\n"
         f"{when_line}"
         f"{legs_lines}"
+        f"{suspect_footer}"
     )
 
 
@@ -173,9 +186,10 @@ class TelegramAlerter:
         return self._send(format_value_bet(bet))
 
     def send_surebet(self, sb: Surebet) -> bool:
-        # Suspicious flagged surebets are almost always parsing bugs; never
-        # alert the user on those — they'd just look like spam.
-        if sb.suspicious:
+        # The suspicious flag is normally a "phantom surebet" canary (matching
+        # bug, label mismatch, ...), but the user can opt into seeing them to
+        # verify themselves before acting.
+        if sb.suspicious and not self.config.include_suspicious_surebets:
             return False
         if sb.margin * 100 < self.config.min_surebet_margin_pct:
             return False
