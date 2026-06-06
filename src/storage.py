@@ -66,6 +66,16 @@ CREATE TABLE IF NOT EXISTS clv_snapshots (
     pinnacle_prob   REAL NOT NULL,
     FOREIGN KEY (value_bet_id) REFERENCES value_bets(id)
 );
+
+CREATE TABLE IF NOT EXISTS notified_surebets (
+    id              INTEGER PRIMARY KEY AUTOINCREMENT,
+    event_key       TEXT NOT NULL,
+    market          TEXT NOT NULL,
+    line            REAL,
+    margin_pct      REAL NOT NULL,
+    notified_at     TEXT NOT NULL
+);
+CREATE INDEX IF NOT EXISTS idx_ns_lookup ON notified_surebets(event_key, market);
 """
 
 
@@ -180,6 +190,39 @@ class Storage:
                 "ORDER BY snapshot_at DESC LIMIT 1",
                 (value_bet_id,),
             ).fetchone()
+
+    def surebet_already_notified(
+        self, event_key: str, market: str, line: Optional[float],
+    ) -> bool:
+        """Skip re-notifying the same surebet on consecutive scans. We dedupe
+        on (event, market, line) — if the legs or margin improve later we
+        currently still don't re-notify, which trades a tiny chance of
+        missing an upgrade against zero chat-spam."""
+        with self._conn() as c:
+            if line is None:
+                row = c.execute(
+                    "SELECT 1 FROM notified_surebets WHERE event_key=? AND market=? "
+                    "AND line IS NULL LIMIT 1",
+                    (event_key, market),
+                ).fetchone()
+            else:
+                row = c.execute(
+                    "SELECT 1 FROM notified_surebets WHERE event_key=? AND market=? "
+                    "AND line=? LIMIT 1",
+                    (event_key, market, line),
+                ).fetchone()
+            return row is not None
+
+    def mark_surebet_notified(
+        self, event_key: str, market: str, line: Optional[float],
+        margin_pct: float, notified_at: datetime,
+    ) -> None:
+        with self._conn() as c:
+            c.execute(
+                "INSERT INTO notified_surebets(event_key, market, line, margin_pct, notified_at) "
+                "VALUES (?, ?, ?, ?, ?)",
+                (event_key, market, line, margin_pct, notified_at.isoformat()),
+            )
 
     def all_closed_bets(self) -> list[sqlite3.Row]:
         """Bets joined with their closing snapshot, ready for CLV aggregation."""
