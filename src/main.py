@@ -410,8 +410,13 @@ def scan(
             )
         console.print(table)
 
-        # Cross-book surebet detection on the soft-book quotes (no Pinnacle needed).
-        surebets = find_surebets(soft_quotes)
+        # Cross-book surebet detection. We include Pinnacle's own quotes in
+        # the candidate pool — they're rarely the best odd per outcome (tight
+        # margin) but on the occasional event where Pinnacle is the only
+        # source for a side, or its odd happens to drift, the arb shows up
+        # in the table. find_surebets already enforces a distinct-book-per-leg
+        # rule, so Pinnacle-vs-Pinnacle "arbs" can't slip through.
+        surebets = find_surebets(soft_quotes + quotes)
         plausible = [s for s in surebets if not s.suspicious]
         flagged = [s for s in surebets if s.suspicious]
         console.print(

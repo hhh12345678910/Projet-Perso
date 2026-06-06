@@ -125,6 +125,24 @@ def test_suspicious_flag():
     assert out[0].margin > SUSPICIOUS_MARGIN_THRESHOLD
 
 
+def test_pinnacle_can_be_a_surebet_leg():
+    # Pinnacle quotes flow through find_surebets just like any other book —
+    # rarely the best price per outcome, but worth including in the pool.
+    quotes = [
+        _q(Book.PINNACLE, MarketType.H2H, "home", 2.05),
+        _q(Book.UNIBET_BE, MarketType.H2H, "draw", 3.70),
+        _q(Book.BETFIRST, MarketType.H2H, "away", 4.20),
+    ]
+    # 1/2.05 + 1/3.70 + 1/4.20 = 0.488 + 0.270 + 0.238 = 0.996 -> tiny margin
+    out = find_surebets(quotes)
+    assert len(out) == 1
+    s = out[0]
+    assert s.legs["home"] == (2.05, Book.PINNACLE)
+    assert s.legs["draw"] == (3.70, Book.UNIBET_BE)
+    assert s.legs["away"] == (4.20, Book.BETFIRST)
+    assert s.margin > 0
+
+
 def test_surebet_stakes_and_roi():
     quotes = [
         _q(Book.UNIBET_BE, MarketType.H2H, "home", 2.10),
