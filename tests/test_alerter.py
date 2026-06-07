@@ -93,6 +93,31 @@ def test_format_falls_back_when_event_key_is_unparseable():
     assert "+5.00% EV" in msg
 
 
+def test_format_value_bet_prepends_sport_emoji_when_known():
+    msg = format_value_bet(_bet(), sport="soccer")
+    assert "⚽" in msg
+    msg = format_value_bet(_bet(), sport="tennis")
+    assert "🎾" in msg
+    msg = format_value_bet(_bet(), sport="basketball")
+    assert "🏀" in msg
+    msg = format_value_bet(_bet(), sport="hockey")
+    assert "🏒" in msg
+
+
+def test_format_value_bet_no_emoji_when_sport_is_none_or_unknown():
+    msg = format_value_bet(_bet(), sport=None)
+    assert not any(e in msg for e in ("⚽", "🎾", "🏀", "🏒"))
+    msg = format_value_bet(_bet(), sport="curling")
+    assert not any(e in msg for e in ("⚽", "🎾", "🏀", "🏒"))
+
+
+def test_format_surebet_prepends_sport_emoji():
+    msg = format_surebet(_surebet(margin=0.02), sport="tennis")
+    assert "🎾" in msg
+    msg = format_surebet(_surebet(margin=0.02), sport="hockey")
+    assert "🏒" in msg
+
+
 def test_alerter_sends_message_above_threshold():
     client = MagicMock(spec=httpx.Client)
     client.post.return_value.status_code = 200

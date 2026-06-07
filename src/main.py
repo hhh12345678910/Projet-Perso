@@ -389,7 +389,7 @@ def scan(
         # the same opportunity on every scan would spam the user's phone.
         tg_cfg = TelegramConfig.from_env()
         if tg_cfg is not None:
-            sent = send_alerts(newly_detected, tg_cfg, print_fn=lambda s: console.print(f"[yellow]{s}[/yellow]"))
+            sent = send_alerts(newly_detected, tg_cfg, print_fn=lambda s: console.print(f"[yellow]{s}[/yellow]"), sport=current_sport)
             if sent:
                 console.print(f"  → {sent} Telegram alerts sent (EV ≥ {tg_cfg.min_ev_pct:.1f}%)")
 
@@ -441,6 +441,7 @@ def scan(
                 sent = send_surebet_alerts(
                     candidates, tg_cfg,
                     print_fn=lambda x: console.print(f"[yellow]{x}[/yellow]"),
+                    sport=current_sport,
                 )
                 # Track every candidate (even sub-margin) so the table is a
                 # complete history we can audit later — only useful for the
@@ -553,6 +554,7 @@ def scan_surebets(
         sent = send_surebet_alerts(
             candidates, tg_cfg,
             print_fn=lambda x: console.print(f"[yellow]{x}[/yellow]"),
+            sport=current_sport,
         )
         now = datetime.now(timezone.utc)
         for s in candidates:
@@ -586,7 +588,8 @@ def alert_test():
         detected_at=datetime.now(timezone.utc),
     )
     sent = send_alerts(
-        [sample], cfg, print_fn=lambda s: console.print(f"[yellow]{s}[/yellow]")
+        [sample], cfg, print_fn=lambda s: console.print(f"[yellow]{s}[/yellow]"),
+        sport="soccer",
     )
     if sent:
         console.print(f"[bold]Sent 1 test alert to chat {cfg.chat_id}.[/bold]")
