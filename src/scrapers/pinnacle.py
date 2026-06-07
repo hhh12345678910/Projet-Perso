@@ -159,6 +159,16 @@ class PinnacleScraper:
             for market in markets:
                 if market.get("status") != "open":
                     continue
+                # Pinnacle serves a market entry per "period" — full match
+                # (period 0), 1st half (period 1), 2nd half (period 2) and
+                # so on. Without this filter the per-period prices land in
+                # the same (event, market, line) group as the full-match
+                # ones; devig sees ~6 odds instead of 3 for a 1X2 and the
+                # fair line becomes garbage, which downstream surfaces as
+                # phantom surebets and broken EV. Only period 0 matches the
+                # full-match prematch markets every soft book quotes.
+                if market.get("period") != 0:
+                    continue
                 matchup_id = market.get("matchupId")
                 matchup = matchups_by_id.get(matchup_id)
                 if not matchup:
