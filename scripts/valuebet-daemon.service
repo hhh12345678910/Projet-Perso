@@ -1,0 +1,26 @@
+[Unit]
+Description=Valuebet continuous scan daemon
+Documentation=https://github.com/hhh12345678910/Projet-Perso
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=ubuntu
+Group=ubuntu
+WorkingDirectory=/home/ubuntu/Projet-Perso
+ExecStart=/home/ubuntu/Projet-Perso/scripts/scan-daemon.sh
+# If the wrapper script ever crashes (network bug, OOM, ...), let systemd
+# wait 30 s and restart it. The wrapper itself already handles individual
+# scan failures inside the loop, so this only triggers on hard process
+# crashes.
+Restart=always
+RestartSec=30
+
+# Don't hammer the journald disk usage: the daemon already writes to
+# valuebet.log; we just need the journal as a backstop.
+StandardOutput=journal
+StandardError=journal
+
+[Install]
+WantedBy=multi-user.target
