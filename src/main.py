@@ -475,6 +475,94 @@ def scan(
             console.print(st)
 
 
+@app.command(name="scan-surebets")
+def scan_surebets(
+    sport: str = "soccer",
+    betano_file: str = typer.Option(
+        None, "--betano-file",
+        help="Optional Betano dump path — same as in `scan`.",
+    ),
+    magicbetting_file: str = typer.Option(
+        None, "--magicbetting-file",
+        help="Optional Magic Betting dump path — same as in `scan`.",
+    ),
+):
+    """Light surebet-only sweep on the soft books, designed to run every
+    15-30 min between the full 2h scans. Pinnacle's per-league walk takes
+    5-10 min and would burn the whole cycle, so we skip it here — those
+    Pinnacle-leg surebets still get caught by the regular `scan`. Comma-
+    separated --sport lets one cron entry cover every sport you care about."""
+    sports = [s.strip() for s in sport.split(",") if s.strip()]
+    storage = Storage(ScanConfig().db_path)
+    tg_cfg = TelegramConfig.from_env()
+
+    for current_sport in sports:
+        console.print()
+        console.print(f"[bold green]══ {current_sport.upper()} (surebets only) ══[/bold green]")
+
+        # Pull every soft book for this sport.
+        all_quotes: list[OddQuote] = []
+        all_quotes += fetch_betano_quotes(betano_file=betano_file) if current_sport == sports[0] else []
+        unibet_quotes = fetch_unibet_quotes(current_sport)
+        all_quotes += unibet_quotes
+        all_quotes += fetch_betfirst_quotes(current_sport)
+        all_quotes += fetch_ladbrokes_quotes(current_sport)
+        all_quotes += fetch_goldenpalace_quotes(current_sport)
+        all_quotes += fetch_starcasinosport_quotes(current_sport)
+        all_quotes += fetch_magicbetting_quotes(magicbetting_file) if current_sport == sports[0] else []
+        console.print(f"  → {len(all_quotes)} soft-book quotes total")
+
+        if not all_quotes:
+            continue
+
+        # No Pinnacle reference key set here — pick the soft book with the
+        # widest coverage as anchor and reconcile the rest onto it. Unibet
+        # is the typical winner since fetch_all_events walks every termKey.
+        from collections import Counter
+        by_book = Counter(q.event_key for q in all_quotes if q.book == Book.UNIBET_BE)
+        if by_book:
+            ref_keys = set(by_book)
+        else:
+            # Fall back to the largest book in the pool.
+            book_counts = Counter(q.book for q in all_quotes)
+            top_book = book_counts.most_common(1)[0][0]
+            ref_keys = {q.event_key for q in all_quotes if q.book == top_book}
+
+        normalised_quotes = remap_to_reference(all_quotes, ref_keys)
+        console.print(f"  → {len(normalised_quotes)} matched to a common event")
+
+        surebets = find_surebets(normalised_quotes)
+        plausible = [s for s in surebets if not s.suspicious]
+        flagged = [s for s in surebets if s.suspicious]
+        console.print(
+            f"[bold]Surebets: {len(plausible)} plausible[/bold]"
+            + (f" (+ {len(flagged)} suspicious)" if flagged else "")
+        )
+
+        if tg_cfg is None or not surebets:
+            continue
+
+        candidates = surebets if tg_cfg.include_suspicious_surebets else plausible
+        if tg_cfg.surebet_dedup:
+            candidates = [
+                s for s in candidates
+                if not storage.surebet_already_notified(s.event_key, s.market.value, s.line)
+            ]
+        if not candidates:
+            continue
+        sent = send_surebet_alerts(
+            candidates, tg_cfg,
+            print_fn=lambda x: console.print(f"[yellow]{x}[/yellow]"),
+        )
+        now = datetime.now(timezone.utc)
+        for s in candidates:
+            storage.mark_surebet_notified(
+                s.event_key, s.market.value, s.line, s.margin * 100, now,
+            )
+        if sent:
+            console.print(f"  → {sent} surebet alerts sent")
+
+
 @app.command(name="alert-test")
 def alert_test():
     """Send a dummy value bet alert to verify the Telegram bot setup."""
