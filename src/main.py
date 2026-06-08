@@ -335,7 +335,6 @@ def _fetch_all_parallel(
         "Ladbrokes":     lambda: fetch_ladbrokes_quotes(sport),
         "Golden Palace": lambda: fetch_goldenpalace_quotes(sport),
         "StarCasino":    lambda: fetch_starcasinosport_quotes(sport),
-        "Smarkets":      lambda: fetch_smarkets_quotes(sport),
     }
     if include_file_books:
         tasks["Betano"]        = lambda: fetch_betano_quotes(betano_file=betano_file)
