@@ -439,32 +439,29 @@ def scan(
         bets.sort(key=lambda b: b.ev_pct, reverse=True)
         console.print(f"[bold]Value bets: {len(bets)}[/bold]")
 
-        # Persist every detected value bet so close-lines / clv-report can track
-        # whether the engine actually beats the closing line over time.
-        newly_detected: list[ValueBet] = []
-        ev_changed: list[ValueBet] = []
-        tg_cfg = TelegramConfig.from_env()
         for b in bets:
-            existing = storage.find_value_bet_ev(
-                b.event_key, b.book.value, b.market.value, b.outcome.label, b.outcome.line
-            )
             storage.insert_value_bet(b)
-            if existing is None:
-                newly_detected.append(b)
-            elif tg_cfg is not None and abs(b.ev_pct - existing[1]) >= tg_cfg.valuebet_ev_delta_pct:
-                ev_changed.append(b)
-                storage.update_value_bet_ev(existing[0], b.ev_pct)
-        if newly_detected:
-            console.print(f"  → {len(newly_detected)} new bets persisted for CLV tracking")
-        if ev_changed:
-            console.print(f"  → {len(ev_changed)} bets re-alerted (EV shifted ≥ {tg_cfg.valuebet_ev_delta_pct:.1f}%)")
 
-        # Telegram value-bet notifications. Newly detected bets always fire.
-        # Known bets re-fire only when EV moved by valuebet_ev_delta_pct or more.
-        # Disable dedup entirely with TELEGRAM_VALUEBET_DEDUP=0.
+        tg_cfg = TelegramConfig.from_env()
         if tg_cfg is not None:
-            candidates = (newly_detected + ev_changed) if tg_cfg.valuebet_dedup else bets
+            if tg_cfg.valuebet_dedup:
+                candidates = [
+                    b for b in bets
+                    if not storage.value_bet_already_notified(
+                        b.event_key, b.book.value, b.market.value, b.outcome.label, b.outcome.line,
+                        current_ev_pct=b.ev_pct,
+                        ev_delta_pct=tg_cfg.valuebet_ev_delta_pct,
+                    )
+                ]
+            else:
+                candidates = bets
             sent = send_alerts(candidates, tg_cfg, print_fn=lambda s: console.print(f"[yellow]{s}[/yellow]"), sport=current_sport)
+            now = datetime.now(timezone.utc)
+            for b in candidates:
+                storage.mark_value_bet_notified(
+                    b.event_key, b.book.value, b.market.value, b.outcome.label, b.outcome.line,
+                    b.ev_pct, now,
+                )
             if sent:
                 console.print(f"  → {sent} Telegram alerts sent (EV ≥ {tg_cfg.min_ev_pct:.1f}%)")
 
@@ -692,30 +689,32 @@ def daemon(
                 # ── Value bets ───────────────────────────────────────────────
                 bets = find_value_bets(soft_q, fair, cfg)
                 bets.sort(key=lambda b: b.ev_pct, reverse=True)
-                newly_detected: list[ValueBet] = []
-                ev_changed: list[ValueBet] = []
                 for b in bets:
-                    existing = storage.find_value_bet_ev(
-                        b.event_key, b.book.value, b.market.value, b.outcome.label, b.outcome.line
-                    )
                     storage.insert_value_bet(b)
-                    if existing is None:
-                        newly_detected.append(b)
-                    elif tg_cfg is not None and abs(b.ev_pct - existing[1]) >= tg_cfg.valuebet_ev_delta_pct:
-                        ev_changed.append(b)
-                        storage.update_value_bet_ev(existing[0], b.ev_pct)
-                console.print(
-                    f"  value bets: {len(bets)} total"
-                    + (f", {len(newly_detected)} new" if newly_detected else "")
-                    + (f", {len(ev_changed)} EV-changed" if ev_changed else "")
-                )
+                console.print(f"  value bets: {len(bets)} total")
                 if tg_cfg is not None:
-                    vb_candidates = (newly_detected + ev_changed) if tg_cfg.valuebet_dedup else bets
+                    if tg_cfg.valuebet_dedup:
+                        vb_candidates = [
+                            b for b in bets
+                            if not storage.value_bet_already_notified(
+                                b.event_key, b.book.value, b.market.value, b.outcome.label, b.outcome.line,
+                                current_ev_pct=b.ev_pct,
+                                ev_delta_pct=tg_cfg.valuebet_ev_delta_pct,
+                            )
+                        ]
+                    else:
+                        vb_candidates = bets
                     sent = send_alerts(
                         vb_candidates, tg_cfg,
                         print_fn=lambda s: console.print(f"[yellow]{s}[/yellow]"),
                         sport=current_sport,
                     )
+                    now_vb = datetime.now(timezone.utc)
+                    for b in vb_candidates:
+                        storage.mark_value_bet_notified(
+                            b.event_key, b.book.value, b.market.value, b.outcome.label, b.outcome.line,
+                            b.ev_pct, now_vb,
+                        )
                     if sent:
                         console.print(f"  → {sent} value bet alert(s) sent")
 

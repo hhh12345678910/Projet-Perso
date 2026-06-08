@@ -77,6 +77,18 @@ CREATE TABLE IF NOT EXISTS notified_surebets (
 );
 CREATE INDEX IF NOT EXISTS idx_ns_lookup ON notified_surebets(event_key, market);
 
+CREATE TABLE IF NOT EXISTS notified_value_bets (
+    id              INTEGER PRIMARY KEY AUTOINCREMENT,
+    event_key       TEXT NOT NULL,
+    book            TEXT NOT NULL,
+    market          TEXT NOT NULL,
+    outcome_label   TEXT NOT NULL,
+    line            REAL,
+    ev_pct          REAL NOT NULL,
+    notified_at     TEXT NOT NULL
+);
+CREATE INDEX IF NOT EXISTS idx_nvb_lookup ON notified_value_bets(event_key, book, market);
+
 CREATE TABLE IF NOT EXISTS teams (
     normalized_name  TEXT PRIMARY KEY,
     display_name     TEXT NOT NULL,
@@ -260,6 +272,44 @@ class Storage:
                 "INSERT INTO notified_surebets(event_key, market, line, margin_pct, notified_at) "
                 "VALUES (?, ?, ?, ?, ?)",
                 (event_key, market, line, margin_pct, notified_at.isoformat()),
+            )
+
+    def value_bet_already_notified(
+        self, event_key: str, book: str, market: str, outcome_label: str,
+        line: Optional[float],
+        current_ev_pct: float = 0.0, ev_delta_pct: float = 1.0,
+    ) -> bool:
+        """Return True (skip) when this value bet was already notified AND its
+        EV hasn't moved by ev_delta_pct since the last alert."""
+        with self._conn() as c:
+            if line is None:
+                row = c.execute(
+                    "SELECT ev_pct FROM notified_value_bets "
+                    "WHERE event_key=? AND book=? AND market=? AND outcome_label=? AND line IS NULL "
+                    "ORDER BY notified_at DESC LIMIT 1",
+                    (event_key, book, market, outcome_label),
+                ).fetchone()
+            else:
+                row = c.execute(
+                    "SELECT ev_pct FROM notified_value_bets "
+                    "WHERE event_key=? AND book=? AND market=? AND outcome_label=? AND line=? "
+                    "ORDER BY notified_at DESC LIMIT 1",
+                    (event_key, book, market, outcome_label, line),
+                ).fetchone()
+            if row is None:
+                return False
+            return abs(current_ev_pct - row[0]) < ev_delta_pct
+
+    def mark_value_bet_notified(
+        self, event_key: str, book: str, market: str, outcome_label: str,
+        line: Optional[float], ev_pct: float, notified_at: datetime,
+    ) -> None:
+        with self._conn() as c:
+            c.execute(
+                "INSERT INTO notified_value_bets"
+                "(event_key, book, market, outcome_label, line, ev_pct, notified_at) "
+                "VALUES (?, ?, ?, ?, ?, ?, ?)",
+                (event_key, book, market, outcome_label, line, ev_pct, notified_at.isoformat()),
             )
 
     def record_team(self, normalized_name: str, display_name: str) -> None:
