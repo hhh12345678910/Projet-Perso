@@ -463,7 +463,9 @@ def scan(
                 candidates = [
                     s for s in candidates
                     if not storage.surebet_already_notified(
-                        s.event_key, s.market.value, s.line
+                        s.event_key, s.market.value, s.line,
+                        current_margin_pct=s.margin * 100,
+                        roi_delta_pct=tg_cfg.surebet_roi_delta_pct,
                     )
                 ]
             if candidates:
@@ -472,9 +474,6 @@ def scan(
                     print_fn=lambda x: console.print(f"[yellow]{x}[/yellow]"),
                     sport=current_sport,
                 )
-                # Track every candidate (even sub-margin) so the table is a
-                # complete history we can audit later — only useful for the
-                # dedup path, but cheap enough to do unconditionally.
                 now = datetime.now(timezone.utc)
                 for s in candidates:
                     storage.mark_surebet_notified(
@@ -577,7 +576,11 @@ def scan_surebets(
         if tg_cfg.surebet_dedup:
             candidates = [
                 s for s in candidates
-                if not storage.surebet_already_notified(s.event_key, s.market.value, s.line)
+                if not storage.surebet_already_notified(
+                    s.event_key, s.market.value, s.line,
+                    current_margin_pct=s.margin * 100,
+                    roi_delta_pct=tg_cfg.surebet_roi_delta_pct,
+                )
             ]
         if not candidates:
             continue

@@ -199,25 +199,29 @@ class Storage:
 
     def surebet_already_notified(
         self, event_key: str, market: str, line: Optional[float],
+        current_margin_pct: float = 0.0, roi_delta_pct: float = 0.5,
     ) -> bool:
-        """Skip re-notifying the same surebet on consecutive scans. We dedupe
-        on (event, market, line) — if the legs or margin improve later we
-        currently still don't re-notify, which trades a tiny chance of
-        missing an upgrade against zero chat-spam."""
+        """Return True (skip) only when the surebet was already notified AND
+        its margin hasn't moved by more than roi_delta_pct since the last alert.
+        A ROI change >= roi_delta_pct triggers a fresh notification so the user
+        sees the updated opportunity without needing to disable dedup entirely."""
         with self._conn() as c:
             if line is None:
                 row = c.execute(
-                    "SELECT 1 FROM notified_surebets WHERE event_key=? AND market=? "
-                    "AND line IS NULL LIMIT 1",
+                    "SELECT margin_pct FROM notified_surebets WHERE event_key=? AND market=? "
+                    "AND line IS NULL ORDER BY notified_at DESC LIMIT 1",
                     (event_key, market),
                 ).fetchone()
             else:
                 row = c.execute(
-                    "SELECT 1 FROM notified_surebets WHERE event_key=? AND market=? "
-                    "AND line=? LIMIT 1",
+                    "SELECT margin_pct FROM notified_surebets WHERE event_key=? AND market=? "
+                    "AND line=? ORDER BY notified_at DESC LIMIT 1",
                     (event_key, market, line),
                 ).fetchone()
-            return row is not None
+            if row is None:
+                return False
+            last_margin_pct = row[0]
+            return abs(current_margin_pct - last_margin_pct) < roi_delta_pct
 
     def mark_surebet_notified(
         self, event_key: str, market: str, line: Optional[float],

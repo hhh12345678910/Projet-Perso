@@ -96,6 +96,7 @@ class TelegramConfig:
     include_suspicious_surebets: bool = False  # opt-in to see flagged ones too
     surebet_dedup: bool = True            # off -> alert every scan even if seen before
     valuebet_dedup: bool = True           # off -> alert every scan even on stale bets
+    surebet_roi_delta_pct: float = 0.5    # re-alert when ROI shifts by this many points
     parse_mode: str = "HTML"
 
     @classmethod
@@ -113,6 +114,7 @@ class TelegramConfig:
             include_suspicious_surebets=os.getenv("TELEGRAM_INCLUDE_SUSPICIOUS", "0") == "1",
             surebet_dedup=os.getenv("TELEGRAM_SUREBET_DEDUP", "1") == "1",
             valuebet_dedup=os.getenv("TELEGRAM_VALUEBET_DEDUP", "1") == "1",
+            surebet_roi_delta_pct=float(os.getenv("TELEGRAM_SUREBET_ROI_DELTA", "0.5")),
         )
 
     @property
