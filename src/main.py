@@ -153,22 +153,46 @@ def find_value_bets(
     return out
 
 
+_OPPOSITE_OUTCOME = {"home": "away", "away": "home"}
+
+
+def _flip_outcome_for_swap(outcome: Outcome, market: MarketType) -> Outcome:
+    """When the matcher had to swap home/away to align a soft-book event_key
+    with the Pinnacle reference, any outcome labels carried by quotes from
+    that event are now pointing at the wrong team in the reference frame.
+    Flip home↔away (draw stays); the totals over/under labels are
+    team-symmetric so they pass through unchanged."""
+    if market == MarketType.TOTALS:
+        return outcome
+    flipped_label = _OPPOSITE_OUTCOME.get(outcome.label, outcome.label)
+    return replace(outcome, label=flipped_label)
+
+
 def remap_to_reference(
     soft_quotes: list[OddQuote],
     reference_keys: Iterable[str],
 ) -> list[OddQuote]:
     """Re-key soft-book quotes onto the matching Pinnacle event_key via fuzzy
-    matching, so they line up with the fair lines. Unmatched quotes are dropped."""
+    matching, so they line up with the fair lines. When the matcher detects
+    that the candidate listed the teams in swapped order (e.g. soft book has
+    'Senegal vs Nigeria' while Pinnacle has 'Nigeria vs Senegal'), the home
+    /away outcome labels are flipped on the way out so the rest of the
+    pipeline compares apples to apples. Unmatched quotes are dropped."""
     soft_to_ref = reconcile_event_keys(
         reference_keys=list(reference_keys),
         candidate_keys={q.event_key for q in soft_quotes},
     )
     out: list[OddQuote] = []
     for q in soft_quotes:
-        ref = soft_to_ref.get(q.event_key)
-        if ref is None:
+        match = soft_to_ref.get(q.event_key)
+        if match is None:
             continue
-        out.append(replace(q, event_key=ref) if ref != q.event_key else q)
+        ref_key, swap = match
+        flipped_outcome = _flip_outcome_for_swap(q.outcome, q.market) if swap else q.outcome
+        if ref_key == q.event_key and not swap:
+            out.append(q)
+        else:
+            out.append(replace(q, event_key=ref_key, outcome=flipped_outcome))
     return out
 
 

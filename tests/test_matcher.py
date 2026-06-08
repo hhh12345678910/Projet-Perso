@@ -79,14 +79,24 @@ def test_parse_event_key_roundtrip():
 def test_reconcile_keeps_exact_match():
     t = datetime(2026, 5, 14, 20, 0, tzinfo=timezone.utc)
     k = event_key("Valencia", "Rayo Vallecano", t)
-    assert reconcile_event_keys([k], [k]) == {k: k}
+    assert reconcile_event_keys([k], [k]) == {k: (k, False)}
 
 
 def test_reconcile_maps_soft_key_within_time_window():
     t = datetime(2026, 5, 14, 20, 0, tzinfo=timezone.utc)
     ref = event_key("Standard Liège", "RSC Anderlecht", t)
     soft = event_key("Standard de Liege", "Anderlecht", t + timedelta(minutes=4))
-    assert reconcile_event_keys([ref], [soft]) == {soft: ref}
+    assert reconcile_event_keys([ref], [soft]) == {soft: (ref, False)}
+
+
+def test_reconcile_flags_team_order_swap():
+    # Same event, but the soft book lists Senegal as home instead of Nigeria.
+    # The matcher should still link the two keys, with the swap flag set.
+    t = datetime(2026, 5, 14, 20, 0, tzinfo=timezone.utc)
+    ref = event_key("Nigeria", "Senegal", t)
+    soft = event_key("Senegal", "Nigeria", t)
+    result = reconcile_event_keys([ref], [soft])
+    assert result == {soft: (ref, True)}
 
 
 def test_reconcile_rejects_outside_time_window():

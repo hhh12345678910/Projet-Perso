@@ -67,12 +67,16 @@ def reconcile_event_keys(
     *,
     time_tolerance_minutes: int = 10,
     min_score: float = 85.0,
-) -> dict[str, str]:
+) -> dict[str, tuple[str, bool]]:
     """Map each candidate (soft-book) event_key onto the best reference
     (Pinnacle) event_key via fuzzy team matching within a time window.
 
-    Returns {candidate_key: reference_key} for candidates that match. Exact
-    string matches are kept as-is.
+    Returns {candidate_key: (reference_key, swap_required)} for candidates
+    that match. `swap_required=True` means the candidate listed home/away
+    in the opposite order to the reference, so any outcome labels carried
+    by quotes from that candidate need to be flipped before they line up
+    with the reference frame. Exact string matches are kept as-is and never
+    require a swap.
     """
     refs: list[tuple[str, datetime, str, str]] = []
     for k in reference_keys:
@@ -81,12 +85,12 @@ def reconcile_event_keys(
             refs.append((k, *parsed))
 
     tol = timedelta(minutes=time_tolerance_minutes)
-    mapping: dict[str, str] = {}
+    mapping: dict[str, tuple[str, bool]] = {}
     ref_keys = {r[0] for r in refs}
 
     for ck in candidate_keys:
         if ck in ref_keys:
-            mapping[ck] = ck
+            mapping[ck] = (ck, False)
             continue
         parsed = parse_event_key(ck)
         if parsed is None:
@@ -94,17 +98,24 @@ def reconcile_event_keys(
         c_start, c_home, c_away = parsed
         best_key: Optional[str] = None
         best_score = 0.0
+        best_swap = False
         for rk, r_start, r_home, r_away in refs:
             if abs(r_start - c_start) > tol:
                 continue
             s_direct = (team_similarity(c_home, r_home) + team_similarity(c_away, r_away)) / 2
             s_swap = (team_similarity(c_home, r_away) + team_similarity(c_away, r_home)) / 2
-            score = max(s_direct, s_swap)
+            if s_direct >= s_swap:
+                score = s_direct
+                swap = False
+            else:
+                score = s_swap
+                swap = True
             if score > best_score:
                 best_score = score
                 best_key = rk
+                best_swap = swap
         if best_key is not None and best_score >= min_score:
-            mapping[ck] = best_key
+            mapping[ck] = (best_key, best_swap)
     return mapping
 
 
