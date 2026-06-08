@@ -548,6 +548,7 @@ def scan_surebets(
         soft_quotes += fetch_goldenpalace_quotes(current_sport)
         soft_quotes += fetch_starcasinosport_quotes(current_sport)
         soft_quotes += fetch_magicbetting_quotes(magicbetting_file) if current_sport == sports[0] else []
+        soft_quotes += fetch_smarkets_quotes(current_sport)
         console.print(f"  → {len(soft_quotes)} soft-book quotes total")
 
         if not pinnacle_quotes and not soft_quotes:
