@@ -104,14 +104,16 @@ class GoldenPalaceScraper:
 # typeId for the match-winner and total markets — they all reduce to H2H /
 # TOTALS downstream. Discovered via real HARs on /api/widget/GetEvents.
 _MARKET_BY_TYPE_ID = {
-    1: MarketType.H2H,       # Soccer 1x2 (also Hockey regulation 3-way)
-    186: MarketType.H2H,     # Tennis "Vainqueur"
-    219: MarketType.H2H,     # Basketball "Vainqueur (prol. incl.)"
-    406: MarketType.H2H,     # Hockey "Vainqueur (prol. + TAB incl.)"
-    18: MarketType.TOTALS,   # Soccer Total de buts
-    189: MarketType.TOTALS,  # Tennis "Total jeux"
-    225: MarketType.TOTALS,  # Basketball "Total de points (prol. incl.)"
-    412: MarketType.TOTALS,  # Hockey "Total de buts (prol. + TAB incl.)"
+    1: MarketType.H2H,         # Soccer 1x2 (also Hockey regulation 3-way)
+    186: MarketType.H2H,       # Tennis "Vainqueur"
+    219: MarketType.H2H,       # Basketball "Vainqueur (prol. incl.)"
+    406: MarketType.H2H,       # Hockey "Vainqueur (prol. + TAB incl.)"
+    18: MarketType.TOTALS,     # Soccer Total de buts
+    189: MarketType.TOTALS,    # Tennis "Total jeux"
+    225: MarketType.TOTALS,    # Basketball "Total de points (prol. incl.)"
+    412: MarketType.TOTALS,    # Hockey "Total de buts (prol. + TAB incl.)"
+    14: MarketType.HANDICAP,   # Soccer Handicap 1x2 (European 3-way) — discovered via GetEventDetails HAR
+    16: MarketType.HANDICAP,   # Soccer Handicap (Asian 2-way)
 }
 
 
@@ -121,9 +123,14 @@ def _market_type(market: dict) -> MarketType | None:
 
 # Per-market the odd typeId is the canonical position role
 # (1 = home, 2 = draw, 3 = away for 1X2; 12 = over, 13 = under for Totals).
+# Handicap odd typeIds discovered from GetEventDetails HAR:
+#   1711=home, 1712=draw, 1713=away (Handicap 1x2 / typeId=14)
+#   1714=home, 1715=away             (Asian handicap / typeId=16)
 _LABEL_BY_ODD_TYPE = {
     1: "home", 2: "draw", 3: "away",
     12: "over", 13: "under",
+    1711: "home", 1712: "draw", 1713: "away",
+    1714: "home", 1715: "away",
 }
 
 
@@ -205,7 +212,7 @@ def parse_get_events(payload: dict, book: Book = Book.GOLDEN_PALACE) -> Iterator
                     continue
                 if decimal_odd <= 1.0:
                     continue
-                line = _extract_line(odd.get("name") or "") if market_type == MarketType.TOTALS else None
+                line = _extract_line(odd.get("name") or "") if market_type in (MarketType.TOTALS, MarketType.HANDICAP) else None
                 yield OddQuote(
                     event_key=ek,
                     book=book,
