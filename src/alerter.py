@@ -94,6 +94,7 @@ class TelegramConfig:
     min_surebet_margin_pct: float = 1.0  # surebets below this margin stay silent
     include_suspicious_surebets: bool = False  # opt-in to see flagged ones too
     surebet_dedup: bool = True           # off -> alert every scan even if seen before
+    valuebet_dedup: bool = True          # off -> alert every scan even on stale bets
     parse_mode: str = "HTML"
 
     @classmethod
@@ -109,6 +110,7 @@ class TelegramConfig:
             min_surebet_margin_pct=float(os.getenv("TELEGRAM_MIN_SUREBET", "1.0")),
             include_suspicious_surebets=os.getenv("TELEGRAM_INCLUDE_SUSPICIOUS", "0") == "1",
             surebet_dedup=os.getenv("TELEGRAM_SUREBET_DEDUP", "1") == "1",
+            valuebet_dedup=os.getenv("TELEGRAM_VALUEBET_DEDUP", "1") == "1",
         )
 
 
