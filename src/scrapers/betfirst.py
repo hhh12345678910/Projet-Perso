@@ -96,7 +96,7 @@ class BetFirstScraper:
         self,
         sport: str = "soccer",
         *,
-        days_ahead: int = 2,
+        days_ahead: int = 7,
         max_market_count: int = 10,
         page_number: int = 1,
     ) -> dict:
@@ -124,7 +124,7 @@ class BetFirstScraper:
         self,
         sport: str = "soccer",
         *,
-        days_ahead: int = 2,
+        days_ahead: int = 7,
         max_market_count: int = 10,
         max_pages: int = 50,
     ) -> dict:

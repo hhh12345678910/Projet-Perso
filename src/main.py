@@ -237,7 +237,7 @@ def fetch_betfirst_quotes(sport: str) -> list[OddQuote]:
     """Fetch + parse the BetFirst events-table for a sport (paginated)."""
     try:
         with BetFirstScraper() as bf:
-            data = bf.fetch_all_events(sport, days_ahead=2, max_market_count=10)
+            data = bf.fetch_all_events(sport, days_ahead=7, max_market_count=10)
         return list(betfirst_parse_events_table(data))
     except httpx.HTTPError as e:
         console.print(f"[yellow]BetFirst skipped:[/yellow] {e}")
@@ -248,7 +248,7 @@ def fetch_ladbrokes_quotes(sport: str) -> list[OddQuote]:
     """Fetch + parse every Ladbrokes meeting of a sport via the detail-service."""
     try:
         with LadbrokesScraper() as lb:
-            data = lb.fetch_all_meetings(sport, max_meetings=40)
+            data = lb.fetch_all_meetings(sport, max_meetings=80)
         return list(ladbrokes_parse_prematch(data))
     except httpx.HTTPError as e:
         console.print(f"[yellow]Ladbrokes skipped:[/yellow] {e}")

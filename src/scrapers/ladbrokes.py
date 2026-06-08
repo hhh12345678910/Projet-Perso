@@ -130,7 +130,7 @@ class LadbrokesScraper:
         self,
         sport: str = "soccer",
         *,
-        max_meetings: int = 40,
+        max_meetings: int = 80,
         min_events: int = 1,
     ) -> dict:
         """Discover every meeting of a sport and fetch each one. Returns a
