@@ -6,6 +6,8 @@ from dataclasses import replace
 from datetime import datetime, timezone
 from typing import Callable, Iterable
 
+import time
+
 import httpx
 import typer
 from rich.console import Console
@@ -611,6 +613,133 @@ def scan_surebets(
             )
         if sent:
             console.print(f"  → {sent} surebet alerts sent")
+
+
+@app.command()
+def daemon(
+    sport: str = "soccer,tennis,basketball,hockey",
+    min_ev: float = 2.0,
+    bankroll: float = 1000.0,
+    breather: int = typer.Option(
+        30, "--breather",
+        help="Seconds to pause between cycle end and next start.",
+    ),
+    betano_file: str = typer.Option(
+        None, "--betano-file",
+        help="Path to a Betano JSON dump — same as in `scan`.",
+    ),
+    magicbetting_file: str = typer.Option(
+        None, "--magicbetting-file",
+        help="Path to a Magic Betting capture — same as in `scan`.",
+    ),
+):
+    """Continuous scan: fetch all books in parallel, detect value bets + surebets,
+    alert on Telegram only when something new or changed. Loops forever — run
+    under systemd (scripts/valuebet-daemon.service) or screen/tmux."""
+    sports_list = [s.strip() for s in sport.split(",") if s.strip()]
+    storage = Storage(ScanConfig().db_path)
+    teams.init(storage)
+
+    cycle = 0
+    while True:
+        cycle += 1
+        t0 = datetime.now(timezone.utc)
+        console.print(f"\n[bold green]══ CYCLE {cycle} — {t0.strftime('%H:%M:%S')} UTC ══[/bold green]")
+        tg_cfg = TelegramConfig.from_env()
+
+        for current_sport in sports_list:
+            try:
+                console.print(f"\n[bold]{current_sport.upper()}[/bold]")
+                all_q = _fetch_all_parallel(
+                    current_sport, betano_file, magicbetting_file,
+                    include_file_books=(current_sport == sports_list[0]),
+                )
+                pinnacle_q = [q for q in all_q if q.book == Book.PINNACLE]
+                smarkets_q = [q for q in all_q if q.book == Book.SMARKETS]
+                soft_raw   = [q for q in all_q if q.book not in (Book.PINNACLE, Book.SMARKETS)]
+
+                if not pinnacle_q:
+                    console.print("[yellow]  No Pinnacle quotes — skipping[/yellow]")
+                    continue
+
+                cfg = ScanConfig(sport=current_sport, min_ev_pct=min_ev, bankroll=bankroll)
+                if smarkets_q:
+                    smarkets_q = remap_to_reference(smarkets_q, {q.event_key for q in pinnacle_q})
+                fair = build_fair_lines(pinnacle_q, cfg.devig_method, secondary_quotes=smarkets_q)
+                for q in pinnacle_q:
+                    storage.insert_quote(q)
+
+                ref_keys = {fl.event_key for fl in fair.values()}
+                soft_q = remap_to_reference(soft_raw, ref_keys)
+                for q in soft_q:
+                    storage.insert_quote(q)
+
+                # ── Value bets ───────────────────────────────────────────────
+                bets = find_value_bets(soft_q, fair, cfg)
+                bets.sort(key=lambda b: b.ev_pct, reverse=True)
+                newly_detected: list[ValueBet] = []
+                ev_changed: list[ValueBet] = []
+                for b in bets:
+                    existing = storage.find_value_bet_ev(
+                        b.event_key, b.book.value, b.market.value, b.outcome.label, b.outcome.line
+                    )
+                    storage.insert_value_bet(b)
+                    if existing is None:
+                        newly_detected.append(b)
+                    elif tg_cfg is not None and abs(b.ev_pct - existing[1]) >= tg_cfg.valuebet_ev_delta_pct:
+                        ev_changed.append(b)
+                        storage.update_value_bet_ev(existing[0], b.ev_pct)
+                console.print(
+                    f"  value bets: {len(bets)} total"
+                    + (f", {len(newly_detected)} new" if newly_detected else "")
+                    + (f", {len(ev_changed)} EV-changed" if ev_changed else "")
+                )
+                if tg_cfg is not None:
+                    vb_candidates = (newly_detected + ev_changed) if tg_cfg.valuebet_dedup else bets
+                    sent = send_alerts(
+                        vb_candidates, tg_cfg,
+                        print_fn=lambda s: console.print(f"[yellow]{s}[/yellow]"),
+                        sport=current_sport,
+                    )
+                    if sent:
+                        console.print(f"  → {sent} value bet alert(s) sent")
+
+                # ── Surebets ─────────────────────────────────────────────────
+                surebets = find_surebets(soft_q + pinnacle_q)
+                plausible = [s for s in surebets if not s.suspicious]
+                console.print(f"  surebets: {len(plausible)} plausible")
+                if tg_cfg is not None and surebets:
+                    sb_candidates = surebets if tg_cfg.include_suspicious_surebets else plausible
+                    if tg_cfg.surebet_dedup:
+                        sb_candidates = [
+                            s for s in sb_candidates
+                            if not storage.surebet_already_notified(
+                                s.event_key, s.market.value, s.line,
+                                current_margin_pct=s.margin * 100,
+                                roi_delta_pct=tg_cfg.surebet_roi_delta_pct,
+                            )
+                        ]
+                    if sb_candidates:
+                        sent_sb = send_surebet_alerts(
+                            sb_candidates, tg_cfg,
+                            print_fn=lambda x: console.print(f"[yellow]{x}[/yellow]"),
+                            sport=current_sport,
+                        )
+                        now = datetime.now(timezone.utc)
+                        for s in sb_candidates:
+                            storage.mark_surebet_notified(
+                                s.event_key, s.market.value, s.line, s.margin * 100, now,
+                            )
+                        if sent_sb:
+                            console.print(f"  → {sent_sb} surebet alert(s) sent")
+
+            except Exception as e:
+                console.print(f"[red]  {current_sport} error: {e}[/red]")
+                continue
+
+        elapsed = (datetime.now(timezone.utc) - t0).total_seconds()
+        console.print(f"\n[dim]Cycle {cycle} done in {elapsed:.0f}s — next in {breather}s[/dim]")
+        time.sleep(breather)
 
 
 @app.command(name="alert-test")

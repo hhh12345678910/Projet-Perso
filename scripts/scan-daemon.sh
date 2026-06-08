@@ -1,28 +1,19 @@
 #!/bin/bash
-# Continuous-mode wrapper: runs `scan` back-to-back forever. systemd keeps
-# the service alive; this loop handles the "next cycle starts immediately
-# after the previous one returns" semantics inside the process so we don't
-# rely on a fixed cron cadence.
+# Wrapper that launches the Python daemon command under systemd.
+# The Python loop handles retries and sleeps internally — this script
+# is just the process entry point that systemd monitors and restarts
+# if the Python process ever hard-crashes.
 set -uo pipefail
 
 PROJECT_DIR="${PROJECT_DIR:-/home/ubuntu/Projet-Perso}"
 SPORT_LIST="${SPORT_LIST:-soccer,tennis,basketball,hockey}"
-BREATHER_SECONDS="${BREATHER_SECONDS:-5}"
+BREATHER="${BREATHER:-30}"
 LOG_FILE="${LOG_FILE:-/home/ubuntu/valuebet.log}"
 
-# Funnel everything to the same log cron already writes to, so `tail -f` keeps
-# showing one ordered timeline.
 exec >> "$LOG_FILE" 2>&1
 
 cd "$PROJECT_DIR"
 
-while true; do
-    echo "$(date -Is) daemon: starting scan cycle"
-    if "$PROJECT_DIR/runscan.sh" scan --sport "$SPORT_LIST"; then
-        echo "$(date -Is) daemon: scan cycle completed"
-    else
-        rc=$?
-        echo "$(date -Is) daemon: scan exited with $rc — sleeping before retry"
-    fi
-    sleep "$BREATHER_SECONDS"
-done
+exec "$PROJECT_DIR/runscan.sh" daemon \
+    --sport "$SPORT_LIST" \
+    --breather "$BREATHER"
