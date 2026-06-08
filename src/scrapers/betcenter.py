@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import re
 from datetime import datetime, timezone
 from typing import Any, Iterator
 
@@ -140,23 +141,33 @@ def _parse_event_time(raw: Any) -> datetime | None:
         return None
 
 
+# Only full-match over/under markets; excludes per-team, per-half sub-markets
+# that share the same `anchor` field but have inflated odds (e.g., "Equipe 1 p/m 1,5").
+_FULLMATCH_TOTALS_RE = re.compile(r"^Plus \+ / [Mm]oins\b", re.IGNORECASE)
+
+# Cashpoint tip text -> normalised outcome label for H2H / handicap markets.
+_TIP_LABEL = {"1": "home", "X": "draw", "2": "away"}
+
+
 def _market_type(market: dict) -> MarketType | None:
     """Identify market type from the Cashpoint market dict.
 
-    Totals markets carry an `anchor` float (the over/under threshold).
+    Totals markets carry a non-null `anchor` float (the over/under threshold).
+    We additionally require the market text to match the standard full-match
+    "Plus + / Moins" pattern to exclude per-team and per-half sub-markets that
+    share the same `anchor` field structure but have wildly inflated odds.
     Handicap markets carry `hcAnchor` / `hc` (the handicap value/string).
     The primary match-result market has `isPrimary: true`."""
-    if "anchor" in market:
-        return MarketType.TOTALS
+    raw_anchor = market.get("anchor")
+    if raw_anchor is not None:
+        if _FULLMATCH_TOTALS_RE.match(market.get("text", "")):
+            return MarketType.TOTALS
+        return None
     if "hcAnchor" in market or "hc" in market:
         return MarketType.HANDICAP
     if market.get("isPrimary"):
         return MarketType.H2H
     return None
-
-
-# Cashpoint tip text -> normalised outcome label for H2H / handicap markets.
-_TIP_LABEL = {"1": "home", "X": "draw", "2": "away"}
 
 
 def _totals_label(tip_text: str) -> str | None:
