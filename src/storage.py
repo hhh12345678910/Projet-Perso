@@ -255,6 +255,35 @@ class Storage:
         with self._conn() as c:
             return list(c.execute("SELECT * FROM teams"))
 
+    def latest_pinnacle_quote_before(
+        self, event_key: str, market: str, outcome_label: str,
+        line: Optional[float], before: datetime,
+    ) -> Optional[sqlite3.Row]:
+        """Return the most recent Pinnacle quote stored before `before` for
+        this exact (event, market, outcome, line) tuple. close-lines uses
+        this to capture the closing price from our own historical capture
+        instead of asking Pinnacle's live API — by kickoff the live market
+        is already gone, the only place the real closing line still exists
+        is in our quotes table."""
+        with self._conn() as c:
+            params: list = [event_key, market, outcome_label, before.isoformat()]
+            line_clause = "line IS NULL" if line is None else "line = ?"
+            if line is not None:
+                # Splice the line value just after outcome_label in the params list.
+                params = [event_key, market, outcome_label, line, before.isoformat()]
+            sql = (
+                f"SELECT * FROM quotes "
+                f"WHERE book = 'pinnacle' "
+                f"  AND event_key = ? "
+                f"  AND market = ? "
+                f"  AND outcome_label = ? "
+                f"  AND {line_clause} "
+                f"  AND fetched_at < ? "
+                f"ORDER BY fetched_at DESC "
+                f"LIMIT 1"
+            )
+            return c.execute(sql, params).fetchone()
+
     def all_closed_bets(self) -> list[sqlite3.Row]:
         """Bets joined with their closing snapshot, ready for CLV aggregation."""
         with self._conn() as c:

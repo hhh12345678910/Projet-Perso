@@ -13,7 +13,7 @@ from rich.table import Table
 from .config import ScanConfig
 from .devig import devig
 from .ev import ev_pct, fair_odd, kelly_fraction, kelly_stake
-from .matcher import reconcile_event_keys
+from .matcher import parse_event_key, reconcile_event_keys
 from .models import Book, FairLine, MarketType, OddQuote, Outcome, ValueBet
 from .scrapers.betano import BetanoAuthError, BetanoScraper, parse_overview as betano_parse_overview
 from .scrapers.betfirst import BetFirstScraper, parse_events_table as betfirst_parse_events_table
@@ -630,9 +630,12 @@ def alert_test():
 @app.command(name="close-lines")
 def close_lines(sport: str = "soccer"):
     """For every detected value bet whose event has kicked off, snapshot the
-    last Pinnacle price as the closing line. Run this once after kickoff
-    (e.g. via cron a few minutes past every hour) — the closing snapshot is
-    what `clv-report` then aggregates."""
+    last Pinnacle price as the closing line. The closing price comes from our
+    own historical capture in the quotes table — Pinnacle removes prematch
+    markets from the live API at kickoff, so by the time this command runs
+    the only place the real closing line still exists is in the rows scan
+    persisted before kickoff. Run after kickoff (e.g. cron a few minutes
+    past every hour); the closing snapshot feeds `clv-report`."""
     cfg = ScanConfig(sport=sport)
     storage = Storage(cfg.db_path)
     teams.init(storage)
@@ -647,29 +650,40 @@ def close_lines(sport: str = "soccer"):
     if not due:
         return
 
-    console.print(f"[bold]Fetching Pinnacle {sport} for closing-line snapshots...[/bold]")
-    with PinnacleScraper() as pin:
-        quotes = list(pin.fetch_market_quotes(sport))
-    pin_index = index_quotes_by_market(quotes)
-
     closed = 0
     missing = 0
     for b in due:
-        q = pin_index.get((b["event_key"], b["market"], b["outcome_label"], b["line"]))
-        if q is None:
+        parsed = parse_event_key(b["event_key"])
+        if parsed is None:
             missing += 1
             continue
-        # Use the inverse of the closing odd as a quick implied-prob estimate
-        # — for CLV we just need the price; the fair_prob column is informational.
+        kickoff, _, _ = parsed
+        row = storage.latest_pinnacle_quote_before(
+            event_key=b["event_key"],
+            market=b["market"],
+            outcome_label=b["outcome_label"],
+            line=b["line"],
+            before=kickoff,
+        )
+        if row is None:
+            missing += 1
+            continue
+        pinnacle_odd = float(row["decimal_odd"])
         storage.insert_clv_snapshot(
             value_bet_id=int(b["id"]),
-            pinnacle_odd=q.decimal_odd,
-            pinnacle_prob=1.0 / q.decimal_odd,
+            pinnacle_odd=pinnacle_odd,
+            # Inverse of the closing odd is the quickest implied-prob estimate
+            # — close to the devigged fair but not normalised; the fair_prob
+            # column on the value_bet row is the proper sharp estimate.
+            pinnacle_prob=1.0 / pinnacle_odd,
             snapshot_at=now,
             closing=True,
         )
         closed += 1
-    console.print(f"  → {closed} closing snapshots written; {missing} bets with no Pinnacle match")
+    console.print(
+        f"  → {closed} closing snapshots written; {missing} bets with no "
+        f"pre-kickoff Pinnacle quote on file"
+    )
 
 
 @app.command(name="clv-report")
