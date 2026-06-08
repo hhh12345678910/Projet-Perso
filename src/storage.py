@@ -237,6 +237,25 @@ class Storage:
                 (value_bet_id,),
             ).fetchone()
 
+    @staticmethod
+    def _event_key_like(event_key: str) -> str:
+        """Build a LIKE pattern that matches any event_key with the same date
+        and teams regardless of the exact kick-off minute.
+
+        event_key format: "YYYYMMDDHHMM::home__vs__away"
+        Pattern produced:  "YYYYMMDD%::home__vs__away"
+
+        Pinnacle sometimes adjusts a match's start time by a few minutes
+        between scans (DST corrections, late schedule changes). When that
+        happens the full key changes but the date + teams stay identical, so
+        exact-key dedup would miss the stored notification and fire again.
+        Matching on date+teams makes dedup robust to minor time drifts."""
+        if "::" not in event_key:
+            return event_key  # malformed key — fall back to exact match
+        date_prefix = event_key[:8]          # "YYYYMMDD"
+        teams_part = event_key.split("::", 1)[1]  # "home__vs__away"
+        return f"{date_prefix}%::{teams_part}"
+
     def surebet_already_notified(
         self, event_key: str, market: str, line: Optional[float],
         current_margin_pct: float = 0.0, roi_delta_pct: float = 0.5,
@@ -245,18 +264,19 @@ class Storage:
         its margin hasn't moved by more than roi_delta_pct since the last alert.
         A ROI change >= roi_delta_pct triggers a fresh notification so the user
         sees the updated opportunity without needing to disable dedup entirely."""
+        like_key = self._event_key_like(event_key)
         with self._conn() as c:
             if line is None:
                 row = c.execute(
-                    "SELECT margin_pct FROM notified_surebets WHERE event_key=? AND market=? "
+                    "SELECT margin_pct FROM notified_surebets WHERE event_key LIKE ? AND market=? "
                     "AND line IS NULL ORDER BY notified_at DESC LIMIT 1",
-                    (event_key, market),
+                    (like_key, market),
                 ).fetchone()
             else:
                 row = c.execute(
-                    "SELECT margin_pct FROM notified_surebets WHERE event_key=? AND market=? "
+                    "SELECT margin_pct FROM notified_surebets WHERE event_key LIKE ? AND market=? "
                     "AND line=? ORDER BY notified_at DESC LIMIT 1",
-                    (event_key, market, line),
+                    (like_key, market, line),
                 ).fetchone()
             if row is None:
                 return False
@@ -281,20 +301,21 @@ class Storage:
     ) -> bool:
         """Return True (skip) when this value bet was already notified AND its
         EV hasn't moved by ev_delta_pct since the last alert."""
+        like_key = self._event_key_like(event_key)
         with self._conn() as c:
             if line is None:
                 row = c.execute(
                     "SELECT ev_pct FROM notified_value_bets "
-                    "WHERE event_key=? AND book=? AND market=? AND outcome_label=? AND line IS NULL "
+                    "WHERE event_key LIKE ? AND book=? AND market=? AND outcome_label=? AND line IS NULL "
                     "ORDER BY notified_at DESC LIMIT 1",
-                    (event_key, book, market, outcome_label),
+                    (like_key, book, market, outcome_label),
                 ).fetchone()
             else:
                 row = c.execute(
                     "SELECT ev_pct FROM notified_value_bets "
-                    "WHERE event_key=? AND book=? AND market=? AND outcome_label=? AND line=? "
+                    "WHERE event_key LIKE ? AND book=? AND market=? AND outcome_label=? AND line=? "
                     "ORDER BY notified_at DESC LIMIT 1",
-                    (event_key, book, market, outcome_label, line),
+                    (like_key, book, market, outcome_label, line),
                 ).fetchone()
             if row is None:
                 return False
