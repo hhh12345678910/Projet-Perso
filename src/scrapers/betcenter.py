@@ -27,7 +27,7 @@ SPORT_IDS = {
     "soccer":     1,
     "tennis":     2,
     "basketball": 12,
-    "hockey":     4,
+    "hockey":     10,
 }
 
 
