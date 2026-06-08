@@ -756,6 +756,11 @@ def alert_test():
         )
         return
 
+    # Use values just above the configured thresholds so the test always
+    # passes regardless of what TELEGRAM_MIN_EV / TELEGRAM_MIN_SUREBET are set to.
+    test_ev  = cfg.min_ev_pct + 1.0
+    test_roi = cfg.min_surebet_margin_pct / 100 + 0.005  # margin slightly above threshold
+
     sample_bet = ValueBet(
         event_key="202606010000::testteamA__vs__testteamB",
         book=Book.UNIBET_BE,
@@ -764,7 +769,7 @@ def alert_test():
         odd_taken=1.86,
         fair_prob=0.5650,
         fair_odd=1.77,
-        ev_pct=5.17,
+        ev_pct=test_ev,
         kelly_stake_pct=1.50,
         detected_at=datetime.now(timezone.utc),
     )
@@ -777,7 +782,7 @@ def alert_test():
             "draw": (3.85, Book.BETFIRST),
             "away": (4.20, Book.LADBROKES_BE),
         },
-        margin=0.0234,
+        margin=test_roi,
     )
 
     bet_sent = send_alerts(
