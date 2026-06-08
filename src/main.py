@@ -1,9 +1,10 @@
 from __future__ import annotations
 
 from collections import defaultdict
+from concurrent.futures import ThreadPoolExecutor, as_completed
 from dataclasses import replace
 from datetime import datetime, timezone
-from typing import Iterable
+from typing import Callable, Iterable
 
 import httpx
 import typer
@@ -289,17 +290,66 @@ def fetch_smarkets_quotes(sport: str, max_events: int = 200) -> list[OddQuote]:
         return []
 
 
-def fetch_magicbetting_quotes(magicbetting_file: str | None) -> list[OddQuote]:
-    """Magic Betting sits behind Cloudflare from datacenter IPs, so live fetch
-    is impossible from cloud. Reads a saved response body via the file flag."""
+def fetch_magicbetting_quotes(magicbetting_file: str | None, sport: str = "soccer") -> list[OddQuote]:
+    """Try a live dynamic fetch first (discovers all tournaments automatically).
+    Falls back to a saved file dump when the live endpoint is blocked (Cloudflare
+    on datacenter IPs) or returns nothing."""
+    try:
+        with MagicBettingScraper() as mb:
+            quotes = mb.fetch_all_quotes(sport)
+        if quotes:
+            return quotes
+    except Exception:
+        pass
     if not magicbetting_file:
         return []
     try:
         data = magicbetting_load_file(magicbetting_file)
+        return list(magicbetting_parse_events(data))
     except (OSError, ValueError) as e:
         console.print(f"[yellow]Magic Betting file unreadable:[/yellow] {e}")
         return []
-    return list(magicbetting_parse_events(data))
+
+
+def _fetch_all_parallel(
+    sport: str,
+    betano_file: str | None = None,
+    magicbetting_file: str | None = None,
+    *,
+    include_file_books: bool = True,
+) -> list[OddQuote]:
+    """Fetch Pinnacle + all soft books concurrently. Returns the merged list;
+    callers split by book to route Pinnacle/Smarkets as sharp references."""
+    def _pinnacle() -> list[OddQuote]:
+        with PinnacleScraper() as pin:
+            return list(pin.fetch_market_quotes(sport))
+
+    tasks: dict[str, Callable[[], list[OddQuote]]] = {
+        "Pinnacle":      _pinnacle,
+        "Unibet":        lambda: fetch_unibet_quotes(sport),
+        "BetFirst":      lambda: fetch_betfirst_quotes(sport),
+        "Ladbrokes":     lambda: fetch_ladbrokes_quotes(sport),
+        "Golden Palace": lambda: fetch_goldenpalace_quotes(sport),
+        "StarCasino":    lambda: fetch_starcasinosport_quotes(sport),
+        "Smarkets":      lambda: fetch_smarkets_quotes(sport),
+    }
+    if include_file_books:
+        tasks["Betano"]        = lambda: fetch_betano_quotes(betano_file=betano_file)
+        tasks["Magic Betting"] = lambda: fetch_magicbetting_quotes(magicbetting_file, sport)
+
+    all_quotes: list[OddQuote] = []
+    with ThreadPoolExecutor(max_workers=len(tasks)) as executor:
+        futures = {executor.submit(fn): name for name, fn in tasks.items()}
+        for future in as_completed(futures):
+            name = futures[future]
+            try:
+                quotes = future.result()
+                all_quotes.extend(quotes)
+                if quotes:
+                    console.print(f"  → {len(quotes):5d} quotes  {name}")
+            except Exception as e:
+                console.print(f"[yellow]  {name} skipped: {e}[/yellow]")
+    return all_quotes
 
 
 @app.command()
@@ -334,18 +384,17 @@ def scan(
         console.print()
         console.print(f"[bold green]══ {current_sport.upper()} ══[/bold green]")
 
-        console.print(f"[bold]Fetching Pinnacle {current_sport} markets...[/bold]")
-        with PinnacleScraper() as pin:
-            quotes = list(pin.fetch_market_quotes(current_sport))
-        console.print(f"  → {len(quotes)} Pinnacle quotes")
+        console.print(f"[bold]Fetching all books in parallel ({current_sport})...[/bold]")
+        all_quotes = _fetch_all_parallel(
+            current_sport, betano_file, magicbetting_file,
+            include_file_books=(current_sport == sports[0]),
+        )
 
-        # Smarkets exchange as a secondary sharp reference (margin-free
-        # peer-to-peer prices). Pinnacle stays primary in the blend.
-        smarkets_quotes = fetch_smarkets_quotes(current_sport)
-        console.print(f"  → {len(smarkets_quotes)} Smarkets quotes")
+        quotes         = [q for q in all_quotes if q.book == Book.PINNACLE]
+        smarkets_quotes = [q for q in all_quotes if q.book == Book.SMARKETS]
+        raw_soft       = [q for q in all_quotes if q.book not in (Book.PINNACLE, Book.SMARKETS)]
 
-        # Match Smarkets event keys onto Pinnacle's so the blend per
-        # (event, market, line) actually lands on the same row.
+        # Remap Smarkets onto Pinnacle keys for the fair-line blend.
         if smarkets_quotes:
             smarkets_quotes = remap_to_reference(
                 smarkets_quotes, {q.event_key for q in quotes}
@@ -359,37 +408,10 @@ def scan(
         for q in quotes:
             storage.insert_quote(q)
 
-        console.print("[bold]Fetching soft books...[/bold]")
-        # Betano/Magic Betting are file-mode books; only consume them on the
-        # first sport iteration so we don't double-parse the same dump.
-        betano_quotes = (
-            fetch_betano_quotes(betano_file=betano_file)
-            if current_sport == sports[0] else []
-        )
-        console.print(f"  → {len(betano_quotes)} Betano quotes")
-        unibet_quotes = fetch_unibet_quotes(current_sport)
-        console.print(f"  → {len(unibet_quotes)} Unibet quotes")
-        betfirst_quotes = fetch_betfirst_quotes(current_sport)
-        console.print(f"  → {len(betfirst_quotes)} BetFirst quotes")
-        ladbrokes_quotes = fetch_ladbrokes_quotes(current_sport)
-        console.print(f"  → {len(ladbrokes_quotes)} Ladbrokes quotes")
-        goldenpalace_quotes = fetch_goldenpalace_quotes(current_sport)
-        console.print(f"  → {len(goldenpalace_quotes)} Golden Palace quotes")
-        starcasinosport_quotes = fetch_starcasinosport_quotes(current_sport)
-        console.print(f"  → {len(starcasinosport_quotes)} StarCasino Sport quotes")
-        magicbetting_quotes = (
-            fetch_magicbetting_quotes(magicbetting_file)
-            if current_sport == sports[0] else []
-        )
-        console.print(f"  → {len(magicbetting_quotes)} Magic Betting quotes")
         sport = current_sport  # keep local var name for downstream prints
 
         ref_keys = {fl.event_key for fl in fair.values()}
-        soft_quotes = remap_to_reference(
-            betano_quotes + unibet_quotes + betfirst_quotes + ladbrokes_quotes
-            + goldenpalace_quotes + starcasinosport_quotes + magicbetting_quotes,
-            ref_keys,
-        )
+        soft_quotes = remap_to_reference(raw_soft, ref_keys)
         console.print(f"  → {len(soft_quotes)} matched to a Pinnacle event")
         for q in soft_quotes:
             storage.insert_quote(q)
@@ -534,28 +556,20 @@ def scan_surebets(
         console.print()
         console.print(f"[bold green]══ {current_sport.upper()} (surebets) ══[/bold green]")
 
-        console.print(f"[bold]Fetching Pinnacle {current_sport} markets...[/bold]")
-        with PinnacleScraper() as pin:
-            pinnacle_quotes = list(pin.fetch_market_quotes(current_sport))
-        console.print(f"  → {len(pinnacle_quotes)} Pinnacle quotes")
+        console.print(f"[bold]Fetching all books in parallel ({current_sport})...[/bold]")
+        all_quotes = _fetch_all_parallel(
+            current_sport, betano_file, magicbetting_file,
+            include_file_books=(current_sport == sports[0]),
+        )
 
-        # Pull every soft book for this sport.
-        soft_quotes: list[OddQuote] = []
-        soft_quotes += fetch_betano_quotes(betano_file=betano_file) if current_sport == sports[0] else []
-        soft_quotes += fetch_unibet_quotes(current_sport)
-        soft_quotes += fetch_betfirst_quotes(current_sport)
-        soft_quotes += fetch_ladbrokes_quotes(current_sport)
-        soft_quotes += fetch_goldenpalace_quotes(current_sport)
-        soft_quotes += fetch_starcasinosport_quotes(current_sport)
-        soft_quotes += fetch_magicbetting_quotes(magicbetting_file) if current_sport == sports[0] else []
-        soft_quotes += fetch_smarkets_quotes(current_sport)
-        console.print(f"  → {len(soft_quotes)} soft-book quotes total")
+        pinnacle_quotes = [q for q in all_quotes if q.book == Book.PINNACLE]
+        soft_quotes     = [q for q in all_quotes if q.book != Book.PINNACLE]
 
-        if not pinnacle_quotes and not soft_quotes:
+        if not all_quotes:
             continue
 
-        # Remap soft-book event keys onto Pinnacle's canonical keys, then
-        # include Pinnacle in the pool so Pinnacle-leg arbs are detected too.
+        # Remap all soft books (incl. Smarkets) onto Pinnacle canonical keys,
+        # then include Pinnacle in the pool so Pinnacle-leg arbs are detected.
         ref_keys = {q.event_key for q in pinnacle_quotes}
         normalised_quotes = remap_to_reference(soft_quotes, ref_keys) + pinnacle_quotes
         console.print(f"  → {len(normalised_quotes)} quotes matched to a common event")

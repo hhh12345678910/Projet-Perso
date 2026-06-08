@@ -19,6 +19,25 @@ BASE = "https://sport-ak.bldiframe.com"
 PARTNER_ID = "3000270"        # Magic Betting's BetConstruct partner id
 PARTNER_GUID = "4e9954e6-76b5-4bd4-9801-2cdf644246b0"  # path segment
 
+SPORT_IDS = {
+    "soccer": 1,
+    "tennis": 2,
+    "basketball": 3,
+    "hockey": 4,
+}
+
+
+def _tournament_ids(tree: dict) -> list[int]:
+    """Walk a getSportsTree payload and collect every tournament/competition Id."""
+    ids: list[int] = []
+    for sport in tree.get("sports") or []:
+        for region in sport.get("Regions") or []:
+            for comp in region.get("Competitions") or []:
+                tid = comp.get("Id")
+                if tid is not None:
+                    ids.append(int(tid))
+    return ids
+
 
 def _is_retryable(exc: BaseException) -> bool:
     if isinstance(exc, httpx.TransportError):
@@ -71,6 +90,42 @@ class MagicBettingScraper:
 
     def __exit__(self, *_: object) -> None:
         self.close()
+
+    @retry(
+        retry=retry_if_exception(_is_retryable),
+        stop=stop_after_attempt(3),
+        wait=wait_exponential(multiplier=1, min=1, max=8),
+    )
+    def fetch_sports_tree(self, sport_id: int = 1) -> dict:
+        """Discover every region + tournament for a sport via the BetConstruct
+        getSportsTree endpoint. Returns the raw (decoded) payload."""
+        r = self._client.get(
+            f"/{PARTNER_GUID}/common/getSportsTree",
+            params={
+                "sportIds": sport_id,
+                "langId": 16,
+                "partnerId": PARTNER_ID,
+                "countryCode": "BE",
+            },
+        )
+        r.raise_for_status()
+        return decode_response(r.content)
+
+    def fetch_all_quotes(self, sport: str = "soccer") -> list[OddQuote]:
+        """Discover all tournaments for the sport dynamically, then scrape each.
+        Falls back gracefully: tournaments that return errors are skipped so one
+        bad endpoint doesn't abort the whole fetch."""
+        sport_id = SPORT_IDS.get(sport, 1)
+        tree = self.fetch_sports_tree(sport_id)
+        tournament_ids = _tournament_ids(tree)
+        out: list[OddQuote] = []
+        for tid in tournament_ids:
+            try:
+                payload = self.fetch_tournament_events(tid, sport_id=sport_id)
+                out.extend(parse_events(payload))
+            except Exception:
+                continue
+        return out
 
     @retry(
         retry=retry_if_exception(_is_retryable),
