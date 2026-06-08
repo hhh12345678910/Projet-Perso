@@ -128,6 +128,17 @@ def find_value_bets(
     fair_lines: dict[tuple[str, MarketType, float | None], FairLine],
     cfg: ScanConfig,
 ) -> list[ValueBet]:
+    # Pre-count distinct outcome labels per (event, market, line, book).
+    # If a soft book offers fewer outcomes than Pinnacle's fair line (e.g.
+    # hockey 2-way OT-included on Pinnacle vs 3-way regulation 1X2 on soft
+    # books), the markets are structurally incompatible and must be skipped.
+    from collections import defaultdict
+    _soft_labels: dict[tuple, set[str]] = defaultdict(set)
+    for q in candidate_quotes:
+        if q.book != Book.PINNACLE:
+            _soft_labels[(q.event_key, q.market, q.outcome.line, q.book)].add(q.outcome.label)
+    soft_outcome_counts = {k: len(v) for k, v in _soft_labels.items()}
+
     out: list[ValueBet] = []
     now = datetime.now(timezone.utc)
     for q in candidate_quotes:
@@ -135,6 +146,11 @@ def find_value_bets(
             continue
         fl = fair_lines.get((q.event_key, q.market, q.outcome.line))
         if fl is None:
+            continue
+        # Skip if the soft book doesn't offer the same number of outcomes as
+        # the Pinnacle fair line (market structure mismatch).
+        n_soft = soft_outcome_counts.get((q.event_key, q.market, q.outcome.line, q.book), 0)
+        if n_soft != len(fl.outcomes):
             continue
         p = fl.outcomes.get(q.outcome.label)
         if p is None or p <= 0 or p >= 1:
