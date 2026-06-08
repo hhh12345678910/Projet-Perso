@@ -8,6 +8,7 @@ from tenacity import retry, retry_if_exception, stop_after_attempt, wait_exponen
 
 from ..matcher import event_key
 from ..models import Book, MarketType, OddQuote, Outcome
+from ..teams import record_pair
 
 
 # Magic Betting embeds an iframe served by BetConstruct (sport-ak.bldiframe.com).
@@ -142,6 +143,7 @@ def parse_events(payload: dict, *, book: Book = Book.MAGIC_BETTING) -> Iterator[
         start = _parse_event_time(ev.get("D"))
         if not (home and away and start):
             continue
+        record_pair(home, away)
         ek = event_key(home, away, start)
         source_id = str(ev.get("Id") or "")
 

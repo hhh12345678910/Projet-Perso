@@ -34,6 +34,7 @@ from .clv import (
     index_quotes_by_market,
 )
 from .alerter import TelegramConfig, send_alerts, send_surebet_alerts
+from . import teams
 
 
 app = typer.Typer(add_completion=False)
@@ -326,6 +327,7 @@ def scan(
     section so per-sport coverage stays visible."""
     sports = [s.strip() for s in sport.split(",") if s.strip()]
     storage = Storage(ScanConfig().db_path)
+    teams.init(storage)
 
     for current_sport in sports:
         cfg = ScanConfig(sport=current_sport, min_ev_pct=min_ev, bankroll=bankroll)
@@ -519,6 +521,7 @@ def scan_surebets(
     separated --sport lets one cron entry cover every sport you care about."""
     sports = [s.strip() for s in sport.split(",") if s.strip()]
     storage = Storage(ScanConfig().db_path)
+    teams.init(storage)
     tg_cfg = TelegramConfig.from_env()
 
     for current_sport in sports:
@@ -629,6 +632,7 @@ def close_lines(sport: str = "soccer"):
     what `clv-report` then aggregates."""
     cfg = ScanConfig(sport=sport)
     storage = Storage(cfg.db_path)
+    teams.init(storage)
     open_bets = storage.open_value_bets()
     if not open_bets:
         console.print("[bold]No open value bets to close.[/bold]")
@@ -672,6 +676,7 @@ def clv_report():
     CLV is positive and stable, the engine is finding real edges."""
     cfg = ScanConfig()
     storage = Storage(cfg.db_path)
+    teams.init(storage)
     rows = [dict(r) for r in storage.all_closed_bets()]
     if not rows:
         console.print("[bold]No closed bets yet — run `close-lines` after kickoffs.[/bold]")

@@ -11,6 +11,7 @@ from tenacity import retry, retry_if_exception, stop_after_attempt, wait_exponen
 
 from ..matcher import event_key
 from ..models import Book, MarketType, OddQuote, Outcome
+from ..teams import record_pair
 
 
 # Smarkets is a London-based betting exchange with a public, unauthenticated
@@ -232,6 +233,7 @@ def iter_quotes_for_event(
     start = _parse_event_time(event.get("start_datetime"))
     if not (home and away and start):
         return
+    record_pair(home, away)
     ek = event_key(home, away, start)
     source_id = str(event.get("id") or "")
 

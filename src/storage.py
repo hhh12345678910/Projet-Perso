@@ -76,6 +76,12 @@ CREATE TABLE IF NOT EXISTS notified_surebets (
     notified_at     TEXT NOT NULL
 );
 CREATE INDEX IF NOT EXISTS idx_ns_lookup ON notified_surebets(event_key, market);
+
+CREATE TABLE IF NOT EXISTS teams (
+    normalized_name  TEXT PRIMARY KEY,
+    display_name     TEXT NOT NULL,
+    last_seen_at     TEXT NOT NULL
+);
 """
 
 
@@ -223,6 +229,31 @@ class Storage:
                 "VALUES (?, ?, ?, ?, ?)",
                 (event_key, market, line, margin_pct, notified_at.isoformat()),
             )
+
+    def record_team(self, normalized_name: str, display_name: str) -> None:
+        """Persist (or refresh) the mapping from the matcher's space-stripped
+        team key to the original human-readable name a scraper just saw.
+        UPSERT semantics — the most recent scraper to see the team wins."""
+        with self._conn() as c:
+            c.execute(
+                "INSERT INTO teams(normalized_name, display_name, last_seen_at) "
+                "VALUES (?, ?, ?) "
+                "ON CONFLICT(normalized_name) DO UPDATE SET "
+                "  display_name = excluded.display_name, "
+                "  last_seen_at = excluded.last_seen_at",
+                (normalized_name, display_name, datetime.utcnow().isoformat()),
+            )
+
+    def get_team(self, normalized_name: str) -> Optional[sqlite3.Row]:
+        with self._conn() as c:
+            return c.execute(
+                "SELECT * FROM teams WHERE normalized_name=?",
+                (normalized_name,),
+            ).fetchone()
+
+    def all_teams(self) -> list[sqlite3.Row]:
+        with self._conn() as c:
+            return list(c.execute("SELECT * FROM teams"))
 
     def all_closed_bets(self) -> list[sqlite3.Row]:
         """Bets joined with their closing snapshot, ready for CLV aggregation."""

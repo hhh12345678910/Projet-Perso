@@ -14,6 +14,7 @@ except ImportError:  # Python < 3.9 fallback — sandbox is 3.11 so this is safe
 from .matcher import parse_event_key
 from .models import Book, ValueBet
 from .surebet import Surebet
+from . import teams
 
 
 # Belgium-friendly display: dates relative to today, kickoff in local time.
@@ -61,13 +62,12 @@ def _sport_prefix(sport: str | None) -> str:
 
 
 def _prettify_team_name(normalized: str) -> str:
-    """Best-effort title-case of the normalized event-key fragment. Spaces are
-    stripped during normalize_team so multi-word names like 'manchestercity'
-    can't be recovered cleanly — single-word names look fine, compound ones
-    stay as-is in title case (good enough for an alert preview)."""
-    if not normalized:
-        return ""
-    return normalized.capitalize()
+    """Resolve a space-stripped event-key fragment back to its human-readable
+    name via the teams registry (populated by every scraper when it sees an
+    original team string). Falls back to the old title-case behaviour when
+    the registry doesn't know the team yet — typically only on the very
+    first scan of an event before a scraper records it."""
+    return teams.display(normalized)
 
 
 def _format_kickoff(start: datetime, now: datetime | None = None) -> str:

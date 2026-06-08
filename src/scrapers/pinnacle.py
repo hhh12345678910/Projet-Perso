@@ -11,6 +11,7 @@ from tenacity import retry, retry_if_exception, stop_after_attempt, wait_exponen
 from ..filter import is_noise_event
 from ..matcher import event_key
 from ..models import Book, Event, MarketType, OddQuote, Outcome
+from ..teams import record_pair
 
 
 PINNACLE_BASE = "https://guest.api.arcadia.pinnacle.com/0.1"
@@ -182,6 +183,7 @@ class PinnacleScraper:
                 if is_noise_event(home, away, league.get("name", "")):
                     continue
                 start = datetime.fromisoformat(start_raw.replace("Z", "+00:00")).astimezone(timezone.utc)
+                record_pair(home, away)
                 ek = event_key(home, away, start)
 
                 market_type = self._map_market(market.get("type"))

@@ -9,6 +9,7 @@ from tenacity import retry, retry_if_exception, stop_after_attempt, wait_exponen
 
 from ..matcher import event_key, team_similarity
 from ..models import Book, MarketType, OddQuote, Outcome
+from ..teams import record_pair
 
 
 BASE = "https://www.betanosports.be/fr/danae-webapi/api"
@@ -331,6 +332,7 @@ def parse_overview(data: dict) -> Iterator[OddQuote]:
         except (TypeError, ValueError):
             line_val = None
 
+        record_pair(home, away)
         yield OddQuote(
             event_key=event_key(home, away, start),
             book=Book.BETANO_BE,

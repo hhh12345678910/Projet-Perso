@@ -10,6 +10,7 @@ from tenacity import retry, stop_after_attempt, wait_exponential
 from ..filter import is_noise_event
 from ..matcher import event_key
 from ..models import Book, MarketType, OddQuote, Outcome
+from ..teams import record_pair
 
 
 # Unibet.be runs on the Kambi sportsbook platform. The public "offering" API is
@@ -201,6 +202,7 @@ def parse_listview(data: dict) -> Iterator[OddQuote]:
             continue
         if is_noise_event(home, away, ev.get("group", "")):
             continue
+        record_pair(home, away)
         ek = event_key(home, away, start)
         source_id = str(ev.get("id", ""))
 

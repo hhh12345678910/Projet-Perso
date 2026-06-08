@@ -9,6 +9,7 @@ from tenacity import retry, retry_if_exception, stop_after_attempt, wait_exponen
 from ..filter import is_noise_event
 from ..matcher import event_key
 from ..models import Book, MarketType, OddQuote, Outcome
+from ..teams import record_pair
 
 
 # BetFirst's sportsbook backend (separate from sports.betfirst.be).
@@ -261,6 +262,7 @@ def parse_events_table(payload: dict) -> Iterator[OddQuote]:
             continue
         if is_noise_event(home, away, ev.get("competitionName", "")):
             continue
+        record_pair(home, away)
         event_index[eid] = (event_key(home, away, start), eid)
 
     # marketId -> (event_key, MarketType, line, source_event_id)
