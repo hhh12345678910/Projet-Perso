@@ -25,7 +25,7 @@ from .scrapers.smarkets import SmarketsScraper, iter_all_quotes as smarkets_iter
 from .scrapers.starcasinosport import StarCasinoSportScraper, parse_get_events as starcasinosport_parse_get_events
 from .scrapers.unibet import UnibetScraper, parse_listview as unibet_parse_listview
 from .storage import Storage
-from .surebet import find_surebets
+from .surebet import find_surebets, Surebet
 from .clv import (
     aggregate as clv_aggregate,
     clv_pct,
