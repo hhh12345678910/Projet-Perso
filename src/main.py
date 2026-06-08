@@ -299,9 +299,11 @@ def fetch_magicbetting_quotes(magicbetting_file: str | None, sport: str = "socce
             quotes = mb.fetch_all_quotes(sport)
         if quotes:
             return quotes
-    except Exception:
-        pass
+        console.print("[yellow]Magic Betting live: 0 quotes (endpoint reachable but empty)[/yellow]")
+    except Exception as e:
+        console.print(f"[yellow]Magic Betting live blocked:[/yellow] {e}")
     if not magicbetting_file:
+        console.print("[yellow]Magic Betting skipped — no --magicbetting-file fallback set[/yellow]")
         return []
     try:
         data = magicbetting_load_file(magicbetting_file)
