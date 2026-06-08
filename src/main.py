@@ -597,7 +597,10 @@ def scan_surebets(
 
 @app.command(name="alert-test")
 def alert_test():
-    """Send a dummy value bet alert to verify the Telegram bot setup."""
+    """Send one dummy value-bet alert and one dummy surebet alert to verify
+    both Telegram channels are wired up. The value bet goes to TELEGRAM_CHAT_ID;
+    the surebet goes to TELEGRAM_SUREBET_CHAT_ID if set, otherwise it falls
+    back to the same chat so the existing single-channel setup keeps working."""
     cfg = TelegramConfig.from_env()
     if cfg is None:
         console.print(
@@ -605,7 +608,8 @@ def alert_test():
             "— nothing to send.[/yellow]"
         )
         return
-    sample = ValueBet(
+
+    sample_bet = ValueBet(
         event_key="202606010000::testteamA__vs__testteamB",
         book=Book.UNIBET_BE,
         market=MarketType.H2H,
@@ -617,14 +621,38 @@ def alert_test():
         kelly_stake_pct=1.50,
         detected_at=datetime.now(timezone.utc),
     )
-    sent = send_alerts(
-        [sample], cfg, print_fn=lambda s: console.print(f"[yellow]{s}[/yellow]"),
+    sample_surebet = Surebet(
+        event_key="202606010000::testteamA__vs__testteamB",
+        market=MarketType.H2H,
+        line=None,
+        legs={
+            "home": (1.95, Book.UNIBET_BE),
+            "draw": (3.85, Book.BETFIRST),
+            "away": (4.20, Book.LADBROKES_BE),
+        },
+        margin=0.0234,
+    )
+
+    bet_sent = send_alerts(
+        [sample_bet], cfg, print_fn=lambda s: console.print(f"[yellow]{s}[/yellow]"),
         sport="soccer",
     )
-    if sent:
-        console.print(f"[bold]Sent 1 test alert to chat {cfg.chat_id}.[/bold]")
+    surebet_sent = send_surebet_alerts(
+        [sample_surebet], cfg, print_fn=lambda s: console.print(f"[yellow]{s}[/yellow]"),
+        sport="soccer",
+    )
+
+    if bet_sent:
+        console.print(f"[bold]Value bet → chat {cfg.chat_id} ✓[/bold]")
     else:
-        console.print("[red]Test alert was not sent — check the messages above.[/red]")
+        console.print("[red]Value bet alert NOT sent — check the messages above.[/red]")
+    target = cfg.effective_surebet_chat_id
+    same_chat = target == cfg.chat_id
+    suffix = " (same as main — TELEGRAM_SUREBET_CHAT_ID not set)" if same_chat else " (dedicated surebet chat)"
+    if surebet_sent:
+        console.print(f"[bold]Surebet → chat {target} ✓{suffix}[/bold]")
+    else:
+        console.print("[red]Surebet alert NOT sent — check the messages above.[/red]")
 
 
 @app.command(name="close-lines")
