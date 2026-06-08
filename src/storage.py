@@ -180,6 +180,34 @@ class Storage:
                 ).fetchone()
             return int(row["id"]) if row else None
 
+    def find_value_bet_ev(
+        self, event_key: str, book: str, market: str, outcome_label: str,
+        line: Optional[float],
+    ) -> Optional[tuple[int, float]]:
+        """Return (id, ev_pct) for an existing bet, or None if not yet tracked."""
+        with self._conn() as c:
+            if line is None:
+                row = c.execute(
+                    "SELECT id, ev_pct FROM value_bets WHERE event_key=? AND book=? AND market=? "
+                    "AND outcome_label=? AND line IS NULL",
+                    (event_key, book, market, outcome_label),
+                ).fetchone()
+            else:
+                row = c.execute(
+                    "SELECT id, ev_pct FROM value_bets WHERE event_key=? AND book=? AND market=? "
+                    "AND outcome_label=? AND line=?",
+                    (event_key, book, market, outcome_label, line),
+                ).fetchone()
+            return (int(row["id"]), float(row["ev_pct"])) if row else None
+
+    def update_value_bet_ev(self, value_bet_id: int, ev_pct: float) -> None:
+        """Refresh the stored EV% so the next scan delta-checks against the latest value."""
+        with self._conn() as c:
+            c.execute(
+                "UPDATE value_bets SET ev_pct=? WHERE id=?",
+                (ev_pct, value_bet_id),
+            )
+
     def open_value_bets(self) -> list[sqlite3.Row]:
         """Bets that don't have a closing snapshot yet."""
         with self._conn() as c:

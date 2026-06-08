@@ -401,23 +401,28 @@ def scan(
         # Persist every detected value bet so close-lines / clv-report can track
         # whether the engine actually beats the closing line over time.
         newly_detected: list[ValueBet] = []
+        ev_changed: list[ValueBet] = []
+        tg_cfg = TelegramConfig.from_env()
         for b in bets:
-            before = storage.find_value_bet_id(
+            existing = storage.find_value_bet_ev(
                 b.event_key, b.book.value, b.market.value, b.outcome.label, b.outcome.line
             )
             storage.insert_value_bet(b)
-            if before is None:
+            if existing is None:
                 newly_detected.append(b)
+            elif tg_cfg is not None and abs(b.ev_pct - existing[1]) >= tg_cfg.valuebet_ev_delta_pct:
+                ev_changed.append(b)
+                storage.update_value_bet_ev(existing[0], b.ev_pct)
         if newly_detected:
             console.print(f"  → {len(newly_detected)} new bets persisted for CLV tracking")
+        if ev_changed:
+            console.print(f"  → {len(ev_changed)} bets re-alerted (EV shifted ≥ {tg_cfg.valuebet_ev_delta_pct:.1f}%)")
 
-        # Telegram value-bet notifications. By default only fresh detections
-        # fire so the same opportunity on consecutive scans doesn't spam the
-        # chat — flip TELEGRAM_VALUEBET_DEDUP=0 in .env to re-notify on
-        # every cycle the same way the surebet path already supports.
-        tg_cfg = TelegramConfig.from_env()
+        # Telegram value-bet notifications. Newly detected bets always fire.
+        # Known bets re-fire only when EV moved by valuebet_ev_delta_pct or more.
+        # Disable dedup entirely with TELEGRAM_VALUEBET_DEDUP=0.
         if tg_cfg is not None:
-            candidates = newly_detected if tg_cfg.valuebet_dedup else bets
+            candidates = (newly_detected + ev_changed) if tg_cfg.valuebet_dedup else bets
             sent = send_alerts(candidates, tg_cfg, print_fn=lambda s: console.print(f"[yellow]{s}[/yellow]"), sport=current_sport)
             if sent:
                 console.print(f"  → {sent} Telegram alerts sent (EV ≥ {tg_cfg.min_ev_pct:.1f}%)")

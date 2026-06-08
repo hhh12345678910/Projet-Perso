@@ -97,6 +97,7 @@ class TelegramConfig:
     surebet_dedup: bool = True            # off -> alert every scan even if seen before
     valuebet_dedup: bool = True           # off -> alert every scan even on stale bets
     surebet_roi_delta_pct: float = 0.5    # re-alert when ROI shifts by this many points
+    valuebet_ev_delta_pct: float = 1.0    # re-alert when EV% shifts by this many points
     parse_mode: str = "HTML"
 
     @classmethod
@@ -115,6 +116,7 @@ class TelegramConfig:
             surebet_dedup=os.getenv("TELEGRAM_SUREBET_DEDUP", "1") == "1",
             valuebet_dedup=os.getenv("TELEGRAM_VALUEBET_DEDUP", "1") == "1",
             surebet_roi_delta_pct=float(os.getenv("TELEGRAM_SUREBET_ROI_DELTA", "0.5")),
+            valuebet_ev_delta_pct=float(os.getenv("TELEGRAM_VALUEBET_EV_DELTA", "1.0")),
         )
 
     @property
