@@ -831,22 +831,19 @@ def daemon(
 
 @app.command(name="alert-test")
 def alert_test():
-    """Send one dummy value-bet alert and one dummy surebet alert to verify
-    both Telegram channels are wired up. The value bet goes to TELEGRAM_CHAT_ID;
-    the surebet goes to TELEGRAM_SUREBET_CHAT_ID if set, otherwise it falls
-    back to the same chat so the existing single-channel setup keeps working."""
+    """Send one dummy alert per Telegram channel to verify all chats are wired up:
+    value bet → TELEGRAM_CHAT_ID, surebet → TELEGRAM_SUREBET_CHAT_ID,
+    CLV → TELEGRAM_CLV_CHAT_ID (each falls back to the main chat if not set)."""
     cfg = TelegramConfig.from_env()
     if cfg is None:
         console.print(
-            "[yellow]TELEGRAM_BOT_TOKEN and/or TELEGRAM_CHAT_ID are not set "
-            "— nothing to send.[/yellow]"
+            "[yellow]TELEGRAM_BOT_TOKEN and/ou TELEGRAM_CHAT_ID non définis "
+            "— rien à envoyer.[/yellow]"
         )
         return
 
-    # Use values just above the configured thresholds so the test always
-    # passes regardless of what TELEGRAM_MIN_EV / TELEGRAM_MIN_SUREBET are set to.
     test_ev  = cfg.min_ev_pct + 1.0
-    test_roi = cfg.min_surebet_margin_pct / 100 + 0.005  # margin slightly above threshold
+    test_roi = cfg.min_surebet_margin_pct / 100 + 0.005
 
     sample_bet = ValueBet(
         event_key="202606010000::testteamA__vs__testteamB",
@@ -871,6 +868,16 @@ def alert_test():
         },
         margin=test_roi,
     )
+    # CLV test: dummy bet row as plain dict (same interface as sqlite3.Row)
+    sample_clv_bet: dict = {
+        "id": 0,
+        "event_key": "202606010000::testteamA__vs__testteamB",
+        "book": Book.UNIBET_BE.value,
+        "market": MarketType.H2H.value,
+        "outcome_label": "home",
+        "line": None,
+        "odd_taken": 1.86,
+    }
 
     bet_sent = send_alerts(
         [sample_bet], cfg, print_fn=lambda s: console.print(f"[yellow]{s}[/yellow]"),
@@ -880,18 +887,31 @@ def alert_test():
         [sample_surebet], cfg, print_fn=lambda s: console.print(f"[yellow]{s}[/yellow]"),
         sport="soccer",
     )
+    clv_sent = send_clv_alerts(
+        [(sample_clv_bet, 4.52, 1.78, 12)], cfg,
+        print_fn=lambda s: console.print(f"[yellow]{s}[/yellow]"),
+        sport="soccer",
+    )
 
-    if bet_sent:
-        console.print(f"[bold]Value bet → chat {cfg.chat_id} ✓[/bold]")
-    else:
-        console.print("[red]Value bet alert NOT sent — check the messages above.[/red]")
-    target = cfg.effective_surebet_chat_id
-    same_chat = target == cfg.chat_id
-    suffix = " (same as main — TELEGRAM_SUREBET_CHAT_ID not set)" if same_chat else " (dedicated surebet chat)"
-    if surebet_sent:
-        console.print(f"[bold]Surebet → chat {target} ✓{suffix}[/bold]")
-    else:
-        console.print("[red]Surebet alert NOT sent — check the messages above.[/red]")
+    def _status(sent: bool, chat: str, label: str, fallback_note: str = "") -> None:
+        if sent:
+            console.print(f"[bold]{label} → chat {chat} ✓{fallback_note}[/bold]")
+        else:
+            console.print(f"[red]{label} NOT sent — check the messages above.[/red]")
+
+    _status(bet_sent, cfg.chat_id, "Value bet")
+
+    sb_chat = cfg.effective_surebet_chat_id
+    _status(
+        surebet_sent, sb_chat, "Surebet",
+        " (même chat — TELEGRAM_SUREBET_CHAT_ID non défini)" if sb_chat == cfg.chat_id else "",
+    )
+
+    clv_chat = cfg.effective_clv_chat_id
+    _status(
+        clv_sent, clv_chat, "CLV",
+        " (même chat — TELEGRAM_CLV_CHAT_ID non défini)" if clv_chat == cfg.chat_id else "",
+    )
 
 
 @app.command(name="close-lines")
