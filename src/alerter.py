@@ -238,6 +238,15 @@ def format_value_bet(bet: ValueBet, sport: str | None = None) -> str:
     )
 
 
+def _jouer_keyboard(pending_alert_id: int) -> dict:
+    return {
+        "inline_keyboard": [[{
+            "text": "🎯 Jouer",
+            "callback_data": f"play:{pending_alert_id}",
+        }]]
+    }
+
+
 class TelegramAlerter:
     """Thin wrapper around the Telegram Bot API. send_value_bet is best-effort:
     a network failure is logged via the supplied print_fn but doesn't abort
@@ -262,10 +271,18 @@ class TelegramAlerter:
     def __exit__(self, *_: object) -> None:
         self.close()
 
-    def send_value_bet(self, bet: ValueBet, *, sport: str | None = None) -> bool:
+    def send_value_bet(
+        self, bet: ValueBet, *, sport: str | None = None,
+        pending_alert_id: int | None = None,
+    ) -> bool:
         if bet.ev_pct < self.config.min_ev_pct:
             return False
-        return self._send(format_value_bet(bet, sport=sport), chat_id=self.config.chat_id)
+        markup = _jouer_keyboard(pending_alert_id) if pending_alert_id is not None else None
+        return self._send(
+            format_value_bet(bet, sport=sport),
+            chat_id=self.config.chat_id,
+            reply_markup=markup,
+        )
 
     def send_clv_alert(
         self,
@@ -275,33 +292,44 @@ class TelegramAlerter:
         mins_to_kickoff: int,
         *,
         sport: str | None = None,
+        pending_alert_id: int | None = None,
     ) -> bool:
         text = format_clv_alert(bet, clv_pct, current_pin_odd, mins_to_kickoff, sport=sport)
-        return self._send(text, chat_id=self.config.effective_clv_chat_id)
+        markup = _jouer_keyboard(pending_alert_id) if pending_alert_id is not None else None
+        return self._send(
+            text,
+            chat_id=self.config.effective_clv_chat_id,
+            reply_markup=markup,
+        )
 
-    def send_surebet(self, sb: Surebet, *, sport: str | None = None) -> bool:
-        # The suspicious flag is normally a "phantom surebet" canary (matching
-        # bug, label mismatch, ...), but the user can opt into seeing them to
-        # verify themselves before acting.
+    def send_surebet(
+        self, sb: Surebet, *, sport: str | None = None,
+        pending_alert_id: int | None = None,
+    ) -> bool:
         if sb.suspicious and not self.config.include_suspicious_surebets:
             return False
         if sb.margin * 100 < self.config.min_surebet_margin_pct:
             return False
+        markup = _jouer_keyboard(pending_alert_id) if pending_alert_id is not None else None
         return self._send(
             format_surebet(sb, sport=sport),
             chat_id=self.config.effective_surebet_chat_id,
+            reply_markup=markup,
         )
 
-    def _send(self, text: str, chat_id: str) -> bool:
+    def _send(self, text: str, chat_id: str, *, reply_markup: dict | None = None) -> bool:
+        payload: dict = {
+            "chat_id": chat_id,
+            "text": text,
+            "parse_mode": self.config.parse_mode,
+            "disable_web_page_preview": True,
+        }
+        if reply_markup is not None:
+            payload["reply_markup"] = reply_markup
         try:
             r = self._client.post(
                 f"{self.API_BASE}/bot{self.config.bot_token}/sendMessage",
-                json={
-                    "chat_id": chat_id,
-                    "text": text,
-                    "parse_mode": self.config.parse_mode,
-                    "disable_web_page_preview": True,
-                },
+                json=payload,
             )
             if r.status_code != 200:
                 self._print(f"Telegram non-200 ({r.status_code}) [chat={chat_id}]: {r.text[:200]}")
@@ -312,17 +340,21 @@ class TelegramAlerter:
             return False
 
 
-def send_alerts(bets: list[ValueBet], config: TelegramConfig | None,
-                *, print_fn=print, sport: str | None = None) -> int:
+def send_alerts(
+    bets: list[ValueBet], config: TelegramConfig | None,
+    *, print_fn=print, sport: str | None = None,
+    alert_ids: list[int | None] | None = None,
+) -> int:
     """Fire a Telegram message for each bet that clears the EV threshold.
     Returns the number actually sent. No-op if config is None (env not set).
-    Pass `sport` so the per-sport emoji shows up in the message."""
+    Pass `alert_ids` (aligned with `bets`) to attach a '🎯 Jouer' button."""
     if config is None or not bets:
         return 0
     sent = 0
     with TelegramAlerter(config, print_fn=print_fn) as alerter:
-        for b in bets:
-            if alerter.send_value_bet(b, sport=sport):
+        for i, b in enumerate(bets):
+            aid = alert_ids[i] if alert_ids is not None and i < len(alert_ids) else None
+            if alerter.send_value_bet(b, sport=sport, pending_alert_id=aid):
                 sent += 1
     return sent
 
@@ -330,6 +362,7 @@ def send_alerts(bets: list[ValueBet], config: TelegramConfig | None,
 def send_surebet_alerts(
     surebets: list[Surebet], config: TelegramConfig | None,
     *, print_fn=print, sport: str | None = None,
+    alert_ids: list[int | None] | None = None,
 ) -> int:
     """Same shape as send_alerts but for surebets. Suspicious surebets and
     sub-threshold margins are silently skipped — only plausible
@@ -338,8 +371,9 @@ def send_surebet_alerts(
         return 0
     sent = 0
     with TelegramAlerter(config, print_fn=print_fn) as alerter:
-        for sb in surebets:
-            if alerter.send_surebet(sb, sport=sport):
+        for i, sb in enumerate(surebets):
+            aid = alert_ids[i] if alert_ids is not None and i < len(alert_ids) else None
+            if alerter.send_surebet(sb, sport=sport, pending_alert_id=aid):
                 sent += 1
     return sent
 
@@ -350,6 +384,7 @@ def send_clv_alerts(
     *,
     print_fn=print,
     sport: str | None = None,
+    alert_ids: list[int | None] | None = None,
 ) -> int:
     """Send one CLV confirmation alert per near-kickoff value bet. Returns the
     number of messages sent. No-op if config is None or the list is empty."""
@@ -357,7 +392,8 @@ def send_clv_alerts(
         return 0
     sent = 0
     with TelegramAlerter(config, print_fn=print_fn) as alerter:
-        for bet, clv_pct, pin_odd, mins in clv_items:
-            if alerter.send_clv_alert(bet, clv_pct, pin_odd, mins, sport=sport):
+        for i, (bet, clv_pct, pin_odd, mins) in enumerate(clv_items):
+            aid = alert_ids[i] if alert_ids is not None and i < len(alert_ids) else None
+            if alerter.send_clv_alert(bet, clv_pct, pin_odd, mins, sport=sport, pending_alert_id=aid):
                 sent += 1
     return sent

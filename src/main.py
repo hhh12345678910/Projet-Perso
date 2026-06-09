@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import json
 from collections import defaultdict
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from dataclasses import replace
@@ -654,6 +655,18 @@ def daemon(
     storage = Storage(ScanConfig().db_path)
     teams.init(storage)
 
+    # Start callback poller once — handles '🎯 Jouer' button presses throughout
+    # the daemon's lifetime. Uses the token from env at startup; restart the
+    # daemon if the token changes.
+    from .callback_handler import CallbackPoller
+    _init_cfg = TelegramConfig.from_env()
+    _callback_poller: CallbackPoller | None = None
+    if _init_cfg is not None:
+        _callback_poller = CallbackPoller(_init_cfg.bot_token, storage,
+                                          print_fn=lambda s: console.print(f"[dim]{s}[/dim]"))
+        _callback_poller.start()
+        console.print("[dim]Telegram callback poller started[/dim]")
+
     cycle = 0
     while True:
         cycle += 1
@@ -738,10 +751,30 @@ def daemon(
                         clv_ids_to_mark.append((int(_bet["id"]), _clv, _pin_odd))
 
                     if clv_pending:
+                        clv_alert_ids: list[int | None] = []
+                        for _bet_row, _clv, _pin_odd, _mins in clv_pending:
+                            try:
+                                _aid = storage.insert_pending_alert(
+                                    alert_type="clv",
+                                    sport=current_sport,
+                                    event_key=_bet_row["event_key"],
+                                    book=_bet_row["book"],
+                                    market=_bet_row["market"],
+                                    outcome_label=_bet_row["outcome_label"],
+                                    line=_bet_row["line"],
+                                    odd_taken=float(_bet_row["odd_taken"]),
+                                    ev_pct=float(_bet_row["ev_pct"]),
+                                    clv_pct=_clv,
+                                    margin_pct=None,
+                                )
+                                clv_alert_ids.append(_aid)
+                            except Exception:
+                                clv_alert_ids.append(None)
                         clv_sent = send_clv_alerts(
                             clv_pending, tg_cfg,
                             print_fn=lambda s: console.print(f"[yellow]{s}[/yellow]"),
                             sport=current_sport,
+                            alert_ids=clv_alert_ids,
                         )
                         for _vb_id, _clv_pct, _pin_odd in clv_ids_to_mark:
                             storage.mark_clv_alert_notified(_vb_id, _clv_pct, _pin_odd, now_utc)
@@ -766,10 +799,30 @@ def daemon(
                         ]
                     else:
                         vb_candidates = bets
+                    vb_alert_ids: list[int | None] = []
+                    for _b in vb_candidates:
+                        try:
+                            _aid = storage.insert_pending_alert(
+                                alert_type="valuebet",
+                                sport=current_sport,
+                                event_key=_b.event_key,
+                                book=_b.book.value,
+                                market=_b.market.value,
+                                outcome_label=_b.outcome.label,
+                                line=_b.outcome.line,
+                                odd_taken=_b.odd_taken,
+                                ev_pct=_b.ev_pct,
+                                clv_pct=None,
+                                margin_pct=None,
+                            )
+                            vb_alert_ids.append(_aid)
+                        except Exception:
+                            vb_alert_ids.append(None)
                     sent = send_alerts(
                         vb_candidates, tg_cfg,
                         print_fn=lambda s: console.print(f"[yellow]{s}[/yellow]"),
                         sport=current_sport,
+                        alert_ids=vb_alert_ids,
                     )
                     now_mark = datetime.now(timezone.utc)
                     vb_to_mark = vb_candidates
@@ -794,10 +847,35 @@ def daemon(
                     else:
                         sb_candidates = sb_pool
                     if sb_candidates:
+                        sb_alert_ids: list[int | None] = []
+                        for _s in sb_candidates:
+                            try:
+                                _legs_json = json.dumps({
+                                    label: [odd, book.value]
+                                    for label, (odd, book) in _s.legs.items()
+                                })
+                                _aid = storage.insert_pending_alert(
+                                    alert_type="surebet",
+                                    sport=current_sport,
+                                    event_key=_s.event_key,
+                                    book=None,
+                                    market=_s.market.value,
+                                    outcome_label=None,
+                                    line=_s.line,
+                                    odd_taken=None,
+                                    ev_pct=None,
+                                    clv_pct=None,
+                                    margin_pct=_s.margin * 100,
+                                    legs_json=_legs_json,
+                                )
+                                sb_alert_ids.append(_aid)
+                            except Exception:
+                                sb_alert_ids.append(None)
                         sent_sb = send_surebet_alerts(
                             sb_candidates, tg_cfg,
                             print_fn=lambda x: console.print(f"[yellow]{x}[/yellow]"),
                             sport=current_sport,
+                            alert_ids=sb_alert_ids,
                         )
                         sb_to_mark = sb_candidates
                         if sent_sb:

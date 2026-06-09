@@ -103,6 +103,25 @@ CREATE TABLE IF NOT EXISTS teams (
     display_name     TEXT NOT NULL,
     last_seen_at     TEXT NOT NULL
 );
+
+CREATE TABLE IF NOT EXISTS pending_alerts (
+    id              INTEGER PRIMARY KEY AUTOINCREMENT,
+    alert_type      TEXT NOT NULL,
+    sport           TEXT,
+    event_key       TEXT NOT NULL,
+    book            TEXT,
+    market          TEXT NOT NULL,
+    outcome_label   TEXT,
+    line            REAL,
+    odd_taken       REAL,
+    ev_pct          REAL,
+    clv_pct         REAL,
+    margin_pct      REAL,
+    legs_json       TEXT,
+    created_at      TEXT NOT NULL,
+    played          INTEGER DEFAULT 0,
+    played_at       TEXT
+);
 """
 
 
@@ -440,6 +459,47 @@ class Storage:
                 "INSERT INTO clv_snapshots(value_bet_id, snapshot_at, closing, pinnacle_odd, "
                 "pinnacle_prob) VALUES (?, ?, ?, ?, ?)",
                 (value_bet_id, snapshot_at.isoformat(), 1 if closing else 0, pinnacle_odd, pinnacle_prob),
+            )
+
+    def insert_pending_alert(
+        self,
+        alert_type: str,
+        sport: Optional[str],
+        event_key: str,
+        book: Optional[str],
+        market: str,
+        outcome_label: Optional[str],
+        line: Optional[float],
+        odd_taken: Optional[float],
+        ev_pct: Optional[float],
+        clv_pct: Optional[float],
+        margin_pct: Optional[float],
+        legs_json: Optional[str] = None,
+    ) -> int:
+        with self._conn() as c:
+            cur = c.execute(
+                "INSERT INTO pending_alerts(alert_type, sport, event_key, book, market, "
+                "outcome_label, line, odd_taken, ev_pct, clv_pct, margin_pct, legs_json, created_at) "
+                "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+                (
+                    alert_type, sport, event_key, book, market, outcome_label, line,
+                    odd_taken, ev_pct, clv_pct, margin_pct, legs_json,
+                    datetime.utcnow().isoformat(),
+                ),
+            )
+            return int(cur.lastrowid or 0)
+
+    def get_pending_alert(self, alert_id: int) -> Optional[sqlite3.Row]:
+        with self._conn() as c:
+            return c.execute(
+                "SELECT * FROM pending_alerts WHERE id=?", (alert_id,)
+            ).fetchone()
+
+    def mark_alert_played(self, alert_id: int, played_at: datetime) -> None:
+        with self._conn() as c:
+            c.execute(
+                "UPDATE pending_alerts SET played=1, played_at=? WHERE id=?",
+                (played_at.isoformat(), alert_id),
             )
 
     def recent_value_bets(self, limit: int = 50) -> list[sqlite3.Row]:
