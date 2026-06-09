@@ -106,8 +106,13 @@ class Storage:
 
     @contextmanager
     def _conn(self) -> Iterator[sqlite3.Connection]:
-        conn = sqlite3.connect(str(self.path))
+        # timeout=10 s : attend jusqu'à 10 s si une autre connexion écrit.
+        # WAL activé au premier appel (persisté dans le fichier) : permet les
+        # lectures concurrentes pendant les écritures → plus de "database is locked".
+        conn = sqlite3.connect(str(self.path), timeout=10)
         conn.row_factory = sqlite3.Row
+        conn.execute("PRAGMA journal_mode=WAL")
+        conn.execute("PRAGMA synchronous=NORMAL")
         try:
             yield conn
             conn.commit()
