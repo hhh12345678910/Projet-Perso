@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import os
+import sqlite3
 from dataclasses import dataclass
 from datetime import datetime, timezone
 
@@ -97,6 +98,9 @@ class TelegramConfig:
     valuebet_dedup: bool = True           # off -> alert every scan even on stale bets
     surebet_roi_delta_pct: float = 0.5    # re-alert when ROI shifts by this many points
     valuebet_ev_delta_pct: float = 2.0    # re-alert when EV% shifts by this many points
+    clv_chat_id: str | None = None        # dedicated chat for pre-kickoff CLV alerts
+    min_clv_pct: float = 0.0             # minimum CLV% to fire a pre-kickoff alert
+    clv_window_minutes: int = 60          # send CLV alert when kickoff is within this many minutes
     parse_mode: str = "HTML"
 
     @classmethod
@@ -116,6 +120,9 @@ class TelegramConfig:
             valuebet_dedup=os.getenv("TELEGRAM_VALUEBET_DEDUP", "1") == "1",
             surebet_roi_delta_pct=float(os.getenv("TELEGRAM_SUREBET_ROI_DELTA", "0.5")),
             valuebet_ev_delta_pct=float(os.getenv("TELEGRAM_VALUEBET_EV_DELTA", "2.0")),
+            clv_chat_id=os.getenv("TELEGRAM_CLV_CHAT_ID") or None,
+            min_clv_pct=float(os.getenv("TELEGRAM_MIN_CLV", "0.0")),
+            clv_window_minutes=int(os.getenv("TELEGRAM_CLV_WINDOW_MINUTES", "60")),
         )
 
     @property
@@ -123,6 +130,11 @@ class TelegramConfig:
         """Surebets fall back to the main chat when the dedicated one isn't
         set — backward compatible with users who didn't split their channels."""
         return self.surebet_chat_id or self.chat_id
+
+    @property
+    def effective_clv_chat_id(self) -> str:
+        """CLV alerts fall back to the main chat when the dedicated one isn't set."""
+        return self.clv_chat_id or self.chat_id
 
 
 def format_surebet(sb: Surebet, sport: str | None = None) -> str:
@@ -159,6 +171,41 @@ def format_surebet(sb: Surebet, sport: str | None = None) -> str:
         f"{when_line}"
         f"{legs_lines}"
         f"{suspect_footer}"
+    )
+
+
+def format_clv_alert(
+    bet: sqlite3.Row,
+    clv_pct: float,
+    current_pin_odd: float,
+    mins_to_kickoff: int,
+    sport: str | None = None,
+) -> str:
+    """Message envoyé peu avant le coup d'envoi quand la CLV est confirmée positive.
+    Montre la cote prise, la cote Pinnacle actuelle (plus basse = marché a bougé dans
+    notre sens) et le temps restant pour placer la mise."""
+    from .models import Book as _Book  # local import to avoid circular at module level
+    parsed = parse_event_key(bet["event_key"])
+    if parsed is not None:
+        start, home_norm, away_norm = parsed
+        matchup = f"{_prettify_team_name(home_norm)} vs {_prettify_team_name(away_norm)}"
+        when_line = f"📅 {_format_kickoff(start)} (dans {mins_to_kickoff} min)\n"
+    else:
+        matchup = bet["event_key"]
+        when_line = f"📅 Dans {mins_to_kickoff} min\n"
+
+    try:
+        book_name = _BOOK_NAMES.get(_Book(bet["book"]), bet["book"])
+    except ValueError:
+        book_name = bet["book"]
+
+    line_suffix = f" {bet['line']}" if bet["line"] is not None else ""
+    return (
+        f"⏰ <b>CLV {clv_pct:+.2f}% confirmé</b> — {book_name}\n"
+        f"{_sport_prefix(sport)}{matchup}\n"
+        f"{when_line}"
+        f"Pari : <b>{bet['outcome_label']}{line_suffix}</b> @ {float(bet['odd_taken']):.2f}\n"
+        f"Pinnacle actuel : {current_pin_odd:.2f}"
     )
 
 
@@ -219,6 +266,18 @@ class TelegramAlerter:
         if bet.ev_pct < self.config.min_ev_pct:
             return False
         return self._send(format_value_bet(bet, sport=sport), chat_id=self.config.chat_id)
+
+    def send_clv_alert(
+        self,
+        bet: sqlite3.Row,
+        clv_pct: float,
+        current_pin_odd: float,
+        mins_to_kickoff: int,
+        *,
+        sport: str | None = None,
+    ) -> bool:
+        text = format_clv_alert(bet, clv_pct, current_pin_odd, mins_to_kickoff, sport=sport)
+        return self._send(text, chat_id=self.config.effective_clv_chat_id)
 
     def send_surebet(self, sb: Surebet, *, sport: str | None = None) -> bool:
         # The suspicious flag is normally a "phantom surebet" canary (matching
@@ -281,5 +340,24 @@ def send_surebet_alerts(
     with TelegramAlerter(config, print_fn=print_fn) as alerter:
         for sb in surebets:
             if alerter.send_surebet(sb, sport=sport):
+                sent += 1
+    return sent
+
+
+def send_clv_alerts(
+    clv_items: list[tuple],  # (bet_row, clv_pct, current_pin_odd, mins_to_kickoff)
+    config: TelegramConfig | None,
+    *,
+    print_fn=print,
+    sport: str | None = None,
+) -> int:
+    """Send one CLV confirmation alert per near-kickoff value bet. Returns the
+    number of messages sent. No-op if config is None or the list is empty."""
+    if config is None or not clv_items:
+        return 0
+    sent = 0
+    with TelegramAlerter(config, print_fn=print_fn) as alerter:
+        for bet, clv_pct, pin_odd, mins in clv_items:
+            if alerter.send_clv_alert(bet, clv_pct, pin_odd, mins, sport=sport):
                 sent += 1
     return sent

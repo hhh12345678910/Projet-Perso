@@ -89,6 +89,15 @@ CREATE TABLE IF NOT EXISTS notified_value_bets (
 );
 CREATE INDEX IF NOT EXISTS idx_nvb_lookup ON notified_value_bets(event_key, book, market);
 
+CREATE TABLE IF NOT EXISTS notified_clv_alerts (
+    id              INTEGER PRIMARY KEY AUTOINCREMENT,
+    value_bet_id    INTEGER NOT NULL,
+    clv_pct         REAL NOT NULL,
+    current_pin_odd REAL NOT NULL,
+    notified_at     TEXT NOT NULL
+);
+CREATE INDEX IF NOT EXISTS idx_nca_vb ON notified_clv_alerts(value_bet_id);
+
 CREATE TABLE IF NOT EXISTS teams (
     normalized_name  TEXT PRIMARY KEY,
     display_name     TEXT NOT NULL,
@@ -297,6 +306,26 @@ class Storage:
                 "INSERT INTO notified_surebets(event_key, market, line, margin_pct, notified_at) "
                 "VALUES (?, ?, ?, ?, ?)",
                 (event_key, market, line, margin_pct, notified_at.isoformat()),
+            )
+
+    def clv_alert_already_notified(self, value_bet_id: int) -> bool:
+        """True if a pre-kickoff CLV alert was already sent for this value bet row."""
+        with self._conn() as c:
+            row = c.execute(
+                "SELECT 1 FROM notified_clv_alerts WHERE value_bet_id=? LIMIT 1",
+                (value_bet_id,),
+            ).fetchone()
+            return row is not None
+
+    def mark_clv_alert_notified(
+        self, value_bet_id: int, clv_pct: float,
+        current_pin_odd: float, notified_at: datetime,
+    ) -> None:
+        with self._conn() as c:
+            c.execute(
+                "INSERT INTO notified_clv_alerts(value_bet_id, clv_pct, current_pin_odd, notified_at) "
+                "VALUES (?, ?, ?, ?)",
+                (value_bet_id, clv_pct, current_pin_odd, notified_at.isoformat()),
             )
 
     def value_bet_already_notified(

@@ -36,7 +36,7 @@ from .clv import (
     group_by as clv_group_by,
     index_quotes_by_market,
 )
-from .alerter import TelegramConfig, send_alerts, send_surebet_alerts
+from .alerter import TelegramConfig, send_alerts, send_surebet_alerts, send_clv_alerts
 from . import teams
 
 
@@ -695,6 +695,58 @@ def daemon(
                 soft_q = remap_to_reference(soft_raw, ref_keys)
                 for q in soft_q:
                     storage.insert_quote(q)
+
+                # ── CLV pre-kickoff alerts ────────────────────────────────────
+                # For every open value bet whose kickoff is within the configured
+                # window, look up the current Pinnacle odd and compute live CLV.
+                # CLV > 0 means Pinnacle has shortened the odds since detection
+                # (market agrees with us) — good time to place the bet.
+                if tg_cfg is not None and tg_cfg.clv_window_minutes > 0:
+                    now_utc = datetime.now(timezone.utc)
+                    # Index current Pinnacle quotes by (YYYYMMDD, teams, market, outcome, line)
+                    # so we can match against stored bets regardless of HHMM drift.
+                    pin_idx: dict[tuple, float] = {}
+                    for _q in pinnacle_q:
+                        if "::" in _q.event_key:
+                            _d = _q.event_key[:8]
+                            _t = _q.event_key.split("::", 1)[1]
+                            pin_idx[(_d, _t, _q.market.value, _q.outcome.label, _q.outcome.line)] = _q.decimal_odd
+
+                    clv_pending: list[tuple] = []   # (bet_row, clv_pct, pin_odd, mins)
+                    clv_ids_to_mark: list[tuple[int, float, float]] = []
+                    for _bet in storage.open_value_bets():
+                        _parsed = parse_event_key(_bet["event_key"])
+                        if _parsed is None:
+                            continue
+                        _kickoff, _, _ = _parsed
+                        _mins = (_kickoff - now_utc).total_seconds() / 60
+                        if not (0 < _mins <= tg_cfg.clv_window_minutes):
+                            continue
+                        if storage.clv_alert_already_notified(int(_bet["id"])):
+                            continue
+                        if "::" not in _bet["event_key"]:
+                            continue
+                        _d = _bet["event_key"][:8]
+                        _t = _bet["event_key"].split("::", 1)[1]
+                        _pin_odd = pin_idx.get((_d, _t, _bet["market"], _bet["outcome_label"], _bet["line"]))
+                        if _pin_odd is None:
+                            continue
+                        _clv = (float(_bet["odd_taken"]) / _pin_odd - 1) * 100
+                        if _clv < tg_cfg.min_clv_pct:
+                            continue
+                        clv_pending.append((_bet, _clv, _pin_odd, int(_mins)))
+                        clv_ids_to_mark.append((int(_bet["id"]), _clv, _pin_odd))
+
+                    if clv_pending:
+                        clv_sent = send_clv_alerts(
+                            clv_pending, tg_cfg,
+                            print_fn=lambda s: console.print(f"[yellow]{s}[/yellow]"),
+                            sport=current_sport,
+                        )
+                        for _vb_id, _clv_pct, _pin_odd in clv_ids_to_mark:
+                            storage.mark_clv_alert_notified(_vb_id, _clv_pct, _pin_odd, now_utc)
+                        if clv_sent:
+                            console.print(f"  → {clv_sent} CLV alert(s) sent")
 
                 # ── Value bets ───────────────────────────────────────────────
                 bets = find_value_bets(soft_q, fair, cfg)
