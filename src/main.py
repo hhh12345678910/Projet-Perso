@@ -21,9 +21,11 @@ from .models import Book, FairLine, MarketType, OddQuote, Outcome, ValueBet
 from .scrapers.betano import BetanoAuthError, BetanoScraper, parse_overview as betano_parse_overview
 from .scrapers.betcenter import BetCenterScraper
 from .scrapers.betfirst import BetFirstScraper, parse_events_table as betfirst_parse_events_table
+from .scrapers.bwin import build_scraper as bwin_build_scraper, parse_fixtures as bwin_parse_fixtures
 from .scrapers.goldenpalace import GoldenPalaceScraper, parse_get_events as goldenpalace_parse_get_events
 from .scrapers.ladbrokes import LadbrokesScraper, parse_prematch as ladbrokes_parse_prematch
 from .scrapers.magicbetting import load_file as magicbetting_load_file, parse_events as magicbetting_parse_events
+from .scrapers.napoleongames import NapoleonGamesScraper, parse_listview as napoleongames_parse_listview
 from .scrapers.pinnacle import PinnacleScraper
 from .scrapers.smarkets import SmarketsScraper, iter_all_quotes as smarkets_iter_quotes
 from .scrapers.starcasinosport import StarCasinoSportScraper, parse_get_events as starcasinosport_parse_get_events
@@ -342,6 +344,34 @@ def fetch_magicbetting_quotes(magicbetting_file: str | None, sport: str = "socce
         return []
 
 
+def fetch_napoleongames_quotes(sport: str) -> list[OddQuote]:
+    """Fetch + parse Napoleon Games events via the Kambi offering API."""
+    try:
+        with NapoleonGamesScraper() as ng:
+            data = ng.fetch_all_events(sport)
+        return list(napoleongames_parse_listview(data))
+    except httpx.HTTPError as e:
+        console.print(f"[yellow]Napoleon Games skipped:[/yellow] {e}")
+        return []
+
+
+def fetch_bwin_quotes(sport: str) -> list[OddQuote]:
+    """Fetch + parse Bwin Belgium events via the Entain CDS API.
+
+    Requires BWIN_ACCESS_ID env var (grab from browser DevTools).
+    Silently returns [] when the var is not set."""
+    scraper = bwin_build_scraper()
+    if scraper is None:
+        return []
+    try:
+        with scraper:
+            data = scraper.fetch_fixtures(sport)
+        return list(bwin_parse_fixtures(data))
+    except httpx.HTTPError as e:
+        console.print(f"[yellow]Bwin skipped:[/yellow] {e}")
+        return []
+
+
 def _fetch_all_parallel(
     sport: str,
     betano_file: str | None = None,
@@ -356,13 +386,15 @@ def _fetch_all_parallel(
             return list(pin.fetch_market_quotes(sport))
 
     tasks: dict[str, Callable[[], list[OddQuote]]] = {
-        "Pinnacle":      _pinnacle,
-        "Unibet":        lambda: fetch_unibet_quotes(sport),
-        "BetFirst":      lambda: fetch_betfirst_quotes(sport),
-        "Ladbrokes":     lambda: fetch_ladbrokes_quotes(sport),
-        "BetCenter":     lambda: fetch_betcenter_quotes(sport),
-        "Golden Palace": lambda: fetch_goldenpalace_quotes(sport),
-        "StarCasino":    lambda: fetch_starcasinosport_quotes(sport),
+        "Pinnacle":       _pinnacle,
+        "Unibet":         lambda: fetch_unibet_quotes(sport),
+        "BetFirst":       lambda: fetch_betfirst_quotes(sport),
+        "Ladbrokes":      lambda: fetch_ladbrokes_quotes(sport),
+        "BetCenter":      lambda: fetch_betcenter_quotes(sport),
+        "Napoleon Games": lambda: fetch_napoleongames_quotes(sport),
+        "Bwin":           lambda: fetch_bwin_quotes(sport),
+        "Golden Palace":  lambda: fetch_goldenpalace_quotes(sport),
+        "StarCasino":     lambda: fetch_starcasinosport_quotes(sport),
     }
     if include_file_books:
         tasks["Betano"]        = lambda: fetch_betano_quotes(betano_file=betano_file)
