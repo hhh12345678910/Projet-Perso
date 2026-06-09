@@ -14,7 +14,7 @@ from ..teams import record_pair
 
 
 # Napoleon Games BE runs on the Kambi sportsbook platform (offering code "ngbe").
-BASE = "https://eu-offering.kambicdn.org/offering/v2018"
+BASE = "https://eu-offering-api.kambicdn.com/offering/v2018"
 OFFERING = os.getenv("NAPOLEONGAMES_OFFERING", "ngbe")
 
 SPORT_TERMS = {
