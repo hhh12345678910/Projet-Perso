@@ -673,6 +673,14 @@ def daemon(
         tg_cfg = TelegramConfig.from_env()
 
         for current_sport in sports_list:
+            # Collected outside the analysis try-block so their writes land even
+            # when the broader analysis succeeds — a mark failure must never be
+            # silently swallowed by the sport-level catch (that would allow the
+            # same alert to fire again next cycle).
+            vb_to_mark: list[ValueBet] = []
+            sb_to_mark: list[Surebet] = []
+            now_mark = datetime.now(timezone.utc)
+
             try:
                 console.print(f"\n[bold]{current_sport.upper()}[/bold]")
                 all_q = _fetch_all_parallel(
@@ -722,12 +730,8 @@ def daemon(
                         print_fn=lambda s: console.print(f"[yellow]{s}[/yellow]"),
                         sport=current_sport,
                     )
-                    now_vb = datetime.now(timezone.utc)
-                    for b in vb_candidates:
-                        storage.mark_value_bet_notified(
-                            b.event_key, b.book.value, b.market.value, b.outcome.label, b.outcome.line,
-                            b.ev_pct, now_vb,
-                        )
+                    now_mark = datetime.now(timezone.utc)
+                    vb_to_mark = vb_candidates
                     if sent:
                         console.print(f"  → {sent} value bet alert(s) sent")
 
@@ -736,33 +740,48 @@ def daemon(
                 plausible = [s for s in surebets if not s.suspicious]
                 console.print(f"  surebets: {len(plausible)} plausible")
                 if tg_cfg is not None and surebets:
-                    sb_candidates = surebets if tg_cfg.include_suspicious_surebets else plausible
+                    sb_pool = surebets if tg_cfg.include_suspicious_surebets else plausible
                     if tg_cfg.surebet_dedup:
                         sb_candidates = [
-                            s for s in sb_candidates
+                            s for s in sb_pool
                             if not storage.surebet_already_notified(
                                 s.event_key, s.market.value, s.line,
                                 current_margin_pct=s.margin * 100,
                                 roi_delta_pct=tg_cfg.surebet_roi_delta_pct,
                             )
                         ]
+                    else:
+                        sb_candidates = sb_pool
                     if sb_candidates:
                         sent_sb = send_surebet_alerts(
                             sb_candidates, tg_cfg,
                             print_fn=lambda x: console.print(f"[yellow]{x}[/yellow]"),
                             sport=current_sport,
                         )
-                        now = datetime.now(timezone.utc)
-                        for s in sb_candidates:
-                            storage.mark_surebet_notified(
-                                s.event_key, s.market.value, s.line, s.margin * 100, now,
-                            )
+                        sb_to_mark = sb_candidates
                         if sent_sb:
                             console.print(f"  → {sent_sb} surebet alert(s) sent")
 
             except Exception as e:
                 console.print(f"[red]  {current_sport} error: {e}[/red]")
-                continue
+
+            # ── Persist dedup marks (outside the sport catch so a scraper/analysis
+            # failure never prevents already-sent alerts from being recorded) ────
+            try:
+                for b in vb_to_mark:
+                    storage.mark_value_bet_notified(
+                        b.event_key, b.book.value, b.market.value, b.outcome.label, b.outcome.line,
+                        b.ev_pct, now_mark,
+                    )
+                for s in sb_to_mark:
+                    storage.mark_surebet_notified(
+                        s.event_key, s.market.value, s.line, s.margin * 100, now_mark,
+                    )
+            except Exception as mark_err:
+                console.print(
+                    f"[red]  dedup mark failed for {current_sport} — "
+                    f"next cycle may re-alert: {mark_err}[/red]"
+                )
 
         elapsed = (datetime.now(timezone.utc) - t0).total_seconds()
         console.print(f"\n[dim]Cycle {cycle} done in {elapsed:.0f}s — next in {breather}s[/dim]")
