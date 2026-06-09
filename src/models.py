@@ -20,7 +20,6 @@ class Book(str, Enum):
     LADBROKES_BE = "ladbrokes_be"
     CIRCUS_BE = "circus_be"
     BETFIRST = "betfirst"
-    BETCENTER = "betcenter"
     GOLDEN_PALACE = "golden_palace"
     STARCASINO_SPORT = "starcasino_sport"
     MAGIC_BETTING = "magic_betting"

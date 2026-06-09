@@ -19,7 +19,6 @@ from .ev import ev_pct, fair_odd, kelly_fraction, kelly_stake
 from .matcher import parse_event_key, reconcile_event_keys
 from .models import Book, FairLine, MarketType, OddQuote, Outcome, ValueBet
 from .scrapers.betano import BetanoAuthError, BetanoScraper, parse_overview as betano_parse_overview
-from .scrapers.betcenter import BetCenterScraper
 from .scrapers.betfirst import BetFirstScraper, parse_events_table as betfirst_parse_events_table
 from .scrapers.goldenpalace import GoldenPalaceScraper, parse_get_events as goldenpalace_parse_get_events
 from .scrapers.ladbrokes import LadbrokesScraper, parse_prematch as ladbrokes_parse_prematch
@@ -275,15 +274,6 @@ def fetch_ladbrokes_quotes(sport: str) -> list[OddQuote]:
         return []
 
 
-def fetch_betcenter_quotes(sport: str) -> list[OddQuote]:
-    """Fetch all BetCenter prematch events for a sport via the Cashpoint odds API."""
-    try:
-        with BetCenterScraper() as bc:
-            return bc.fetch_all_quotes(sport)
-    except httpx.HTTPError as e:
-        console.print(f"[yellow]BetCenter skipped: {e}[/yellow]")
-        return []
-
 
 def fetch_goldenpalace_quotes(sport: str) -> list[OddQuote]:
     """Bulk-fetch every Golden Palace event for a sport via the Altenar widget."""
@@ -361,7 +351,6 @@ def _fetch_all_parallel(
         "Unibet":        lambda: fetch_unibet_quotes(sport),
         "BetFirst":      lambda: fetch_betfirst_quotes(sport),
         "Ladbrokes":     lambda: fetch_ladbrokes_quotes(sport),
-        "BetCenter":     lambda: fetch_betcenter_quotes(sport),
         "Golden Palace": lambda: fetch_goldenpalace_quotes(sport),
         "StarCasino":    lambda: fetch_starcasinosport_quotes(sport),
     }

@@ -36,7 +36,6 @@ _BOOK_NAMES = {
     Book.STARCASINO_SPORT: "StarCasino",
     Book.MAGIC_BETTING: "Magic Betting",
     Book.CIRCUS_BE: "Circus",
-    Book.BETCENTER: "BetCenter",
     Book.SMARKETS: "Smarkets",
 }
 
@@ -96,8 +95,8 @@ class TelegramConfig:
     include_suspicious_surebets: bool = False  # opt-in to see flagged ones too
     surebet_dedup: bool = True            # off -> alert every scan even if seen before
     valuebet_dedup: bool = True           # off -> alert every scan even on stale bets
-    surebet_roi_delta_pct: float = 2.0    # re-alert when ROI shifts by this many points
-    valuebet_ev_delta_pct: float = 3.0    # re-alert when EV% shifts by this many points
+    surebet_roi_delta_pct: float = 0.5    # re-alert when ROI shifts by this many points
+    valuebet_ev_delta_pct: float = 2.0    # re-alert when EV% shifts by this many points
     parse_mode: str = "HTML"
 
     @classmethod
@@ -115,8 +114,8 @@ class TelegramConfig:
             include_suspicious_surebets=os.getenv("TELEGRAM_INCLUDE_SUSPICIOUS", "0") == "1",
             surebet_dedup=os.getenv("TELEGRAM_SUREBET_DEDUP", "1") == "1",
             valuebet_dedup=os.getenv("TELEGRAM_VALUEBET_DEDUP", "1") == "1",
-            surebet_roi_delta_pct=float(os.getenv("TELEGRAM_SUREBET_ROI_DELTA", "2.0")),
-            valuebet_ev_delta_pct=float(os.getenv("TELEGRAM_VALUEBET_EV_DELTA", "3.0")),
+            surebet_roi_delta_pct=float(os.getenv("TELEGRAM_SUREBET_ROI_DELTA", "0.5")),
+            valuebet_ev_delta_pct=float(os.getenv("TELEGRAM_VALUEBET_EV_DELTA", "2.0")),
         )
 
     @property
