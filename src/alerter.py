@@ -37,8 +37,6 @@ _BOOK_NAMES = {
     Book.MAGIC_BETTING: "Magic Betting",
     Book.CIRCUS_BE: "Circus",
     Book.BETCENTER: "BetCenter",
-    Book.NAPOLEONGAMES_BE: "Napoleon Games",
-    Book.BWIN_BE: "Bwin",
     Book.SMARKETS: "Smarkets",
 }
 
