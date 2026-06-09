@@ -386,16 +386,18 @@ def _fetch_all_parallel(
             return list(pin.fetch_market_quotes(sport))
 
     tasks: dict[str, Callable[[], list[OddQuote]]] = {
-        "Pinnacle":       _pinnacle,
-        "Unibet":         lambda: fetch_unibet_quotes(sport),
-        "BetFirst":       lambda: fetch_betfirst_quotes(sport),
-        "Ladbrokes":      lambda: fetch_ladbrokes_quotes(sport),
-        "BetCenter":      lambda: fetch_betcenter_quotes(sport),
-        "Napoleon Games": lambda: fetch_napoleongames_quotes(sport),
-        "Bwin":           lambda: fetch_bwin_quotes(sport),
-        "Golden Palace":  lambda: fetch_goldenpalace_quotes(sport),
-        "StarCasino":     lambda: fetch_starcasinosport_quotes(sport),
+        "Pinnacle":      _pinnacle,
+        "Unibet":        lambda: fetch_unibet_quotes(sport),
+        "BetFirst":      lambda: fetch_betfirst_quotes(sport),
+        "Ladbrokes":     lambda: fetch_ladbrokes_quotes(sport),
+        "BetCenter":     lambda: fetch_betcenter_quotes(sport),
+        "Golden Palace": lambda: fetch_goldenpalace_quotes(sport),
+        "StarCasino":    lambda: fetch_starcasinosport_quotes(sport),
     }
+    # Napoleon Games (Kambi/ngbe) et Bwin (Entain CDS) bloquent les IPs de
+    # datacenter côté serveur — les inclure ici ferait 3 tentatives × timeout
+    # à chaque cycle pour rien. À réactiver si l'hébergement passe par un
+    # proxy résidentiel.
     if include_file_books:
         tasks["Betano"]        = lambda: fetch_betano_quotes(betano_file=betano_file)
         tasks["Magic Betting"] = lambda: fetch_magicbetting_quotes(magicbetting_file, sport)
