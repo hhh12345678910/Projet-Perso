@@ -920,11 +920,14 @@ def alert_test():
         )
         return
 
+    storage = Storage(ScanConfig().db_path)
+
     test_ev  = cfg.min_ev_pct + 1.0
     test_roi = cfg.min_surebet_margin_pct / 100 + 0.005
+    test_event_key = "202606010000::testteamA__vs__testteamB"
 
     sample_bet = ValueBet(
-        event_key="202606010000::testteamA__vs__testteamB",
+        event_key=test_event_key,
         book=Book.UNIBET_BE,
         market=MarketType.H2H,
         outcome=Outcome(label="home"),
@@ -936,7 +939,7 @@ def alert_test():
         detected_at=datetime.now(timezone.utc),
     )
     sample_surebet = Surebet(
-        event_key="202606010000::testteamA__vs__testteamB",
+        event_key=test_event_key,
         market=MarketType.H2H,
         line=None,
         legs={
@@ -946,29 +949,51 @@ def alert_test():
         },
         margin=test_roi,
     )
-    # CLV test: dummy bet row as plain dict (same interface as sqlite3.Row)
     sample_clv_bet: dict = {
         "id": 0,
-        "event_key": "202606010000::testteamA__vs__testteamB",
+        "event_key": test_event_key,
         "book": Book.UNIBET_BE.value,
         "market": MarketType.H2H.value,
         "outcome_label": "home",
         "line": None,
         "odd_taken": 1.86,
+        "ev_pct": test_ev,
     }
+
+    # Insert pending alerts so the 🎯 Jouer button is live in each test message.
+    vb_aid = storage.insert_pending_alert(
+        alert_type="valuebet", sport="soccer", event_key=test_event_key,
+        book=Book.UNIBET_BE.value, market=MarketType.H2H.value,
+        outcome_label="home", line=None, odd_taken=1.86,
+        ev_pct=test_ev, clv_pct=None, margin_pct=None,
+    )
+    sb_legs_json = json.dumps({"home": [1.95, "unibet_be"], "draw": [3.85, "betfirst"], "away": [4.20, "ladbrokes_be"]})
+    sb_aid = storage.insert_pending_alert(
+        alert_type="surebet", sport="soccer", event_key=test_event_key,
+        book=None, market=MarketType.H2H.value,
+        outcome_label=None, line=None, odd_taken=None,
+        ev_pct=None, clv_pct=None, margin_pct=test_roi * 100,
+        legs_json=sb_legs_json,
+    )
+    clv_aid = storage.insert_pending_alert(
+        alert_type="clv", sport="soccer", event_key=test_event_key,
+        book=Book.UNIBET_BE.value, market=MarketType.H2H.value,
+        outcome_label="home", line=None, odd_taken=1.86,
+        ev_pct=test_ev, clv_pct=4.52, margin_pct=None,
+    )
 
     bet_sent = send_alerts(
         [sample_bet], cfg, print_fn=lambda s: console.print(f"[yellow]{s}[/yellow]"),
-        sport="soccer",
+        sport="soccer", alert_ids=[vb_aid],
     )
     surebet_sent = send_surebet_alerts(
         [sample_surebet], cfg, print_fn=lambda s: console.print(f"[yellow]{s}[/yellow]"),
-        sport="soccer",
+        sport="soccer", alert_ids=[sb_aid],
     )
     clv_sent = send_clv_alerts(
         [(sample_clv_bet, 4.52, 1.78, 12)], cfg,
         print_fn=lambda s: console.print(f"[yellow]{s}[/yellow]"),
-        sport="soccer",
+        sport="soccer", alert_ids=[clv_aid],
     )
 
     def _status(sent: bool, chat: str, label: str, fallback_note: str = "") -> None:
