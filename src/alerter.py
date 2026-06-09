@@ -100,7 +100,7 @@ class TelegramConfig:
     valuebet_ev_delta_pct: float = 2.0    # re-alert when EV% shifts by this many points
     clv_chat_id: str | None = None        # dedicated chat for pre-kickoff CLV alerts
     min_clv_pct: float = 0.0             # minimum CLV% to fire a pre-kickoff alert
-    clv_window_minutes: int = 60          # send CLV alert when kickoff is within this many minutes
+    clv_window_minutes: int = 15          # send CLV alert when kickoff is within this many minutes
     parse_mode: str = "HTML"
 
     @classmethod
@@ -122,7 +122,7 @@ class TelegramConfig:
             valuebet_ev_delta_pct=float(os.getenv("TELEGRAM_VALUEBET_EV_DELTA", "2.0")),
             clv_chat_id=os.getenv("TELEGRAM_CLV_CHAT_ID") or None,
             min_clv_pct=float(os.getenv("TELEGRAM_MIN_CLV", "0.0")),
-            clv_window_minutes=int(os.getenv("TELEGRAM_CLV_WINDOW_MINUTES", "60")),
+            clv_window_minutes=int(os.getenv("TELEGRAM_CLV_WINDOW_MINUTES", "15")),
         )
 
     @property
