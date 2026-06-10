@@ -906,8 +906,15 @@ def alert_test():
         print_fn=lambda s: console.print(f"[yellow]{s}[/yellow]"),
         sport="soccer",
     )
+    # CLV normal (7% — entre min_clv_pct et min_high_clv_pct)
     clv_sent = send_clv_alerts(
-        [(sample_clv_bet, 4.52, 1.78, 12)], cfg,
+        [(sample_clv_bet, 7.0, 1.74, 12)], cfg,
+        print_fn=lambda s: console.print(f"[yellow]{s}[/yellow]"),
+        sport="soccer",
+    )
+    # CLV élevé (18% — au-dessus de min_high_clv_pct)
+    clv_high_sent = send_clv_alerts(
+        [(sample_clv_bet, 18.0, 1.58, 8)], cfg,
         print_fn=lambda s: console.print(f"[yellow]{s}[/yellow]"),
         sport="soccer",
     )
@@ -934,8 +941,14 @@ def alert_test():
 
     clv_chat = cfg.effective_clv_chat_id
     _status(
-        clv_sent, clv_chat, "CLV",
+        clv_sent, clv_chat, "CLV normal (7%)",
         " (même chat — TELEGRAM_CLV_CHAT_ID non défini)" if clv_chat == cfg.chat_id else "",
+    )
+
+    high_clv_chat = cfg.effective_high_clv_chat_id
+    _status(
+        clv_high_sent, high_clv_chat, "CLV élevé (18%)",
+        " (même chat — TELEGRAM_HIGH_CLV_CHAT_ID non défini)" if high_clv_chat == clv_chat else "",
     )
 
 

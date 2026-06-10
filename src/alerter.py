@@ -99,8 +99,10 @@ class TelegramConfig:
     valuebet_dedup: bool = True           # off -> alert every scan even on stale bets
     surebet_roi_delta_pct: float = 0.5    # re-alert when ROI shifts by this many points
     valuebet_ev_delta_pct: float = 2.0    # re-alert when EV% shifts by this many points
-    clv_chat_id: str | None = None        # dedicated chat for pre-kickoff CLV alerts
-    min_clv_pct: float = 0.0             # minimum CLV% to fire a pre-kickoff alert
+    clv_chat_id: str | None = None        # CLV entre min_clv_pct et min_high_clv_pct
+    high_clv_chat_id: str | None = None   # CLV >= min_high_clv_pct (prioritaire)
+    min_clv_pct: float = 5.0             # en dessous : aucune alerte CLV
+    min_high_clv_pct: float = 15.0       # au-dessus : bascule vers high_clv_chat
     clv_window_minutes: int = 15          # send CLV alert when kickoff is within this many minutes
     parse_mode: str = "HTML"
 
@@ -123,7 +125,9 @@ class TelegramConfig:
             surebet_roi_delta_pct=float(os.getenv("TELEGRAM_SUREBET_ROI_DELTA", "0.5")),
             valuebet_ev_delta_pct=float(os.getenv("TELEGRAM_VALUEBET_EV_DELTA", "2.0")),
             clv_chat_id=os.getenv("TELEGRAM_CLV_CHAT_ID") or None,
-            min_clv_pct=float(os.getenv("TELEGRAM_MIN_CLV", "0.0")),
+            high_clv_chat_id=os.getenv("TELEGRAM_HIGH_CLV_CHAT_ID") or None,
+            min_clv_pct=float(os.getenv("TELEGRAM_MIN_CLV", "5.0")),
+            min_high_clv_pct=float(os.getenv("TELEGRAM_MIN_HIGH_CLV", "15.0")),
             clv_window_minutes=int(os.getenv("TELEGRAM_CLV_WINDOW_MINUTES", "15")),
         )
 
@@ -139,8 +143,13 @@ class TelegramConfig:
 
     @property
     def effective_clv_chat_id(self) -> str:
-        """CLV alerts fall back to the main chat when the dedicated one isn't set."""
+        """CLV 5-15% — falls back to main chat if not set."""
         return self.clv_chat_id or self.chat_id
+
+    @property
+    def effective_high_clv_chat_id(self) -> str:
+        """CLV 15%+ — falls back to normal CLV chat if no dedicated high-CLV chat is set."""
+        return self.high_clv_chat_id or self.effective_clv_chat_id
 
 
 def format_surebet(sb: Surebet, sport: str | None = None, is_live: bool = False) -> str:
@@ -191,10 +200,10 @@ def format_clv_alert(
     current_pin_odd: float,
     mins_to_kickoff: int,
     sport: str | None = None,
+    is_high: bool = False,
 ) -> str:
     """Message envoyé peu avant le coup d'envoi quand la CLV est confirmée positive.
-    Montre la cote prise, la cote Pinnacle actuelle (plus basse = marché a bougé dans
-    notre sens) et le temps restant pour placer la mise."""
+    is_high=True → header 🔥 et libellé différent pour le groupe prioritaire."""
     from .models import Book as _Book  # local import to avoid circular at module level
     parsed = parse_event_key(bet["event_key"])
     if parsed is not None:
@@ -210,9 +219,14 @@ def format_clv_alert(
     except ValueError:
         book_name = bet["book"]
 
+    header = (
+        f"🔥 <b>CLV ÉLEVÉ {clv_pct:+.2f}% confirmé</b> — {book_name}"
+        if is_high else
+        f"⏰ <b>CLV {clv_pct:+.2f}% confirmé</b> — {book_name}"
+    )
     line_suffix = f" {bet['line']}" if bet["line"] is not None else ""
     return (
-        f"⏰ <b>CLV {clv_pct:+.2f}% confirmé</b> — {book_name}\n"
+        f"{header}\n"
         f"{_sport_prefix(sport)}{matchup}\n"
         f"{when_line}"
         f"Pari : <b>{bet['outcome_label']}{line_suffix}</b> @ {float(bet['odd_taken']):.2f}\n"
@@ -287,8 +301,15 @@ class TelegramAlerter:
         *,
         sport: str | None = None,
     ) -> bool:
-        text = format_clv_alert(bet, clv_pct, current_pin_odd, mins_to_kickoff, sport=sport)
-        return self._send(text, chat_id=self.config.effective_clv_chat_id)
+        is_high = clv_pct >= self.config.min_high_clv_pct
+        chat = (
+            self.config.effective_high_clv_chat_id
+            if is_high
+            else self.config.effective_clv_chat_id
+        )
+        text = format_clv_alert(bet, clv_pct, current_pin_odd, mins_to_kickoff,
+                                sport=sport, is_high=is_high)
+        return self._send(text, chat_id=chat)
 
     def send_surebet(self, sb: Surebet, *, sport: str | None = None, is_live: bool = False) -> bool:
         # The suspicious flag is normally a "phantom surebet" canary (matching
