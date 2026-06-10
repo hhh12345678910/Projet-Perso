@@ -1,6 +1,5 @@
 from __future__ import annotations
 
-import json
 from collections import defaultdict
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from dataclasses import replace
@@ -655,18 +654,6 @@ def daemon(
     storage = Storage(ScanConfig().db_path)
     teams.init(storage)
 
-    # Start callback poller once — handles '🎯 Jouer' button presses throughout
-    # the daemon's lifetime. Uses the token from env at startup; restart the
-    # daemon if the token changes.
-    from .callback_handler import CallbackPoller
-    _init_cfg = TelegramConfig.from_env()
-    _callback_poller: CallbackPoller | None = None
-    if _init_cfg is not None:
-        _callback_poller = CallbackPoller(_init_cfg.bot_token, storage,
-                                          print_fn=lambda s: console.print(f"[dim]{s}[/dim]"))
-        _callback_poller.start()
-        console.print("[dim]Telegram callback poller started[/dim]")
-
     cycle = 0
     while True:
         cycle += 1
@@ -751,30 +738,10 @@ def daemon(
                         clv_ids_to_mark.append((int(_bet["id"]), _clv, _pin_odd))
 
                     if clv_pending:
-                        clv_alert_ids: list[int | None] = []
-                        for _bet_row, _clv, _pin_odd, _mins in clv_pending:
-                            try:
-                                _aid = storage.insert_pending_alert(
-                                    alert_type="clv",
-                                    sport=current_sport,
-                                    event_key=_bet_row["event_key"],
-                                    book=_bet_row["book"],
-                                    market=_bet_row["market"],
-                                    outcome_label=_bet_row["outcome_label"],
-                                    line=_bet_row["line"],
-                                    odd_taken=float(_bet_row["odd_taken"]),
-                                    ev_pct=float(_bet_row["ev_pct"]),
-                                    clv_pct=_clv,
-                                    margin_pct=None,
-                                )
-                                clv_alert_ids.append(_aid)
-                            except Exception:
-                                clv_alert_ids.append(None)
                         clv_sent = send_clv_alerts(
                             clv_pending, tg_cfg,
                             print_fn=lambda s: console.print(f"[yellow]{s}[/yellow]"),
                             sport=current_sport,
-                            alert_ids=clv_alert_ids,
                         )
                         for _vb_id, _clv_pct, _pin_odd in clv_ids_to_mark:
                             storage.mark_clv_alert_notified(_vb_id, _clv_pct, _pin_odd, now_utc)
@@ -799,30 +766,10 @@ def daemon(
                         ]
                     else:
                         vb_candidates = bets
-                    vb_alert_ids: list[int | None] = []
-                    for _b in vb_candidates:
-                        try:
-                            _aid = storage.insert_pending_alert(
-                                alert_type="valuebet",
-                                sport=current_sport,
-                                event_key=_b.event_key,
-                                book=_b.book.value,
-                                market=_b.market.value,
-                                outcome_label=_b.outcome.label,
-                                line=_b.outcome.line,
-                                odd_taken=_b.odd_taken,
-                                ev_pct=_b.ev_pct,
-                                clv_pct=None,
-                                margin_pct=None,
-                            )
-                            vb_alert_ids.append(_aid)
-                        except Exception:
-                            vb_alert_ids.append(None)
                     sent = send_alerts(
                         vb_candidates, tg_cfg,
                         print_fn=lambda s: console.print(f"[yellow]{s}[/yellow]"),
                         sport=current_sport,
-                        alert_ids=vb_alert_ids,
                     )
                     now_mark = datetime.now(timezone.utc)
                     vb_to_mark = vb_candidates
@@ -847,35 +794,10 @@ def daemon(
                     else:
                         sb_candidates = sb_pool
                     if sb_candidates:
-                        sb_alert_ids: list[int | None] = []
-                        for _s in sb_candidates:
-                            try:
-                                _legs_json = json.dumps({
-                                    label: [odd, book.value]
-                                    for label, (odd, book) in _s.legs.items()
-                                })
-                                _aid = storage.insert_pending_alert(
-                                    alert_type="surebet",
-                                    sport=current_sport,
-                                    event_key=_s.event_key,
-                                    book=None,
-                                    market=_s.market.value,
-                                    outcome_label=None,
-                                    line=_s.line,
-                                    odd_taken=None,
-                                    ev_pct=None,
-                                    clv_pct=None,
-                                    margin_pct=_s.margin * 100,
-                                    legs_json=_legs_json,
-                                )
-                                sb_alert_ids.append(_aid)
-                            except Exception:
-                                sb_alert_ids.append(None)
                         sent_sb = send_surebet_alerts(
                             sb_candidates, tg_cfg,
                             print_fn=lambda x: console.print(f"[yellow]{x}[/yellow]"),
                             sport=current_sport,
-                            alert_ids=sb_alert_ids,
                         )
                         sb_to_mark = sb_candidates
                         if sent_sb:
@@ -920,14 +842,11 @@ def alert_test():
         )
         return
 
-    storage = Storage(ScanConfig().db_path)
-
     test_ev  = cfg.min_ev_pct + 1.0
     test_roi = cfg.min_surebet_margin_pct / 100 + 0.005
-    test_event_key = "202606010000::testteamA__vs__testteamB"
 
     sample_bet = ValueBet(
-        event_key=test_event_key,
+        event_key="202606010000::testteamA__vs__testteamB",
         book=Book.UNIBET_BE,
         market=MarketType.H2H,
         outcome=Outcome(label="home"),
@@ -939,7 +858,7 @@ def alert_test():
         detected_at=datetime.now(timezone.utc),
     )
     sample_surebet = Surebet(
-        event_key=test_event_key,
+        event_key="202606010000::testteamA__vs__testteamB",
         market=MarketType.H2H,
         line=None,
         legs={
@@ -949,51 +868,29 @@ def alert_test():
         },
         margin=test_roi,
     )
+    # CLV test: dummy bet row as plain dict (same interface as sqlite3.Row)
     sample_clv_bet: dict = {
         "id": 0,
-        "event_key": test_event_key,
+        "event_key": "202606010000::testteamA__vs__testteamB",
         "book": Book.UNIBET_BE.value,
         "market": MarketType.H2H.value,
         "outcome_label": "home",
         "line": None,
         "odd_taken": 1.86,
-        "ev_pct": test_ev,
     }
-
-    # Insert pending alerts so the 🎯 Jouer button is live in each test message.
-    vb_aid = storage.insert_pending_alert(
-        alert_type="valuebet", sport="soccer", event_key=test_event_key,
-        book=Book.UNIBET_BE.value, market=MarketType.H2H.value,
-        outcome_label="home", line=None, odd_taken=1.86,
-        ev_pct=test_ev, clv_pct=None, margin_pct=None,
-    )
-    sb_legs_json = json.dumps({"home": [1.95, "unibet_be"], "draw": [3.85, "betfirst"], "away": [4.20, "ladbrokes_be"]})
-    sb_aid = storage.insert_pending_alert(
-        alert_type="surebet", sport="soccer", event_key=test_event_key,
-        book=None, market=MarketType.H2H.value,
-        outcome_label=None, line=None, odd_taken=None,
-        ev_pct=None, clv_pct=None, margin_pct=test_roi * 100,
-        legs_json=sb_legs_json,
-    )
-    clv_aid = storage.insert_pending_alert(
-        alert_type="clv", sport="soccer", event_key=test_event_key,
-        book=Book.UNIBET_BE.value, market=MarketType.H2H.value,
-        outcome_label="home", line=None, odd_taken=1.86,
-        ev_pct=test_ev, clv_pct=4.52, margin_pct=None,
-    )
 
     bet_sent = send_alerts(
         [sample_bet], cfg, print_fn=lambda s: console.print(f"[yellow]{s}[/yellow]"),
-        sport="soccer", alert_ids=[vb_aid],
+        sport="soccer",
     )
     surebet_sent = send_surebet_alerts(
         [sample_surebet], cfg, print_fn=lambda s: console.print(f"[yellow]{s}[/yellow]"),
-        sport="soccer", alert_ids=[sb_aid],
+        sport="soccer",
     )
     clv_sent = send_clv_alerts(
         [(sample_clv_bet, 4.52, 1.78, 12)], cfg,
         print_fn=lambda s: console.print(f"[yellow]{s}[/yellow]"),
-        sport="soccer", alert_ids=[clv_aid],
+        sport="soccer",
     )
 
     def _status(sent: bool, chat: str, label: str, fallback_note: str = "") -> None:
