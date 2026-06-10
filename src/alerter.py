@@ -90,7 +90,8 @@ def _format_kickoff(start: datetime, now: datetime | None = None) -> str:
 class TelegramConfig:
     bot_token: str
     chat_id: str                          # main chat — value bets land here
-    surebet_chat_id: str | None = None    # optional 2nd chat for surebets only
+    surebet_chat_id: str | None = None    # prematch surebets
+    live_surebet_chat_id: str | None = None  # live surebets (match already started)
     min_ev_pct: float = 3.0               # value bets below this stay silent
     min_surebet_margin_pct: float = 1.0   # surebets below this margin stay silent
     include_suspicious_surebets: bool = False  # opt-in to see flagged ones too
@@ -113,6 +114,7 @@ class TelegramConfig:
             bot_token=token,
             chat_id=chat,
             surebet_chat_id=os.getenv("TELEGRAM_SUREBET_CHAT_ID") or None,
+            live_surebet_chat_id=os.getenv("TELEGRAM_LIVE_SUREBET_CHAT_ID") or None,
             min_ev_pct=float(os.getenv("TELEGRAM_MIN_EV", "3.0")),
             min_surebet_margin_pct=float(os.getenv("TELEGRAM_MIN_SUREBET", "1.0")),
             include_suspicious_surebets=os.getenv("TELEGRAM_INCLUDE_SUSPICIOUS", "0") == "1",
@@ -127,9 +129,13 @@ class TelegramConfig:
 
     @property
     def effective_surebet_chat_id(self) -> str:
-        """Surebets fall back to the main chat when the dedicated one isn't
-        set — backward compatible with users who didn't split their channels."""
+        """Prematch surebets — falls back to main chat if not set."""
         return self.surebet_chat_id or self.chat_id
+
+    @property
+    def effective_live_surebet_chat_id(self) -> str:
+        """Live surebets — falls back to prematch chat if no dedicated live chat is set."""
+        return self.live_surebet_chat_id or self.effective_surebet_chat_id
 
     @property
     def effective_clv_chat_id(self) -> str:
@@ -137,7 +143,7 @@ class TelegramConfig:
         return self.clv_chat_id or self.chat_id
 
 
-def format_surebet(sb: Surebet, sport: str | None = None) -> str:
+def format_surebet(sb: Surebet, sport: str | None = None, is_live: bool = False) -> str:
     """Surebet messages need to list every leg with its book — that's the
     whole point — so the format is taller than a value bet alert. Visually
     distinct (💰 vs 🎯) so the user can tell them apart in the chat preview.
@@ -158,7 +164,12 @@ def format_surebet(sb: Surebet, sport: str | None = None) -> str:
         f"  • <b>{label}</b> @ {odd:.2f} — {_BOOK_NAMES.get(book, book.value)}"
         for label, (odd, book) in sb.legs.items()
     )
-    header_emoji = "⚠️ <b>SUREBET SUSPECT</b>" if sb.suspicious else "💰 <b>SUREBET</b>"
+    if sb.suspicious:
+        header_emoji = "⚠️ <b>SUREBET SUSPECT</b>"
+    elif is_live:
+        header_emoji = "🔴 <b>SUREBET LIVE</b>"
+    else:
+        header_emoji = "💰 <b>SUREBET</b>"
     suspect_footer = (
         "\n<i>⚠️ Marge inhabituelle — vérifie les équipes et les cotes "
         "avant de jouer.</i>"
@@ -279,7 +290,7 @@ class TelegramAlerter:
         text = format_clv_alert(bet, clv_pct, current_pin_odd, mins_to_kickoff, sport=sport)
         return self._send(text, chat_id=self.config.effective_clv_chat_id)
 
-    def send_surebet(self, sb: Surebet, *, sport: str | None = None) -> bool:
+    def send_surebet(self, sb: Surebet, *, sport: str | None = None, is_live: bool = False) -> bool:
         # The suspicious flag is normally a "phantom surebet" canary (matching
         # bug, label mismatch, ...), but the user can opt into seeing them to
         # verify themselves before acting.
@@ -287,10 +298,12 @@ class TelegramAlerter:
             return False
         if sb.margin * 100 < self.config.min_surebet_margin_pct:
             return False
-        return self._send(
-            format_surebet(sb, sport=sport),
-            chat_id=self.config.effective_surebet_chat_id,
+        chat = (
+            self.config.effective_live_surebet_chat_id
+            if is_live
+            else self.config.effective_surebet_chat_id
         )
+        return self._send(format_surebet(sb, sport=sport, is_live=is_live), chat_id=chat)
 
     def _send(self, text: str, chat_id: str) -> bool:
         try:
@@ -331,15 +344,19 @@ def send_surebet_alerts(
     surebets: list[Surebet], config: TelegramConfig | None,
     *, print_fn=print, sport: str | None = None,
 ) -> int:
-    """Same shape as send_alerts but for surebets. Suspicious surebets and
-    sub-threshold margins are silently skipped — only plausible
-    above-threshold opportunities make it to the chat."""
+    """Same shape as send_alerts but for surebets. Routes each surebet to the
+    prematch or live Telegram channel based on whether the event's kickoff time
+    has already passed. Suspicious surebets and sub-threshold margins are
+    silently skipped."""
     if config is None or not surebets:
         return 0
+    now = datetime.now(timezone.utc)
     sent = 0
     with TelegramAlerter(config, print_fn=print_fn) as alerter:
         for sb in surebets:
-            if alerter.send_surebet(sb, sport=sport):
+            parsed = parse_event_key(sb.event_key)
+            is_live = parsed is not None and parsed[0] <= now
+            if alerter.send_surebet(sb, sport=sport, is_live=is_live):
                 sent += 1
     return sent
 
