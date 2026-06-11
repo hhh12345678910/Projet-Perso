@@ -105,6 +105,8 @@ class TelegramConfig:
     min_clv_pct: float = 5.0             # en dessous : aucune alerte CLV
     min_high_clv_pct: float = 15.0       # au-dessus : bascule vers high_clv_chat
     clv_window_minutes: int = 15          # send CLV alert when kickoff is within this many minutes
+    clv_min_odd: float = 1.5             # CLV alerts only when the bet odd is >= this
+    clv_max_odd: float = 4.0             # CLV alerts only when the bet odd is <= this
     bankroll: float = 1000.0              # base used to turn Kelly% into a € stake in alerts
     parse_mode: str = "HTML"
 
@@ -131,6 +133,8 @@ class TelegramConfig:
             min_clv_pct=float(os.getenv("TELEGRAM_MIN_CLV", "5.0")),
             min_high_clv_pct=float(os.getenv("TELEGRAM_MIN_HIGH_CLV", "15.0")),
             clv_window_minutes=int(os.getenv("TELEGRAM_CLV_WINDOW_MINUTES", "15")),
+            clv_min_odd=float(os.getenv("TELEGRAM_CLV_MIN_ODD", "1.5")),
+            clv_max_odd=float(os.getenv("TELEGRAM_CLV_MAX_ODD", "4.0")),
             bankroll=float(os.getenv("TELEGRAM_BANKROLL", "1000.0")),
         )
 
