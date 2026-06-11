@@ -24,6 +24,7 @@ from .scrapers.goldenpalace import GoldenPalaceScraper, parse_get_events as gold
 from .scrapers.ladbrokes import LadbrokesScraper, parse_prematch as ladbrokes_parse_prematch
 from .scrapers.magicbetting import load_file as magicbetting_load_file, parse_events as magicbetting_parse_events
 from .scrapers.pinnacle import PinnacleScraper
+from .scrapers.sevenelevenbe import SevenElevenScraper, parse_listview as sevenelevenbe_parse_listview
 from .scrapers.smarkets import SmarketsScraper, iter_all_quotes as smarkets_iter_quotes
 from .scrapers.starcasinosport import StarCasinoSportScraper, parse_get_events as starcasinosport_parse_get_events
 from .scrapers.unibet import UnibetScraper, parse_listview as unibet_parse_listview
@@ -252,6 +253,18 @@ def fetch_unibet_quotes(sport: str) -> list[OddQuote]:
         return []
 
 
+def fetch_sevenelevenbe_quotes(sport: str) -> list[OddQuote]:
+    """Fetch + parse every 711 (Kambi) event — same coverage strategy as Unibet,
+    just a different operator code on the shared Kambi offering API."""
+    try:
+        with SevenElevenScraper() as se:
+            data = se.fetch_all_events(sport)
+        return list(sevenelevenbe_parse_listview(data))
+    except httpx.HTTPError as e:
+        console.print(f"[yellow]711 skipped:[/yellow] {e}")
+        return []
+
+
 def fetch_betfirst_quotes(sport: str) -> list[OddQuote]:
     """Fetch + parse the BetFirst events-table for a sport (paginated)."""
     try:
@@ -349,6 +362,7 @@ def _fetch_all_parallel(
     tasks: dict[str, Callable[[], list[OddQuote]]] = {
         "Pinnacle":      _pinnacle,
         "Unibet":        lambda: fetch_unibet_quotes(sport),
+        "711":           lambda: fetch_sevenelevenbe_quotes(sport),
         "BetFirst":      lambda: fetch_betfirst_quotes(sport),
         "Ladbrokes":     lambda: fetch_ladbrokes_quotes(sport),
         "Golden Palace": lambda: fetch_goldenpalace_quotes(sport),

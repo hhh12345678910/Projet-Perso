@@ -23,6 +23,7 @@ class Book(str, Enum):
     GOLDEN_PALACE = "golden_palace"
     STARCASINO_SPORT = "starcasino_sport"
     MAGIC_BETTING = "magic_betting"
+    SEVEN_ELEVEN_BE = "seven_eleven_be"  # 711.be — Kambi platform, same as Unibet
     SMARKETS = "smarkets"        # London exchange, used as a secondary sharp reference
 
 
