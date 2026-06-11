@@ -104,6 +104,7 @@ class TelegramConfig:
     min_clv_pct: float = 5.0             # en dessous : aucune alerte CLV
     min_high_clv_pct: float = 15.0       # au-dessus : bascule vers high_clv_chat
     clv_window_minutes: int = 15          # send CLV alert when kickoff is within this many minutes
+    bankroll: float = 1000.0              # base used to turn Kelly% into a € stake in alerts
     parse_mode: str = "HTML"
 
     @classmethod
@@ -129,6 +130,7 @@ class TelegramConfig:
             min_clv_pct=float(os.getenv("TELEGRAM_MIN_CLV", "5.0")),
             min_high_clv_pct=float(os.getenv("TELEGRAM_MIN_HIGH_CLV", "15.0")),
             clv_window_minutes=int(os.getenv("TELEGRAM_CLV_WINDOW_MINUTES", "15")),
+            bankroll=float(os.getenv("TELEGRAM_BANKROLL", "1000.0")),
         )
 
     @property
@@ -194,6 +196,16 @@ def format_surebet(sb: Surebet, sport: str | None = None, is_live: bool = False)
     )
 
 
+def _clv_bet_kelly_pct(bet: sqlite3.Row) -> float | None:
+    """Read the stored Kelly% from a value_bets row if present. The row may be a
+    plain dict (alert-test) or a sqlite3.Row — both expose .keys() — so we probe
+    for the column and return None when it's absent."""
+    if "kelly_pct" in bet.keys():
+        val = bet["kelly_pct"]
+        return float(val) if val is not None else None
+    return None
+
+
 def format_clv_alert(
     bet: sqlite3.Row,
     clv_pct: float,
@@ -201,9 +213,11 @@ def format_clv_alert(
     mins_to_kickoff: int,
     sport: str | None = None,
     is_high: bool = False,
+    bankroll: float = 1000.0,
 ) -> str:
     """Message envoyé peu avant le coup d'envoi quand la CLV est confirmée positive.
-    is_high=True → header 🔥 et libellé différent pour le groupe prioritaire."""
+    is_high=True → header 🔥 et libellé différent pour le groupe prioritaire.
+    bankroll sert à convertir le Kelly% stocké en mise conseillée en €."""
     from .models import Book as _Book  # local import to avoid circular at module level
     parsed = parse_event_key(bet["event_key"])
     if parsed is not None:
@@ -225,12 +239,21 @@ def format_clv_alert(
         f"⏰ <b>CLV {clv_pct:+.2f}% confirmé</b> — {book_name}"
     )
     line_suffix = f" {bet['line']}" if bet["line"] is not None else ""
+
+    kelly_pct = _clv_bet_kelly_pct(bet)
+    if kelly_pct is not None:
+        stake_eur = kelly_pct / 100.0 * bankroll
+        stake_line = f"\nMise conseillée : {kelly_pct:.2f}% → {stake_eur:.2f}€ (sur {bankroll:.0f}€)"
+    else:
+        stake_line = ""
+
     return (
         f"{header}\n"
         f"{_sport_prefix(sport)}{matchup}\n"
         f"{when_line}"
         f"Pari : <b>{bet['outcome_label']}{line_suffix}</b> @ {float(bet['odd_taken']):.2f}\n"
         f"Pinnacle actuel : {current_pin_odd:.2f}"
+        f"{stake_line}"
     )
 
 
@@ -308,7 +331,7 @@ class TelegramAlerter:
             else self.config.effective_clv_chat_id
         )
         text = format_clv_alert(bet, clv_pct, current_pin_odd, mins_to_kickoff,
-                                sport=sport, is_high=is_high)
+                                sport=sport, is_high=is_high, bankroll=self.config.bankroll)
         return self._send(text, chat_id=chat)
 
     def send_surebet(self, sb: Surebet, *, sport: str | None = None, is_live: bool = False) -> bool:

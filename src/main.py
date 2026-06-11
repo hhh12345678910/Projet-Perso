@@ -890,6 +890,7 @@ def alert_test():
         "outcome_label": "home",
         "line": None,
         "odd_taken": 1.86,
+        "kelly_pct": 1.50,
     }
 
     bet_sent = send_alerts(
