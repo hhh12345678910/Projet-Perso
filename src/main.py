@@ -629,13 +629,180 @@ def scan_surebets(
             console.print(f"  → {sent} surebet alerts sent")
 
 
+def _daemon_scan_sport(
+    current_sport: str,
+    storage: Storage,
+    tg_cfg: "TelegramConfig | None",
+    min_ev: float,
+    bankroll: float,
+    betano_file: "str | None",
+    magicbetting_file: "str | None",
+) -> None:
+    """Fetch, analyse and alert for one sport. Runs inside a ThreadPoolExecutor
+    so all sports execute concurrently every cycle. SQLite WAL mode lets multiple
+    threads read simultaneously; concurrent writes serialise via the 10 s timeout
+    built into Storage._conn(), so no external locking is needed."""
+    vb_to_mark: list[ValueBet] = []
+    sb_to_mark: list[Surebet] = []
+    now_mark = datetime.now(timezone.utc)
+
+    try:
+        console.print(f"\n[bold]{current_sport.upper()}[/bold]")
+        # Betano and Magic Betting are soccer-only file-based scrapers.
+        all_q = _fetch_all_parallel(
+            current_sport, betano_file, magicbetting_file,
+            include_file_books=(current_sport == "soccer"),
+        )
+        pinnacle_q = [q for q in all_q if q.book == Book.PINNACLE]
+        smarkets_q = [q for q in all_q if q.book == Book.SMARKETS]
+        soft_raw   = [q for q in all_q if q.book not in (Book.PINNACLE, Book.SMARKETS)]
+
+        if not pinnacle_q:
+            console.print("[yellow]  No Pinnacle quotes — skipping[/yellow]")
+            return
+
+        cfg = ScanConfig(sport=current_sport, min_ev_pct=min_ev, bankroll=bankroll)
+        if smarkets_q:
+            smarkets_q = remap_to_reference(smarkets_q, {q.event_key for q in pinnacle_q})
+        fair = build_fair_lines(pinnacle_q, cfg.devig_method, secondary_quotes=smarkets_q)
+        for q in pinnacle_q:
+            storage.insert_quote(q)
+
+        ref_keys = {fl.event_key for fl in fair.values()}
+        soft_q = remap_to_reference(soft_raw, ref_keys)
+        for q in soft_q:
+            storage.insert_quote(q)
+
+        # ── CLV pre-kickoff alerts ────────────────────────────────────
+        if tg_cfg is not None and tg_cfg.clv_window_minutes > 0:
+            now_utc = datetime.now(timezone.utc)
+            pin_idx: dict[tuple, float] = {}
+            for _q in pinnacle_q:
+                if "::" in _q.event_key:
+                    _d = _q.event_key[:8]
+                    _t = _q.event_key.split("::", 1)[1]
+                    pin_idx[(_d, _t, _q.market.value, _q.outcome.label, _q.outcome.line)] = _q.decimal_odd
+
+            clv_pending: list[tuple] = []
+            clv_ids_to_mark: list[tuple[int, float, float]] = []
+            for _bet in storage.open_value_bets():
+                _parsed = parse_event_key(_bet["event_key"])
+                if _parsed is None:
+                    continue
+                _kickoff, _, _ = _parsed
+                _mins = (_kickoff - now_utc).total_seconds() / 60
+                if not (0 < _mins <= tg_cfg.clv_window_minutes):
+                    continue
+                if storage.clv_alert_already_notified(int(_bet["id"])):
+                    continue
+                if "::" not in _bet["event_key"]:
+                    continue
+                _d = _bet["event_key"][:8]
+                _t = _bet["event_key"].split("::", 1)[1]
+                _pin_odd = pin_idx.get((_d, _t, _bet["market"], _bet["outcome_label"], _bet["line"]))
+                if _pin_odd is None:
+                    continue
+                _clv = (float(_bet["odd_taken"]) / _pin_odd - 1) * 100
+                if _clv < tg_cfg.min_clv_pct:
+                    continue
+                clv_pending.append((_bet, _clv, _pin_odd, int(_mins)))
+                clv_ids_to_mark.append((int(_bet["id"]), _clv, _pin_odd))
+
+            if clv_pending:
+                clv_sent = send_clv_alerts(
+                    clv_pending, tg_cfg,
+                    print_fn=lambda s: console.print(f"[yellow]{s}[/yellow]"),
+                    sport=current_sport,
+                )
+                for _vb_id, _clv_pct, _pin_odd in clv_ids_to_mark:
+                    storage.mark_clv_alert_notified(_vb_id, _clv_pct, _pin_odd, now_utc)
+                if clv_sent:
+                    console.print(f"  → {clv_sent} CLV alert(s) sent")
+
+        # ── Value bets ───────────────────────────────────────────────
+        bets = find_value_bets(soft_q, fair, cfg)
+        bets.sort(key=lambda b: b.ev_pct, reverse=True)
+        for b in bets:
+            storage.insert_value_bet(b)
+        console.print(f"  value bets: {len(bets)} total")
+        if tg_cfg is not None:
+            if tg_cfg.valuebet_dedup:
+                vb_candidates = [
+                    b for b in bets
+                    if not storage.value_bet_already_notified(
+                        b.event_key, b.book.value, b.market.value, b.outcome.label, b.outcome.line,
+                        current_ev_pct=b.ev_pct,
+                        ev_delta_pct=tg_cfg.valuebet_ev_delta_pct,
+                    )
+                ]
+            else:
+                vb_candidates = bets
+            sent = send_alerts(
+                vb_candidates, tg_cfg,
+                print_fn=lambda s: console.print(f"[yellow]{s}[/yellow]"),
+                sport=current_sport,
+            )
+            now_mark = datetime.now(timezone.utc)
+            vb_to_mark = vb_candidates
+            if sent:
+                console.print(f"  → {sent} value bet alert(s) sent")
+
+        # ── Surebets ─────────────────────────────────────────────────
+        surebets = find_surebets(soft_q + pinnacle_q)
+        plausible = [s for s in surebets if not s.suspicious]
+        console.print(f"  surebets: {len(plausible)} plausible")
+        if tg_cfg is not None and surebets:
+            sb_pool = surebets if tg_cfg.include_suspicious_surebets else plausible
+            if tg_cfg.surebet_dedup:
+                sb_candidates = [
+                    s for s in sb_pool
+                    if not storage.surebet_already_notified(
+                        s.event_key, s.market.value, s.line,
+                        current_margin_pct=s.margin * 100,
+                        roi_delta_pct=tg_cfg.surebet_roi_delta_pct,
+                    )
+                ]
+            else:
+                sb_candidates = sb_pool
+            if sb_candidates:
+                sent_sb = send_surebet_alerts(
+                    sb_candidates, tg_cfg,
+                    print_fn=lambda x: console.print(f"[yellow]{x}[/yellow]"),
+                    sport=current_sport,
+                )
+                sb_to_mark = sb_candidates
+                if sent_sb:
+                    console.print(f"  → {sent_sb} surebet alert(s) sent")
+
+    except Exception as e:
+        console.print(f"[red]  {current_sport} error: {e}[/red]")
+
+    # ── Persist dedup marks outside the sport catch so a scraper/analysis
+    # failure never prevents already-sent alerts from being recorded. ──────
+    try:
+        for b in vb_to_mark:
+            storage.mark_value_bet_notified(
+                b.event_key, b.book.value, b.market.value, b.outcome.label, b.outcome.line,
+                b.ev_pct, now_mark,
+            )
+        for s in sb_to_mark:
+            storage.mark_surebet_notified(
+                s.event_key, s.market.value, s.line, s.margin * 100, now_mark,
+            )
+    except Exception as mark_err:
+        console.print(
+            f"[red]  dedup mark failed for {current_sport} — "
+            f"next cycle may re-alert: {mark_err}[/red]"
+        )
+
+
 @app.command()
 def daemon(
     sport: str = "soccer,tennis,basketball,hockey",
     min_ev: float = 2.0,
     bankroll: float = 1000.0,
     breather: int = typer.Option(
-        30, "--breather",
+        10, "--breather",
         help="Seconds to pause between cycle end and next start.",
     ),
     betano_file: str = typer.Option(
@@ -649,7 +816,10 @@ def daemon(
 ):
     """Continuous scan: fetch all books in parallel, detect value bets + surebets,
     alert on Telegram only when something new or changed. Loops forever — run
-    under systemd (scripts/valuebet-daemon.service) or screen/tmux."""
+    under systemd (scripts/valuebet-daemon.service) or screen/tmux.
+
+    All sports are scanned concurrently (one thread per sport) so the cycle time
+    equals the slowest single-sport fetch, not their sum."""
     sports_list = [s.strip() for s in sport.split(",") if s.strip()]
     storage = Storage(ScanConfig().db_path)
     teams.init(storage)
@@ -661,168 +831,20 @@ def daemon(
         console.print(f"\n[bold green]══ CYCLE {cycle} — {t0.strftime('%H:%M:%S')} UTC ══[/bold green]")
         tg_cfg = TelegramConfig.from_env()
 
-        for current_sport in sports_list:
-            # Collected outside the analysis try-block so their writes land even
-            # when the broader analysis succeeds — a mark failure must never be
-            # silently swallowed by the sport-level catch (that would allow the
-            # same alert to fire again next cycle).
-            vb_to_mark: list[ValueBet] = []
-            sb_to_mark: list[Surebet] = []
-            now_mark = datetime.now(timezone.utc)
-
-            try:
-                console.print(f"\n[bold]{current_sport.upper()}[/bold]")
-                all_q = _fetch_all_parallel(
-                    current_sport, betano_file, magicbetting_file,
-                    include_file_books=(current_sport == sports_list[0]),
-                )
-                pinnacle_q = [q for q in all_q if q.book == Book.PINNACLE]
-                smarkets_q = [q for q in all_q if q.book == Book.SMARKETS]
-                soft_raw   = [q for q in all_q if q.book not in (Book.PINNACLE, Book.SMARKETS)]
-
-                if not pinnacle_q:
-                    console.print("[yellow]  No Pinnacle quotes — skipping[/yellow]")
-                    continue
-
-                cfg = ScanConfig(sport=current_sport, min_ev_pct=min_ev, bankroll=bankroll)
-                if smarkets_q:
-                    smarkets_q = remap_to_reference(smarkets_q, {q.event_key for q in pinnacle_q})
-                fair = build_fair_lines(pinnacle_q, cfg.devig_method, secondary_quotes=smarkets_q)
-                for q in pinnacle_q:
-                    storage.insert_quote(q)
-
-                ref_keys = {fl.event_key for fl in fair.values()}
-                soft_q = remap_to_reference(soft_raw, ref_keys)
-                for q in soft_q:
-                    storage.insert_quote(q)
-
-                # ── CLV pre-kickoff alerts ────────────────────────────────────
-                # For every open value bet whose kickoff is within the configured
-                # window, look up the current Pinnacle odd and compute live CLV.
-                # CLV > 0 means Pinnacle has shortened the odds since detection
-                # (market agrees with us) — good time to place the bet.
-                if tg_cfg is not None and tg_cfg.clv_window_minutes > 0:
-                    now_utc = datetime.now(timezone.utc)
-                    # Index current Pinnacle quotes by (YYYYMMDD, teams, market, outcome, line)
-                    # so we can match against stored bets regardless of HHMM drift.
-                    pin_idx: dict[tuple, float] = {}
-                    for _q in pinnacle_q:
-                        if "::" in _q.event_key:
-                            _d = _q.event_key[:8]
-                            _t = _q.event_key.split("::", 1)[1]
-                            pin_idx[(_d, _t, _q.market.value, _q.outcome.label, _q.outcome.line)] = _q.decimal_odd
-
-                    clv_pending: list[tuple] = []   # (bet_row, clv_pct, pin_odd, mins)
-                    clv_ids_to_mark: list[tuple[int, float, float]] = []
-                    for _bet in storage.open_value_bets():
-                        _parsed = parse_event_key(_bet["event_key"])
-                        if _parsed is None:
-                            continue
-                        _kickoff, _, _ = _parsed
-                        _mins = (_kickoff - now_utc).total_seconds() / 60
-                        if not (0 < _mins <= tg_cfg.clv_window_minutes):
-                            continue
-                        if storage.clv_alert_already_notified(int(_bet["id"])):
-                            continue
-                        if "::" not in _bet["event_key"]:
-                            continue
-                        _d = _bet["event_key"][:8]
-                        _t = _bet["event_key"].split("::", 1)[1]
-                        _pin_odd = pin_idx.get((_d, _t, _bet["market"], _bet["outcome_label"], _bet["line"]))
-                        if _pin_odd is None:
-                            continue
-                        _clv = (float(_bet["odd_taken"]) / _pin_odd - 1) * 100
-                        if _clv < tg_cfg.min_clv_pct:
-                            continue
-                        clv_pending.append((_bet, _clv, _pin_odd, int(_mins)))
-                        clv_ids_to_mark.append((int(_bet["id"]), _clv, _pin_odd))
-
-                    if clv_pending:
-                        clv_sent = send_clv_alerts(
-                            clv_pending, tg_cfg,
-                            print_fn=lambda s: console.print(f"[yellow]{s}[/yellow]"),
-                            sport=current_sport,
-                        )
-                        for _vb_id, _clv_pct, _pin_odd in clv_ids_to_mark:
-                            storage.mark_clv_alert_notified(_vb_id, _clv_pct, _pin_odd, now_utc)
-                        if clv_sent:
-                            console.print(f"  → {clv_sent} CLV alert(s) sent")
-
-                # ── Value bets ───────────────────────────────────────────────
-                bets = find_value_bets(soft_q, fair, cfg)
-                bets.sort(key=lambda b: b.ev_pct, reverse=True)
-                for b in bets:
-                    storage.insert_value_bet(b)
-                console.print(f"  value bets: {len(bets)} total")
-                if tg_cfg is not None:
-                    if tg_cfg.valuebet_dedup:
-                        vb_candidates = [
-                            b for b in bets
-                            if not storage.value_bet_already_notified(
-                                b.event_key, b.book.value, b.market.value, b.outcome.label, b.outcome.line,
-                                current_ev_pct=b.ev_pct,
-                                ev_delta_pct=tg_cfg.valuebet_ev_delta_pct,
-                            )
-                        ]
-                    else:
-                        vb_candidates = bets
-                    sent = send_alerts(
-                        vb_candidates, tg_cfg,
-                        print_fn=lambda s: console.print(f"[yellow]{s}[/yellow]"),
-                        sport=current_sport,
-                    )
-                    now_mark = datetime.now(timezone.utc)
-                    vb_to_mark = vb_candidates
-                    if sent:
-                        console.print(f"  → {sent} value bet alert(s) sent")
-
-                # ── Surebets ─────────────────────────────────────────────────
-                surebets = find_surebets(soft_q + pinnacle_q)
-                plausible = [s for s in surebets if not s.suspicious]
-                console.print(f"  surebets: {len(plausible)} plausible")
-                if tg_cfg is not None and surebets:
-                    sb_pool = surebets if tg_cfg.include_suspicious_surebets else plausible
-                    if tg_cfg.surebet_dedup:
-                        sb_candidates = [
-                            s for s in sb_pool
-                            if not storage.surebet_already_notified(
-                                s.event_key, s.market.value, s.line,
-                                current_margin_pct=s.margin * 100,
-                                roi_delta_pct=tg_cfg.surebet_roi_delta_pct,
-                            )
-                        ]
-                    else:
-                        sb_candidates = sb_pool
-                    if sb_candidates:
-                        sent_sb = send_surebet_alerts(
-                            sb_candidates, tg_cfg,
-                            print_fn=lambda x: console.print(f"[yellow]{x}[/yellow]"),
-                            sport=current_sport,
-                        )
-                        sb_to_mark = sb_candidates
-                        if sent_sb:
-                            console.print(f"  → {sent_sb} surebet alert(s) sent")
-
-            except Exception as e:
-                console.print(f"[red]  {current_sport} error: {e}[/red]")
-
-            # ── Persist dedup marks (outside the sport catch so a scraper/analysis
-            # failure never prevents already-sent alerts from being recorded) ────
-            try:
-                for b in vb_to_mark:
-                    storage.mark_value_bet_notified(
-                        b.event_key, b.book.value, b.market.value, b.outcome.label, b.outcome.line,
-                        b.ev_pct, now_mark,
-                    )
-                for s in sb_to_mark:
-                    storage.mark_surebet_notified(
-                        s.event_key, s.market.value, s.line, s.margin * 100, now_mark,
-                    )
-            except Exception as mark_err:
-                console.print(
-                    f"[red]  dedup mark failed for {current_sport} — "
-                    f"next cycle may re-alert: {mark_err}[/red]"
-                )
+        # Run every sport concurrently — cycle time = max(sport_time) not sum.
+        with ThreadPoolExecutor(max_workers=len(sports_list)) as executor:
+            futs = {
+                executor.submit(
+                    _daemon_scan_sport,
+                    sp, storage, tg_cfg, min_ev, bankroll, betano_file, magicbetting_file,
+                ): sp
+                for sp in sports_list
+            }
+            for f in as_completed(futs):
+                try:
+                    f.result()
+                except Exception as e:
+                    console.print(f"[red]Sport thread {futs[f]} crashed: {e}[/red]")
 
         elapsed = (datetime.now(timezone.utc) - t0).total_seconds()
         console.print(f"\n[dim]Cycle {cycle} done in {elapsed:.0f}s — next in {breather}s[/dim]")
