@@ -2,6 +2,8 @@ from __future__ import annotations
 
 import os
 import sqlite3
+import threading
+import time as _time
 from dataclasses import dataclass
 from datetime import datetime, timezone
 
@@ -108,6 +110,11 @@ class TelegramConfig:
     clv_min_odd: float = 1.5             # CLV alerts only when the bet odd is >= this
     clv_max_odd: float = 4.0             # CLV alerts only when the bet odd is <= this
     bankroll: float = 1000.0              # base used to turn Kelly% into a € stake in alerts
+    # Rate limiting — Telegram caps bots at ~20 messages/min per group. We pace
+    # sends per chat and honour 429 cooldowns so a burst can't get the bot
+    # throttled for hours.
+    min_send_interval_s: float = 3.2     # min gap between two messages to the same chat
+    max_defer_s: float = 45.0            # if a chat's send queue is backed up past this, defer to next cycle
     parse_mode: str = "HTML"
 
     @classmethod
@@ -136,6 +143,8 @@ class TelegramConfig:
             clv_min_odd=float(os.getenv("TELEGRAM_CLV_MIN_ODD", "1.5")),
             clv_max_odd=float(os.getenv("TELEGRAM_CLV_MAX_ODD", "4.0")),
             bankroll=float(os.getenv("TELEGRAM_BANKROLL", "1000.0")),
+            min_send_interval_s=float(os.getenv("TELEGRAM_MIN_SEND_INTERVAL", "3.2")),
+            max_defer_s=float(os.getenv("TELEGRAM_MAX_DEFER", "45.0")),
         )
 
     @property
@@ -294,9 +303,24 @@ def format_value_bet(bet: ValueBet, sport: str | None = None) -> str:
 class TelegramAlerter:
     """Thin wrapper around the Telegram Bot API. send_value_bet is best-effort:
     a network failure is logged via the supplied print_fn but doesn't abort
-    the scan, since alerting is informational."""
+    the scan, since alerting is informational.
+
+    Built-in rate limiting: Telegram throttles bots to ~20 messages/min per
+    group and answers a flood with a 429 + retry_after that can reach hours.
+    The limiter state is class-level (shared across the per-sport threads and
+    the fresh alerter instance each cycle creates) and guarded by a lock:
+      - _next_slot paces sends per chat (min_send_interval_s apart),
+      - _cooldown_until parks a chat after a 429 until its retry_after elapses,
+      - sends that would queue past max_defer_s are dropped for this cycle and
+        retried later (the daemon only marks as notified what actually sent)."""
 
     API_BASE = "https://api.telegram.org"
+
+    # Shared across every instance in the process so parallel sport threads and
+    # successive cycles all pace against the same per-chat budget.
+    _rl_lock = threading.Lock()
+    _next_slot: dict[str, float] = {}        # chat_id -> earliest epoch we may send next
+    _cooldown_until: dict[str, float] = {}   # chat_id -> epoch to skip sends until (post-429)
 
     def __init__(self, config: TelegramConfig, *, client: httpx.Client | None = None,
                  print_fn=print):
@@ -354,7 +378,46 @@ class TelegramAlerter:
         )
         return self._send(format_surebet(sb, sport=sport, is_live=is_live), chat_id=chat)
 
+    @staticmethod
+    def _retry_after_seconds(r: httpx.Response) -> float:
+        """Pull Telegram's requested back-off from a 429 response."""
+        try:
+            params = r.json().get("parameters", {})
+            return float(params.get("retry_after", 30))
+        except Exception:
+            hdr = r.headers.get("Retry-After")
+            try:
+                return float(hdr) if hdr else 30.0
+            except (TypeError, ValueError):
+                return 30.0
+
+    def _reserve_slot(self, chat_id: str) -> float | None:
+        """Reserve the next send slot for a chat under the shared lock. Returns
+        the epoch at which the caller may send, or None to skip this send (the
+        chat is in a 429 cooldown, or its queue is backed up past max_defer_s)."""
+        with TelegramAlerter._rl_lock:
+            now = _time.time()
+            cooldown = TelegramAlerter._cooldown_until.get(chat_id, 0.0)
+            if now < cooldown:
+                self._print(
+                    f"Telegram cooldown {int(cooldown - now)}s restant [chat={chat_id}] — message reporté"
+                )
+                return None
+            slot = max(now, TelegramAlerter._next_slot.get(chat_id, 0.0))
+            if slot - now > self.config.max_defer_s:
+                # Too many queued for this chat right now — leave it unsent so the
+                # daemon doesn't mark it notified; it'll be retried next cycle.
+                return None
+            TelegramAlerter._next_slot[chat_id] = slot + self.config.min_send_interval_s
+            return slot
+
     def _send(self, text: str, chat_id: str) -> bool:
+        slot = self._reserve_slot(chat_id)
+        if slot is None:
+            return False
+        wait = slot - _time.time()
+        if wait > 0:
+            _time.sleep(wait)
         try:
             r = self._client.post(
                 f"{self.API_BASE}/bot{self.config.bot_token}/sendMessage",
@@ -365,6 +428,14 @@ class TelegramAlerter:
                     "disable_web_page_preview": True,
                 },
             )
+            if r.status_code == 429:
+                retry_after = self._retry_after_seconds(r)
+                with TelegramAlerter._rl_lock:
+                    TelegramAlerter._cooldown_until[chat_id] = _time.time() + retry_after
+                self._print(
+                    f"Telegram 429 [chat={chat_id}] — pause {int(retry_after)}s avant le prochain envoi"
+                )
+                return False
             if r.status_code != 200:
                 self._print(f"Telegram non-200 ({r.status_code}) [chat={chat_id}]: {r.text[:200]}")
                 return False
@@ -375,38 +446,39 @@ class TelegramAlerter:
 
 
 def send_alerts(bets: list[ValueBet], config: TelegramConfig | None,
-                *, print_fn=print, sport: str | None = None) -> int:
+                *, print_fn=print, sport: str | None = None) -> list[ValueBet]:
     """Fire a Telegram message for each bet that clears the EV threshold.
-    Returns the number actually sent. No-op if config is None (env not set).
-    Pass `sport` so the per-sport emoji shows up in the message."""
+    Returns the bets actually delivered (so the caller marks only those as
+    notified — a rate-limited/failed send stays unmarked and is retried).
+    No-op if config is None (env not set)."""
     if config is None or not bets:
-        return 0
-    sent = 0
+        return []
+    sent: list[ValueBet] = []
     with TelegramAlerter(config, print_fn=print_fn) as alerter:
         for b in bets:
             if alerter.send_value_bet(b, sport=sport):
-                sent += 1
+                sent.append(b)
     return sent
 
 
 def send_surebet_alerts(
     surebets: list[Surebet], config: TelegramConfig | None,
     *, print_fn=print, sport: str | None = None,
-) -> int:
+) -> list[Surebet]:
     """Same shape as send_alerts but for surebets. Routes each surebet to the
     prematch or live Telegram channel based on whether the event's kickoff time
     has already passed. Suspicious surebets and sub-threshold margins are
-    silently skipped."""
+    silently skipped. Returns the surebets actually delivered."""
     if config is None or not surebets:
-        return 0
+        return []
     now = datetime.now(timezone.utc)
-    sent = 0
+    sent: list[Surebet] = []
     with TelegramAlerter(config, print_fn=print_fn) as alerter:
         for sb in surebets:
             parsed = parse_event_key(sb.event_key)
             is_live = parsed is not None and parsed[0] <= now
             if alerter.send_surebet(sb, sport=sport, is_live=is_live):
-                sent += 1
+                sent.append(sb)
     return sent
 
 
@@ -416,14 +488,15 @@ def send_clv_alerts(
     *,
     print_fn=print,
     sport: str | None = None,
-) -> int:
+) -> list[tuple]:
     """Send one CLV confirmation alert per near-kickoff value bet. Returns the
-    number of messages sent. No-op if config is None or the list is empty."""
+    clv_items actually delivered. No-op if config is None or the list is empty."""
     if config is None or not clv_items:
-        return 0
-    sent = 0
+        return []
+    sent: list[tuple] = []
     with TelegramAlerter(config, print_fn=print_fn) as alerter:
-        for bet, clv_pct, pin_odd, mins in clv_items:
+        for item in clv_items:
+            bet, clv_pct, pin_odd, mins = item
             if alerter.send_clv_alert(bet, clv_pct, pin_odd, mins, sport=sport):
-                sent += 1
+                sent.append(item)
     return sent

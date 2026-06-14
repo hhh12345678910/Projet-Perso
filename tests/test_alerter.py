@@ -18,6 +18,18 @@ from src.models import Book, MarketType, Outcome, ValueBet
 from src.surebet import Surebet
 
 
+@pytest.fixture(autouse=True)
+def _reset_rate_limiter():
+    """The TelegramAlerter rate-limit state is class-level (shared across the
+    process in production). Clear it between tests so per-chat slot reservations
+    and 429 cooldowns from one test never bleed into the next."""
+    TelegramAlerter._next_slot.clear()
+    TelegramAlerter._cooldown_until.clear()
+    yield
+    TelegramAlerter._next_slot.clear()
+    TelegramAlerter._cooldown_until.clear()
+
+
 NOW = datetime(2026, 5, 28, tzinfo=timezone.utc)
 
 
@@ -246,23 +258,24 @@ def test_send_surebet_alerts_counts_above_threshold(monkeypatch):
         def close(self): pass
 
     monkeypatch.setattr("src.alerter.httpx.Client", lambda **_: FakeClient())
-    cfg = TelegramConfig(bot_token="t", chat_id="c", min_surebet_margin_pct=1.0)
+    cfg = TelegramConfig(bot_token="t", chat_id="c", min_surebet_margin_pct=1.0,
+                         min_send_interval_s=0.0)
     surebets = [
         _surebet(margin=0.005),                 # below threshold
         _surebet(margin=0.025),                 # above threshold
         _surebet(margin=0.20, suspicious=True), # suspicious -> skipped
         _surebet(margin=0.015),                 # above threshold
     ]
-    assert send_surebet_alerts(surebets, cfg) == 2
+    assert len(send_surebet_alerts(surebets, cfg)) == 2
     assert sent_count["n"] == 2
 
 
 def test_send_surebet_alerts_returns_zero_when_no_config():
-    assert send_surebet_alerts([_surebet()], config=None) == 0
+    assert send_surebet_alerts([_surebet()], config=None) == []
 
 
 def test_send_alerts_returns_zero_when_no_config():
-    assert send_alerts([_bet()], config=None) == 0
+    assert send_alerts([_bet()], config=None) == []
 
 
 def test_send_alerts_counts_sent_only_above_threshold(monkeypatch):
@@ -276,7 +289,8 @@ def test_send_alerts_counts_sent_only_above_threshold(monkeypatch):
         def close(self): pass
 
     monkeypatch.setattr("src.alerter.httpx.Client", lambda **_: FakeClient())
-    cfg = TelegramConfig(bot_token="t", chat_id="c", min_ev_pct=3.0)
+    cfg = TelegramConfig(bot_token="t", chat_id="c", min_ev_pct=3.0,
+                         min_send_interval_s=0.0)
     bets = [_bet(ev_pct=2.0), _bet(ev_pct=5.0), _bet(ev_pct=4.1)]
-    assert send_alerts(bets, cfg) == 2
+    assert len(send_alerts(bets, cfg)) == 2
     assert sent_count["n"] == 2

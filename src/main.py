@@ -22,7 +22,7 @@ from .scrapers.betano import BetanoAuthError, BetanoScraper, parse_overview as b
 from .scrapers.betfirst import BetFirstScraper, parse_events_table as betfirst_parse_events_table
 from .scrapers.goldenpalace import GoldenPalaceScraper, parse_get_events as goldenpalace_parse_get_events
 from .scrapers.ladbrokes import LadbrokesScraper, parse_prematch as ladbrokes_parse_prematch
-from .scrapers.magicbetting import load_file as magicbetting_load_file, parse_events as magicbetting_parse_events
+from .scrapers.magicbetting import MagicBettingScraper, load_file as magicbetting_load_file, parse_events as magicbetting_parse_events
 from .scrapers.pinnacle import PinnacleScraper
 from .scrapers.sevenelevenbe import SevenElevenScraper, parse_listview as sevenelevenbe_parse_listview
 from .scrapers.smarkets import SmarketsScraper, iter_all_quotes as smarkets_iter_quotes
@@ -524,13 +524,13 @@ def scan(
                 candidates = bets
             sent = send_alerts(candidates, tg_cfg, print_fn=lambda s: console.print(f"[yellow]{s}[/yellow]"), sport=current_sport)
             now = datetime.now(timezone.utc)
-            for b in candidates:
+            for b in sent:
                 storage.mark_value_bet_notified(
                     b.event_key, b.book.value, b.market.value, b.outcome.label, b.outcome.line,
                     b.ev_pct, now,
                 )
             if sent:
-                console.print(f"  → {sent} Telegram alerts sent (EV ≥ {tg_cfg.min_ev_pct:.1f}%)")
+                console.print(f"  → {len(sent)} Telegram alerts sent (EV ≥ {tg_cfg.min_ev_pct:.1f}%)")
 
         table = Table(title=f"Value bets ({sport}, min_ev={min_ev}%)", show_lines=False)
         table.add_column("event_key", overflow="fold")
@@ -587,12 +587,12 @@ def scan(
                     sport=current_sport,
                 )
                 now = datetime.now(timezone.utc)
-                for s in candidates:
+                for s in sent:
                     storage.mark_surebet_notified(
                         s.event_key, s.market.value, s.line, s.margin * 100, now,
                     )
                 if sent:
-                    console.print(f"  → {sent} surebet alerts sent")
+                    console.print(f"  → {len(sent)} surebet alerts sent")
         if plausible:
             st = Table(title=f"Surebets ({sport})", show_lines=False)
             st.add_column("event_key", overflow="fold")
@@ -688,12 +688,12 @@ def scan_surebets(
             sport=current_sport,
         )
         now = datetime.now(timezone.utc)
-        for s in candidates:
+        for s in sent:
             storage.mark_surebet_notified(
                 s.event_key, s.market.value, s.line, s.margin * 100, now,
             )
         if sent:
-            console.print(f"  → {sent} surebet alerts sent")
+            console.print(f"  → {len(sent)} surebet alerts sent")
 
 
 def _daemon_scan_sport(
@@ -751,7 +751,6 @@ def _daemon_scan_sport(
                     pin_idx[(_d, _t, _q.market.value, _q.outcome.label, _q.outcome.line)] = _q.decimal_odd
 
             clv_pending: list[tuple] = []
-            clv_ids_to_mark: list[tuple[int, float, float]] = []
             for _bet in storage.open_value_bets():
                 _parsed = parse_event_key(_bet["event_key"])
                 if _parsed is None:
@@ -779,7 +778,6 @@ def _daemon_scan_sport(
                 if _clv < tg_cfg.min_clv_pct:
                     continue
                 clv_pending.append((_bet, _clv, _pin_odd, int(_mins)))
-                clv_ids_to_mark.append((int(_bet["id"]), _clv, _pin_odd))
 
             if clv_pending:
                 clv_sent = send_clv_alerts(
@@ -787,10 +785,12 @@ def _daemon_scan_sport(
                     print_fn=lambda s: console.print(f"[yellow]{s}[/yellow]"),
                     sport=current_sport,
                 )
-                for _vb_id, _clv_pct, _pin_odd in clv_ids_to_mark:
-                    storage.mark_clv_alert_notified(_vb_id, _clv_pct, _pin_odd, now_utc)
+                # Mark only the CLV alerts that actually went out, so a
+                # rate-limited/failed send is retried on a later cycle.
+                for _bet_row, _clv_pct, _pin_odd, _mins in clv_sent:
+                    storage.mark_clv_alert_notified(int(_bet_row["id"]), _clv_pct, _pin_odd, now_utc)
                 if clv_sent:
-                    console.print(f"  → {clv_sent} CLV alert(s) sent")
+                    console.print(f"  → {len(clv_sent)} CLV alert(s) sent")
 
         # ── Value bets ───────────────────────────────────────────────
         bets = find_value_bets(soft_q, fair, cfg)
@@ -816,9 +816,11 @@ def _daemon_scan_sport(
                 sport=current_sport,
             )
             now_mark = datetime.now(timezone.utc)
-            vb_to_mark = vb_candidates
+            # Mark only what actually sent — deferred/rate-limited bets stay
+            # unmarked and get retried next cycle instead of being lost.
+            vb_to_mark = sent
             if sent:
-                console.print(f"  → {sent} value bet alert(s) sent")
+                console.print(f"  → {len(sent)} value bet alert(s) sent")
 
         # ── Surebets ─────────────────────────────────────────────────
         # Surebets use a wider pool than value bets: events Pinnacle doesn't
@@ -846,9 +848,9 @@ def _daemon_scan_sport(
                     print_fn=lambda x: console.print(f"[yellow]{x}[/yellow]"),
                     sport=current_sport,
                 )
-                sb_to_mark = sb_candidates
+                sb_to_mark = sent_sb
                 if sent_sb:
-                    console.print(f"  → {sent_sb} surebet alert(s) sent")
+                    console.print(f"  → {len(sent_sb)} surebet alert(s) sent")
 
     except Exception as e:
         console.print(f"[red]  {current_sport} error: {e}[/red]")
