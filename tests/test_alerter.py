@@ -294,3 +294,108 @@ def test_send_alerts_counts_sent_only_above_threshold(monkeypatch):
     bets = [_bet(ev_pct=2.0), _bet(ev_pct=5.0), _bet(ev_pct=4.1)]
     assert len(send_alerts(bets, cfg)) == 2
     assert sent_count["n"] == 2
+
+
+# ---------------------------------------------------------------------------
+# Critical channel tests
+# ---------------------------------------------------------------------------
+
+def test_critical_channel_not_called_without_config():
+    """No critical_chat_id → only one POST even for very high EV bets."""
+    client = MagicMock(spec=httpx.Client)
+    client.post.return_value.status_code = 200
+    cfg = TelegramConfig(bot_token="t", chat_id="c", min_ev_pct=3.0,
+                         min_send_interval_s=0.0)
+    with TelegramAlerter(cfg, client=client) as a:
+        assert a.send_value_bet(_bet(ev_pct=40.0)) is True
+    client.post.assert_called_once()
+
+
+def test_critical_channel_called_for_high_ev_bet():
+    """With critical_chat_id set, a bet above min_critical_ev_pct triggers two POSTs."""
+    calls = []
+
+    class FakeClient:
+        def post(self, url, json):
+            calls.append(json["chat_id"])
+            r = MagicMock(); r.status_code = 200
+            return r
+        def close(self): pass
+
+    cfg = TelegramConfig(
+        bot_token="t", chat_id="c", min_ev_pct=3.0,
+        critical_chat_id="crit", min_critical_ev_pct=35.0,
+        min_send_interval_s=0.0,
+    )
+    with TelegramAlerter(cfg, client=FakeClient()) as a:
+        assert a.send_value_bet(_bet(ev_pct=40.0)) is True
+    assert "c" in calls and "crit" in calls
+    assert len(calls) == 2
+
+
+def test_critical_channel_not_called_for_normal_ev_bet():
+    """A bet below the critical threshold should NOT go to the critical channel."""
+    calls = []
+
+    class FakeClient:
+        def post(self, url, json):
+            calls.append(json["chat_id"])
+            r = MagicMock(); r.status_code = 200
+            return r
+        def close(self): pass
+
+    cfg = TelegramConfig(
+        bot_token="t", chat_id="c", min_ev_pct=3.0,
+        critical_chat_id="crit", min_critical_ev_pct=35.0,
+        min_send_interval_s=0.0,
+    )
+    with TelegramAlerter(cfg, client=FakeClient()) as a:
+        assert a.send_value_bet(_bet(ev_pct=10.0)) is True
+    assert calls == ["c"]
+
+
+def test_critical_channel_called_for_high_margin_surebet():
+    """Surebet with margin > min_critical_surebet_pct → also posted to critical channel."""
+    calls = []
+
+    class FakeClient:
+        def post(self, url, json):
+            calls.append(json["chat_id"])
+            r = MagicMock(); r.status_code = 200
+            return r
+        def close(self): pass
+
+    cfg = TelegramConfig(
+        bot_token="t", chat_id="c",
+        surebet_chat_id="sb",
+        critical_chat_id="crit",
+        min_surebet_margin_pct=1.0,
+        min_critical_surebet_pct=10.0,
+        min_send_interval_s=0.0,
+    )
+    with TelegramAlerter(cfg, client=FakeClient()) as a:
+        assert a.send_surebet(_surebet(margin=0.12)) is True
+    assert "sb" in calls and "crit" in calls
+    assert len(calls) == 2
+
+
+def test_critical_channel_message_contains_critical_header():
+    """The critical channel message must start with the 🚨 marker."""
+    critical_texts = []
+
+    class FakeClient:
+        def post(self, url, json):
+            if json["chat_id"] == "crit":
+                critical_texts.append(json["text"])
+            r = MagicMock(); r.status_code = 200
+            return r
+        def close(self): pass
+
+    cfg = TelegramConfig(
+        bot_token="t", chat_id="c", min_ev_pct=3.0,
+        critical_chat_id="crit", min_critical_ev_pct=35.0,
+        min_send_interval_s=0.0,
+    )
+    with TelegramAlerter(cfg, client=FakeClient()) as a:
+        a.send_value_bet(_bet(ev_pct=40.0))
+    assert critical_texts and "🚨" in critical_texts[0]

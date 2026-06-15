@@ -110,6 +110,12 @@ class TelegramConfig:
     clv_min_odd: float = 1.5             # CLV alerts only when the bet odd is >= this
     clv_max_odd: float = 4.0             # CLV alerts only when the bet odd is <= this
     bankroll: float = 1000.0              # base used to turn Kelly% into a € stake in alerts
+    # Critical channel — receives a copy of every alert that clears the higher thresholds.
+    # If not set, critical alerts are still sent to the normal channels only.
+    critical_chat_id: str | None = None
+    min_critical_ev_pct: float = 35.0    # value bets above this also go to critical channel
+    min_critical_surebet_pct: float = 10.0  # surebets (margin%) above this also go to critical
+    min_critical_clv_pct: float = 25.0   # CLV% above this also goes to critical channel
     # Rate limiting — Telegram caps bots at ~20 messages/min per group. We pace
     # sends per chat and honour 429 cooldowns so a burst can't get the bot
     # throttled for hours.
@@ -145,6 +151,10 @@ class TelegramConfig:
             bankroll=float(os.getenv("TELEGRAM_BANKROLL", "1000.0")),
             min_send_interval_s=float(os.getenv("TELEGRAM_MIN_SEND_INTERVAL", "3.2")),
             max_defer_s=float(os.getenv("TELEGRAM_MAX_DEFER", "45.0")),
+            critical_chat_id=os.getenv("TELEGRAM_CRITICAL_CHAT_ID") or None,
+            min_critical_ev_pct=float(os.getenv("TELEGRAM_MIN_CRITICAL_EV", "35.0")),
+            min_critical_surebet_pct=float(os.getenv("TELEGRAM_MIN_CRITICAL_SUREBET", "10.0")),
+            min_critical_clv_pct=float(os.getenv("TELEGRAM_MIN_CRITICAL_CLV", "25.0")),
         )
 
     @property
@@ -166,6 +176,11 @@ class TelegramConfig:
     def effective_high_clv_chat_id(self) -> str:
         """CLV 15%+ — falls back to normal CLV chat if no dedicated high-CLV chat is set."""
         return self.high_clv_chat_id or self.effective_clv_chat_id
+
+    @property
+    def effective_critical_chat_id(self) -> str | None:
+        """Critical channel — None when not configured (no fallback: critical is opt-in)."""
+        return self.critical_chat_id
 
 
 def format_surebet(sb: Surebet, sport: str | None = None, is_live: bool = False) -> str:
@@ -342,7 +357,11 @@ class TelegramAlerter:
     def send_value_bet(self, bet: ValueBet, *, sport: str | None = None) -> bool:
         if bet.ev_pct < self.config.min_ev_pct:
             return False
-        return self._send(format_value_bet(bet, sport=sport), chat_id=self.config.chat_id)
+        ok = self._send(format_value_bet(bet, sport=sport), chat_id=self.config.chat_id)
+        if ok and self.config.effective_critical_chat_id and bet.ev_pct >= self.config.min_critical_ev_pct:
+            critical_text = f"🚨 <b>VALUE BET EXCEPTIONNEL</b>\n" + format_value_bet(bet, sport=sport)
+            self._send(critical_text, chat_id=self.config.effective_critical_chat_id)
+        return ok
 
     def send_clv_alert(
         self,
@@ -361,7 +380,14 @@ class TelegramAlerter:
         )
         text = format_clv_alert(bet, clv_pct, current_pin_odd, mins_to_kickoff,
                                 sport=sport, is_high=is_high, bankroll=self.config.bankroll)
-        return self._send(text, chat_id=chat)
+        ok = self._send(text, chat_id=chat)
+        if ok and self.config.effective_critical_chat_id and clv_pct >= self.config.min_critical_clv_pct:
+            critical_text = f"🚨 <b>CLV CRITIQUE</b>\n" + format_clv_alert(
+                bet, clv_pct, current_pin_odd, mins_to_kickoff,
+                sport=sport, is_high=True, bankroll=self.config.bankroll,
+            )
+            self._send(critical_text, chat_id=self.config.effective_critical_chat_id)
+        return ok
 
     def send_surebet(self, sb: Surebet, *, sport: str | None = None, is_live: bool = False) -> bool:
         # The suspicious flag is normally a "phantom surebet" canary (matching
@@ -376,7 +402,11 @@ class TelegramAlerter:
             if is_live
             else self.config.effective_surebet_chat_id
         )
-        return self._send(format_surebet(sb, sport=sport, is_live=is_live), chat_id=chat)
+        ok = self._send(format_surebet(sb, sport=sport, is_live=is_live), chat_id=chat)
+        if ok and self.config.effective_critical_chat_id and sb.margin * 100 >= self.config.min_critical_surebet_pct:
+            critical_text = f"🚨 <b>SUREBET EXCEPTIONNEL</b>\n" + format_surebet(sb, sport=sport, is_live=is_live)
+            self._send(critical_text, chat_id=self.config.effective_critical_chat_id)
+        return ok
 
     @staticmethod
     def _retry_after_seconds(r: httpx.Response) -> float:
