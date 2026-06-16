@@ -414,9 +414,9 @@ def _fetch_all_parallel(
                 quotes = future.result()
                 all_quotes.extend(quotes)
                 if quotes:
-                    console.print(f"[{sport}]   → {len(quotes):5d} quotes  {name}")
+                    console.print(f"\\[{sport}]   → {len(quotes):5d} quotes  {name}")
             except Exception as e:
-                console.print(f"[yellow][{sport}]   {name} skipped: {e}[/yellow]")
+                console.print(f"[yellow]\\[{sport}]   {name} skipped: {e}[/yellow]")
     return all_quotes
 
 
@@ -696,7 +696,7 @@ def _daemon_scan_sport(
         soft_raw   = [q for q in all_q if q.book not in (Book.PINNACLE, Book.SMARKETS)]
 
         if not pinnacle_q:
-            console.print(f"[yellow][{current_sport}]   No Pinnacle quotes — skipping[/yellow]")
+            console.print(f"[yellow]\\[{current_sport}]   No Pinnacle quotes — skipping[/yellow]")
             return
 
         cfg = ScanConfig(sport=current_sport, min_ev_pct=min_ev, bankroll=bankroll)
@@ -761,14 +761,14 @@ def _daemon_scan_sport(
                 for _bet_row, _clv_pct, _pin_odd, _mins in clv_sent:
                     storage.mark_clv_alert_notified(int(_bet_row["id"]), _clv_pct, _pin_odd, now_utc)
                 if clv_sent:
-                    console.print(f"[{current_sport}]   → {len(clv_sent)} CLV alert(s) sent")
+                    console.print(f"\\[{current_sport}]   → {len(clv_sent)} CLV alert(s) sent")
 
         # ── Value bets ───────────────────────────────────────────────
         bets = find_value_bets(soft_q, fair, cfg)
         bets.sort(key=lambda b: b.ev_pct, reverse=True)
         for b in bets:
             storage.insert_value_bet(b)
-        console.print(f"[{current_sport}]   value bets: {len(bets)} total")
+        console.print(f"\\[{current_sport}]   value bets: {len(bets)} total")
         if tg_cfg is not None:
             if tg_cfg.valuebet_dedup:
                 vb_candidates = [
@@ -791,7 +791,7 @@ def _daemon_scan_sport(
             # unmarked and get retried next cycle instead of being lost.
             vb_to_mark = sent
             if sent:
-                console.print(f"[{current_sport}]   → {len(sent)} value bet alert(s) sent")
+                console.print(f"\\[{current_sport}]   → {len(sent)} value bet alert(s) sent")
 
         # ── Surebets ─────────────────────────────────────────────────
         # Surebets use a wider pool than value bets: events Pinnacle doesn't
@@ -799,7 +799,7 @@ def _daemon_scan_sport(
         surebet_pool = canonicalize_for_surebets(pinnacle_q, soft_raw)
         surebets = find_surebets(surebet_pool)
         plausible = [s for s in surebets if not s.suspicious]
-        console.print(f"[{current_sport}]   surebets: {len(plausible)} plausible")
+        console.print(f"\\[{current_sport}]   surebets: {len(plausible)} plausible")
         if tg_cfg is not None and surebets:
             sb_pool = surebets if tg_cfg.include_suspicious_surebets else plausible
             if tg_cfg.surebet_dedup:
@@ -821,7 +821,7 @@ def _daemon_scan_sport(
                 )
                 sb_to_mark = sent_sb
                 if sent_sb:
-                    console.print(f"[{current_sport}]   → {len(sent_sb)} surebet alert(s) sent")
+                    console.print(f"\\[{current_sport}]   → {len(sent_sb)} surebet alert(s) sent")
 
     except Exception as e:
         console.print(f"[red]  {current_sport} error: {e}[/red]")
