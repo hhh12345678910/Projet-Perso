@@ -102,10 +102,9 @@ class TelegramConfig:
     valuebet_dedup: bool = True           # off -> alert every scan even on stale bets
     surebet_roi_delta_pct: float = 0.5    # re-alert when ROI shifts by this many points
     valuebet_ev_delta_pct: float = 2.0    # re-alert when EV% shifts by this many points
-    clv_chat_id: str | None = None        # CLV entre min_clv_pct et min_high_clv_pct
-    high_clv_chat_id: str | None = None   # CLV >= min_high_clv_pct (prioritaire)
+    clv_chat_id: str | None = None        # toutes les CLV (>= min_clv_pct) atterrissent ici
     min_clv_pct: float = 5.0             # en dessous : aucune alerte CLV
-    min_high_clv_pct: float = 15.0       # au-dessus : bascule vers high_clv_chat
+    min_high_clv_pct: float = 15.0       # au-dessus : header 🔥 (même canal, juste un libellé)
     clv_window_minutes: int = 15          # send CLV alert when kickoff is within this many minutes
     clv_min_odd: float = 1.5             # CLV alerts only when the bet odd is >= this
     clv_max_odd: float = 4.0             # CLV alerts only when the bet odd is <= this
@@ -116,6 +115,14 @@ class TelegramConfig:
     min_critical_ev_pct: float = 35.0    # value bets above this also go to critical channel
     min_critical_surebet_pct: float = 10.0  # surebets (margin%) above this also go to critical
     min_critical_clv_pct: float = 25.0   # CLV% above this also goes to critical channel
+    # Premium channel — curated "best opportunities" copy: big value bets (incl.
+    # the suspiciously-huge ones) within a sane odds band, plus juicy prematch
+    # surebets. Opt-in via TELEGRAM_PREMIUM_CHAT_ID; no fallback when unset.
+    premium_chat_id: str | None = None
+    min_premium_ev_pct: float = 20.0     # value bets at/above this also go to premium channel
+    min_premium_surebet_pct: float = 5.0  # prematch surebets (margin%) at/above this go to premium
+    premium_min_odd: float = 1.5         # premium value bets only within this odds band
+    premium_max_odd: float = 4.0
     # Rate limiting — Telegram caps bots at ~20 messages/min per group. We pace
     # sends per chat and honour 429 cooldowns so a burst can't get the bot
     # throttled for hours.
@@ -142,7 +149,6 @@ class TelegramConfig:
             surebet_roi_delta_pct=float(os.getenv("TELEGRAM_SUREBET_ROI_DELTA", "0.5")),
             valuebet_ev_delta_pct=float(os.getenv("TELEGRAM_VALUEBET_EV_DELTA", "2.0")),
             clv_chat_id=os.getenv("TELEGRAM_CLV_CHAT_ID") or None,
-            high_clv_chat_id=os.getenv("TELEGRAM_HIGH_CLV_CHAT_ID") or None,
             min_clv_pct=float(os.getenv("TELEGRAM_MIN_CLV", "5.0")),
             min_high_clv_pct=float(os.getenv("TELEGRAM_MIN_HIGH_CLV", "15.0")),
             clv_window_minutes=int(os.getenv("TELEGRAM_CLV_WINDOW_MINUTES", "15")),
@@ -155,6 +161,11 @@ class TelegramConfig:
             min_critical_ev_pct=float(os.getenv("TELEGRAM_MIN_CRITICAL_EV", "35.0")),
             min_critical_surebet_pct=float(os.getenv("TELEGRAM_MIN_CRITICAL_SUREBET", "10.0")),
             min_critical_clv_pct=float(os.getenv("TELEGRAM_MIN_CRITICAL_CLV", "25.0")),
+            premium_chat_id=os.getenv("TELEGRAM_PREMIUM_CHAT_ID") or None,
+            min_premium_ev_pct=float(os.getenv("TELEGRAM_MIN_PREMIUM_EV", "20.0")),
+            min_premium_surebet_pct=float(os.getenv("TELEGRAM_MIN_PREMIUM_SUREBET", "5.0")),
+            premium_min_odd=float(os.getenv("TELEGRAM_PREMIUM_MIN_ODD", "1.5")),
+            premium_max_odd=float(os.getenv("TELEGRAM_PREMIUM_MAX_ODD", "4.0")),
         )
 
     @property
@@ -169,18 +180,18 @@ class TelegramConfig:
 
     @property
     def effective_clv_chat_id(self) -> str:
-        """CLV 5-15% — falls back to main chat if not set."""
+        """Toutes les CLV (≥ min_clv_pct) — fallback vers le chat principal si non défini."""
         return self.clv_chat_id or self.chat_id
-
-    @property
-    def effective_high_clv_chat_id(self) -> str:
-        """CLV 15%+ — falls back to normal CLV chat if no dedicated high-CLV chat is set."""
-        return self.high_clv_chat_id or self.effective_clv_chat_id
 
     @property
     def effective_critical_chat_id(self) -> str | None:
         """Critical channel — None when not configured (no fallback: critical is opt-in)."""
         return self.critical_chat_id
+
+    @property
+    def effective_premium_chat_id(self) -> str | None:
+        """Premium channel — None when not configured (no fallback: premium is opt-in)."""
+        return self.premium_chat_id
 
 
 def format_surebet(sb: Surebet, sport: str | None = None, is_live: bool = False) -> str:
@@ -361,6 +372,15 @@ class TelegramAlerter:
         if ok and self.config.effective_critical_chat_id and bet.ev_pct >= self.config.min_critical_ev_pct:
             critical_text = f"🚨 <b>VALUE BET EXCEPTIONNEL</b>\n" + format_value_bet(bet, sport=sport)
             self._send(critical_text, chat_id=self.config.effective_critical_chat_id)
+        # Premium copy: big edges (incl. error-looking ones) within the odds band.
+        if (
+            ok
+            and self.config.effective_premium_chat_id
+            and bet.ev_pct >= self.config.min_premium_ev_pct
+            and self.config.premium_min_odd <= bet.odd_taken <= self.config.premium_max_odd
+        ):
+            premium_text = f"💎 <b>VALUE PREMIUM</b>\n" + format_value_bet(bet, sport=sport)
+            self._send(premium_text, chat_id=self.config.effective_premium_chat_id)
         return ok
 
     def send_clv_alert(
@@ -372,15 +392,12 @@ class TelegramAlerter:
         *,
         sport: str | None = None,
     ) -> bool:
+        # All CLV alerts land in the single CLV channel now; is_high only drives
+        # the message header (🔥) so high-CLV confirmations still stand out.
         is_high = clv_pct >= self.config.min_high_clv_pct
-        chat = (
-            self.config.effective_high_clv_chat_id
-            if is_high
-            else self.config.effective_clv_chat_id
-        )
         text = format_clv_alert(bet, clv_pct, current_pin_odd, mins_to_kickoff,
                                 sport=sport, is_high=is_high, bankroll=self.config.bankroll)
-        ok = self._send(text, chat_id=chat)
+        ok = self._send(text, chat_id=self.config.effective_clv_chat_id)
         if ok and self.config.effective_critical_chat_id and clv_pct >= self.config.min_critical_clv_pct:
             critical_text = f"🚨 <b>CLV CRITIQUE</b>\n" + format_clv_alert(
                 bet, clv_pct, current_pin_odd, mins_to_kickoff,
@@ -406,6 +423,15 @@ class TelegramAlerter:
         if ok and self.config.effective_critical_chat_id and sb.margin * 100 >= self.config.min_critical_surebet_pct:
             critical_text = f"🚨 <b>SUREBET EXCEPTIONNEL</b>\n" + format_surebet(sb, sport=sport, is_live=is_live)
             self._send(critical_text, chat_id=self.config.effective_critical_chat_id)
+        # Premium copy: prematch-only surebets above the premium margin.
+        if (
+            ok
+            and not is_live
+            and self.config.effective_premium_chat_id
+            and sb.margin * 100 >= self.config.min_premium_surebet_pct
+        ):
+            premium_text = f"💎 <b>SUREBET PREMIUM</b>\n" + format_surebet(sb, sport=sport, is_live=is_live)
+            self._send(premium_text, chat_id=self.config.effective_premium_chat_id)
         return ok
 
     @staticmethod

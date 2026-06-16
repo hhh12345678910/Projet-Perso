@@ -992,6 +992,32 @@ def alert_test():
         "odd_taken": 1.86,
         "kelly_pct": 1.50,
     }
+    # Premium channel samples: a big value bet (>min_premium_ev, odds in band)
+    # and a juicy prematch surebet (>min_premium_surebet).
+    premium_ev = max(cfg.min_premium_ev_pct + 1.0, cfg.min_ev_pct + 1.0)
+    sample_premium_bet = ValueBet(
+        event_key="202607010000::testteamA__vs__testteamB",
+        book=Book.UNIBET_BE,
+        market=MarketType.H2H,
+        outcome=Outcome(label="home"),
+        odd_taken=2.40,  # within the 1.5-4.0 premium band
+        fair_prob=0.5650,
+        fair_odd=1.77,
+        ev_pct=premium_ev,
+        kelly_stake_pct=1.50,
+        detected_at=datetime.now(timezone.utc),
+    )
+    sample_premium_surebet = Surebet(
+        event_key="202607010000::testteamA__vs__testteamB",
+        market=MarketType.H2H,
+        line=None,
+        legs={
+            "home": (1.95, Book.UNIBET_BE),
+            "draw": (3.85, Book.BETFIRST),
+            "away": (4.20, Book.LADBROKES_BE),
+        },
+        margin=cfg.min_premium_surebet_pct / 100 + 0.005,
+    )
 
     bet_sent = send_alerts(
         [sample_bet], cfg, print_fn=lambda s: console.print(f"[yellow]{s}[/yellow]"),
@@ -1007,15 +1033,26 @@ def alert_test():
         print_fn=lambda s: console.print(f"[yellow]{s}[/yellow]"),
         sport="soccer",
     )
-    # CLV normal (7% — entre min_clv_pct et min_high_clv_pct)
+    # CLV normal (7%) et CLV élevé (18%) — désormais le même canal, seul le
+    # header change (🔥 au-dessus de min_high_clv_pct).
     clv_sent = send_clv_alerts(
         [(sample_clv_bet, 7.0, 1.74, 12)], cfg,
         print_fn=lambda s: console.print(f"[yellow]{s}[/yellow]"),
         sport="soccer",
     )
-    # CLV élevé (18% — au-dessus de min_high_clv_pct)
     clv_high_sent = send_clv_alerts(
         [(sample_clv_bet, 18.0, 1.58, 8)], cfg,
+        print_fn=lambda s: console.print(f"[yellow]{s}[/yellow]"),
+        sport="soccer",
+    )
+    # Premium : grosse value (envoyée aussi au canal principal) + surebet prématch.
+    premium_bet_sent = send_alerts(
+        [sample_premium_bet], cfg,
+        print_fn=lambda s: console.print(f"[yellow]{s}[/yellow]"),
+        sport="soccer",
+    )
+    premium_sb_sent = send_surebet_alerts(
+        [sample_premium_surebet], cfg,
         print_fn=lambda s: console.print(f"[yellow]{s}[/yellow]"),
         sport="soccer",
     )
@@ -1045,12 +1082,19 @@ def alert_test():
         clv_sent, clv_chat, "CLV normal (7%)",
         " (même chat — TELEGRAM_CLV_CHAT_ID non défini)" if clv_chat == cfg.chat_id else "",
     )
-
-    high_clv_chat = cfg.effective_high_clv_chat_id
     _status(
-        clv_high_sent, high_clv_chat, "CLV élevé (18%)",
-        " (même chat — TELEGRAM_HIGH_CLV_CHAT_ID non défini)" if high_clv_chat == clv_chat else "",
+        clv_high_sent, clv_chat, "CLV élevé (18%, header 🔥)",
+        " (même canal CLV)",
     )
+
+    premium_chat = cfg.effective_premium_chat_id
+    if premium_chat:
+        _status(premium_bet_sent, premium_chat, "Premium value (grosse EV)")
+        _status(premium_sb_sent, premium_chat, "Premium surebet prématch")
+    else:
+        console.print(
+            "[dim]Premium: TELEGRAM_PREMIUM_CHAT_ID non défini — canal premium désactivé.[/dim]"
+        )
 
 
 @app.command(name="close-lines")

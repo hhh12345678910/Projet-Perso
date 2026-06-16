@@ -33,13 +33,14 @@ def _reset_rate_limiter():
 NOW = datetime(2026, 5, 28, tzinfo=timezone.utc)
 
 
-def _bet(ev_pct: float = 5.0, label: str = "home", line: float | None = None) -> ValueBet:
+def _bet(ev_pct: float = 5.0, label: str = "home", line: float | None = None,
+         odd: float = 1.86) -> ValueBet:
     return ValueBet(
         event_key="202606010000::boise__vs__sarasota",
         book=Book.UNIBET_BE,
         market=MarketType.H2H,
         outcome=Outcome(label=label, line=line),
-        odd_taken=1.86,
+        odd_taken=odd,
         fair_prob=0.5650,
         fair_odd=1.77,
         ev_pct=ev_pct,
@@ -377,6 +378,138 @@ def test_critical_channel_called_for_high_margin_surebet():
         assert a.send_surebet(_surebet(margin=0.12)) is True
     assert "sb" in calls and "crit" in calls
     assert len(calls) == 2
+
+
+def test_premium_channel_called_for_big_value_bet_in_odds_band():
+    """Value bet >= min_premium_ev_pct with odds in [1.5, 4.0] → also to premium."""
+    calls = []
+
+    class FakeClient:
+        def post(self, url, json):
+            calls.append(json["chat_id"])
+            r = MagicMock(); r.status_code = 200
+            return r
+        def close(self): pass
+
+    cfg = TelegramConfig(
+        bot_token="t", chat_id="c", min_ev_pct=3.0,
+        premium_chat_id="prem", min_premium_ev_pct=20.0,
+        premium_min_odd=1.5, premium_max_odd=4.0,
+        min_send_interval_s=0.0,
+    )
+    with TelegramAlerter(cfg, client=FakeClient()) as a:
+        assert a.send_value_bet(_bet(ev_pct=25.0, odd=2.40)) is True
+    assert "c" in calls and "prem" in calls
+    assert len(calls) == 2
+
+
+def test_premium_channel_skips_value_bet_out_of_odds_band():
+    """A big EV bet outside the odds band goes to main only, not premium."""
+    calls = []
+
+    class FakeClient:
+        def post(self, url, json):
+            calls.append(json["chat_id"])
+            r = MagicMock(); r.status_code = 200
+            return r
+        def close(self): pass
+
+    cfg = TelegramConfig(
+        bot_token="t", chat_id="c", min_ev_pct=3.0,
+        premium_chat_id="prem", min_premium_ev_pct=20.0,
+        premium_min_odd=1.5, premium_max_odd=4.0,
+        min_send_interval_s=0.0,
+    )
+    with TelegramAlerter(cfg, client=FakeClient()) as a:
+        assert a.send_value_bet(_bet(ev_pct=25.0, odd=6.50)) is True  # odd > 4.0
+    assert calls == ["c"]
+
+
+def test_premium_channel_called_for_prematch_surebet():
+    """Prematch surebet >= min_premium_surebet_pct → also posted to premium."""
+    calls = []
+
+    class FakeClient:
+        def post(self, url, json):
+            calls.append(json["chat_id"])
+            r = MagicMock(); r.status_code = 200
+            return r
+        def close(self): pass
+
+    cfg = TelegramConfig(
+        bot_token="t", chat_id="c",
+        surebet_chat_id="sb",
+        premium_chat_id="prem",
+        min_surebet_margin_pct=1.0, min_premium_surebet_pct=5.0,
+        min_send_interval_s=0.0,
+    )
+    with TelegramAlerter(cfg, client=FakeClient()) as a:
+        assert a.send_surebet(_surebet(margin=0.07), is_live=False) is True
+    assert "sb" in calls and "prem" in calls
+    assert len(calls) == 2
+
+
+def test_premium_channel_skips_live_surebet():
+    """Live surebets must NOT go to the premium channel (prematch only)."""
+    calls = []
+
+    class FakeClient:
+        def post(self, url, json):
+            calls.append(json["chat_id"])
+            r = MagicMock(); r.status_code = 200
+            return r
+        def close(self): pass
+
+    cfg = TelegramConfig(
+        bot_token="t", chat_id="c",
+        surebet_chat_id="sb", live_surebet_chat_id="live",
+        premium_chat_id="prem",
+        min_surebet_margin_pct=1.0, min_premium_surebet_pct=5.0,
+        min_send_interval_s=0.0,
+    )
+    with TelegramAlerter(cfg, client=FakeClient()) as a:
+        assert a.send_surebet(_surebet(margin=0.07), is_live=True) is True
+    assert "live" in calls and "prem" not in calls
+
+
+def test_high_clv_now_lands_in_normal_clv_channel():
+    """High CLV no longer has its own channel — it goes to the CLV chat with a 🔥 header."""
+    calls = []
+
+    class FakeClient:
+        def post(self, url, json):
+            calls.append((json["chat_id"], json["text"]))
+            r = MagicMock(); r.status_code = 200
+            return r
+        def close(self): pass
+
+    cfg = TelegramConfig(
+        bot_token="t", chat_id="c", clv_chat_id="clv",
+        min_clv_pct=5.0, min_high_clv_pct=15.0,
+        min_send_interval_s=0.0,
+    )
+    row = {
+        "id": 0, "event_key": "202607010000::a__vs__b",
+        "book": Book.UNIBET_BE.value, "market": MarketType.H2H.value,
+        "outcome_label": "home", "line": None, "odd_taken": 1.86, "kelly_pct": 1.5,
+    }
+    with TelegramAlerter(cfg, client=FakeClient()) as a:
+        assert a.send_clv_alert(row, 18.0, 1.58, 8) is True
+    assert len(calls) == 1
+    chat_id, text = calls[0]
+    assert chat_id == "clv"
+    assert "🔥" in text  # high-CLV header retained even though routing merged
+
+
+def test_premium_channel_not_called_without_config():
+    """No premium_chat_id → big value bets only hit the main channel."""
+    client = MagicMock(spec=httpx.Client)
+    client.post.return_value.status_code = 200
+    cfg = TelegramConfig(bot_token="t", chat_id="c", min_ev_pct=3.0,
+                         min_send_interval_s=0.0)
+    with TelegramAlerter(cfg, client=client) as a:
+        assert a.send_value_bet(_bet(ev_pct=25.0, odd=2.40)) is True
+    client.post.assert_called_once()
 
 
 def test_critical_channel_message_contains_critical_header():
