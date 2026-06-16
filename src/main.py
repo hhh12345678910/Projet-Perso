@@ -703,6 +703,14 @@ def _daemon_scan_sport(
         if smarkets_q:
             smarkets_q = remap_to_reference(smarkets_q, {q.event_key for q in pinnacle_q})
         fair = build_fair_lines(pinnacle_q, cfg.devig_method, secondary_quotes=smarkets_q)
+        # Persist the event (with its sport) for every Pinnacle event in the
+        # reference frame. Value bets are keyed onto these same event_keys, so
+        # this lets clv-report break CLV down per sport instead of "unknown".
+        for ek in {q.event_key for q in pinnacle_q}:
+            parsed = parse_event_key(ek)
+            if parsed is not None:
+                start, home_norm, away_norm = parsed
+                storage.upsert_event(ek, current_sport, "", home_norm, away_norm, start)
         for q in pinnacle_q:
             storage.insert_quote(q)
 
