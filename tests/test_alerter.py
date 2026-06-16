@@ -171,7 +171,8 @@ def test_alerter_swallows_network_failure():
     printed = []
     cfg = TelegramConfig(bot_token="t", chat_id="c")
     with TelegramAlerter(cfg, client=client, print_fn=printed.append) as a:
-        assert a.send_value_bet(_bet(ev_pct=5.0)) is False
+        # EV inside the main band [8, 15) so a send is actually attempted.
+        assert a.send_value_bet(_bet(ev_pct=10.0)) is False
     assert printed and "boom" in printed[0]
 
 
@@ -306,7 +307,7 @@ def test_critical_channel_not_called_without_config():
     client = MagicMock(spec=httpx.Client)
     client.post.return_value.status_code = 200
     cfg = TelegramConfig(bot_token="t", chat_id="c", min_ev_pct=3.0,
-                         min_send_interval_s=0.0)
+                         main_max_ev_pct=100.0, min_send_interval_s=0.0)
     with TelegramAlerter(cfg, client=client) as a:
         assert a.send_value_bet(_bet(ev_pct=40.0)) is True
     client.post.assert_called_once()
@@ -324,7 +325,7 @@ def test_critical_channel_called_for_high_ev_bet():
         def close(self): pass
 
     cfg = TelegramConfig(
-        bot_token="t", chat_id="c", min_ev_pct=3.0,
+        bot_token="t", chat_id="c", min_ev_pct=3.0, main_max_ev_pct=100.0,
         critical_chat_id="crit", min_critical_ev_pct=35.0,
         min_send_interval_s=0.0,
     )
@@ -380,6 +381,53 @@ def test_critical_channel_called_for_high_margin_surebet():
     assert len(calls) == 2
 
 
+def test_main_channel_ev_band_confines_value_bets():
+    """Main chat only takes EV in [min_ev_pct, main_max_ev_pct); below stays
+    silent, above is confined to premium (here: no premium, so it goes nowhere)."""
+    calls = []
+
+    class FakeClient:
+        def post(self, url, json):
+            calls.append(json["chat_id"])
+            r = MagicMock(); r.status_code = 200
+            return r
+        def close(self): pass
+
+    cfg = TelegramConfig(
+        bot_token="t", chat_id="c",
+        min_ev_pct=8.0, main_max_ev_pct=15.0,
+        min_send_interval_s=0.0,
+    )
+    with TelegramAlerter(cfg, client=FakeClient()) as a:
+        assert a.send_value_bet(_bet(ev_pct=5.0)) is False    # below band
+        assert a.send_value_bet(_bet(ev_pct=10.0)) is True    # inside band
+        assert a.send_value_bet(_bet(ev_pct=22.0)) is False   # above band, no premium set
+    assert calls == ["c"]  # only the 10% one reached the main chat
+
+
+def test_big_ev_routes_to_premium_not_main():
+    """A 22% EV bet (odds in band) goes to premium, NOT the main chat."""
+    calls = []
+
+    class FakeClient:
+        def post(self, url, json):
+            calls.append(json["chat_id"])
+            r = MagicMock(); r.status_code = 200
+            return r
+        def close(self): pass
+
+    cfg = TelegramConfig(
+        bot_token="t", chat_id="c",
+        min_ev_pct=8.0, main_max_ev_pct=15.0,
+        premium_chat_id="prem", min_premium_ev_pct=15.0,
+        premium_min_odd=1.5, premium_max_odd=4.0,
+        min_send_interval_s=0.0,
+    )
+    with TelegramAlerter(cfg, client=FakeClient()) as a:
+        assert a.send_value_bet(_bet(ev_pct=22.0, odd=2.40)) is True
+    assert calls == ["prem"]  # confined to premium, main untouched
+
+
 def test_premium_channel_called_for_big_value_bet_in_odds_band():
     """Value bet >= min_premium_ev_pct with odds in [1.5, 4.0] → also to premium."""
     calls = []
@@ -392,7 +440,7 @@ def test_premium_channel_called_for_big_value_bet_in_odds_band():
         def close(self): pass
 
     cfg = TelegramConfig(
-        bot_token="t", chat_id="c", min_ev_pct=3.0,
+        bot_token="t", chat_id="c", min_ev_pct=3.0, main_max_ev_pct=100.0,
         premium_chat_id="prem", min_premium_ev_pct=20.0,
         premium_min_odd=1.5, premium_max_odd=4.0,
         min_send_interval_s=0.0,
@@ -415,7 +463,7 @@ def test_premium_channel_skips_value_bet_out_of_odds_band():
         def close(self): pass
 
     cfg = TelegramConfig(
-        bot_token="t", chat_id="c", min_ev_pct=3.0,
+        bot_token="t", chat_id="c", min_ev_pct=3.0, main_max_ev_pct=100.0,
         premium_chat_id="prem", min_premium_ev_pct=20.0,
         premium_min_odd=1.5, premium_max_odd=4.0,
         min_send_interval_s=0.0,
@@ -506,7 +554,7 @@ def test_premium_channel_not_called_without_config():
     client = MagicMock(spec=httpx.Client)
     client.post.return_value.status_code = 200
     cfg = TelegramConfig(bot_token="t", chat_id="c", min_ev_pct=3.0,
-                         min_send_interval_s=0.0)
+                         main_max_ev_pct=100.0, min_send_interval_s=0.0)
     with TelegramAlerter(cfg, client=client) as a:
         assert a.send_value_bet(_bet(ev_pct=25.0, odd=2.40)) is True
     client.post.assert_called_once()
