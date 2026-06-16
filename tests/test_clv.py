@@ -98,3 +98,48 @@ def test_group_by_partitions_pairs_by_attribute():
     assert set(parts) == {"unibet_be", "betfirst"}
     assert len(parts["unibet_be"]) == 2
     assert len(parts["betfirst"]) == 1
+
+
+# ── EV bucketing + sport breakdown for clv-report ────────────────────────────
+
+from datetime import timedelta
+
+from src.main import _ev_bucket, _EV_BUCKET_ORDER
+from src.models import ValueBet
+from src.storage import Storage
+
+
+def test_ev_bucket_boundaries():
+    assert _ev_bucket(2.0) == "<5%"
+    assert _ev_bucket(4.99) == "<5%"
+    assert _ev_bucket(5.0) == "5-8%"
+    assert _ev_bucket(7.99) == "5-8%"
+    assert _ev_bucket(8.0) == "8-15%"
+    assert _ev_bucket(14.99) == "8-15%"
+    assert _ev_bucket(15.0) == "15-35%"
+    assert _ev_bucket(34.99) == "15-35%"
+    assert _ev_bucket(35.0) == "35%+"
+    assert _ev_bucket(900.0) == "35%+"
+    # Every bucket label is in the display order list.
+    for ev in (2, 6, 10, 20, 50):
+        assert _ev_bucket(ev) in _EV_BUCKET_ORDER
+
+
+def test_all_closed_bets_carries_sport(tmp_path):
+    s = Storage(tmp_path / "clv.db")
+    now = datetime(2026, 6, 16, 18, 0, tzinfo=timezone.utc)
+    ek = "202606161800::a__vs__b"
+    s.upsert_event(ek, "tennis", "ATP", "A", "B", now)
+    vid = s.insert_value_bet(ValueBet(
+        event_key=ek, book=Book.UNIBET_BE, market=MarketType.H2H,
+        outcome=Outcome(label="home"), odd_taken=3.0, fair_prob=0.4,
+        fair_odd=2.5, ev_pct=12.0, kelly_stake_pct=1.0, detected_at=now,
+    ))
+    s.insert_clv_snapshot(
+        value_bet_id=vid, pinnacle_odd=2.7, pinnacle_prob=1.0 / 2.7,
+        snapshot_at=now + timedelta(hours=2), closing=True,
+    )
+    rows = [dict(r) for r in s.all_closed_bets()]
+    assert len(rows) == 1
+    assert rows[0]["sport"] == "tennis"
+    assert rows[0]["closing_odd"] == 2.7

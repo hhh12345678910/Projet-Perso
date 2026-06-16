@@ -422,12 +422,16 @@ class Storage:
             return c.execute(sql, params).fetchone()
 
     def all_closed_bets(self) -> list[sqlite3.Row]:
-        """Bets joined with their closing snapshot, ready for CLV aggregation."""
+        """Bets joined with their closing snapshot, ready for CLV aggregation.
+        The events LEFT JOIN carries the sport so clv-report can break CLV down
+        per sport (sport is NULL when the event row was never persisted)."""
         with self._conn() as c:
             return list(c.execute(
-                "SELECT vb.*, cs.pinnacle_odd AS closing_odd, cs.snapshot_at AS closed_at "
+                "SELECT vb.*, cs.pinnacle_odd AS closing_odd, cs.snapshot_at AS closed_at, "
+                "e.sport AS sport "
                 "FROM value_bets vb "
                 "JOIN clv_snapshots cs ON cs.value_bet_id = vb.id AND cs.closing = 1 "
+                "LEFT JOIN events e ON e.event_key = vb.event_key "
                 "ORDER BY vb.detected_at DESC"
             ))
 

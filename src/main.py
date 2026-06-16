@@ -1128,6 +1128,23 @@ def close_lines(sport: str = "soccer"):
     )
 
 
+_EV_BUCKET_ORDER = ["<5%", "5-8%", "8-15%", "15-35%", "35%+"]
+
+
+def _ev_bucket(ev: float) -> str:
+    """Bucket a detected EV% into the bands that map to the alert channels, so
+    clv-report can show whether higher detected EV actually means better CLV."""
+    if ev < 5:
+        return "<5%"
+    if ev < 8:
+        return "5-8%"
+    if ev < 15:
+        return "8-15%"
+    if ev < 35:
+        return "15-35%"
+    return "35%+"
+
+
 @app.command(name="clv-report")
 def clv_report():
     """Aggregate Closing Line Value over every closed value bet. CLV is the
@@ -1148,25 +1165,39 @@ def clv_report():
         f"median {overall.median_clv_pct:+.2f}%  positive {overall.positive_rate * 100:.1f}%"
     )
 
-    for dim in ("book", "market"):
+    # Normalise the sport label (the LEFT JOIN yields None when the event row
+    # was never persisted) and tag each row with its EV bucket.
+    for r in rows:
+        r["sport"] = r["sport"] or "unknown"
+        r["ev_bucket"] = _ev_bucket(float(r["ev_pct"]))
+
+    def _print_clv_table(title: str, dim: str, order: list[str] | None = None) -> None:
         groups = clv_group_by(rows, dim)
         stats = {k: clv_aggregate(v) for k, v in groups.items() if v}
         if not stats:
-            continue
-        t = Table(title=f"CLV by {dim}", show_lines=False)
+            return
+        t = Table(title=title, show_lines=False)
         t.add_column(dim)
         t.add_column("n", justify="right")
         t.add_column("mean CLV%", justify="right")
         t.add_column("median%", justify="right")
         t.add_column("positive%", justify="right")
-        for k in sorted(stats, key=lambda k: stats[k].mean_clv_pct, reverse=True):
+        # EV buckets read best in natural order; the rest by mean CLV descending.
+        keys = ([k for k in order if k in stats] if order
+                else sorted(stats, key=lambda k: stats[k].mean_clv_pct, reverse=True))
+        for k in keys:
             s = stats[k]
             t.add_row(
-                k, str(s.n),
+                str(k), str(s.n),
                 f"{s.mean_clv_pct:+.2f}", f"{s.median_clv_pct:+.2f}",
                 f"{s.positive_rate * 100:.1f}",
             )
         console.print(t)
+
+    _print_clv_table("CLV by book", "book")
+    _print_clv_table("CLV by market", "market")
+    _print_clv_table("CLV by sport", "sport")
+    _print_clv_table("CLV by EV bucket", "ev_bucket", order=_EV_BUCKET_ORDER)
 
 
 @app.command(name="inspect-betano")
