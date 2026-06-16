@@ -848,7 +848,12 @@ def _daemon_scan_sport(
 @app.command()
 def daemon(
     sport: str = "soccer,tennis,basketball,hockey",
-    min_ev: float = 2.0,
+    min_ev: float = typer.Option(
+        8.0, "--min-ev",
+        help="Minimum EV% to detect/store a value bet. Defaults to 8 so the "
+        "daemon stops storing the flood of low-EV bets that re-saturated "
+        "Telegram (the main chat already starts at 8%). Lower it for research.",
+    ),
     bankroll: float = 1000.0,
     breather: int = typer.Option(
         10, "--breather",
