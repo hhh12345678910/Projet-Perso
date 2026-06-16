@@ -23,7 +23,6 @@ src/
     ladbrokes.py  Ladbrokes.be (Eurobet sport-schedule; guest)
     goldenpalace.py Golden Palace (Altenar GetEvents widget; guest)
     starcasinosport.py StarCasino Sport (same Altenar API, different operator)
-    magicbetting.py Magic Betting (BetConstruct XOR-cipher; file mode)
   main.py         orchestration loop + CLI
 tests/            unit tests for math
 ```

@@ -22,7 +22,6 @@ from .scrapers.betano import BetanoAuthError, BetanoScraper, parse_overview as b
 from .scrapers.betfirst import BetFirstScraper, parse_events_table as betfirst_parse_events_table
 from .scrapers.goldenpalace import GoldenPalaceScraper, parse_get_events as goldenpalace_parse_get_events
 from .scrapers.ladbrokes import LadbrokesScraper, parse_prematch as ladbrokes_parse_prematch
-from .scrapers.magicbetting import MagicBettingScraper, load_file as magicbetting_load_file, parse_events as magicbetting_parse_events
 from .scrapers.pinnacle import PinnacleScraper
 from .scrapers.sevenelevenbe import SevenElevenScraper, parse_listview as sevenelevenbe_parse_listview
 from .scrapers.smarkets import SmarketsScraper, iter_all_quotes as smarkets_iter_quotes
@@ -382,34 +381,9 @@ def fetch_smarkets_quotes(sport: str, max_events: int = 200) -> list[OddQuote]:
         return []
 
 
-def fetch_magicbetting_quotes(magicbetting_file: str | None, sport: str = "soccer") -> list[OddQuote]:
-    """Try a live dynamic fetch first (discovers all tournaments automatically).
-    Falls back to a saved file dump when the live endpoint is blocked (Cloudflare
-    on datacenter IPs) or returns nothing."""
-    try:
-        with MagicBettingScraper() as mb:
-            quotes = mb.fetch_all_quotes(sport)
-        if quotes:
-            return quotes
-        console.print("[yellow]Magic Betting live: 0 quotes (endpoint reachable but empty)[/yellow]")
-    except Exception as e:
-        console.print(f"[yellow]Magic Betting live blocked:[/yellow] {e}")
-    if not magicbetting_file:
-        console.print("[yellow]Magic Betting skipped — no --magicbetting-file fallback set[/yellow]")
-        return []
-    try:
-        data = magicbetting_load_file(magicbetting_file)
-        return list(magicbetting_parse_events(data))
-    except (OSError, ValueError) as e:
-        console.print(f"[yellow]Magic Betting file unreadable:[/yellow] {e}")
-        return []
-
-
-
 def _fetch_all_parallel(
     sport: str,
     betano_file: str | None = None,
-    magicbetting_file: str | None = None,
     *,
     include_file_books: bool = True,
 ) -> list[OddQuote]:
@@ -430,7 +404,6 @@ def _fetch_all_parallel(
     }
     if include_file_books:
         tasks["Betano"]        = lambda: fetch_betano_quotes(betano_file=betano_file)
-        tasks["Magic Betting"] = lambda: fetch_magicbetting_quotes(magicbetting_file, sport)
 
     all_quotes: list[OddQuote] = []
     with ThreadPoolExecutor(max_workers=len(tasks)) as executor:
@@ -458,14 +431,8 @@ def scan(
         help="Path to a JSON dump of Betano's /danae-webapi/.../live/overview/latest "
         "response, captured from your browser. Bypasses the IP-bound cookie check.",
     ),
-    magicbetting_file: str = typer.Option(
-        None,
-        "--magicbetting-file",
-        help="Path to a Magic Betting capture (raw XOR-encoded body or already-decoded JSON). "
-        "Same workaround as --betano-file: Cloudflare blocks live fetch from datacenters.",
-    ),
 ):
-    """Fetch Pinnacle + soft books (Betano, Unibet, BetFirst, Ladbrokes, Golden Palace, StarCasino, Magic Betting), compute fair lines, print top value bets.
+    """Fetch Pinnacle + soft books (Betano, Unibet, BetFirst, Ladbrokes, Golden Palace, StarCasino), compute fair lines, print top value bets.
 
     --sport accepts a comma-separated list (e.g. 'soccer,tennis,basketball').
     The full pipeline runs per sport and results are tagged in their own
@@ -481,7 +448,7 @@ def scan(
 
         console.print(f"[bold]Fetching all books in parallel ({current_sport})...[/bold]")
         all_quotes = _fetch_all_parallel(
-            current_sport, betano_file, magicbetting_file,
+            current_sport, betano_file,
             include_file_books=(current_sport == sports[0]),
         )
 
@@ -632,10 +599,6 @@ def scan_surebets(
         None, "--betano-file",
         help="Optional Betano dump path — same as in `scan`.",
     ),
-    magicbetting_file: str = typer.Option(
-        None, "--magicbetting-file",
-        help="Optional Magic Betting dump path — same as in `scan`.",
-    ),
 ):
     """Surebet sweep including Pinnacle, designed to run every 5-15 min.
     Pinnacle quotes are fetched and used as the canonical event-key reference,
@@ -652,7 +615,7 @@ def scan_surebets(
 
         console.print(f"[bold]Fetching all books in parallel ({current_sport})...[/bold]")
         all_quotes = _fetch_all_parallel(
-            current_sport, betano_file, magicbetting_file,
+            current_sport, betano_file,
             include_file_books=(current_sport == sports[0]),
         )
 
@@ -712,7 +675,6 @@ def _daemon_scan_sport(
     min_ev: float,
     bankroll: float,
     betano_file: "str | None",
-    magicbetting_file: "str | None",
 ) -> None:
     """Fetch, analyse and alert for one sport. Runs inside a ThreadPoolExecutor
     so all sports execute concurrently every cycle. SQLite WAL mode lets multiple
@@ -724,9 +686,9 @@ def _daemon_scan_sport(
 
     try:
         console.print(f"\n[bold]{current_sport.upper()}[/bold]")
-        # Betano and Magic Betting are soccer-only file-based scrapers.
+        # Betano is a soccer-only file-based scraper.
         all_q = _fetch_all_parallel(
-            current_sport, betano_file, magicbetting_file,
+            current_sport, betano_file,
             include_file_books=(current_sport == "soccer"),
         )
         pinnacle_q = [q for q in all_q if q.book == Book.PINNACLE]
@@ -896,10 +858,6 @@ def daemon(
         None, "--betano-file",
         help="Path to a Betano JSON dump — same as in `scan`.",
     ),
-    magicbetting_file: str = typer.Option(
-        None, "--magicbetting-file",
-        help="Path to a Magic Betting capture — same as in `scan`.",
-    ),
 ):
     """Continuous scan: fetch all books in parallel, detect value bets + surebets,
     alert on Telegram only when something new or changed. Loops forever — run
@@ -923,7 +881,7 @@ def daemon(
             futs = {
                 executor.submit(
                     _daemon_scan_sport,
-                    sp, storage, tg_cfg, min_ev, bankroll, betano_file, magicbetting_file,
+                    sp, storage, tg_cfg, min_ev, bankroll, betano_file,
                 ): sp
                 for sp in sports_list
             }
