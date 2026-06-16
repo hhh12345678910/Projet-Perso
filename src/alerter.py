@@ -299,11 +299,13 @@ def format_clv_alert(
     )
 
 
-def format_value_bet(bet: ValueBet, sport: str | None = None) -> str:
+def format_value_bet(bet: ValueBet, sport: str | None = None,
+                     bankroll: float = 1000.0) -> str:
     """Human-readable single message per bet — kept compact so a phone
     notification preview shows EV%, opponent and kickoff before the user
     needs to expand the chat. Dates are localised to Brussels time.
-    Optionally takes the sport string to surface a per-sport emoji."""
+    Optionally takes the sport string to surface a per-sport emoji.
+    bankroll converts the stored quarter-Kelly% into a concrete € stake."""
     book_name = _BOOK_NAMES.get(bet.book, bet.book.value)
 
     # Try to extract a readable home/away + kickoff from the event_key.
@@ -324,7 +326,8 @@ def format_value_bet(bet: ValueBet, sport: str | None = None) -> str:
         f"{_sport_prefix(sport)}{matchup}\n"
         f"{when_line}"
         f"Pari : <b>{bet.outcome.label}{line_suffix}</b> @ {bet.odd_taken:.2f} (fair {bet.fair_odd:.2f})\n"
-        f"Mise conseillée : {bet.kelly_stake_pct:.2f}%"
+        f"Mise conseillée : {bet.kelly_stake_pct:.2f}% → "
+        f"{bet.kelly_stake_pct / 100.0 * bankroll:.2f}€ (sur {bankroll:.0f}€)"
     )
 
 
@@ -386,11 +389,18 @@ class TelegramAlerter:
         text = format_value_bet(bet, sport=sport)
         delivered = False
 
+        # Premium is a prematch-only channel: a value bet whose kickoff has
+        # already passed is "live" and must not reach the premium chat (mirrors
+        # the prematch-only rule on premium surebets).
+        parsed = parse_event_key(bet.event_key)
+        is_live = parsed is not None and parsed[0] <= datetime.now(timezone.utc)
+
         if cfg.min_ev_pct <= ev < cfg.main_max_ev_pct:
             delivered |= self._send(text, chat_id=cfg.chat_id)
 
         if (
-            cfg.effective_premium_chat_id
+            not is_live
+            and cfg.effective_premium_chat_id
             and ev >= cfg.min_premium_ev_pct
             and cfg.premium_min_odd <= bet.odd_taken <= cfg.premium_max_odd
         ):

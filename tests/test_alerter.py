@@ -34,9 +34,11 @@ NOW = datetime(2026, 5, 28, tzinfo=timezone.utc)
 
 
 def _bet(ev_pct: float = 5.0, label: str = "home", line: float | None = None,
-         odd: float = 1.86) -> ValueBet:
+         odd: float = 1.86, event_key: str = "209906010000::boise__vs__sarasota") -> ValueBet:
+    # Default kickoff is far in the future so the bet counts as prematch
+    # regardless of when the suite runs (premium routing is prematch-only).
     return ValueBet(
-        event_key="202606010000::boise__vs__sarasota",
+        event_key=event_key,
         book=Book.UNIBET_BE,
         market=MarketType.H2H,
         outcome=Outcome(label=label, line=line),
@@ -88,6 +90,14 @@ def test_format_includes_kickoff_date():
     # Should mention a time HH:MM
     import re
     assert re.search(r"\d{2}:\d{2}", msg)
+
+
+def test_format_includes_euro_stake_on_default_bankroll():
+    # kelly_stake_pct=1.50 on a 1000€ bankroll -> 15.00€.
+    msg = format_value_bet(_bet())
+    assert "1.50%" in msg
+    assert "15.00€" in msg
+    assert "sur 1000€" in msg
 
 
 def test_format_includes_line_when_present():
@@ -426,6 +436,33 @@ def test_big_ev_routes_to_premium_not_main():
     with TelegramAlerter(cfg, client=FakeClient()) as a:
         assert a.send_value_bet(_bet(ev_pct=22.0, odd=2.40)) is True
     assert calls == ["prem"]  # confined to premium, main untouched
+
+
+def test_premium_skips_live_value_bet():
+    """Premium is prematch-only: a premium-eligible bet whose kickoff has
+    already passed must NOT reach premium. With EV above the main band and no
+    other eligible channel, nothing is sent."""
+    calls = []
+
+    class FakeClient:
+        def post(self, url, json):
+            calls.append(json["chat_id"])
+            r = MagicMock(); r.status_code = 200
+            return r
+        def close(self): pass
+
+    cfg = TelegramConfig(
+        bot_token="t", chat_id="c",
+        min_ev_pct=8.0, main_max_ev_pct=15.0,
+        premium_chat_id="prem", min_premium_ev_pct=15.0,
+        premium_min_odd=1.5, premium_max_odd=4.0,
+        min_send_interval_s=0.0,
+    )
+    # Kickoff in the past -> the event is live.
+    live = _bet(ev_pct=22.0, odd=2.40, event_key="200001010000::boise__vs__sarasota")
+    with TelegramAlerter(cfg, client=FakeClient()) as a:
+        assert a.send_value_bet(live) is False
+    assert calls == []  # premium skipped (live), nothing else qualifies
 
 
 def test_premium_channel_called_for_big_value_bet_in_odds_band():
