@@ -145,6 +145,15 @@ def find_value_bets(
     for q in candidate_quotes:
         if q.book == Book.PINNACLE:
             continue
+        # Handicap markets are excluded for now: line semantics vary across
+        # books (Pinnacle signs each side, e.g. home -1.0 / away +1.0, while
+        # soft books carry both sides at the same |line|). That mismatch pairs
+        # non-complementary lines in the devig and surfaces phantom value bets
+        # (huge "EV" on away -1.0 etc.). Surebets already skip handicaps for the
+        # same reason; mirror that here until per-book line conventions are
+        # normalised.
+        if q.market == MarketType.HANDICAP:
+            continue
         fl = fair_lines.get((q.event_key, q.market, q.outcome.line))
         if fl is None:
             continue
