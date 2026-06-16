@@ -96,6 +96,8 @@ class TelegramConfig:
     live_surebet_chat_id: str | None = None  # live surebets (match already started)
     min_ev_pct: float = 8.0               # main chat: value bets below this stay silent
     main_max_ev_pct: float = 15.0         # main chat: value bets above this go to premium instead
+    main_min_odd: float = 1.5             # main chat: only value bets within this odds band
+    main_max_odd: float = 4.0
     min_surebet_margin_pct: float = 1.0   # surebets below this margin stay silent
     include_suspicious_surebets: bool = False  # opt-in to see flagged ones too
     surebet_dedup: bool = True            # off -> alert every scan even if seen before
@@ -143,6 +145,8 @@ class TelegramConfig:
             live_surebet_chat_id=os.getenv("TELEGRAM_LIVE_SUREBET_CHAT_ID") or None,
             min_ev_pct=float(os.getenv("TELEGRAM_MIN_EV", "8.0")),
             main_max_ev_pct=float(os.getenv("TELEGRAM_MAIN_MAX_EV", "15.0")),
+            main_min_odd=float(os.getenv("TELEGRAM_MAIN_MIN_ODD", "1.5")),
+            main_max_odd=float(os.getenv("TELEGRAM_MAIN_MAX_ODD", "4.0")),
             min_surebet_margin_pct=float(os.getenv("TELEGRAM_MIN_SUREBET", "1.0")),
             include_suspicious_surebets=os.getenv("TELEGRAM_INCLUDE_SUSPICIOUS", "0") == "1",
             surebet_dedup=os.getenv("TELEGRAM_SUREBET_DEDUP", "1") == "1",
@@ -374,7 +378,7 @@ class TelegramAlerter:
         sent independently (a rate-limited main chat no longer suppresses the
         premium/critical copies, which live on their own chats with their own
         budgets):
-          - main chat:     min_ev_pct <= EV < main_max_ev_pct
+          - main chat:     min_ev_pct <= EV < main_max_ev_pct, odd within the main band
           - premium chat:  EV >= min_premium_ev_pct, odd within the premium band
           - critical chat: EV >= min_critical_ev_pct
 
@@ -394,7 +398,10 @@ class TelegramAlerter:
         parsed = parse_event_key(bet.event_key)
         is_live = parsed is not None and parsed[0] <= datetime.now(timezone.utc)
 
-        if cfg.min_ev_pct <= ev < cfg.main_max_ev_pct:
+        if (
+            cfg.min_ev_pct <= ev < cfg.main_max_ev_pct
+            and cfg.main_min_odd <= bet.odd_taken <= cfg.main_max_odd
+        ):
             delivered |= self._send(text, chat_id=cfg.chat_id)
 
         if (

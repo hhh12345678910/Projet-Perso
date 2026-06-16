@@ -415,6 +415,31 @@ def test_main_channel_ev_band_confines_value_bets():
     assert calls == ["c"]  # only the 10% one reached the main chat
 
 
+def test_main_channel_odds_band_confines_value_bets():
+    """Main chat only takes bets whose odd is within [main_min_odd, main_max_odd]
+    (default 1.5-4.0). An in-EV-band bet with out-of-band odds stays silent."""
+    calls = []
+
+    class FakeClient:
+        def post(self, url, json):
+            calls.append((json["chat_id"], json["text"]))
+            r = MagicMock(); r.status_code = 200
+            return r
+        def close(self): pass
+
+    cfg = TelegramConfig(
+        bot_token="t", chat_id="c",
+        min_ev_pct=8.0, main_max_ev_pct=15.0,
+        main_min_odd=1.5, main_max_odd=4.0,
+        min_send_interval_s=0.0,
+    )
+    with TelegramAlerter(cfg, client=FakeClient()) as a:
+        assert a.send_value_bet(_bet(ev_pct=10.0, odd=1.30)) is False  # odd too low
+        assert a.send_value_bet(_bet(ev_pct=10.0, odd=5.50)) is False  # odd too high
+        assert a.send_value_bet(_bet(ev_pct=10.0, odd=2.40)) is True   # in band
+    assert [c for c, _ in calls] == ["c"]  # only the in-band one reached main
+
+
 def test_big_ev_routes_to_premium_not_main():
     """A 22% EV bet (odds in band) goes to premium, NOT the main chat."""
     calls = []
@@ -488,8 +513,10 @@ def test_premium_channel_called_for_big_value_bet_in_odds_band():
     assert len(calls) == 2
 
 
-def test_premium_channel_skips_value_bet_out_of_odds_band():
-    """A big EV bet outside the odds band goes to main only, not premium."""
+def test_value_bet_out_of_odds_band_reaches_no_channel():
+    """A bet whose odd is outside the 1.5-4.0 band is skipped by BOTH the main
+    and premium channels — it goes nowhere (only the critical channel, which has
+    no odds band, would still take a high-EV one)."""
     calls = []
 
     class FakeClient:
@@ -501,13 +528,14 @@ def test_premium_channel_skips_value_bet_out_of_odds_band():
 
     cfg = TelegramConfig(
         bot_token="t", chat_id="c", min_ev_pct=3.0, main_max_ev_pct=100.0,
+        main_min_odd=1.5, main_max_odd=4.0,
         premium_chat_id="prem", min_premium_ev_pct=20.0,
         premium_min_odd=1.5, premium_max_odd=4.0,
         min_send_interval_s=0.0,
     )
     with TelegramAlerter(cfg, client=FakeClient()) as a:
-        assert a.send_value_bet(_bet(ev_pct=25.0, odd=6.50)) is True  # odd > 4.0
-    assert calls == ["c"]
+        assert a.send_value_bet(_bet(ev_pct=25.0, odd=6.50)) is False  # odd > 4.0
+    assert calls == []
 
 
 def test_premium_channel_called_for_prematch_surebet():
