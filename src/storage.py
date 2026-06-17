@@ -355,6 +355,29 @@ class Storage:
                 return False
             return abs(current_ev_pct - row[0]) < ev_delta_pct
 
+    def value_bet_notify_count(
+        self, event_key: str, book: str, market: str, outcome_label: str,
+        line: Optional[float],
+    ) -> int:
+        """How many times this value bet has already been alerted. Used to cap
+        re-alerts at a fixed number per bet, so a bet whose EV keeps jittering
+        across the dedup delta can't notify forever."""
+        like_key = self._event_key_like(event_key)
+        with self._conn() as c:
+            if line is None:
+                row = c.execute(
+                    "SELECT COUNT(*) FROM notified_value_bets "
+                    "WHERE event_key LIKE ? AND book=? AND market=? AND outcome_label=? AND line IS NULL",
+                    (like_key, book, market, outcome_label),
+                ).fetchone()
+            else:
+                row = c.execute(
+                    "SELECT COUNT(*) FROM notified_value_bets "
+                    "WHERE event_key LIKE ? AND book=? AND market=? AND outcome_label=? AND line=?",
+                    (like_key, book, market, outcome_label, line),
+                ).fetchone()
+            return int(row[0]) if row else 0
+
     def mark_value_bet_notified(
         self, event_key: str, book: str, market: str, outcome_label: str,
         line: Optional[float], ev_pct: float, notified_at: datetime,

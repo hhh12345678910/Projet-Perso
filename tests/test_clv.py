@@ -143,3 +143,18 @@ def test_all_closed_bets_carries_sport(tmp_path):
     assert len(rows) == 1
     assert rows[0]["sport"] == "tennis"
     assert rows[0]["closing_odd"] == 2.7
+
+
+def test_value_bet_notify_count_caps_alerts(tmp_path):
+    """notify_count grows with each mark and lets the daemon cap re-alerts."""
+    s = Storage(tmp_path / "cap.db")
+    now = datetime(2026, 6, 16, 18, 0, tzinfo=timezone.utc)
+    ek = "202606161800::a__vs__b"
+    args = (ek, "unibet_be", "h2h", "home", None)
+    assert s.value_bet_notify_count(*args) == 0
+    s.mark_value_bet_notified(*args, 12.0, now)
+    assert s.value_bet_notify_count(*args) == 1
+    s.mark_value_bet_notified(*args, 15.0, now)
+    assert s.value_bet_notify_count(*args) == 2
+    # A different outcome is tracked independently.
+    assert s.value_bet_notify_count(ek, "unibet_be", "h2h", "away", None) == 0

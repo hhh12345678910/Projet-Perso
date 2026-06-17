@@ -490,7 +490,10 @@ def scan(
             if tg_cfg.valuebet_dedup:
                 candidates = [
                     b for b in bets
-                    if not storage.value_bet_already_notified(
+                    if storage.value_bet_notify_count(
+                        b.event_key, b.book.value, b.market.value, b.outcome.label, b.outcome.line,
+                    ) < tg_cfg.valuebet_max_alerts
+                    and not storage.value_bet_already_notified(
                         b.event_key, b.book.value, b.market.value, b.outcome.label, b.outcome.line,
                         current_ev_pct=b.ev_pct,
                         ev_delta_pct=tg_cfg.valuebet_ev_delta_pct,
@@ -781,7 +784,12 @@ def _daemon_scan_sport(
             if tg_cfg.valuebet_dedup:
                 vb_candidates = [
                     b for b in bets
-                    if not storage.value_bet_already_notified(
+                    # Hard cap: never alert the same bet more than N times, even
+                    # if its EV keeps crossing the dedup delta cycle to cycle.
+                    if storage.value_bet_notify_count(
+                        b.event_key, b.book.value, b.market.value, b.outcome.label, b.outcome.line,
+                    ) < tg_cfg.valuebet_max_alerts
+                    and not storage.value_bet_already_notified(
                         b.event_key, b.book.value, b.market.value, b.outcome.label, b.outcome.line,
                         current_ev_pct=b.ev_pct,
                         ev_delta_pct=tg_cfg.valuebet_ev_delta_pct,

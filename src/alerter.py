@@ -104,6 +104,7 @@ class TelegramConfig:
     valuebet_dedup: bool = True           # off -> alert every scan even on stale bets
     surebet_roi_delta_pct: float = 0.5    # re-alert when ROI shifts by this many points
     valuebet_ev_delta_pct: float = 2.0    # re-alert when EV% shifts by this many points
+    valuebet_max_alerts: int = 2          # hard cap on alerts per bet (jitter-proof)
     clv_chat_id: str | None = None        # toutes les CLV (>= min_clv_pct) atterrissent ici
     min_clv_pct: float = 5.0             # en dessous : aucune alerte CLV
     min_high_clv_pct: float = 15.0       # au-dessus : header 🔥 (même canal, juste un libellé)
@@ -153,6 +154,7 @@ class TelegramConfig:
             valuebet_dedup=os.getenv("TELEGRAM_VALUEBET_DEDUP", "1") == "1",
             surebet_roi_delta_pct=float(os.getenv("TELEGRAM_SUREBET_ROI_DELTA", "0.5")),
             valuebet_ev_delta_pct=float(os.getenv("TELEGRAM_VALUEBET_EV_DELTA", "2.0")),
+            valuebet_max_alerts=int(os.getenv("TELEGRAM_VALUEBET_MAX_ALERTS", "2")),
             clv_chat_id=os.getenv("TELEGRAM_CLV_CHAT_ID") or None,
             min_clv_pct=float(os.getenv("TELEGRAM_MIN_CLV", "5.0")),
             min_high_clv_pct=float(os.getenv("TELEGRAM_MIN_HIGH_CLV", "15.0")),
