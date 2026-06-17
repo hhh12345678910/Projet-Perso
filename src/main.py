@@ -857,10 +857,10 @@ def _daemon_scan_sport(
 def daemon(
     sport: str = "soccer,tennis,basketball,hockey",
     min_ev: float = typer.Option(
-        8.0, "--min-ev",
-        help="Minimum EV% to detect/store a value bet. Defaults to 8 so the "
-        "daemon stops storing the flood of low-EV bets that re-saturated "
-        "Telegram (the main chat already starts at 8%). Lower it for research.",
+        5.0, "--min-ev",
+        help="Minimum EV% to detect/store a value bet. Defaults to 5 to match "
+        "the main chat's lower bound; the 5-8% bucket still shows ~+12% CLV. "
+        "Below 5% is where the volume that re-saturated Telegram lives.",
     ),
     bankroll: float = 1000.0,
     breather: int = typer.Option(

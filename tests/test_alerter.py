@@ -181,8 +181,8 @@ def test_alerter_swallows_network_failure():
     printed = []
     cfg = TelegramConfig(bot_token="t", chat_id="c")
     with TelegramAlerter(cfg, client=client, print_fn=printed.append) as a:
-        # EV inside the main band [8, 15) so a send is actually attempted.
-        assert a.send_value_bet(_bet(ev_pct=10.0)) is False
+        # EV inside the main band [5, 10) so a send is actually attempted.
+        assert a.send_value_bet(_bet(ev_pct=7.0)) is False
     assert printed and "boom" in printed[0]
 
 
@@ -362,7 +362,7 @@ def test_critical_channel_not_called_for_normal_ev_bet():
         min_send_interval_s=0.0,
     )
     with TelegramAlerter(cfg, client=FakeClient()) as a:
-        assert a.send_value_bet(_bet(ev_pct=10.0)) is True
+        assert a.send_value_bet(_bet(ev_pct=7.0)) is True
     assert calls == ["c"]
 
 

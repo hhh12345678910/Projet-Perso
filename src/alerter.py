@@ -94,8 +94,8 @@ class TelegramConfig:
     chat_id: str                          # main chat — value bets land here
     surebet_chat_id: str | None = None    # prematch surebets
     live_surebet_chat_id: str | None = None  # live surebets (match already started)
-    min_ev_pct: float = 8.0               # main chat: value bets below this stay silent
-    main_max_ev_pct: float = 15.0         # main chat: value bets above this go to premium instead
+    min_ev_pct: float = 5.0               # main chat: value bets below this stay silent
+    main_max_ev_pct: float = 10.0         # main chat: value bets above this go to premium instead
     main_min_odd: float = 1.5             # main chat: only value bets within this odds band
     main_max_odd: float = 4.0
     min_surebet_margin_pct: float = 1.0   # surebets below this margin stay silent
@@ -121,7 +121,7 @@ class TelegramConfig:
     # the suspiciously-huge ones) within a sane odds band, plus juicy prematch
     # surebets. Opt-in via TELEGRAM_PREMIUM_CHAT_ID; no fallback when unset.
     premium_chat_id: str | None = None
-    min_premium_ev_pct: float = 15.0     # value bets at/above this go to premium channel
+    min_premium_ev_pct: float = 10.0     # value bets at/above this go to premium channel
     min_premium_surebet_pct: float = 5.0  # prematch surebets (margin%) at/above this go to premium
     premium_min_odd: float = 1.5         # premium value bets only within this odds band
     premium_max_odd: float = 4.0
@@ -143,8 +143,8 @@ class TelegramConfig:
             chat_id=chat,
             surebet_chat_id=os.getenv("TELEGRAM_SUREBET_CHAT_ID") or None,
             live_surebet_chat_id=os.getenv("TELEGRAM_LIVE_SUREBET_CHAT_ID") or None,
-            min_ev_pct=float(os.getenv("TELEGRAM_MIN_EV", "8.0")),
-            main_max_ev_pct=float(os.getenv("TELEGRAM_MAIN_MAX_EV", "15.0")),
+            min_ev_pct=float(os.getenv("TELEGRAM_MIN_EV", "5.0")),
+            main_max_ev_pct=float(os.getenv("TELEGRAM_MAIN_MAX_EV", "10.0")),
             main_min_odd=float(os.getenv("TELEGRAM_MAIN_MIN_ODD", "1.5")),
             main_max_odd=float(os.getenv("TELEGRAM_MAIN_MAX_ODD", "4.0")),
             min_surebet_margin_pct=float(os.getenv("TELEGRAM_MIN_SUREBET", "1.0")),
@@ -167,7 +167,7 @@ class TelegramConfig:
             min_critical_surebet_pct=float(os.getenv("TELEGRAM_MIN_CRITICAL_SUREBET", "10.0")),
             min_critical_clv_pct=float(os.getenv("TELEGRAM_MIN_CRITICAL_CLV", "25.0")),
             premium_chat_id=os.getenv("TELEGRAM_PREMIUM_CHAT_ID") or None,
-            min_premium_ev_pct=float(os.getenv("TELEGRAM_MIN_PREMIUM_EV", "15.0")),
+            min_premium_ev_pct=float(os.getenv("TELEGRAM_MIN_PREMIUM_EV", "10.0")),
             min_premium_surebet_pct=float(os.getenv("TELEGRAM_MIN_PREMIUM_SUREBET", "5.0")),
             premium_min_odd=float(os.getenv("TELEGRAM_PREMIUM_MIN_ODD", "1.5")),
             premium_max_odd=float(os.getenv("TELEGRAM_PREMIUM_MAX_ODD", "4.0")),

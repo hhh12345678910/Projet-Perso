@@ -8,7 +8,7 @@ set -uo pipefail
 PROJECT_DIR="${PROJECT_DIR:-/home/ubuntu/Projet-Perso}"
 SPORT_LIST="${SPORT_LIST:-soccer,tennis,basketball,hockey}"
 BREATHER="${BREATHER:-10}"
-MIN_EV="${MIN_EV:-8}"
+MIN_EV="${MIN_EV:-5}"
 LOG_FILE="${LOG_FILE:-/home/ubuntu/valuebet.log}"
 
 exec >> "$LOG_FILE" 2>&1
