@@ -487,20 +487,20 @@ def scan(
 
         tg_cfg = TelegramConfig.from_env()
         if tg_cfg is not None:
-            if tg_cfg.valuebet_dedup:
-                candidates = [
-                    b for b in bets
-                    if storage.value_bet_notify_count(
-                        b.event_key, b.book.value, b.market.value, b.outcome.label, b.outcome.line,
-                    ) < tg_cfg.valuebet_max_alerts
-                    and not storage.value_bet_already_notified(
+            candidates = [
+                b for b in bets
+                if storage.value_bet_notify_count(
+                    b.event_key, b.book.value, b.market.value, b.outcome.label, b.outcome.line,
+                ) < tg_cfg.valuebet_max_alerts
+                and (
+                    not tg_cfg.valuebet_dedup
+                    or not storage.value_bet_already_notified(
                         b.event_key, b.book.value, b.market.value, b.outcome.label, b.outcome.line,
                         current_ev_pct=b.ev_pct,
                         ev_delta_pct=tg_cfg.valuebet_ev_delta_pct,
                     )
-                ]
-            else:
-                candidates = bets
+                )
+            ]
             sent = send_alerts(candidates, tg_cfg, print_fn=lambda s: console.print(f"[yellow]{s}[/yellow]"), sport=current_sport)
             now = datetime.now(timezone.utc)
             for b in sent:
@@ -781,22 +781,22 @@ def _daemon_scan_sport(
             storage.insert_value_bet(b)
         console.print(f"\\[{current_sport}]   value bets: {len(bets)} total")
         if tg_cfg is not None:
-            if tg_cfg.valuebet_dedup:
-                vb_candidates = [
-                    b for b in bets
-                    # Hard cap: never alert the same bet more than N times, even
-                    # if its EV keeps crossing the dedup delta cycle to cycle.
-                    if storage.value_bet_notify_count(
-                        b.event_key, b.book.value, b.market.value, b.outcome.label, b.outcome.line,
-                    ) < tg_cfg.valuebet_max_alerts
-                    and not storage.value_bet_already_notified(
+            # The hard alert cap ALWAYS applies (even with the EV-delta dedup
+            # turned off); the EV-delta dedup is an extra filter on top.
+            vb_candidates = [
+                b for b in bets
+                if storage.value_bet_notify_count(
+                    b.event_key, b.book.value, b.market.value, b.outcome.label, b.outcome.line,
+                ) < tg_cfg.valuebet_max_alerts
+                and (
+                    not tg_cfg.valuebet_dedup
+                    or not storage.value_bet_already_notified(
                         b.event_key, b.book.value, b.market.value, b.outcome.label, b.outcome.line,
                         current_ev_pct=b.ev_pct,
                         ev_delta_pct=tg_cfg.valuebet_ev_delta_pct,
                     )
-                ]
-            else:
-                vb_candidates = bets
+                )
+            ]
             sent = send_alerts(
                 vb_candidates, tg_cfg,
                 print_fn=lambda s: console.print(f"[yellow]{s}[/yellow]"),
