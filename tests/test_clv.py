@@ -158,3 +158,17 @@ def test_value_bet_notify_count_caps_alerts(tmp_path):
     assert s.value_bet_notify_count(*args) == 2
     # A different outcome is tracked independently.
     assert s.value_bet_notify_count(ek, "unibet_be", "h2h", "away", None) == 0
+
+
+def test_surebet_notify_count_caps_alerts(tmp_path):
+    """Surebets get the same hard alert cap mechanism as value bets."""
+    s = Storage(tmp_path / "sb.db")
+    now = datetime(2026, 6, 16, 18, 0, tzinfo=timezone.utc)
+    ek = "202606161800::a__vs__b"
+    assert s.surebet_notify_count(ek, "h2h", None) == 0
+    s.mark_surebet_notified(ek, "h2h", None, 3.0, now)
+    assert s.surebet_notify_count(ek, "h2h", None) == 1
+    s.mark_surebet_notified(ek, "h2h", None, 4.0, now)
+    assert s.surebet_notify_count(ek, "h2h", None) == 2
+    # A different market is independent.
+    assert s.surebet_notify_count(ek, "totals", 2.5) == 0

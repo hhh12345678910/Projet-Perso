@@ -297,6 +297,28 @@ class Storage:
             last_margin_pct = row[0]
             return abs(current_margin_pct - last_margin_pct) < roi_delta_pct
 
+    def surebet_notify_count(
+        self, event_key: str, market: str, line: Optional[float],
+    ) -> int:
+        """How many times this surebet has already been alerted, so the daemon
+        can cap re-alerts at a fixed number per opportunity (same hard cap as
+        value bets), jitter-proof regardless of the ROI-delta dedup."""
+        like_key = self._event_key_like(event_key)
+        with self._conn() as c:
+            if line is None:
+                row = c.execute(
+                    "SELECT COUNT(*) FROM notified_surebets "
+                    "WHERE event_key LIKE ? AND market=? AND line IS NULL",
+                    (like_key, market),
+                ).fetchone()
+            else:
+                row = c.execute(
+                    "SELECT COUNT(*) FROM notified_surebets "
+                    "WHERE event_key LIKE ? AND market=? AND line=?",
+                    (like_key, market, line),
+                ).fetchone()
+            return int(row[0]) if row else 0
+
     def mark_surebet_notified(
         self, event_key: str, market: str, line: Optional[float],
         margin_pct: float, notified_at: datetime,

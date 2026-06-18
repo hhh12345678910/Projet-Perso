@@ -101,6 +101,7 @@ class TelegramConfig:
     min_surebet_margin_pct: float = 1.0   # surebets below this margin stay silent
     include_suspicious_surebets: bool = False  # opt-in to see flagged ones too
     surebet_dedup: bool = True            # off -> alert every scan even if seen before
+    surebet_max_alerts: int = 2           # hard cap on alerts per surebet (jitter-proof)
     valuebet_dedup: bool = True           # off -> alert every scan even on stale bets
     surebet_roi_delta_pct: float = 0.5    # re-alert when ROI shifts by this many points
     valuebet_ev_delta_pct: float = 2.0    # re-alert when EV% shifts by this many points
@@ -151,6 +152,7 @@ class TelegramConfig:
             min_surebet_margin_pct=float(os.getenv("TELEGRAM_MIN_SUREBET", "1.0")),
             include_suspicious_surebets=os.getenv("TELEGRAM_INCLUDE_SUSPICIOUS", "0") == "1",
             surebet_dedup=os.getenv("TELEGRAM_SUREBET_DEDUP", "1") == "1",
+            surebet_max_alerts=int(os.getenv("TELEGRAM_SUREBET_MAX_ALERTS", "2")),
             valuebet_dedup=os.getenv("TELEGRAM_VALUEBET_DEDUP", "1") == "1",
             surebet_roi_delta_pct=float(os.getenv("TELEGRAM_SUREBET_ROI_DELTA", "0.5")),
             valuebet_ev_delta_pct=float(os.getenv("TELEGRAM_VALUEBET_EV_DELTA", "2.0")),

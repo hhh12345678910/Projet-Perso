@@ -550,15 +550,19 @@ def scan(
         # Final per-margin filtering happens inside the alerter.
         if tg_cfg is not None and surebets:
             candidates = surebets if tg_cfg.include_suspicious_surebets else plausible
-            if tg_cfg.surebet_dedup:
-                candidates = [
-                    s for s in candidates
-                    if not storage.surebet_already_notified(
+            candidates = [
+                s for s in candidates
+                if storage.surebet_notify_count(s.event_key, s.market.value, s.line)
+                < tg_cfg.surebet_max_alerts
+                and (
+                    not tg_cfg.surebet_dedup
+                    or not storage.surebet_already_notified(
                         s.event_key, s.market.value, s.line,
                         current_margin_pct=s.margin * 100,
                         roi_delta_pct=tg_cfg.surebet_roi_delta_pct,
                     )
-                ]
+                )
+            ]
             if candidates:
                 sent = send_surebet_alerts(
                     candidates, tg_cfg,
@@ -646,15 +650,19 @@ def scan_surebets(
             continue
 
         candidates = surebets if tg_cfg.include_suspicious_surebets else plausible
-        if tg_cfg.surebet_dedup:
-            candidates = [
-                s for s in candidates
-                if not storage.surebet_already_notified(
+        candidates = [
+            s for s in candidates
+            if storage.surebet_notify_count(s.event_key, s.market.value, s.line)
+            < tg_cfg.surebet_max_alerts
+            and (
+                not tg_cfg.surebet_dedup
+                or not storage.surebet_already_notified(
                     s.event_key, s.market.value, s.line,
                     current_margin_pct=s.margin * 100,
                     roi_delta_pct=tg_cfg.surebet_roi_delta_pct,
                 )
-            ]
+            )
+        ]
         if not candidates:
             continue
         sent = send_surebet_alerts(
@@ -818,17 +826,21 @@ def _daemon_scan_sport(
         console.print(f"\\[{current_sport}]   surebets: {len(plausible)} plausible")
         if tg_cfg is not None and surebets:
             sb_pool = surebets if tg_cfg.include_suspicious_surebets else plausible
-            if tg_cfg.surebet_dedup:
-                sb_candidates = [
-                    s for s in sb_pool
-                    if not storage.surebet_already_notified(
+            # Same dedup model as value bets: a hard alert cap that ALWAYS
+            # applies, plus the optional ROI-delta dedup on top.
+            sb_candidates = [
+                s for s in sb_pool
+                if storage.surebet_notify_count(s.event_key, s.market.value, s.line)
+                < tg_cfg.surebet_max_alerts
+                and (
+                    not tg_cfg.surebet_dedup
+                    or not storage.surebet_already_notified(
                         s.event_key, s.market.value, s.line,
                         current_margin_pct=s.margin * 100,
                         roi_delta_pct=tg_cfg.surebet_roi_delta_pct,
                     )
-                ]
-            else:
-                sb_candidates = sb_pool
+                )
+            ]
             if sb_candidates:
                 sent_sb = send_surebet_alerts(
                     sb_candidates, tg_cfg,
