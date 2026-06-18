@@ -26,6 +26,7 @@ from .scrapers.ladbrokes import LadbrokesScraper, parse_prematch as ladbrokes_pa
 from .scrapers.pinnacle import PinnacleScraper
 from .scrapers.sevenelevenbe import SevenElevenScraper, parse_listview as sevenelevenbe_parse_listview
 from .scrapers.bingoal import BingoalScraper, parse_listview as bingoal_parse_listview
+from .scrapers.meridianbet import MeridianScraper, parse_offer as meridian_parse_offer
 from .scrapers.smarkets import SmarketsScraper, iter_all_quotes as smarkets_iter_quotes
 from .scrapers.starcasinosport import StarCasinoSportScraper, parse_get_events as starcasinosport_parse_get_events
 from .scrapers.unibet import UnibetScraper, parse_listview as unibet_parse_listview
@@ -373,6 +374,18 @@ def fetch_bingoal_quotes(sport: str) -> list[OddQuote]:
         return []
 
 
+def fetch_meridian_quotes(sport: str) -> list[OddQuote]:
+    """Fetch + parse the MeridianBet prematch offer for a sport (own REST API,
+    independent odds — genuinely widens value/surebet coverage)."""
+    try:
+        with MeridianScraper() as mb:
+            data = mb.fetch_all_events(sport)
+        return list(meridian_parse_offer(data))
+    except httpx.HTTPError as e:
+        console.print(f"[yellow]MeridianBet skipped:[/yellow] {e}")
+        return []
+
+
 def fetch_betfirst_quotes(sport: str) -> list[OddQuote]:
     """Fetch + parse the BetFirst events-table for a sport (paginated)."""
     try:
@@ -447,6 +460,9 @@ def _fetch_all_parallel(
         "Unibet":        lambda: fetch_unibet_quotes(sport),
         "711":           lambda: fetch_sevenelevenbe_quotes(sport),
         "Bingoal":       lambda: fetch_bingoal_quotes(sport),
+        # MeridianBet: scraper prêt mais l'API exige un token (anti-bot
+        # TrafficGuard) -> réactiver ici une fois le token capturé.
+        # "MeridianBet": lambda: fetch_meridian_quotes(sport),
         "BetFirst":      lambda: fetch_betfirst_quotes(sport),
         "Ladbrokes":     lambda: fetch_ladbrokes_quotes(sport),
         "StarCasino":    lambda: fetch_starcasinosport_quotes(sport),

@@ -24,6 +24,7 @@ class Book(str, Enum):
     STARCASINO_SPORT = "starcasino_sport"
     SEVEN_ELEVEN_BE = "seven_eleven_be"  # 711.be — Kambi platform, same as Unibet
     BINGOAL_BE = "bingoal_be"            # Bingoal.be — Kambi platform, same as Unibet
+    MERIDIAN_BE = "meridian_be"          # Meridianbet.be — own platform, independent odds
     SMARKETS = "smarkets"        # London exchange, used as a secondary sharp reference
 
 
