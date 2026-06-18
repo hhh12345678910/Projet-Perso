@@ -182,6 +182,41 @@ def find_value_bets(
     return out
 
 
+# Books that share a single odds feed (Kambi): Unibet and 711 price identically,
+# so the same value bet on both is one opportunity, not two. UNIBET is the
+# canonical book kept for storage/dedup; 711 rides along in `also_books`.
+_TWIN_BOOK_GROUPS: tuple[tuple[Book, ...], ...] = (
+    (Book.UNIBET_BE, Book.SEVEN_ELEVEN_BE),
+)
+_TWIN_PRIMARY = {grp: grp[0] for grp in _TWIN_BOOK_GROUPS}
+_TWIN_OF = {b: grp for grp in _TWIN_BOOK_GROUPS for b in grp}
+
+
+def merge_twin_book_value_bets(bets: list[ValueBet]) -> list[ValueBet]:
+    """Collapse identical value bets coming from twin books (same Kambi feed,
+    same price) into a single alert that names every book. Non-twin bets and
+    twin bets that don't have a same-priced sibling pass through untouched."""
+    twins: dict[tuple, list[ValueBet]] = defaultdict(list)
+    out: list[ValueBet] = []
+    for b in bets:
+        if b.book in _TWIN_OF:
+            key = (b.event_key, b.market, b.outcome.label, b.outcome.line,
+                   round(b.odd_taken, 4), _TWIN_OF[b.book])
+            twins[key].append(b)
+        else:
+            out.append(b)
+
+    for key, group in twins.items():
+        twin_group = key[5]
+        primary_book = _TWIN_PRIMARY[twin_group]
+        books_present = {b.book for b in group}
+        # Keep the primary book's record if present, else the first seen.
+        base = next((b for b in group if b.book == primary_book), group[0])
+        extras = tuple(b for b in twin_group if b in books_present and b != base.book)
+        out.append(replace(base, also_books=extras))
+    return out
+
+
 _OPPOSITE_OUTCOME = {"home": "away", "away": "home"}
 
 
@@ -399,8 +434,8 @@ def _fetch_all_parallel(
         "711":           lambda: fetch_sevenelevenbe_quotes(sport),
         "BetFirst":      lambda: fetch_betfirst_quotes(sport),
         "Ladbrokes":     lambda: fetch_ladbrokes_quotes(sport),
-        "Golden Palace": lambda: fetch_goldenpalace_quotes(sport),
         "StarCasino":    lambda: fetch_starcasinosport_quotes(sport),
+        # Golden Palace retiré: compte limité, plus exploitable.
     }
     if include_file_books:
         tasks["Betano"]        = lambda: fetch_betano_quotes(betano_file=betano_file)
@@ -478,7 +513,7 @@ def scan(
         for q in soft_quotes:
             storage.insert_quote(q)
 
-        bets = find_value_bets(soft_quotes, fair, cfg)
+        bets = merge_twin_book_value_bets(find_value_bets(soft_quotes, fair, cfg))
         bets.sort(key=lambda b: b.ev_pct, reverse=True)
         console.print(f"[bold]Value bets: {len(bets)}[/bold]")
 
@@ -783,7 +818,7 @@ def _daemon_scan_sport(
                     console.print(f"\\[{current_sport}]   → {len(clv_sent)} CLV alert(s) sent")
 
         # ── Value bets ───────────────────────────────────────────────
-        bets = find_value_bets(soft_q, fair, cfg)
+        bets = merge_twin_book_value_bets(find_value_bets(soft_q, fair, cfg))
         bets.sort(key=lambda b: b.ev_pct, reverse=True)
         for b in bets:
             storage.insert_value_bet(b)

@@ -313,7 +313,9 @@ def format_value_bet(bet: ValueBet, sport: str | None = None,
     needs to expand the chat. Dates are localised to Brussels time.
     Optionally takes the sport string to surface a per-sport emoji.
     bankroll converts the stored quarter-Kelly% into a concrete € stake."""
-    book_name = _BOOK_NAMES.get(bet.book, bet.book.value)
+    book_name = " / ".join(
+        _BOOK_NAMES.get(b, b.value) for b in (bet.book, *bet.also_books)
+    )
 
     # Try to extract a readable home/away + kickoff from the event_key.
     parsed = parse_event_key(bet.event_key)

@@ -80,3 +80,7 @@ class ValueBet:
     ev_pct: float
     kelly_stake_pct: float
     detected_at: datetime
+    # Twin books offering the exact same price for this bet (e.g. Unibet & 711
+    # share the Kambi feed). Listed alongside `book` in the alert so the same
+    # opportunity fires once, naming every book where you can take it.
+    also_books: tuple[Book, ...] = ()
