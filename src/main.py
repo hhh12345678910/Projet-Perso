@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import os
 from collections import defaultdict
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from dataclasses import replace
@@ -1206,6 +1207,38 @@ def _ev_bucket(ev: float) -> str:
     if ev < 35:
         return "15-35%"
     return "35%+"
+
+
+@app.command()
+def prune(
+    retention_days: int = typer.Option(
+        7, "--days",
+        help="Delete raw quote rows older than this many days, then reclaim "
+        "disk with VACUUM. 7 is safe: closing lines are captured within hours "
+        "of kickoff. Run from cron to keep the DB from filling the disk.",
+    ),
+    vacuum: bool = typer.Option(True, "--vacuum/--no-vacuum",
+                                help="Run VACUUM to actually shrink the file on disk."),
+):
+    """Trim the unbounded quotes history and reclaim disk space."""
+    storage = Storage(ScanConfig().db_path)
+    db_path = ScanConfig().db_path
+
+    def _size_mb(p: str) -> float:
+        try:
+            return os.path.getsize(p) / (1024 * 1024)
+        except OSError:
+            return 0.0
+
+    before = _size_mb(db_path)
+    q = storage.prune_quotes(retention_days)
+    n = storage.prune_notifications()
+    console.print(f"Deleted {q} quote rows (> {retention_days}d) and {n} stale dedup rows.")
+    if vacuum:
+        console.print("VACUUM en cours (peut prendre un moment)…")
+        storage.vacuum()
+    after = _size_mb(db_path)
+    console.print(f"DB : {before:.0f} Mo → {after:.0f} Mo (récupéré {before - after:.0f} Mo)")
 
 
 @app.command(name="clv-report")

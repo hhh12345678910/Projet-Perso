@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import sqlite3
 from contextlib import contextmanager
-from datetime import datetime
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from typing import Iterator, Optional
 
@@ -154,6 +154,38 @@ class Storage:
                     q.source_event_id,
                 ),
             )
+
+    def prune_quotes(self, retention_days: int = 7) -> int:
+        """Delete raw quote rows older than retention_days and return how many
+        were removed. The quotes table grows ~unbounded (every quote, every
+        cycle); only recent rows matter — the closing line is captured into
+        clv_snapshots within hours of kickoff, after which the raw history is
+        dead weight. Run periodically (cron) to keep the DB from filling disk."""
+        cutoff = (datetime.now(timezone.utc) - timedelta(days=retention_days)).isoformat()
+        with self._conn() as c:
+            cur = c.execute("DELETE FROM quotes WHERE fetched_at < ?", (cutoff,))
+            return cur.rowcount
+
+    def prune_notifications(self, retention_days: int = 30) -> int:
+        """Trim old dedup bookkeeping rows (notified_*). Tiny vs quotes, but
+        keeps the tables tidy. Returns total rows removed."""
+        cutoff = (datetime.now(timezone.utc) - timedelta(days=retention_days)).isoformat()
+        removed = 0
+        with self._conn() as c:
+            for table in ("notified_value_bets", "notified_surebets", "notified_clv_alerts"):
+                cur = c.execute(f"DELETE FROM {table} WHERE notified_at < ?", (cutoff,))
+                removed += cur.rowcount
+        return removed
+
+    def vacuum(self) -> None:
+        """Rebuild the database file to reclaim space freed by deletes. Must run
+        outside a transaction, so it uses its own autocommit connection."""
+        conn = sqlite3.connect(str(self.path), timeout=60)
+        conn.isolation_level = None  # autocommit — VACUUM can't run in a tx
+        try:
+            conn.execute("VACUUM")
+        finally:
+            conn.close()
 
     def insert_value_bet(self, vb: ValueBet, stake: Optional[float] = None) -> int:
         """Persist a detected value bet. Returns the new row id, or the

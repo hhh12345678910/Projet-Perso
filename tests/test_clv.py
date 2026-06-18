@@ -172,3 +172,19 @@ def test_surebet_notify_count_caps_alerts(tmp_path):
     assert s.surebet_notify_count(ek, "h2h", None) == 2
     # A different market is independent.
     assert s.surebet_notify_count(ek, "totals", 2.5) == 0
+
+
+def test_prune_quotes_and_vacuum(tmp_path):
+    """prune_quotes drops only rows older than the retention window."""
+    from src.models import OddQuote
+    s = Storage(tmp_path / "prune.db")
+    old = datetime(2026, 1, 1, tzinfo=timezone.utc)
+    fresh = datetime.now(timezone.utc)
+    def q(when):
+        return OddQuote(event_key="202601010000::a__vs__b", book=Book.PINNACLE,
+                        market=MarketType.H2H, outcome=Outcome(label="home"),
+                        decimal_odd=2.0, fetched_at=when, source_event_id="x")
+    s.insert_quote(q(old)); s.insert_quote(q(old)); s.insert_quote(q(fresh))
+    removed = s.prune_quotes(retention_days=7)
+    assert removed == 2
+    s.vacuum()  # must not raise
