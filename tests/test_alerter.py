@@ -562,6 +562,35 @@ def test_premium_channel_called_for_prematch_surebet():
     assert len(calls) == 2
 
 
+def test_premium_and_critical_skip_suspicious_surebet():
+    """A suspicious (phantom) surebet may reach the main surebet chat when the
+    user opted in, but must NOT pollute the curated premium/critical channels."""
+    calls = []
+
+    class FakeClient:
+        def post(self, url, json):
+            calls.append(json["chat_id"])
+            r = MagicMock(); r.status_code = 200
+            return r
+        def close(self): pass
+
+    cfg = TelegramConfig(
+        bot_token="t", chat_id="c",
+        surebet_chat_id="sb",
+        premium_chat_id="prem",
+        critical_chat_id="crit",
+        include_suspicious_surebets=True,
+        min_surebet_margin_pct=1.0,
+        min_premium_surebet_pct=5.0,
+        min_critical_surebet_pct=10.0,
+        min_send_interval_s=0.0,
+    )
+    # 25% margin, flagged suspicious — exactly the phantom case from the field.
+    with TelegramAlerter(cfg, client=FakeClient()) as a:
+        assert a.send_surebet(_surebet(margin=0.25, suspicious=True), is_live=False) is True
+    assert calls == ["sb"]  # main surebet chat only — not prem, not crit
+
+
 def test_premium_channel_skips_live_surebet():
     """Live surebets must NOT go to the premium channel (prematch only)."""
     calls = []

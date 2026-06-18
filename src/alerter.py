@@ -465,13 +465,25 @@ class TelegramAlerter:
         text = format_surebet(sb, sport=sport, is_live=is_live)
         margin_pct = sb.margin * 100
         delivered = self._send(text, chat_id=chat)
+        # Premium and critical are curated channels: a suspicious (phantom)
+        # surebet may reach the main surebet chat for manual review when the
+        # user opted in, but it must never pollute premium/critical.
         # Critical copy: any surebet (prematch or live) above the critical margin.
-        if cfg.effective_critical_chat_id and margin_pct >= cfg.min_critical_surebet_pct:
+        if (
+            not sb.suspicious
+            and cfg.effective_critical_chat_id
+            and margin_pct >= cfg.min_critical_surebet_pct
+        ):
             delivered |= self._send(
                 "🚨 <b>SUREBET EXCEPTIONNEL</b>\n" + text, chat_id=cfg.effective_critical_chat_id
             )
         # Premium copy: prematch-only surebets above the premium margin.
-        if not is_live and cfg.effective_premium_chat_id and margin_pct >= cfg.min_premium_surebet_pct:
+        if (
+            not sb.suspicious
+            and not is_live
+            and cfg.effective_premium_chat_id
+            and margin_pct >= cfg.min_premium_surebet_pct
+        ):
             delivered |= self._send(
                 "💎 <b>SUREBET PREMIUM</b>\n" + text, chat_id=cfg.effective_premium_chat_id
             )
