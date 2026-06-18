@@ -25,6 +25,7 @@ from .scrapers.goldenpalace import GoldenPalaceScraper, parse_get_events as gold
 from .scrapers.ladbrokes import LadbrokesScraper, parse_prematch as ladbrokes_parse_prematch
 from .scrapers.pinnacle import PinnacleScraper
 from .scrapers.sevenelevenbe import SevenElevenScraper, parse_listview as sevenelevenbe_parse_listview
+from .scrapers.bingoal import BingoalScraper, parse_listview as bingoal_parse_listview
 from .scrapers.smarkets import SmarketsScraper, iter_all_quotes as smarkets_iter_quotes
 from .scrapers.starcasinosport import StarCasinoSportScraper, parse_get_events as starcasinosport_parse_get_events
 from .scrapers.unibet import UnibetScraper, parse_listview as unibet_parse_listview
@@ -187,7 +188,7 @@ def find_value_bets(
 # so the same value bet on both is one opportunity, not two. UNIBET is the
 # canonical book kept for storage/dedup; 711 rides along in `also_books`.
 _TWIN_BOOK_GROUPS: tuple[tuple[Book, ...], ...] = (
-    (Book.UNIBET_BE, Book.SEVEN_ELEVEN_BE),
+    (Book.UNIBET_BE, Book.SEVEN_ELEVEN_BE, Book.BINGOAL_BE),
 )
 _TWIN_PRIMARY = {grp: grp[0] for grp in _TWIN_BOOK_GROUPS}
 _TWIN_OF = {b: grp for grp in _TWIN_BOOK_GROUPS for b in grp}
@@ -360,6 +361,18 @@ def fetch_sevenelevenbe_quotes(sport: str) -> list[OddQuote]:
         return []
 
 
+def fetch_bingoal_quotes(sport: str) -> list[OddQuote]:
+    """Fetch + parse every Bingoal (Kambi) event — same coverage strategy as
+    Unibet/711, just a different operator code on the shared Kambi offering API."""
+    try:
+        with BingoalScraper() as bg:
+            data = bg.fetch_all_events(sport)
+        return list(bingoal_parse_listview(data))
+    except httpx.HTTPError as e:
+        console.print(f"[yellow]Bingoal skipped:[/yellow] {e}")
+        return []
+
+
 def fetch_betfirst_quotes(sport: str) -> list[OddQuote]:
     """Fetch + parse the BetFirst events-table for a sport (paginated)."""
     try:
@@ -433,6 +446,7 @@ def _fetch_all_parallel(
         "Pinnacle":      _pinnacle,
         "Unibet":        lambda: fetch_unibet_quotes(sport),
         "711":           lambda: fetch_sevenelevenbe_quotes(sport),
+        "Bingoal":       lambda: fetch_bingoal_quotes(sport),
         "BetFirst":      lambda: fetch_betfirst_quotes(sport),
         "Ladbrokes":     lambda: fetch_ladbrokes_quotes(sport),
         "StarCasino":    lambda: fetch_starcasinosport_quotes(sport),
@@ -468,7 +482,7 @@ def scan(
         "response, captured from your browser. Bypasses the IP-bound cookie check.",
     ),
 ):
-    """Fetch Pinnacle + soft books (Betano, Unibet, BetFirst, Ladbrokes, Golden Palace, StarCasino), compute fair lines, print top value bets.
+    """Fetch Pinnacle + soft books (Betano, Unibet, 711, Bingoal, BetFirst, Ladbrokes, StarCasino), compute fair lines, print top value bets.
 
     --sport accepts a comma-separated list (e.g. 'soccer,tennis,basketball').
     The full pipeline runs per sport and results are tagged in their own
