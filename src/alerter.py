@@ -96,6 +96,7 @@ class TelegramConfig:
     chat_id: str                          # main chat — value bets land here
     surebet_chat_id: str | None = None    # prematch surebets
     live_surebet_chat_id: str | None = None  # live surebets (match already started)
+    min_minutes_to_kickoff: int = 15      # drop prematch value/surebet alerts firing within N min of kickoff (stale-line errors)
     min_ev_pct: float = 5.0               # main chat: value bets below this stay silent
     main_max_ev_pct: float = 10.0         # main chat: value bets above this go to premium instead
     main_min_odd: float = 1.5             # main chat: only value bets within this odds band
@@ -147,6 +148,7 @@ class TelegramConfig:
             chat_id=chat,
             surebet_chat_id=os.getenv("TELEGRAM_SUREBET_CHAT_ID") or None,
             live_surebet_chat_id=os.getenv("TELEGRAM_LIVE_SUREBET_CHAT_ID") or None,
+            min_minutes_to_kickoff=int(os.getenv("TELEGRAM_MIN_MINUTES_TO_KICKOFF", "15")),
             min_ev_pct=float(os.getenv("TELEGRAM_MIN_EV", "5.0")),
             main_max_ev_pct=float(os.getenv("TELEGRAM_MAIN_MAX_EV", "10.0")),
             main_min_odd=float(os.getenv("TELEGRAM_MAIN_MIN_ODD", "1.5")),
@@ -403,8 +405,17 @@ class TelegramAlerter:
         # Premium is a prematch-only channel: a value bet whose kickoff has
         # already passed is "live" and must not reach the premium chat (mirrors
         # the prematch-only rule on premium surebets).
+        now = datetime.now(timezone.utc)
         parsed = parse_event_key(bet.event_key)
-        is_live = parsed is not None and parsed[0] <= datetime.now(timezone.utc)
+        is_live = parsed is not None and parsed[0] <= now
+
+        # Drop prematch alerts firing in the final minutes before kickoff —
+        # those last-minute value bets are disproportionately stale-line/data
+        # errors. (Live bets, kickoff already passed, are unaffected.)
+        if parsed is not None and not is_live:
+            mins_to_kickoff = (parsed[0] - now).total_seconds() / 60
+            if mins_to_kickoff < cfg.min_minutes_to_kickoff:
+                return False
 
         if (
             cfg.min_ev_pct <= ev < cfg.main_max_ev_pct
@@ -594,6 +605,12 @@ def send_surebet_alerts(
         for sb in surebets:
             parsed = parse_event_key(sb.event_key)
             is_live = parsed is not None and parsed[0] <= now
+            # Drop prematch surebets firing within N min of kickoff — those
+            # last-minute arbs are usually stale-line/data errors, not real.
+            if parsed is not None and not is_live:
+                mins_to_kickoff = (parsed[0] - now).total_seconds() / 60
+                if mins_to_kickoff < config.min_minutes_to_kickoff:
+                    continue
             if alerter.send_surebet(sb, sport=sport, is_live=is_live):
                 sent.append(sb)
     return sent

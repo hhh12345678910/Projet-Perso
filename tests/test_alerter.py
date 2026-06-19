@@ -674,3 +674,67 @@ def test_critical_channel_message_contains_critical_header():
     with TelegramAlerter(cfg, client=FakeClient()) as a:
         a.send_value_bet(_bet(ev_pct=40.0))
     assert critical_texts and "🚨" in critical_texts[0]
+
+
+# ── Drop prematch alerts firing within N minutes of kickoff ──────────────────
+
+from datetime import datetime as _dt, timezone as _tz, timedelta as _td
+
+
+def _ek_in(minutes: float) -> str:
+    """event_key whose kickoff is `minutes` from now (negative = already live)."""
+    ko = _dt.now(_tz.utc) + _td(minutes=minutes)
+    return ko.strftime("%Y%m%d%H%M") + "::boise__vs__sarasota"
+
+
+def _collect_client():
+    calls = []
+
+    class FakeClient:
+        def post(self, url, json):
+            calls.append(json["chat_id"])
+            r = MagicMock(); r.status_code = 200
+            return r
+        def close(self): pass
+    return calls, FakeClient
+
+
+def test_value_bet_within_kickoff_window_is_dropped():
+    calls, FakeClient = _collect_client()
+    cfg = TelegramConfig(bot_token="t", chat_id="c", min_ev_pct=5.0,
+                         main_max_ev_pct=10.0, min_minutes_to_kickoff=15,
+                         min_send_interval_s=0.0)
+    with TelegramAlerter(cfg, client=FakeClient()) as a:
+        # Kickoff in 10 min -> prematch but too close -> dropped everywhere.
+        assert a.send_value_bet(_bet(ev_pct=7.0, event_key=_ek_in(10))) is False
+    assert calls == []
+
+
+def test_value_bet_outside_kickoff_window_is_sent():
+    calls, FakeClient = _collect_client()
+    cfg = TelegramConfig(bot_token="t", chat_id="c", min_ev_pct=5.0,
+                         main_max_ev_pct=10.0, min_minutes_to_kickoff=15,
+                         min_send_interval_s=0.0)
+    with TelegramAlerter(cfg, client=FakeClient()) as a:
+        assert a.send_value_bet(_bet(ev_pct=7.0, event_key=_ek_in(40))) is True
+    assert calls == ["c"]
+
+
+def test_surebet_within_kickoff_window_is_dropped(monkeypatch):
+    calls, FakeClient = _collect_client()
+    monkeypatch.setattr("src.alerter.httpx.Client", lambda **_: FakeClient())
+    cfg = TelegramConfig(bot_token="t", chat_id="c", surebet_chat_id="sb",
+                         min_surebet_margin_pct=1.0, min_minutes_to_kickoff=15,
+                         min_send_interval_s=0.0)
+    sent = send_surebet_alerts([_surebet(margin=0.04, event_key=_ek_in(8))], cfg)
+    assert sent == [] and calls == []
+
+
+def test_surebet_outside_kickoff_window_is_sent(monkeypatch):
+    calls, FakeClient = _collect_client()
+    monkeypatch.setattr("src.alerter.httpx.Client", lambda **_: FakeClient())
+    cfg = TelegramConfig(bot_token="t", chat_id="c", surebet_chat_id="sb",
+                         min_surebet_margin_pct=1.0, min_minutes_to_kickoff=15,
+                         min_send_interval_s=0.0)
+    sent = send_surebet_alerts([_surebet(margin=0.04, event_key=_ek_in(45))], cfg)
+    assert len(sent) == 1 and "sb" in calls
