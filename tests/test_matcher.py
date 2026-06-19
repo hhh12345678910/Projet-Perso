@@ -104,3 +104,55 @@ def test_reconcile_rejects_outside_time_window():
     ref = event_key("Standard Liège", "Anderlecht", t)
     soft = event_key("Standard Liège", "Anderlecht", t + timedelta(hours=3))
     assert reconcile_event_keys([ref], [soft]) == {}
+
+
+# ── Hardening: class gate (women / youth / reserve) ──────────────────────────
+
+def test_women_team_does_not_match_mens_team():
+    assert team_similarity("Anderlecht", "Anderlecht Women") == 0.0
+    assert team_similarity("Club Brugge", "Club Brugge (W)") == 0.0
+
+
+def test_women_variants_still_match_each_other():
+    # Different books spell the women's side differently — they must still pair.
+    assert team_similarity("Anderlecht Women", "RSC Anderlecht (W)") >= 85
+    assert team_similarity("Lyon Feminin", "Lyon Dames") >= 80
+
+
+def test_youth_and_reserve_do_not_match_senior():
+    assert team_similarity("Genk", "Genk U21") == 0.0
+    assert team_similarity("Bayern Munich", "Bayern Munich II") == 0.0
+
+
+def test_plain_teams_unaffected_by_class_gate():
+    # No class marker -> behaves exactly as before (still matches).
+    assert team_similarity("Manchester United", "Man United") >= 80
+    assert team_similarity("Anderlecht", "RSC Anderlecht") >= 85
+
+
+NOW = datetime(2026, 6, 20, 18, 0, tzinfo=timezone.utc)
+
+
+def test_class_gate_blocks_mismatch_in_reconcile():
+    ref = {event_key("Anderlecht", "Genk", NOW)}
+    # A women's fixture of the same clubs must NOT map onto the men's reference.
+    cand = event_key("Anderlecht Women", "Genk Women", NOW)
+    mapping = reconcile_event_keys(ref, [cand])
+    assert cand not in mapping
+
+
+def test_ambiguity_guard_skips_when_two_refs_tie():
+    # Two near-identical reference events the same minute -> candidate can't be
+    # pinned to one -> skipped instead of guessing.
+    r1 = event_key("Tallinn Kalev", "Parnu", NOW)
+    r2 = event_key("Tallinn Levadia", "Parnu", NOW)
+    cand = event_key("Tallinn", "Parnu", NOW)
+    mapping = reconcile_event_keys({r1, r2}, [cand])
+    assert cand not in mapping
+
+
+def test_single_clear_match_still_maps():
+    ref = event_key("Anderlecht", "Club Brugge", NOW)
+    cand = event_key("RSC Anderlecht", "Club Brugge", NOW)
+    mapping = reconcile_event_keys({ref}, [cand])
+    assert cand in mapping and mapping[cand][0] == ref

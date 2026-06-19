@@ -14,27 +14,73 @@ _TEAM_NOISE = re.compile(
     r"\b("
     r"fc|cf|sc|ac|cd|ss|us|sv|sk|club|cp|de|the|"
     r"rsc|rfc|rcs|rwdm|kv|kvc|kvk|kaa|kfc|kas|kvm|kvo|kmsk|kv|royal|r|k|"
-    r"fk|nk|bk|rb|ssc|asse|ase|"
-    r"u17|u18|u19|u20|u21|u23|"
-    r"reserves|reserve|ii|b|women|w|fem"
+    r"fk|nk|bk|rb|ssc|asse|ase"
     r")\b",
     re.IGNORECASE,
 )
 
 
+# A senior men's side must NEVER be matched against the women's / youth /
+# reserve side of the same club: they share the base name but play completely
+# different games, so pairing them produces phantom value bets and surebets.
+# We pull the class marker out of the name into a canonical tag that survives
+# normalisation, and require the class to match before comparing the base name.
+_CLASS_RULES = (
+    ("xwomen", re.compile(
+        r"\b(women|womens|woman|ladies|dames|frauen|feminines?|feminine|feminin|fem|w)\b",
+        re.IGNORECASE)),
+    ("xyouth", re.compile(r"\b(u1[5-9]|u2[0-3]|youth|junior|jr)\b", re.IGNORECASE)),
+    ("xreserve", re.compile(r"\b(reserves?|ii|b)\b", re.IGNORECASE)),
+)
+_CLASS_TAGS = ("xwomen", "xyouth", "xreserve")
+
+
+def _extract_class(s: str) -> tuple[str, str]:
+    """Return (class_tag, name_without_markers). First rule that hits wins the
+    tag; every matched marker is stripped from the base name."""
+    cls = ""
+    for tag, pat in _CLASS_RULES:
+        if pat.search(s):
+            if not cls:
+                cls = tag
+            s = pat.sub(" ", s)
+    return cls, s
+
+
 def normalize_team(name: str) -> str:
     s = unicodedata.normalize("NFKD", name).encode("ascii", "ignore").decode("ascii")
     s = s.lower()
+    cls, s = _extract_class(s)             # detect class while word boundaries exist
     s = _TEAM_NOISE.sub(" ", s)
     s = re.sub(r"[^a-z0-9 ]", " ", s)
     s = re.sub(r"\s+", " ", s).strip()
+    if cls:
+        s = f"{s} {cls}".strip()
     return s
 
 
+def team_class(normalized: str) -> str:
+    for tag in _CLASS_TAGS:
+        if tag in normalized:
+            return tag
+    return "main"
+
+
+def _strip_class_tag(normalized: str) -> str:
+    for tag in _CLASS_TAGS:
+        normalized = normalized.replace(tag, " ")
+    return re.sub(r"\s+", " ", normalized).strip()
+
+
 def team_similarity(a: str, b: str) -> float:
+    na, nb = normalize_team(a), normalize_team(b)
+    # Class gate: women/youth/reserve only match their own kind.
+    if team_class(na) != team_class(nb):
+        return 0.0
+    sa, sb = _strip_class_tag(na), _strip_class_tag(nb)
     return max(
-        fuzz.token_set_ratio(normalize_team(a), normalize_team(b)),
-        fuzz.partial_ratio(normalize_team(a), normalize_team(b)),
+        fuzz.token_set_ratio(sa, sb),
+        fuzz.partial_ratio(sa, sb),
     )
 
 
@@ -67,6 +113,7 @@ def reconcile_event_keys(
     *,
     time_tolerance_minutes: int = 10,
     min_score: float = 85.0,
+    ambiguity_margin: float = 4.0,
 ) -> dict[str, tuple[str, bool]]:
     """Map each candidate (soft-book) event_key onto the best reference
     (Pinnacle) event_key via fuzzy team matching within a time window.
@@ -99,6 +146,7 @@ def reconcile_event_keys(
         best_key: Optional[str] = None
         best_score = 0.0
         best_swap = False
+        second_score = 0.0     # best score of a *different* reference event
         for rk, r_start, r_home, r_away in refs:
             if abs(r_start - c_start) > tol:
                 continue
@@ -111,9 +159,17 @@ def reconcile_event_keys(
                 score = s_swap
                 swap = True
             if score > best_score:
+                second_score = best_score
                 best_score = score
                 best_key = rk
                 best_swap = swap
+            elif score > second_score:
+                second_score = score
+        # Ambiguity guard: if a second reference event scores almost as well,
+        # the candidate can't be pinned to one match (e.g. several same-day
+        # "Tallinn" sides) — skip it rather than guess and emit a phantom.
+        if second_score >= min_score and (best_score - second_score) < ambiguity_margin:
+            continue
         if best_key is not None and best_score >= min_score:
             mapping[ck] = (best_key, best_swap)
     return mapping
@@ -125,10 +181,12 @@ def match_event(
     *,
     time_tolerance_minutes: int = 10,
     min_score: float = 85.0,
+    ambiguity_margin: float = 4.0,
 ) -> Optional[Event]:
     tol = timedelta(minutes=time_tolerance_minutes)
     best: Optional[Event] = None
     best_score = 0.0
+    second_score = 0.0
     for c in candidates:
         if abs(c.start_time - target.start_time) > tol:
             continue
@@ -136,8 +194,14 @@ def match_event(
         s_swap = (team_similarity(target.home, c.away) + team_similarity(target.away, c.home)) / 2
         score = max(s_direct, s_swap)
         if score > best_score:
+            second_score = best_score
             best_score = score
             best = c
+        elif score > second_score:
+            second_score = score
     if best_score < min_score:
+        return None
+    # Ambiguity guard: two candidates almost equally good -> refuse to guess.
+    if second_score >= min_score and (best_score - second_score) < ambiguity_margin:
         return None
     return best
