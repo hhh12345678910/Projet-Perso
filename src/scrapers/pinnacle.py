@@ -69,12 +69,20 @@ class PinnacleScraper:
     book = Book.PINNACLE
 
     def __init__(self, timeout: float = 10.0, request_delay: float | None = None):
-        # PINNACLE_LOCAL_IP binds outbound Pinnacle requests to a specific
-        # source IP (e.g. an OVH additional IP), so only Pinnacle traffic leaves
-        # via the fresh IP after a rate-limit ban — the rest keeps the main IP.
+        # Route control for Pinnacle traffic only (the rest of the app keeps the
+        # default route), used to dodge a Cloudflare/IP block on the host:
+        #   PINNACLE_PROXY   -> send Pinnacle via an HTTP/SOCKS proxy with a
+        #                       clean (e.g. residential) IP. Takes priority.
+        #   PINNACLE_LOCAL_IP-> bind outbound to a specific source IP
+        #                       (e.g. an OVH additional IP).
+        proxy = os.getenv("PINNACLE_PROXY", "").strip()
         local_ip = os.getenv("PINNACLE_LOCAL_IP", "").strip()
-        transport = httpx.HTTPTransport(local_address=local_ip) if local_ip else None
-        self._client = httpx.Client(timeout=timeout, headers=_headers(), transport=transport)
+        kwargs: dict = {"timeout": timeout, "headers": _headers()}
+        if proxy:
+            kwargs["proxy"] = proxy
+        elif local_ip:
+            kwargs["transport"] = httpx.HTTPTransport(local_address=local_ip)
+        self._client = httpx.Client(**kwargs)
         # Light throttle between requests to stay under Pinnacle's rate limit.
         self._delay = request_delay if request_delay is not None else float(
             os.getenv("PINNACLE_REQUEST_DELAY", "0.3")
