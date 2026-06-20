@@ -27,6 +27,7 @@ SPORT_DOMAINS = {
     "basketball": "basketball",
     "hockey": "ice_hockey",
     "esports": "esports",
+    "volleyball": "volleyball",
 }
 
 # Smarkets carries dozens of derivative markets per match (correct score,

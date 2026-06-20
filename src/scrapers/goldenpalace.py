@@ -26,6 +26,7 @@ SPORT_IDS = {
     "basketball": 67,
     "hockey": 70,        # Hockey sur glace
     "esports": 145,      # E-sports (all)
+    "volleyball": 69,    # match-winner = typeId 1 -> H2H
 }
 
 

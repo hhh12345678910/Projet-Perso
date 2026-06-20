@@ -26,6 +26,7 @@ SPORT_TERMS = {
     "basketball": "basketball",
     "hockey": "ice_hockey",
     "esports": "esports",
+    "volleyball": "volleyball",
 }
 
 
@@ -69,6 +70,7 @@ class UnibetScraper:
         "basketball": "1000093204",
         "hockey": "1000093191",      # ice_hockey
         "esports": "2000077768",
+        "volleyball": "1000093214",
     }
 
     def fetch_listview(self, sport: str = "soccer", path_suffix: str = "") -> dict:

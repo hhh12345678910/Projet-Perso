@@ -25,6 +25,7 @@ SPORT_DESCRIPTIONS = {
     "basketball": "BASKETBALL",
     "hockey": "HOCKEY",
     "esports": "ESPORTS",   # best-effort; Eurobet may not expose it for BE.
+    "volleyball": "VOLLEYBALL",  # best-effort
 }
 
 

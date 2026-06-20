@@ -6,7 +6,7 @@
 set -uo pipefail
 
 PROJECT_DIR="${PROJECT_DIR:-/home/ubuntu/Projet-Perso}"
-SPORT_LIST="${SPORT_LIST:-soccer,tennis,basketball,hockey}"
+SPORT_LIST="${SPORT_LIST:-soccer,tennis,basketball,hockey,volleyball}"
 BREATHER="${BREATHER:-10}"
 MIN_EV="${MIN_EV:-5}"
 LOG_FILE="${LOG_FILE:-/home/ubuntu/valuebet.log}"

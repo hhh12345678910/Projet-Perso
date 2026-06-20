@@ -52,6 +52,7 @@ class SevenElevenScraper:
         "basketball": "1000093204",
         "hockey": "1000093191",      # ice_hockey
         "esports": "2000077768",
+        "volleyball": "1000093214",
     }
 
     def __init__(self, timeout: float = 15.0):

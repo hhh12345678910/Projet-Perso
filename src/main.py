@@ -941,7 +941,7 @@ def _daemon_scan_sport(
 
 @app.command()
 def daemon(
-    sport: str = "soccer,tennis,basketball,hockey",
+    sport: str = "soccer,tennis,basketball,hockey,volleyball",
     min_ev: float = typer.Option(
         5.0, "--min-ev",
         help="Minimum EV% to detect/store a value bet. Defaults to 5 to match "
