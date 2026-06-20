@@ -69,7 +69,12 @@ class PinnacleScraper:
     book = Book.PINNACLE
 
     def __init__(self, timeout: float = 10.0, request_delay: float | None = None):
-        self._client = httpx.Client(timeout=timeout, headers=_headers())
+        # PINNACLE_LOCAL_IP binds outbound Pinnacle requests to a specific
+        # source IP (e.g. an OVH additional IP), so only Pinnacle traffic leaves
+        # via the fresh IP after a rate-limit ban — the rest keeps the main IP.
+        local_ip = os.getenv("PINNACLE_LOCAL_IP", "").strip()
+        transport = httpx.HTTPTransport(local_address=local_ip) if local_ip else None
+        self._client = httpx.Client(timeout=timeout, headers=_headers(), transport=transport)
         # Light throttle between requests to stay under Pinnacle's rate limit.
         self._delay = request_delay if request_delay is not None else float(
             os.getenv("PINNACLE_REQUEST_DELAY", "0.3")
@@ -147,67 +152,70 @@ class PinnacleScraper:
         return []
 
     def fetch_market_quotes(self, sport: str) -> Iterator[OddQuote]:
+        """Pull an entire sport in TWO bulk calls (all matchups + all straight
+        markets) instead of fanning out one request per league. This cuts
+        Pinnacle traffic ~100x — the old per-league fan-out (≈200 requests per
+        sport per cycle) is what got the guest API to rate-limit/ban the IP."""
         now = datetime.now(timezone.utc)
-        for league in self.list_leagues(sport):
-            league_id = league.get("id")
-            if not league_id:
-                continue
-            try:
-                matchups_by_id = {m["id"]: m for m in self.list_matchups(league_id)}
-                markets = self.list_straight_markets(league_id)
-            except httpx.HTTPError:
-                # One league being denied/rate-limited shouldn't abort the whole scan.
-                continue
-            for market in markets:
-                if market.get("status") != "open":
-                    continue
-                # Pinnacle serves a market entry per "period" — full match
-                # (period 0), 1st half (period 1), 2nd half (period 2) and
-                # so on. Without this filter the per-period prices land in
-                # the same (event, market, line) group as the full-match
-                # ones; devig sees ~6 odds instead of 3 for a 1X2 and the
-                # fair line becomes garbage, which downstream surfaces as
-                # phantom surebets and broken EV. Only period 0 matches the
-                # full-match prematch markets every soft book quotes.
-                if market.get("period") != 0:
-                    continue
-                matchup_id = market.get("matchupId")
-                matchup = matchups_by_id.get(matchup_id)
-                if not matchup:
-                    continue
-                participants = matchup.get("participants") or []
-                home = next((p["name"] for p in participants if p.get("alignment") == "home"), None)
-                away = next((p["name"] for p in participants if p.get("alignment") == "away"), None)
-                start_raw = matchup.get("startTime")
-                if not (home and away and start_raw):
-                    continue
-                if is_noise_event(home, away, league.get("name", "")):
-                    continue
-                start = datetime.fromisoformat(start_raw.replace("Z", "+00:00")).astimezone(timezone.utc)
-                record_pair(home, away)
-                ek = event_key(home, away, start)
+        sport_id = SPORT_IDS[sport]
+        matchups = self._get(f"/sports/{sport_id}/matchups")
+        markets = self._get(f"/sports/{sport_id}/markets/straight")
+        if not isinstance(matchups, list) or not isinstance(markets, list):
+            return
 
-                market_type = self._map_market(market.get("type"))
-                if market_type is None:
-                    continue
+        # Index prematch matchups by id (skip derivative "parent" entries).
+        matchups_by_id = {
+            m["id"]: m for m in matchups
+            if isinstance(m, dict) and m.get("id") is not None and not m.get("parent")
+        }
 
-                for p in market.get("prices") or []:
-                    if p.get("points") is not None and market_type == MarketType.H2H:
-                        continue
-                    decimal_odd = _american_to_decimal(p.get("price"))
-                    if decimal_odd is None:
-                        continue
-                    designation = p.get("designation") or "?"
-                    label = self._designation_label(designation, market_type, home, away)
-                    yield OddQuote(
-                        event_key=ek,
-                        book=Book.PINNACLE,
-                        market=market_type,
-                        outcome=Outcome(label=label, line=p.get("points")),
-                        decimal_odd=decimal_odd,
-                        fetched_at=now,
-                        source_event_id=str(matchup_id),
-                    )
+        for market in markets:
+            if not isinstance(market, dict):
+                continue
+            # Only full-match (period 0); per-period prices would contaminate
+            # the (event, market, line) devig groups.
+            if market.get("period") != 0:
+                continue
+            if market.get("status") not in (None, "open"):
+                continue
+            matchup = matchups_by_id.get(market.get("matchupId"))
+            if matchup is None or matchup.get("isLive"):
+                continue
+
+            participants = matchup.get("participants") or []
+            home = next((p["name"] for p in participants if p.get("alignment") == "home"), None)
+            away = next((p["name"] for p in participants if p.get("alignment") == "away"), None)
+            start_raw = matchup.get("startTime")
+            if not (home and away and start_raw):
+                continue
+            league_name = (matchup.get("league") or {}).get("name", "")
+            if is_noise_event(home, away, league_name):
+                continue
+            start = datetime.fromisoformat(start_raw.replace("Z", "+00:00")).astimezone(timezone.utc)
+            record_pair(home, away)
+            ek = event_key(home, away, start)
+
+            market_type = self._map_market(market.get("type"))
+            if market_type is None:
+                continue
+
+            for p in market.get("prices") or []:
+                if p.get("points") is not None and market_type == MarketType.H2H:
+                    continue
+                decimal_odd = _american_to_decimal(p.get("price"))
+                if decimal_odd is None:
+                    continue
+                designation = p.get("designation") or "?"
+                label = self._designation_label(designation, market_type, home, away)
+                yield OddQuote(
+                    event_key=ek,
+                    book=Book.PINNACLE,
+                    market=market_type,
+                    outcome=Outcome(label=label, line=p.get("points")),
+                    decimal_odd=decimal_odd,
+                    fetched_at=now,
+                    source_event_id=str(market.get("matchupId")),
+                )
 
     @staticmethod
     def _map_market(t: str | None) -> MarketType | None:

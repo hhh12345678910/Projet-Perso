@@ -71,12 +71,12 @@ def test_fetch_market_quotes_skips_non_full_match_periods():
     ]
 
     def fake_get(self, path, params=None):
-        if "leagues" in path and "matchups" in path:
+        # Bulk per-sport endpoints: /sports/{id}/matchups and
+        # /sports/{id}/markets/straight.
+        if path.endswith("/matchups"):
             return fake_matchups
         if "markets/straight" in path:
             return fake_markets
-        if "/leagues" in path:
-            return fake_leagues
         return []
 
     with patch.object(PinnacleScraper, "_get", fake_get):
