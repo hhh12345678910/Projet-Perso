@@ -27,7 +27,6 @@ from .scrapers.pinnacle import PinnacleScraper
 from .scrapers.sevenelevenbe import SevenElevenScraper, parse_listview as sevenelevenbe_parse_listview
 from .scrapers.bingoal import BingoalScraper, parse_listview as bingoal_parse_listview
 from .scrapers.meridianbet import MeridianScraper, parse_offer as meridian_parse_offer
-from .scrapers.smarkets import SmarketsScraper, iter_all_quotes as smarkets_iter_quotes
 from .scrapers.starcasinosport import StarCasinoSportScraper, parse_get_events as starcasinosport_parse_get_events
 from .scrapers.unibet import UnibetScraper, parse_listview as unibet_parse_listview
 from .storage import Storage
@@ -431,18 +430,6 @@ def fetch_starcasinosport_quotes(sport: str) -> list[OddQuote]:
         return []
 
 
-def fetch_smarkets_quotes(sport: str, max_events: int = 200) -> list[OddQuote]:
-    """Snapshot Smarkets exchange prices for a sport. Used as a secondary
-    sharp reference (Pinnacle stays primary); a failure here only weakens
-    the fair-line blend, never aborts the scan."""
-    try:
-        with SmarketsScraper() as sm:
-            return list(smarkets_iter_quotes(sm, sport, max_events=max_events))
-    except httpx.HTTPError as e:
-        console.print(f"[yellow]Smarkets skipped:[/yellow] {e}")
-        return []
-
-
 def _fetch_all_parallel(
     sport: str,
     betano_file: str | None = None,
@@ -523,19 +510,10 @@ def scan(
         )
 
         quotes         = [q for q in all_quotes if q.book == Book.PINNACLE]
-        smarkets_quotes = [q for q in all_quotes if q.book == Book.SMARKETS]
-        raw_soft       = [q for q in all_quotes if q.book not in (Book.PINNACLE, Book.SMARKETS)]
+        raw_soft       = [q for q in all_quotes if q.book != Book.PINNACLE]
 
-        # Remap Smarkets onto Pinnacle keys for the fair-line blend.
-        if smarkets_quotes:
-            smarkets_quotes = remap_to_reference(
-                smarkets_quotes, {q.event_key for q in quotes}
-            )
-
-        fair = build_fair_lines(
-            quotes, cfg.devig_method, secondary_quotes=smarkets_quotes,
-        )
-        console.print(f"  → {len(fair)} fair lines (devig={cfg.devig_method}, sharp=Pinnacle+Smarkets)")
+        fair = build_fair_lines(quotes, cfg.devig_method)
+        console.print(f"  → {len(fair)} fair lines (devig={cfg.devig_method}, sharp=Pinnacle)")
 
         storage.insert_quotes(quotes)
 
@@ -771,17 +749,14 @@ def _daemon_scan_sport(
             include_file_books=(current_sport == "soccer"),
         )
         pinnacle_q = [q for q in all_q if q.book == Book.PINNACLE]
-        smarkets_q = [q for q in all_q if q.book == Book.SMARKETS]
-        soft_raw   = [q for q in all_q if q.book not in (Book.PINNACLE, Book.SMARKETS)]
+        soft_raw   = [q for q in all_q if q.book != Book.PINNACLE]
 
         if not pinnacle_q:
             console.print(f"[yellow]\\[{current_sport}]   No Pinnacle quotes — skipping[/yellow]")
             return
 
         cfg = ScanConfig(sport=current_sport, min_ev_pct=min_ev, bankroll=bankroll)
-        if smarkets_q:
-            smarkets_q = remap_to_reference(smarkets_q, {q.event_key for q in pinnacle_q})
-        fair = build_fair_lines(pinnacle_q, cfg.devig_method, secondary_quotes=smarkets_q)
+        fair = build_fair_lines(pinnacle_q, cfg.devig_method)
         # Persist the event (with its sport) for every Pinnacle event in the
         # reference frame. Value bets are keyed onto these same event_keys, so
         # this lets clv-report break CLV down per sport instead of "unknown".
