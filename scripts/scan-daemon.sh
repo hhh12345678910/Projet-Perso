@@ -5,11 +5,13 @@
 # if the Python process ever hard-crashes.
 set -uo pipefail
 
-PROJECT_DIR="${PROJECT_DIR:-/home/ubuntu/Projet-Perso}"
+# Derive the project dir from this script's own location (scripts/..), so the
+# wrapper is portable across hosts/users with no hard-coded path.
+PROJECT_DIR="${PROJECT_DIR:-$(cd "$(dirname "$0")/.." && pwd)}"
 SPORT_LIST="${SPORT_LIST:-soccer,tennis,basketball,hockey,volleyball}"
 BREATHER="${BREATHER:-10}"
 MIN_EV="${MIN_EV:-5}"
-LOG_FILE="${LOG_FILE:-/home/ubuntu/valuebet.log}"
+LOG_FILE="${LOG_FILE:-$PROJECT_DIR/valuebet.log}"
 
 exec >> "$LOG_FILE" 2>&1
 
