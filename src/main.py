@@ -483,7 +483,11 @@ def _fetch_all_parallel(
                     console.print(f"\\[{sport}]   → {len(quotes):5d} quotes  {name}")
             except Exception as e:
                 console.print(f"[yellow]\\[{sport}]   {name} skipped: {e}[/yellow]")
-    return all_quotes
+    # Drop handicap quotes at the source: they're excluded from both value bets
+    # and surebets, so parsing/storing/matching them is pure wasted CPU (and
+    # they're ~45% of Pinnacle's payload). Filtering here lightens the whole
+    # downstream pipeline — critical on a small CPU.
+    return [q for q in all_quotes if q.market != MarketType.HANDICAP]
 
 
 @app.command()
@@ -533,16 +537,14 @@ def scan(
         )
         console.print(f"  → {len(fair)} fair lines (devig={cfg.devig_method}, sharp=Pinnacle+Smarkets)")
 
-        for q in quotes:
-            storage.insert_quote(q)
+        storage.insert_quotes(quotes)
 
         sport = current_sport  # keep local var name for downstream prints
 
         ref_keys = {fl.event_key for fl in fair.values()}
         soft_quotes = remap_to_reference(raw_soft, ref_keys)
         console.print(f"  → {len(soft_quotes)} matched to a Pinnacle event")
-        for q in soft_quotes:
-            storage.insert_quote(q)
+        storage.insert_quotes(soft_quotes)
 
         bets = merge_twin_book_value_bets(find_value_bets(soft_quotes, fair, cfg))
         bets.sort(key=lambda b: b.ev_pct, reverse=True)
@@ -783,18 +785,18 @@ def _daemon_scan_sport(
         # Persist the event (with its sport) for every Pinnacle event in the
         # reference frame. Value bets are keyed onto these same event_keys, so
         # this lets clv-report break CLV down per sport instead of "unknown".
+        event_rows = []
         for ek in {q.event_key for q in pinnacle_q}:
             parsed = parse_event_key(ek)
             if parsed is not None:
                 start, home_norm, away_norm = parsed
-                storage.upsert_event(ek, current_sport, "", home_norm, away_norm, start)
-        for q in pinnacle_q:
-            storage.insert_quote(q)
+                event_rows.append((ek, current_sport, "", home_norm, away_norm, start.isoformat()))
+        storage.upsert_events(event_rows)
+        storage.insert_quotes(pinnacle_q)
 
         ref_keys = {fl.event_key for fl in fair.values()}
         soft_q = remap_to_reference(soft_raw, ref_keys)
-        for q in soft_q:
-            storage.insert_quote(q)
+        storage.insert_quotes(soft_q)
 
         # ── CLV pre-kickoff alerts ────────────────────────────────────
         if tg_cfg is not None and tg_cfg.clv_window_minutes > 0:

@@ -3,6 +3,7 @@ from __future__ import annotations
 import re
 import unicodedata
 from datetime import datetime, timedelta, timezone
+from functools import lru_cache
 from typing import Iterable, Optional
 
 from rapidfuzz import fuzz
@@ -47,6 +48,7 @@ def _extract_class(s: str) -> tuple[str, str]:
     return cls, s
 
 
+@lru_cache(maxsize=100_000)
 def normalize_team(name: str) -> str:
     s = unicodedata.normalize("NFKD", name).encode("ascii", "ignore").decode("ascii")
     s = s.lower()
@@ -59,6 +61,7 @@ def normalize_team(name: str) -> str:
     return s
 
 
+@lru_cache(maxsize=100_000)
 def team_class(normalized: str) -> str:
     for tag in _CLASS_TAGS:
         if tag in normalized:
@@ -66,6 +69,7 @@ def team_class(normalized: str) -> str:
     return "main"
 
 
+@lru_cache(maxsize=100_000)
 def _strip_class_tag(normalized: str) -> str:
     for tag in _CLASS_TAGS:
         normalized = normalized.replace(tag, " ")

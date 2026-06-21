@@ -4,7 +4,7 @@ import sqlite3
 from contextlib import contextmanager
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
-from typing import Iterator, Optional
+from typing import Iterable, Iterator, Optional
 
 from .models import Book, MarketType, OddQuote, Outcome, ValueBet
 
@@ -153,6 +153,39 @@ class Storage:
                     q.fetched_at.isoformat(),
                     q.source_event_id,
                 ),
+            )
+
+    def insert_quotes(self, quotes: "Iterable[OddQuote]") -> int:
+        """Batch-insert quotes in a SINGLE transaction. The per-quote insert_quote
+        opens a fresh connection and fsync-commits each row, which is catastrophic
+        for the thousands of quotes a cycle produces — this does one connection,
+        one executemany, one commit. Returns the number of rows inserted."""
+        rows = [
+            (q.event_key, q.book.value, q.market.value, q.outcome.label,
+             q.outcome.line, q.decimal_odd, q.fetched_at.isoformat(), q.source_event_id)
+            for q in quotes
+        ]
+        if not rows:
+            return 0
+        with self._conn() as c:
+            c.executemany(
+                "INSERT INTO quotes(event_key, book, market, outcome_label, line, decimal_odd, "
+                "fetched_at, source_event_id) VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
+                rows,
+            )
+        return len(rows)
+
+    def upsert_events(self, rows: "Iterable[tuple]") -> None:
+        """Batch INSERT OR IGNORE events in one transaction.
+        Each row = (event_key, sport, league, home, away, start_time_iso)."""
+        rows = list(rows)
+        if not rows:
+            return
+        with self._conn() as c:
+            c.executemany(
+                "INSERT OR IGNORE INTO events(event_key, sport, league, home, away, start_time) "
+                "VALUES (?, ?, ?, ?, ?, ?)",
+                rows,
             )
 
     def prune_quotes(self, retention_days: int = 7) -> int:
