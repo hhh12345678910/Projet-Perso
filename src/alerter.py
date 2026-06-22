@@ -40,6 +40,7 @@ _BOOK_NAMES = {
     Book.CIRCUS_BE: "Circus",
     Book.SEVEN_ELEVEN_BE: "711",
     Book.BINGOAL_BE: "Bingoal",
+    Book.SCOOORE_BE: "Scooore",
     Book.MERIDIAN_BE: "MeridianBet",
     Book.NAPOLEON_BE: "Napoleon",
     Book.SMARKETS: "Smarkets",

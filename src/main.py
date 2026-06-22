@@ -26,6 +26,7 @@ from .scrapers.ladbrokes import LadbrokesScraper, parse_prematch as ladbrokes_pa
 from .scrapers.pinnacle import PinnacleScraper
 from .scrapers.sevenelevenbe import SevenElevenScraper, parse_listview as sevenelevenbe_parse_listview
 from .scrapers.bingoal import BingoalScraper, parse_listview as bingoal_parse_listview
+from .scrapers.scooore import ScoooreScraper, parse_listview as scooore_parse_listview
 from .scrapers.meridianbet import MeridianScraper, parse_offer as meridian_parse_offer
 from .scrapers.napoleon import NapoleonScraper, parse_by_date as napoleon_parse_by_date
 from .scrapers.starcasinosport import StarCasinoSportScraper, parse_get_events as starcasinosport_parse_get_events
@@ -189,7 +190,7 @@ def find_value_bets(
 # so the same value bet on both is one opportunity, not two. UNIBET is the
 # canonical book kept for storage/dedup; 711 rides along in `also_books`.
 _TWIN_BOOK_GROUPS: tuple[tuple[Book, ...], ...] = (
-    (Book.UNIBET_BE, Book.SEVEN_ELEVEN_BE, Book.BINGOAL_BE),
+    (Book.UNIBET_BE, Book.SEVEN_ELEVEN_BE, Book.BINGOAL_BE, Book.SCOOORE_BE),
 )
 _TWIN_PRIMARY = {grp: grp[0] for grp in _TWIN_BOOK_GROUPS}
 _TWIN_OF = {b: grp for grp in _TWIN_BOOK_GROUPS for b in grp}
@@ -386,6 +387,18 @@ def fetch_meridian_quotes(sport: str) -> list[OddQuote]:
         return []
 
 
+def fetch_scooore_quotes(sport: str) -> list[OddQuote]:
+    """Fetch + parse every Scooore (Kambi) event — same coverage strategy as
+    Unibet/711/Bingoal, just a different operator code (bnlbe)."""
+    try:
+        with ScoooreScraper() as sc:
+            data = sc.fetch_all_events(sport)
+        return list(scooore_parse_listview(data))
+    except httpx.HTTPError as e:
+        console.print(f"[yellow]Scooore skipped:[/yellow] {e}")
+        return []
+
+
 def fetch_napoleon_quotes(sport: str) -> list[OddQuote]:
     """Fetch + parse Napoleon's prematch 1X2 offer (Superbet platform, public
     REST, independent odds — genuinely widens value/surebet coverage)."""
@@ -460,6 +473,7 @@ def _fetch_all_parallel(
         "Unibet":        lambda: fetch_unibet_quotes(sport),
         "711":           lambda: fetch_sevenelevenbe_quotes(sport),
         "Bingoal":       lambda: fetch_bingoal_quotes(sport),
+        "Scooore":       lambda: fetch_scooore_quotes(sport),
         # MeridianBet: scraper prêt mais l'API exige un token (anti-bot
         # TrafficGuard) -> réactiver ici une fois le token capturé.
         # "MeridianBet": lambda: fetch_meridian_quotes(sport),
