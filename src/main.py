@@ -27,6 +27,7 @@ from .scrapers.pinnacle import PinnacleScraper
 from .scrapers.sevenelevenbe import SevenElevenScraper, parse_listview as sevenelevenbe_parse_listview
 from .scrapers.bingoal import BingoalScraper, parse_listview as bingoal_parse_listview
 from .scrapers.meridianbet import MeridianScraper, parse_offer as meridian_parse_offer
+from .scrapers.napoleon import NapoleonScraper, parse_by_date as napoleon_parse_by_date
 from .scrapers.starcasinosport import StarCasinoSportScraper, parse_get_events as starcasinosport_parse_get_events
 from .scrapers.unibet import UnibetScraper, parse_listview as unibet_parse_listview
 from .storage import Storage
@@ -385,6 +386,18 @@ def fetch_meridian_quotes(sport: str) -> list[OddQuote]:
         return []
 
 
+def fetch_napoleon_quotes(sport: str) -> list[OddQuote]:
+    """Fetch + parse Napoleon's prematch 1X2 offer (Superbet platform, public
+    REST, independent odds — genuinely widens value/surebet coverage)."""
+    try:
+        with NapoleonScraper() as nap:
+            data = nap.fetch_by_date(sport)
+        return list(napoleon_parse_by_date(data))
+    except httpx.HTTPError as e:
+        console.print(f"[yellow]Napoleon skipped:[/yellow] {e}")
+        return []
+
+
 def fetch_betfirst_quotes(sport: str) -> list[OddQuote]:
     """Fetch + parse the BetFirst events-table for a sport (paginated)."""
     try:
@@ -453,6 +466,7 @@ def _fetch_all_parallel(
         "BetFirst":      lambda: fetch_betfirst_quotes(sport),
         "Ladbrokes":     lambda: fetch_ladbrokes_quotes(sport),
         "StarCasino":    lambda: fetch_starcasinosport_quotes(sport),
+        "Napoleon":      lambda: fetch_napoleon_quotes(sport),
         # Golden Palace retiré: compte limité, plus exploitable.
     }
     if include_file_books:
