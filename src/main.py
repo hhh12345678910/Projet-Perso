@@ -1331,6 +1331,76 @@ def clv_report():
     _print_clv_table("CLV by EV bucket", "ev_bucket", order=_EV_BUCKET_ORDER)
 
 
+@app.command(name="export-history")
+def export_history(
+    out: str = typer.Option("history.csv", "--out", help="Chemin du fichier CSV de sortie."),
+    bankroll: float = typer.Option(1000.0, "--bankroll", help="Capital de départ pour la simulation."),
+):
+    """Exporter chaque value bet clôturé (avec ligne de clôture + CLV) en CSV,
+    prêt pour Excel : date, match, book, cotes, EV%, clôture, CLV%, mise, et un
+    capital simulé sur la CLV. Colonnes Résultat/P&L laissées vides (à remplir
+    à la main ou via un futur flux de résultats)."""
+    import csv
+    storage = Storage(ScanConfig().db_path)
+    teams.init(storage)
+    rows = [dict(r) for r in storage.all_closed_bets()]
+    if not rows:
+        console.print("[bold]Aucun pari clôturé — lance `close-lines` après des coups d'envoi.[/bold]")
+        return
+
+    # Oldest first so the simulated capital curve reads chronologically.
+    rows.sort(key=lambda r: r.get("detected_at") or "")
+
+    def _match(ek: str) -> str:
+        parsed = parse_event_key(ek)
+        if parsed is None:
+            return ek
+        _, home, away = parsed
+        return f"{home.replace('_', ' ').title()} vs {away.replace('_', ' ').title()}"
+
+    headers = [
+        "Date", "Sport", "Match", "Book", "Marché", "Pari", "Cote prise",
+        "Cote fair", "EV %", "Cote clôture (Pinnacle)", "CLV %", "Mise % (Kelly)",
+        "Capital simulé (CLV)", "Résultat", "P&L réel",
+    ]
+    capital = bankroll
+    with open(out, "w", newline="", encoding="utf-8") as f:
+        w = csv.writer(f)
+        w.writerow(headers)
+        for r in rows:
+            taken = float(r["odd_taken"])
+            closing = float(r["closing_odd"]) if r.get("closing_odd") else 0.0
+            clv = clv_pct(taken, closing) * 100 if closing else 0.0
+            kelly = float(r.get("kelly_pct") or 0.0)
+            # Capital simulé : on mise kelly% du capital, gain espéré ≈ CLV.
+            stake = capital * kelly / 100.0
+            capital += stake * (clv / 100.0)
+            line = r.get("line")
+            pari = f"{r['outcome_label']}{(' ' + str(line)) if line is not None else ''}"
+            w.writerow([
+                (r.get("detected_at") or "")[:19],
+                r.get("sport") or "",
+                _match(r["event_key"]),
+                r["book"],
+                r["market"],
+                pari,
+                f"{taken:.2f}",
+                f"{float(r['fair_odd']):.2f}",
+                f"{float(r['ev_pct']):.2f}",
+                f"{closing:.2f}" if closing else "",
+                f"{clv:+.2f}" if closing else "",
+                f"{kelly:.2f}",
+                f"{capital:.2f}",
+                "",   # Résultat (à remplir)
+                "",   # P&L réel (à remplir)
+            ])
+    console.print(
+        f"[green]✓[/green] {len(rows)} paris exportés vers [bold]{out}[/bold]  "
+        f"(capital simulé CLV : {bankroll:.0f}€ → {capital:.0f}€)"
+    )
+
+
+
 @app.command(name="inspect-betano")
 def inspect_betano(path: str):
     """Inspect a saved Betano overview JSON dump (DevTools → Response → save).
