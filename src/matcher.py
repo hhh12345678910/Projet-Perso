@@ -9,6 +9,7 @@ from typing import Iterable, Optional
 from rapidfuzz import fuzz
 
 from .models import Event
+from .teams_i18n import COUNTRY_ALIASES
 
 
 _TEAM_NOISE = re.compile(
@@ -56,6 +57,7 @@ def normalize_team(name: str) -> str:
     s = _TEAM_NOISE.sub(" ", s)
     s = re.sub(r"[^a-z0-9 ]", " ", s)
     s = re.sub(r"\s+", " ", s).strip()
+    s = COUNTRY_ALIASES.get(s, s)        # FR/NL/variantes -> canonique EN (international)
     if cls:
         s = f"{s} {cls}".strip()
     return s

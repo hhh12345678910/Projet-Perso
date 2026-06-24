@@ -493,7 +493,7 @@ def _fetch_all_parallel(
         "Ladbrokes":     lambda: fetch_ladbrokes_quotes(sport),
         "StarCasino":    lambda: fetch_starcasinosport_quotes(sport),
         "Napoleon":      lambda: fetch_napoleon_quotes(sport),
-        "Betcenter":     lambda: fetch_betcenter_quotes(sport),
+        # "Betcenter":     lambda: fetch_betcenter_quotes(sport),  # desactive: cotes erronees
         # Golden Palace retiré: compte limité, plus exploitable.
     }
     if include_file_books:
