@@ -27,6 +27,7 @@ class Book(str, Enum):
     SCOOORE_BE = "scooore_be"            # Scooore.be (Loterie Nationale) — Kambi, same as Unibet
     MERIDIAN_BE = "meridian_be"          # Meridianbet.be — own platform, independent odds
     NAPOLEON_BE = "napoleon_be"          # Napoleonsports.be — Superbet platform, independent odds
+    BETCENTER = "betcenter"              # Betcenter.be - Cashpoint/Merkur, cotes independantes
     SMARKETS = "smarkets"        # London exchange, used as a secondary sharp reference
 
 
