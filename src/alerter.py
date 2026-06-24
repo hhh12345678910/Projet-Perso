@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import os
 import sqlite3
+from pathlib import Path
 import threading
 import time as _time
 from dataclasses import dataclass
@@ -18,6 +19,10 @@ from .matcher import parse_event_key
 from .models import Book, ValueBet
 from .surebet import Surebet
 from . import teams
+
+
+# Plafond de mise (% bankroll) applique par-dessus le quart de Kelly.
+_MAX_STAKE_PCT = float(os.getenv("TELEGRAM_MAX_STAKE_PCT", "3.0"))
 
 
 # Belgium-friendly display: dates relative to today, kickoff in local time.
@@ -297,6 +302,7 @@ def format_clv_alert(
 
     kelly_pct = _clv_bet_kelly_pct(bet)
     if kelly_pct is not None:
+        kelly_pct = min(kelly_pct, _MAX_STAKE_PCT)
         stake_eur = kelly_pct / 100.0 * bankroll
         stake_line = f"\nMise conseillée : {kelly_pct:.2f}% → {stake_eur:.2f}€ (sur {bankroll:.0f}€)"
     else:
@@ -341,9 +347,64 @@ def format_value_bet(bet: ValueBet, sport: str | None = None,
         f"{_sport_prefix(sport)}{matchup}\n"
         f"{when_line}"
         f"Pari : <b>{bet.outcome.label}{line_suffix}</b> @ {bet.odd_taken:.2f} (fair {bet.fair_odd:.2f})\n"
-        f"Mise conseillée : {bet.kelly_stake_pct:.2f}% → "
-        f"{bet.kelly_stake_pct / 100.0 * bankroll:.2f}€ (sur {bankroll:.0f}€)"
+        f"Mise conseillée : {min(bet.kelly_stake_pct, _MAX_STAKE_PCT):.2f}% → "
+        f"{min(bet.kelly_stake_pct, _MAX_STAKE_PCT) / 100.0 * bankroll:.2f}€ (sur {bankroll:.0f}€)"
     )
+
+
+_PLAYS_DB = Path(__file__).resolve().parent.parent / "data" / "valuebet.db"
+
+
+def _record_pending_play(payload: dict) -> str:
+    """Persist the data needed to log a played bet, keyed by a short token that
+    rides in the Telegram button's callback_data. bot_listener.py reads this
+    table when the user taps Jouer. Kept separate from value_bets because the
+    alerter doesn't carry the inserted row id."""
+    import uuid
+
+    token = uuid.uuid4().hex[:12]
+    con = sqlite3.connect(str(_PLAYS_DB))
+    try:
+        con.execute("PRAGMA busy_timeout=5000")
+        con.execute(
+            "CREATE TABLE IF NOT EXISTS pending_plays("
+            "token TEXT PRIMARY KEY, sport TEXT, match TEXT, book TEXT, "
+            "selection TEXT, cote REAL, mise REAL, ev REAL, created_at TEXT)"
+        )
+        con.execute(
+            "INSERT INTO pending_plays(token, sport, match, book, selection, "
+            "cote, mise, ev, created_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)",
+            (token, payload["sport"], payload["match"], payload["book"],
+             payload["selection"], payload["cote"], payload["mise"], payload["ev"],
+             datetime.now(timezone.utc).isoformat()),
+        )
+        con.commit()
+    finally:
+        con.close()
+    return token
+
+
+def _value_bet_play_payload(bet: ValueBet, sport: str | None, bankroll: float) -> dict:
+    """Flatten a ValueBet into the row bot_listener.py writes to Excel."""
+    parsed = parse_event_key(bet.event_key)
+    if parsed is not None:
+        _, home_norm, away_norm = parsed
+        match = f"{_prettify_team_name(home_norm)} vs {_prettify_team_name(away_norm)}"
+    else:
+        match = bet.event_key
+    line_suffix = f" {bet.outcome.line}" if bet.outcome.line is not None else ""
+    book_name = " / ".join(
+        _BOOK_NAMES.get(b, b.value) for b in (bet.book, *bet.also_books)
+    )
+    return {
+        "sport": sport or "",
+        "match": match,
+        "book": book_name,
+        "selection": f"{bet.outcome.label}{line_suffix}",
+        "cote": round(bet.odd_taken, 3),
+        "mise": round(min(bet.kelly_stake_pct, _MAX_STAKE_PCT) / 100.0 * bankroll, 2),
+        "ev": round(bet.ev_pct, 2),
+    }
 
 
 class TelegramAlerter:
@@ -431,11 +492,23 @@ class TelegramAlerter:
             and ev >= cfg.min_premium_ev_pct
             and cfg.premium_min_odd <= bet.odd_taken <= cfg.premium_max_odd
         ):
+            button = None
+            try:
+                token = _record_pending_play(
+                    _value_bet_play_payload(bet, sport, cfg.bankroll)
+                )
+                button = {"inline_keyboard": [[{
+                    "text": "\u25b6\ufe0f Jouer", "callback_data": f"play:{token}"
+                }]]}
+            except Exception as e:  # never let bet-logging break alerting
+                self._print(f"pending_play record failed: {e}")
             delivered |= self._send(
-                "💎 <b>VALUE PREMIUM</b>\n" + text, chat_id=cfg.effective_premium_chat_id
+                "💎 <b>VALUE PREMIUM</b>\n" + text,
+                chat_id=cfg.effective_premium_chat_id,
+                reply_markup=button,
             )
 
-        if cfg.effective_critical_chat_id and ev >= cfg.min_critical_ev_pct:
+        if not is_live and cfg.effective_critical_chat_id and ev >= cfg.min_critical_ev_pct:
             delivered |= self._send(
                 "🚨 <b>VALUE BET EXCEPTIONNEL</b>\n" + text, chat_id=cfg.effective_critical_chat_id
             )
@@ -458,13 +531,7 @@ class TelegramAlerter:
         text = format_clv_alert(bet, clv_pct, current_pin_odd, mins_to_kickoff,
                                 sport=sport, is_high=is_high, bankroll=cfg.bankroll)
         delivered = self._send(text, chat_id=cfg.effective_clv_chat_id)
-        # Critical copy fires on its own chat/budget, independent of the CLV send.
-        if cfg.effective_critical_chat_id and clv_pct >= cfg.min_critical_clv_pct:
-            critical_text = "🚨 <b>CLV CRITIQUE</b>\n" + format_clv_alert(
-                bet, clv_pct, current_pin_odd, mins_to_kickoff,
-                sport=sport, is_high=True, bankroll=cfg.bankroll,
-            )
-            delivered |= self._send(critical_text, chat_id=cfg.effective_critical_chat_id)
+        # CLV n'est jamais copiee sur le canal critique (choix utilisateur).
         return delivered
 
     def send_surebet(self, sb: Surebet, *, sport: str | None = None, is_live: bool = False) -> bool:
@@ -490,6 +557,7 @@ class TelegramAlerter:
         # Critical copy: any surebet (prematch or live) above the critical margin.
         if (
             not sb.suspicious
+            and not is_live
             and cfg.effective_critical_chat_id
             and margin_pct >= cfg.min_critical_surebet_pct
         ):
@@ -501,7 +569,7 @@ class TelegramAlerter:
             not sb.suspicious
             and not is_live
             and cfg.effective_premium_chat_id
-            and margin_pct >= cfg.min_premium_surebet_pct
+            and cfg.min_premium_surebet_pct <= margin_pct < cfg.min_critical_surebet_pct
         ):
             delivered |= self._send(
                 "💎 <b>SUREBET PREMIUM</b>\n" + text, chat_id=cfg.effective_premium_chat_id
@@ -541,7 +609,7 @@ class TelegramAlerter:
             TelegramAlerter._next_slot[chat_id] = slot + self.config.min_send_interval_s
             return slot
 
-    def _send(self, text: str, chat_id: str) -> bool:
+    def _send(self, text: str, chat_id: str, reply_markup: dict | None = None) -> bool:
         slot = self._reserve_slot(chat_id)
         if slot is None:
             return False
@@ -549,14 +617,17 @@ class TelegramAlerter:
         if wait > 0:
             _time.sleep(wait)
         try:
+            payload = {
+                "chat_id": chat_id,
+                "text": text,
+                "parse_mode": self.config.parse_mode,
+                "disable_web_page_preview": True,
+            }
+            if reply_markup is not None:
+                payload["reply_markup"] = reply_markup
             r = self._client.post(
                 f"{self.API_BASE}/bot{self.config.bot_token}/sendMessage",
-                json={
-                    "chat_id": chat_id,
-                    "text": text,
-                    "parse_mode": self.config.parse_mode,
-                    "disable_web_page_preview": True,
-                },
+                json=payload,
             )
             if r.status_code == 429:
                 retry_after = self._retry_after_seconds(r)
