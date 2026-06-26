@@ -370,14 +370,18 @@ def _record_pending_play(payload: dict) -> str:
         con.execute(
             "CREATE TABLE IF NOT EXISTS pending_plays("
             "token TEXT PRIMARY KEY, sport TEXT, match TEXT, book TEXT, "
-            "selection TEXT, cote REAL, mise REAL, ev REAL, created_at TEXT)"
+            "selection TEXT, cote REAL, mise REAL, ev REAL, created_at TEXT, dedup_key TEXT)"
         )
+        try:
+            con.execute("ALTER TABLE pending_plays ADD COLUMN dedup_key TEXT")
+        except sqlite3.OperationalError:
+            pass
         con.execute(
             "INSERT INTO pending_plays(token, sport, match, book, selection, "
-            "cote, mise, ev, created_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)",
+            "cote, mise, ev, created_at, dedup_key) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
             (token, payload["sport"], payload["match"], payload["book"],
              payload["selection"], payload["cote"], payload["mise"], payload["ev"],
-             datetime.now(timezone.utc).isoformat()),
+             datetime.now(timezone.utc).isoformat(), payload.get("dedup_key")),
         )
         con.commit()
     finally:
@@ -405,7 +409,23 @@ def _value_bet_play_payload(bet: ValueBet, sport: str | None, bankroll: float) -
         "cote": round(bet.odd_taken, 3),
         "mise": round(min(bet.kelly_stake_pct, _MAX_STAKE_PCT) / 100.0 * bankroll, 2),
         "ev": round(bet.ev_pct, 2),
+        "dedup_key": f"{bet.event_key}|{bet.market.value}|{bet.outcome.label}|{bet.outcome.line}",
     }
+
+
+def _load_played_keys() -> set:
+    """Selections deja jouees (clic Jouer) a ne plus alerter, tous books/cotes."""
+    try:
+        con = sqlite3.connect(str(_PLAYS_DB))
+        con.execute("PRAGMA busy_timeout=3000")
+        con.execute(
+            "CREATE TABLE IF NOT EXISTS played_bets (dedup_key TEXT PRIMARY KEY, played_at TEXT)"
+        )
+        rows = con.execute("SELECT dedup_key FROM played_bets").fetchall()
+        con.close()
+        return {r[0] for r in rows}
+    except Exception:
+        return set()
 
 
 class TelegramAlerter:
@@ -436,6 +456,7 @@ class TelegramAlerter:
         self._client = client or httpx.Client(timeout=10.0)
         self._owns_client = client is None
         self._print = print_fn
+        self._played_keys = _load_played_keys()
 
     def close(self) -> None:
         if self._owns_client:
@@ -462,6 +483,8 @@ class TelegramAlerter:
         double-posting a channel that already succeeded (main and premium are
         disjoint EV bands, so a bet normally targets a single channel)."""
         cfg = self.config
+        if f"{bet.event_key}|{bet.market.value}|{bet.outcome.label}|{bet.outcome.line}" in self._played_keys:
+            return False
         ev = bet.ev_pct
         text = format_value_bet(bet, sport=sport)
         delivered = False

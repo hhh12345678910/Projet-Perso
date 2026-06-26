@@ -144,7 +144,25 @@ def fetch_bet(token: str) -> dict | None:
         "cote": round(row["cote"], 3),
         "mise": round(row["mise"] or 0.0, 2),
         "ev": round(row["ev"], 1),
+        "dedup_key": (row["dedup_key"] if "dedup_key" in row.keys() else None),
     }
+
+
+def _record_played(dedup_key) -> None:
+    """Marque la selection comme jouee -> plus d'alerte dessus (tous books/cotes)."""
+    if not dedup_key:
+        return
+    con = sqlite3.connect(str(DB_PATH))
+    con.execute("PRAGMA busy_timeout=5000")
+    con.execute(
+        "CREATE TABLE IF NOT EXISTS played_bets (dedup_key TEXT PRIMARY KEY, played_at TEXT)"
+    )
+    con.execute(
+        "INSERT OR IGNORE INTO played_bets(dedup_key, played_at) VALUES (?, ?)",
+        (dedup_key, datetime.now(timezone.utc).isoformat()),
+    )
+    con.commit()
+    con.close()
 
 
 # ----------------------------------------------------------- Callbacks ------
@@ -169,6 +187,7 @@ def handle_callback(cb: dict) -> None:
         return
 
     append_bet(bet)
+    _record_played(bet.get("dedup_key"))
     _mark_button_done(cb)
     tg("answerCallbackQuery", callback_query_id=cb_id,
        text=f"Enregistre : {bet['mise']:.2f} EUR @ {bet['cote']}")
