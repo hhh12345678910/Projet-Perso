@@ -25,6 +25,19 @@ from . import teams
 _MAX_STAKE_PCT = float(os.getenv("TELEGRAM_MAX_STAKE_PCT", "3.0"))
 
 
+def _round_stake(eur: float) -> float:
+    """Arrondit une mise a un montant 'humain' (camouflage anti-limitation :
+    un bot qui mise 12,47 EUR se fait griller -- aucun parieur ne mise a 2
+    decimales). Paliers : 1 EUR sous 10, 5 EUR sous 50, 10 EUR au-dela.
+    Desactivable en mettant TELEGRAM_ROUND_STAKES=0 (renvoie la mise brute)."""
+    if eur <= 0:
+        return 0.0
+    if os.getenv("TELEGRAM_ROUND_STAKES", "1") != "1":
+        return round(eur, 2)
+    step = 1.0 if eur < 10 else 5.0 if eur < 50 else 10.0
+    return max(step, round(eur / step) * step)
+
+
 # Belgium-friendly display: dates relative to today, kickoff in local time.
 _LOCAL_TZ = ZoneInfo("Europe/Brussels") if ZoneInfo is not None else timezone.utc
 _FR_WEEKDAYS = ["Lundi", "Mardi", "Mercredi", "Jeudi", "Vendredi", "Samedi", "Dimanche"]
@@ -304,8 +317,8 @@ def format_clv_alert(
     kelly_pct = _clv_bet_kelly_pct(bet)
     if kelly_pct is not None:
         kelly_pct = min(kelly_pct, _MAX_STAKE_PCT)
-        stake_eur = kelly_pct / 100.0 * bankroll
-        stake_line = f"\nMise conseillée : {kelly_pct:.2f}% → {stake_eur:.2f}€ (sur {bankroll:.0f}€)"
+        stake_eur = _round_stake(kelly_pct / 100.0 * bankroll)
+        stake_line = f"\nMise conseillée : {stake_eur:.0f}€ ({kelly_pct:.2f}% de {bankroll:.0f}€)"
     else:
         stake_line = ""
 
@@ -348,8 +361,8 @@ def format_value_bet(bet: ValueBet, sport: str | None = None,
         f"{_sport_prefix(sport)}{matchup}\n"
         f"{when_line}"
         f"Pari : <b>{bet.outcome.label}{line_suffix}</b> @ {bet.odd_taken:.2f} (fair {bet.fair_odd:.2f})\n"
-        f"Mise conseillée : {min(bet.kelly_stake_pct, _MAX_STAKE_PCT):.2f}% → "
-        f"{min(bet.kelly_stake_pct, _MAX_STAKE_PCT) / 100.0 * bankroll:.2f}€ (sur {bankroll:.0f}€)"
+        f"Mise conseillée : {_round_stake(min(bet.kelly_stake_pct, _MAX_STAKE_PCT) / 100.0 * bankroll):.0f}€ "
+        f"({min(bet.kelly_stake_pct, _MAX_STAKE_PCT):.2f}% de {bankroll:.0f}€)"
     )
 
 
@@ -407,7 +420,7 @@ def _value_bet_play_payload(bet: ValueBet, sport: str | None, bankroll: float) -
         "book": book_name,
         "selection": f"{bet.outcome.label}{line_suffix}",
         "cote": round(bet.odd_taken, 3),
-        "mise": round(min(bet.kelly_stake_pct, _MAX_STAKE_PCT) / 100.0 * bankroll, 2),
+        "mise": _round_stake(min(bet.kelly_stake_pct, _MAX_STAKE_PCT) / 100.0 * bankroll),
         "ev": round(bet.ev_pct, 2),
         "dedup_key": f"{bet.event_key}|{bet.market.value}|{bet.outcome.label}|{bet.outcome.line}",
     }
