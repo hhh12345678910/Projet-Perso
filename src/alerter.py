@@ -161,6 +161,7 @@ class TelegramConfig:
     middle_ev_delta_pct: float = 2.0     # re-alert when a middle's EV shifts by this many points
     middle_max_alerts: int = 2           # hard cap on alerts per middle (jitter-proof)
     middle_max_gap: float = 3.0          # ignore middles whose lines are more than this apart
+    middle_stake_eur: float = 100.0      # TOTAL € spread across both legs of a middle (not the value-bet bankroll)
     # Rate limiting — Telegram caps bots at ~20 messages/min per group. We pace
     # sends per chat and honour 429 cooldowns so a burst can't get the bot
     # throttled for hours.
@@ -215,6 +216,7 @@ class TelegramConfig:
             middle_ev_delta_pct=float(os.getenv("TELEGRAM_MIDDLE_EV_DELTA", "2.0")),
             middle_max_alerts=int(os.getenv("TELEGRAM_MIDDLE_MAX_ALERTS", "2")),
             middle_max_gap=float(os.getenv("TELEGRAM_MIDDLE_MAX_GAP", "3.0")),
+            middle_stake_eur=float(os.getenv("TELEGRAM_MIDDLE_STAKE", "100.0")),
         )
 
     @property
@@ -285,10 +287,12 @@ def format_surebet(sb: Surebet, sport: str | None = None, is_live: bool = False)
     )
 
 
-def format_middle(m: Middle, sport: str | None = None, bankroll: float = 1000.0) -> str:
+def format_middle(m: Middle, sport: str | None = None, total_stake: float = 100.0) -> str:
     """Totals middle alert: both legs with their book and a balanced € stake,
     the gap value(s) that win both, the Pinnacle-priced gap probability and the
-    resulting EV. Mises are rounded (camouflage) like everywhere else."""
+    resulting EV. `total_stake` is the TOTAL € spread across the two legs (not
+    the value-bet bankroll) — a middle ties up money on both sides, so it has
+    its own, smaller budget. Mises are rounded (camouflage) like everywhere."""
     parsed = parse_event_key(m.event_key)
     if parsed is not None:
         start, home_norm, away_norm = parsed
@@ -300,7 +304,7 @@ def format_middle(m: Middle, sport: str | None = None, bankroll: float = 1000.0)
 
     o_odd, o_book = m.over_leg
     u_odd, u_book = m.under_leg
-    stakes = m.stakes(bankroll)
+    stakes = m.stakes(total_stake)
     gap_txt = " ou ".join(str(v) for v in m.gap_values) or "—"
 
     return (
@@ -662,7 +666,7 @@ class TelegramAlerter:
         """Send a totals-middle alert to the CLV channel (per user choice).
         Best-effort like the others: a rate-limited send returns False and the
         daemon retries next cycle."""
-        text = format_middle(m, sport=sport, bankroll=self.config.bankroll)
+        text = format_middle(m, sport=sport, total_stake=self.config.middle_stake_eur)
         return self._send(text, chat_id=self.config.effective_clv_chat_id)
 
     @staticmethod
