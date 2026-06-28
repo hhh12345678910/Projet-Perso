@@ -316,17 +316,33 @@ def format_middle(m: Middle, sport: str | None = None, total_stake: float = 100.
     o_odd, o_book = m.over_leg
     u_odd, u_book = m.under_leg
     stakes = m.stakes(total_stake)
+    s_over = _round_stake5(stakes["over"])
+    s_under = _round_stake5(stakes["under"])
+    total_bet = s_over + s_under
+
+    # Perte/gain net de la position sur les deux scénarios "raté" (hors écart),
+    # calculé sur les mises rondes réellement jouées :
+    #   total > ligne haute -> Over gagne, Under perd  -> on récupère s_over*cote_over
+    #   total < ligne basse  -> Under gagne, Over perd  -> on récupère s_under*cote_under
+    # La moyenne des deux donne la perte moyenne attendue si le middle ne tombe pas.
+    miss_over_wins = s_over * o_odd - total_bet
+    miss_under_wins = s_under * u_odd - total_bet
+    avg_miss = (miss_over_wins + miss_under_wins) / 2.0
+    if avg_miss < 0:
+        miss_line = f"\n💸 Perte moyenne si raté : −{abs(avg_miss):.0f}€ (sur {total_bet:.0f}€ misés)"
+    else:
+        miss_line = f"\n✅ Gain minimum même si raté : +{avg_miss:.0f}€ (surebet-middle)"
+
     gap_txt = " ou ".join(str(v) for v in m.gap_values) or "—"
 
     return (
         f"🎯 <b>MIDDLE +{m.ev_pct:.2f}% EV</b> — proba gap {m.mid_prob * 100:.1f}%\n"
         f"{_sport_prefix(sport)}{matchup}\n"
         f"{when_line}"
-        f"  • <b>Over {m.low_line:g}</b> @ {o_odd:.2f} — {_BOOK_NAMES.get(o_book, o_book.value)}"
-        f"  → {_round_stake5(stakes['over']):.0f}€\n"
-        f"  • <b>Under {m.high_line:g}</b> @ {u_odd:.2f} — {_BOOK_NAMES.get(u_book, u_book.value)}"
-        f"  → {_round_stake5(stakes['under']):.0f}€\n"
+        f"  • <b>Over {m.low_line:g}</b> @ {o_odd:.2f} — {_BOOK_NAMES.get(o_book, o_book.value)}  → {s_over:.0f}€\n"
+        f"  • <b>Under {m.high_line:g}</b> @ {u_odd:.2f} — {_BOOK_NAMES.get(u_book, u_book.value)}  → {s_under:.0f}€\n"
         f"<i>Middle (les deux gagnent) si total = {gap_txt}</i>"
+        f"{miss_line}"
     )
 
 
