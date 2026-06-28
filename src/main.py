@@ -34,6 +34,7 @@ from .scrapers.starcasinosport import StarCasinoSportScraper, parse_get_events a
 from .scrapers.unibet import UnibetScraper, parse_listview as unibet_parse_listview
 from .storage import Storage
 from .surebet import find_surebets, Surebet
+from .middle import find_middles, Middle
 from .clv import (
     aggregate as clv_aggregate,
     clv_pct,
@@ -41,7 +42,7 @@ from .clv import (
     group_by as clv_group_by,
     index_quotes_by_market,
 )
-from .alerter import TelegramConfig, send_alerts, send_surebet_alerts, send_clv_alerts
+from .alerter import TelegramConfig, send_alerts, send_surebet_alerts, send_clv_alerts, send_middle_alerts
 from . import teams
 
 
@@ -780,6 +781,7 @@ def _daemon_scan_sport(
     built into Storage._conn(), so no external locking is needed."""
     vb_to_mark: list[ValueBet] = []
     sb_to_mark: list[Surebet] = []
+    mid_to_mark: list[Middle] = []
     now_mark = datetime.now(timezone.utc)
 
     try:
@@ -935,6 +937,41 @@ def _daemon_scan_sport(
                 if sent_sb:
                     console.print(f"\\[{current_sport}]   → {len(sent_sb)} surebet alert(s) sent")
 
+        # ── Middles ──────────────────────────────────────────────────
+        # Totals middles priced against Pinnacle's devigged ladder. Uses the
+        # remapped soft quotes (aligned to the Pinnacle reference keys) so the
+        # gap probability lookup hits the same event_key as `fair`.
+        if tg_cfg is not None:
+            middles = find_middles(
+                soft_q, fair,
+                min_ev_pct=tg_cfg.min_middle_ev_pct,
+                max_gap=tg_cfg.middle_max_gap,
+            )
+            console.print(f"\\[{current_sport}]   middles: {len(middles)}")
+            if middles:
+                mid_candidates = [
+                    m for m in middles
+                    if storage.middle_notify_count(m.event_key, m.low_line, m.high_line)
+                    < tg_cfg.middle_max_alerts
+                    and (
+                        not tg_cfg.middle_dedup
+                        or not storage.middle_already_notified(
+                            m.event_key, m.low_line, m.high_line,
+                            current_ev_pct=m.ev_pct,
+                            ev_delta_pct=tg_cfg.middle_ev_delta_pct,
+                        )
+                    )
+                ]
+                if mid_candidates:
+                    sent_mid = send_middle_alerts(
+                        mid_candidates, tg_cfg,
+                        print_fn=lambda x: console.print(f"[yellow]{x}[/yellow]"),
+                        sport=current_sport,
+                    )
+                    mid_to_mark = sent_mid
+                    if sent_mid:
+                        console.print(f"\\[{current_sport}]   → {len(sent_mid)} middle alert(s) sent")
+
     except Exception as e:
         console.print(f"[red]  {current_sport} error: {e}[/red]")
 
@@ -949,6 +986,10 @@ def _daemon_scan_sport(
         for s in sb_to_mark:
             storage.mark_surebet_notified(
                 s.event_key, s.market.value, s.line, s.margin * 100, now_mark,
+            )
+        for m in mid_to_mark:
+            storage.mark_middle_notified(
+                m.event_key, m.low_line, m.high_line, m.ev_pct, now_mark,
             )
     except Exception as mark_err:
         console.print(

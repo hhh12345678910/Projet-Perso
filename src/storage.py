@@ -77,6 +77,16 @@ CREATE TABLE IF NOT EXISTS notified_surebets (
 );
 CREATE INDEX IF NOT EXISTS idx_ns_lookup ON notified_surebets(event_key, market);
 
+CREATE TABLE IF NOT EXISTS notified_middles (
+    id              INTEGER PRIMARY KEY AUTOINCREMENT,
+    event_key       TEXT NOT NULL,
+    low_line        REAL NOT NULL,
+    high_line       REAL NOT NULL,
+    ev_pct          REAL NOT NULL,
+    notified_at     TEXT NOT NULL
+);
+CREATE INDEX IF NOT EXISTS idx_nm_lookup ON notified_middles(event_key, low_line, high_line);
+
 CREATE TABLE IF NOT EXISTS notified_value_bets (
     id              INTEGER PRIMARY KEY AUTOINCREMENT,
     event_key       TEXT NOT NULL,
@@ -205,7 +215,7 @@ class Storage:
         cutoff = (datetime.now(timezone.utc) - timedelta(days=retention_days)).isoformat()
         removed = 0
         with self._conn() as c:
-            for table in ("notified_value_bets", "notified_surebets", "notified_clv_alerts"):
+            for table in ("notified_value_bets", "notified_surebets", "notified_clv_alerts", "notified_middles"):
                 cur = c.execute(f"DELETE FROM {table} WHERE notified_at < ?", (cutoff,))
                 removed += cur.rowcount
         return removed
@@ -393,6 +403,49 @@ class Storage:
                 "INSERT INTO notified_surebets(event_key, market, line, margin_pct, notified_at) "
                 "VALUES (?, ?, ?, ?, ?)",
                 (event_key, market, line, margin_pct, notified_at.isoformat()),
+            )
+
+    def middle_already_notified(
+        self, event_key: str, low_line: float, high_line: float,
+        current_ev_pct: float = 0.0, ev_delta_pct: float = 2.0,
+    ) -> bool:
+        """Return True (skip) when this middle was already notified AND its EV
+        hasn't moved by ev_delta_pct since the last alert. Mirrors the surebet
+        dedup so a meaningful EV shift re-alerts without disabling dedup."""
+        like_key = self._event_key_like(event_key)
+        with self._conn() as c:
+            row = c.execute(
+                "SELECT ev_pct FROM notified_middles WHERE event_key LIKE ? "
+                "AND low_line=? AND high_line=? ORDER BY notified_at DESC LIMIT 1",
+                (like_key, low_line, high_line),
+            ).fetchone()
+            if row is None:
+                return False
+            return abs(current_ev_pct - row[0]) < ev_delta_pct
+
+    def middle_notify_count(
+        self, event_key: str, low_line: float, high_line: float,
+    ) -> int:
+        """How many times this middle has already been alerted, for the hard
+        per-opportunity re-alert cap (jitter-proof, same as surebets)."""
+        like_key = self._event_key_like(event_key)
+        with self._conn() as c:
+            row = c.execute(
+                "SELECT COUNT(*) FROM notified_middles "
+                "WHERE event_key LIKE ? AND low_line=? AND high_line=?",
+                (like_key, low_line, high_line),
+            ).fetchone()
+            return int(row[0]) if row else 0
+
+    def mark_middle_notified(
+        self, event_key: str, low_line: float, high_line: float,
+        ev_pct: float, notified_at: datetime,
+    ) -> None:
+        with self._conn() as c:
+            c.execute(
+                "INSERT INTO notified_middles(event_key, low_line, high_line, ev_pct, notified_at) "
+                "VALUES (?, ?, ?, ?, ?)",
+                (event_key, low_line, high_line, ev_pct, notified_at.isoformat()),
             )
 
     def clv_alert_already_notified(self, value_bet_id: int) -> bool:

@@ -18,6 +18,7 @@ except ImportError:  # Python < 3.9 fallback — sandbox is 3.11 so this is safe
 from .matcher import parse_event_key
 from .models import Book, ValueBet
 from .surebet import Surebet
+from .middle import Middle
 from . import teams
 
 
@@ -151,6 +152,15 @@ class TelegramConfig:
     min_premium_surebet_pct: float = 5.0  # prematch surebets (margin%) at/above this go to premium
     premium_min_odd: float = 1.5         # premium value bets only within this odds band
     premium_max_odd: float = 4.0
+    # Totals middles — back Over low_line + Under high_line on two books; the
+    # gap between the lines is profit. EV is priced against Pinnacle's devigged
+    # totals ladder. Routed to the CLV channel (effective_clv_chat_id) per the
+    # user's choice — no dedicated chat id.
+    min_middle_ev_pct: float = 2.0       # middles below this EV stay silent
+    middle_dedup: bool = True            # off -> re-alert every cycle even on stale middles
+    middle_ev_delta_pct: float = 2.0     # re-alert when a middle's EV shifts by this many points
+    middle_max_alerts: int = 2           # hard cap on alerts per middle (jitter-proof)
+    middle_max_gap: float = 3.0          # ignore middles whose lines are more than this apart
     # Rate limiting — Telegram caps bots at ~20 messages/min per group. We pace
     # sends per chat and honour 429 cooldowns so a burst can't get the bot
     # throttled for hours.
@@ -200,6 +210,11 @@ class TelegramConfig:
             min_premium_surebet_pct=float(os.getenv("TELEGRAM_MIN_PREMIUM_SUREBET", "5.0")),
             premium_min_odd=float(os.getenv("TELEGRAM_PREMIUM_MIN_ODD", "1.5")),
             premium_max_odd=float(os.getenv("TELEGRAM_PREMIUM_MAX_ODD", "4.0")),
+            min_middle_ev_pct=float(os.getenv("TELEGRAM_MIN_MIDDLE_EV", "2.0")),
+            middle_dedup=os.getenv("TELEGRAM_MIDDLE_DEDUP", "1") == "1",
+            middle_ev_delta_pct=float(os.getenv("TELEGRAM_MIDDLE_EV_DELTA", "2.0")),
+            middle_max_alerts=int(os.getenv("TELEGRAM_MIDDLE_MAX_ALERTS", "2")),
+            middle_max_gap=float(os.getenv("TELEGRAM_MIDDLE_MAX_GAP", "3.0")),
         )
 
     @property
@@ -267,6 +282,36 @@ def format_surebet(sb: Surebet, sport: str | None = None, is_live: bool = False)
         f"{when_line}"
         f"{legs_lines}"
         f"{suspect_footer}"
+    )
+
+
+def format_middle(m: Middle, sport: str | None = None, bankroll: float = 1000.0) -> str:
+    """Totals middle alert: both legs with their book and a balanced € stake,
+    the gap value(s) that win both, the Pinnacle-priced gap probability and the
+    resulting EV. Mises are rounded (camouflage) like everywhere else."""
+    parsed = parse_event_key(m.event_key)
+    if parsed is not None:
+        start, home_norm, away_norm = parsed
+        matchup = f"{_prettify_team_name(home_norm)} vs {_prettify_team_name(away_norm)}"
+        when_line = f"📅 {_format_kickoff(start)}\n"
+    else:
+        matchup = m.event_key
+        when_line = ""
+
+    o_odd, o_book = m.over_leg
+    u_odd, u_book = m.under_leg
+    stakes = m.stakes(bankroll)
+    gap_txt = " ou ".join(str(v) for v in m.gap_values) or "—"
+
+    return (
+        f"🎯 <b>MIDDLE +{m.ev_pct:.2f}% EV</b> — proba gap {m.mid_prob * 100:.1f}%\n"
+        f"{_sport_prefix(sport)}{matchup}\n"
+        f"{when_line}"
+        f"  • <b>Over {m.low_line:g}</b> @ {o_odd:.2f} — {_BOOK_NAMES.get(o_book, o_book.value)}"
+        f"  → {_round_stake(stakes['over']):.0f}€\n"
+        f"  • <b>Under {m.high_line:g}</b> @ {u_odd:.2f} — {_BOOK_NAMES.get(u_book, u_book.value)}"
+        f"  → {_round_stake(stakes['under']):.0f}€\n"
+        f"<i>Middle (les deux gagnent) si total = {gap_txt}</i>"
     )
 
 
@@ -613,6 +658,13 @@ class TelegramAlerter:
             )
         return delivered
 
+    def send_middle(self, m: Middle, *, sport: str | None = None) -> bool:
+        """Send a totals-middle alert to the CLV channel (per user choice).
+        Best-effort like the others: a rate-limited send returns False and the
+        daemon retries next cycle."""
+        text = format_middle(m, sport=sport, bankroll=self.config.bankroll)
+        return self._send(text, chat_id=self.config.effective_clv_chat_id)
+
     @staticmethod
     def _retry_after_seconds(r: httpx.Response) -> float:
         """Pull Telegram's requested back-off from a 429 response."""
@@ -723,6 +775,34 @@ def send_surebet_alerts(
                     continue
             if alerter.send_surebet(sb, sport=sport, is_live=is_live):
                 sent.append(sb)
+    return sent
+
+
+def send_middle_alerts(
+    middles: list[Middle], config: TelegramConfig | None,
+    *, print_fn=print, sport: str | None = None,
+) -> list[Middle]:
+    """Send a totals-middle alert per middle to the CLV channel. Prematch-only:
+    middles on events whose kickoff has passed (live) or that fire within
+    min_minutes_to_kickoff are dropped — in-play/last-minute totals are the
+    stale-line/data-error zone, same rule as surebets. Returns the middles
+    actually delivered (so only those get marked notified)."""
+    if config is None or not middles:
+        return []
+    now = datetime.now(timezone.utc)
+    sent: list[Middle] = []
+    with TelegramAlerter(config, print_fn=print_fn) as alerter:
+        for m in middles:
+            parsed = parse_event_key(m.event_key)
+            if parsed is not None:
+                kickoff = parsed[0]
+                if kickoff <= now:
+                    continue  # live — skip
+                mins_to_kickoff = (kickoff - now).total_seconds() / 60
+                if mins_to_kickoff < config.min_minutes_to_kickoff:
+                    continue
+            if alerter.send_middle(m, sport=sport):
+                sent.append(m)
     return sent
 
 
