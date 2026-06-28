@@ -39,6 +39,17 @@ def _round_stake(eur: float) -> float:
     return max(step, round(eur / step) * step)
 
 
+def _round_stake5(eur: float) -> float:
+    """Comme _round_stake mais cale TOUJOURS sur un multiple de 5 (mises de
+    middle : on veut 40/20/45/25, jamais 42/22). Minimum 5 EUR.
+    Respecte aussi TELEGRAM_ROUND_STAKES=0 (renvoie la mise brute)."""
+    if eur <= 0:
+        return 0.0
+    if os.getenv("TELEGRAM_ROUND_STAKES", "1") != "1":
+        return round(eur, 2)
+    return max(5.0, round(eur / 5.0) * 5.0)
+
+
 # Belgium-friendly display: dates relative to today, kickoff in local time.
 _LOCAL_TZ = ZoneInfo("Europe/Brussels") if ZoneInfo is not None else timezone.utc
 _FR_WEEKDAYS = ["Lundi", "Mardi", "Mercredi", "Jeudi", "Vendredi", "Samedi", "Dimanche"]
@@ -312,9 +323,9 @@ def format_middle(m: Middle, sport: str | None = None, total_stake: float = 100.
         f"{_sport_prefix(sport)}{matchup}\n"
         f"{when_line}"
         f"  • <b>Over {m.low_line:g}</b> @ {o_odd:.2f} — {_BOOK_NAMES.get(o_book, o_book.value)}"
-        f"  → {_round_stake(stakes['over']):.0f}€\n"
+        f"  → {_round_stake5(stakes['over']):.0f}€\n"
         f"  • <b>Under {m.high_line:g}</b> @ {u_odd:.2f} — {_BOOK_NAMES.get(u_book, u_book.value)}"
-        f"  → {_round_stake(stakes['under']):.0f}€\n"
+        f"  → {_round_stake5(stakes['under']):.0f}€\n"
         f"<i>Middle (les deux gagnent) si total = {gap_txt}</i>"
     )
 
