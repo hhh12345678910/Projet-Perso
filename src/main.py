@@ -483,9 +483,9 @@ def _fetch_all_parallel(
     tasks: dict[str, Callable[[], list[OddQuote]]] = {
         "Pinnacle":      _pinnacle,
         "Unibet":        lambda: fetch_unibet_quotes(sport),
-        "711":           lambda: fetch_sevenelevenbe_quotes(sport),
-        "Bingoal":       lambda: fetch_bingoal_quotes(sport),
-        "Scooore":       lambda: fetch_scooore_quotes(sport),
+        # "711":           lambda: fetch_sevenelevenbe_quotes(sport),  # Kambi jumeau d'Unibet -> desactive (anti rate-limit)
+        # "Bingoal":       lambda: fetch_bingoal_quotes(sport),  # Kambi jumeau d'Unibet -> desactive (anti rate-limit)
+        # "Scooore":       lambda: fetch_scooore_quotes(sport),  # Kambi jumeau d'Unibet -> desactive (anti rate-limit)
         # MeridianBet: scraper prêt mais l'API exige un token (anti-bot
         # TrafficGuard) -> réactiver ici une fois le token capturé.
         # "MeridianBet": lambda: fetch_meridian_quotes(sport),

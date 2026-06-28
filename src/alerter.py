@@ -36,7 +36,7 @@ _FR_MONTHS = [
 # Book.value -> human label used in the message header.
 _BOOK_NAMES = {
     Book.PINNACLE: "Pinnacle",
-    Book.UNIBET_BE: "Unibet",
+    Book.UNIBET_BE: "Unibet / 711 / Bingoal / Scooore",
     Book.BETANO_BE: "Betano",
     Book.BETFIRST: "BetFirst",
     Book.LADBROKES_BE: "Ladbrokes",
