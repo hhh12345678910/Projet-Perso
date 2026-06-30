@@ -198,16 +198,37 @@ class Storage:
                 rows,
             )
 
-    def prune_quotes(self, retention_days: int = 7) -> int:
+    def prune_quotes(self, retention_days: int = 7, *, batch_size: int = 200_000) -> int:
         """Delete raw quote rows older than retention_days and return how many
-        were removed. The quotes table grows ~unbounded (every quote, every
-        cycle); only recent rows matter — the closing line is captured into
-        clv_snapshots within hours of kickoff, after which the raw history is
-        dead weight. Run periodically (cron) to keep the DB from filling disk."""
+        were removed. Deletes in batches with a WAL checkpoint(TRUNCATE) after
+        each one, so the WAL never balloons no matter how much is being purged:
+        a single bulk DELETE on a multi-GB quotes table grows the -wal file by
+        gigabytes before it can commit and has filled the disk in practice. The
+        chunked loop keeps the WAL bounded to one batch. The quotes table grows
+        ~unbounded (every quote, every cycle); only recent rows matter — closing
+        lines are captured into clv_snapshots within hours of kickoff, after
+        which the raw history is dead weight. Run periodically (cron)."""
         cutoff = (datetime.now(timezone.utc) - timedelta(days=retention_days)).isoformat()
-        with self._conn() as c:
-            cur = c.execute("DELETE FROM quotes WHERE fetched_at < ?", (cutoff,))
-            return cur.rowcount
+        removed = 0
+        conn = sqlite3.connect(str(self.path), timeout=60)
+        try:
+            conn.execute("PRAGMA journal_mode=WAL")
+            conn.execute("PRAGMA busy_timeout=60000")
+            while True:
+                cur = conn.execute(
+                    "DELETE FROM quotes WHERE rowid IN "
+                    "(SELECT rowid FROM quotes WHERE fetched_at < ? LIMIT ?)",
+                    (cutoff, batch_size),
+                )
+                conn.commit()
+                n = cur.rowcount
+                removed += n
+                conn.execute("PRAGMA wal_checkpoint(TRUNCATE)")
+                if n == 0:
+                    break
+        finally:
+            conn.close()
+        return removed
 
     def prune_notifications(self, retention_days: int = 30) -> int:
         """Trim old dedup bookkeeping rows (notified_*). Tiny vs quotes, but
