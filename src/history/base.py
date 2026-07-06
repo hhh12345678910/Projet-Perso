@@ -87,6 +87,9 @@ class SettledBet:
         Otherwise derive it from the result: a win returns stake*odd, a loss
         costs the stake, void/cashout without a payout net to zero, pending is
         zero (not yet resolved)."""
+        # Not yet resolved: no P&L, whatever a placeholder payout (often 0) says.
+        if self.result == "pending":
+            return 0.0
         if self.payout is not None:
             return round(self.payout - self.stake, 2)
         if self.result == "won":

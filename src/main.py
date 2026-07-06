@@ -1701,7 +1701,9 @@ def pnl_export(
         sel = r["selection"] or ("—" if legs > 1 else "")
         line = r["line"]
         if line is not None and sel and sel != "—":
-            sel = f"{sel} {line}"
+            lstr = f"{line:g}"          # 2.5 not 2.50
+            if lstr not in sel:         # Kambi labels ("Plus de 2.5") already carry it
+                sel = f"{sel} {lstr}"
         pnl = float(r["pnl"] or 0.0)
         ws.append([
             _short(r["placed_at"]),

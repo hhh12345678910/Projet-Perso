@@ -1,0 +1,584 @@
+{
+  "historyCoupons": [
+    {
+      "couponRef": 12865353082,
+      "couponExternalRef": "368bb532-1a9b-45e2-9fc9-801dbd6f3a1c",
+      "placedDate": "2026-07-05T17:27:26.856Z",
+      "currency": "EUR",
+      "channel": "MOBILE",
+      "tags": [],
+      "bets": [
+        {
+          "betRef": 15995894657,
+          "couponRowIndexes": [
+            0
+          ],
+          "betOdds": 2550,
+          "playedOdds": 2550,
+          "betStatus": "WON",
+          "stake": 25000,
+          "payout": 63750,
+          "potentialPayout": 63750,
+          "tags": []
+        }
+      ],
+      "outcomes": [
+        {
+          "outcomeId": 4241912535,
+          "eventId": 1028170556,
+          "betOfferId": 2663582412,
+          "label": "Plus de 2.5",
+          "settledInfo": {
+            "result": {
+              "score": "",
+              "correct": [
+                "Over"
+              ],
+              "scratched": []
+            }
+          },
+          "status": "WON",
+          "outcomeTags": [],
+          "earlySettlement": false,
+          "line": 2500
+        }
+      ],
+      "couponRows": [
+        {
+          "index": 0,
+          "outcomeId": 4241912535,
+          "status": "WON",
+          "playedOdds": 2550,
+          "payoutOdds": 2550,
+          "bestOddsGuaranteed": false,
+          "tags": [],
+          "selectionType": "SIMPLE"
+        }
+      ],
+      "events": [
+        {
+          "eventId": 1028170556,
+          "sport": "FOOTBALL",
+          "homeName": "Club Atlético Atlas",
+          "awayName": "Claypole",
+          "eventName": "Club Atlético Atlas - Claypole",
+          "eventGroups": [
+            {
+              "id": 1000093190,
+              "name": "Football"
+            },
+            {
+              "id": 1000461754,
+              "name": "Argentine"
+            },
+            {
+              "id": 2000073003,
+              "name": "Primera C"
+            }
+          ],
+          "eventStartDate": "2026-07-05T18:00:00Z"
+        }
+      ],
+      "betOffers": [
+        {
+          "betOfferId": 2663582412,
+          "boType": "Over/Under",
+          "boTypeId": 6,
+          "criterion": "Nombre total de buts",
+          "line": 2500,
+          "tags": []
+        }
+      ],
+      "systemBets": []
+    },
+    {
+      "couponRef": 12866402238,
+      "couponExternalRef": "336932f5-141c-4773-8ee5-1dba58dc11c2",
+      "placedDate": "2026-07-05T19:49:21.144Z",
+      "currency": "EUR",
+      "channel": "MOBILE",
+      "tags": [],
+      "bets": [
+        {
+          "betRef": 15997009550,
+          "couponRowIndexes": [
+            0
+          ],
+          "betOdds": 9000,
+          "playedOdds": 9000,
+          "betStatus": "WON",
+          "stake": 5000,
+          "payout": 45000,
+          "potentialPayout": 45000,
+          "tags": []
+        }
+      ],
+      "outcomes": [
+        {
+          "outcomeId": 4241927083,
+          "eventId": 1028208689,
+          "betOfferId": 2663569329,
+          "label": "X/2",
+          "settledInfo": {
+            "result": {
+              "score": "",
+              "correct": [
+                "X/2"
+              ],
+              "scratched": []
+            }
+          },
+          "status": "WON",
+          "outcomeTags": [],
+          "earlySettlement": false
+        }
+      ],
+      "couponRows": [
+        {
+          "index": 0,
+          "outcomeId": 4241927083,
+          "status": "WON",
+          "playedOdds": 9000,
+          "payoutOdds": 9000,
+          "bestOddsGuaranteed": false,
+          "tags": [],
+          "selectionType": "SIMPLE"
+        }
+      ],
+      "events": [
+        {
+          "eventId": 1028208689,
+          "sport": "FOOTBALL",
+          "homeName": "Brésil",
+          "awayName": "Norvège",
+          "eventName": "Brésil - Norvège",
+          "eventGroups": [
+            {
+              "id": 1000093190,
+              "name": "Football"
+            },
+            {
+              "id": 2010133908,
+              "name": "Coupe du Monde 2026"
+            }
+          ],
+          "eventStartDate": "2026-07-05T20:00:00Z"
+        }
+      ],
+      "betOffers": [
+        {
+          "betOfferId": 2663569329,
+          "boType": "HT/FT",
+          "boTypeId": 8,
+          "criterion": "Mi-temps/Temps complet",
+          "tags": []
+        }
+      ],
+      "systemBets": []
+    },
+    {
+      "couponRef": 12869485109,
+      "couponExternalRef": "48c32e17-d81e-431d-b9c9-dd1b7a3389ae",
+      "placedDate": "2026-07-06T06:00:10.303Z",
+      "currency": "EUR",
+      "channel": "MOBILE",
+      "tags": [],
+      "bets": [
+        {
+          "betRef": 16000217890,
+          "couponRowIndexes": [
+            0
+          ],
+          "betOdds": 0,
+          "playedOdds": 3850,
+          "betStatus": "LOST",
+          "stake": 10000,
+          "payout": 0,
+          "potentialPayout": 0,
+          "tags": []
+        }
+      ],
+      "outcomes": [
+        {
+          "outcomeId": 4248264651,
+          "eventId": 1028269743,
+          "betOfferId": 2665496367,
+          "label": "Lorenzo Bocchi",
+          "settledInfo": {
+            "result": {
+              "score": "",
+              "correct": [],
+              "scratched": []
+            }
+          },
+          "status": "LOST",
+          "participantId": 1002926510,
+          "outcomeTags": [],
+          "earlySettlement": false
+        }
+      ],
+      "couponRows": [
+        {
+          "index": 0,
+          "outcomeId": 4248264651,
+          "status": "LOST",
+          "playedOdds": 3850,
+          "payoutOdds": 0,
+          "bestOddsGuaranteed": false,
+          "tags": [],
+          "selectionType": "SIMPLE"
+        }
+      ],
+      "events": [
+        {
+          "eventId": 1028269743,
+          "sport": "TENNIS",
+          "homeName": "Gonzalo Villanueva",
+          "awayName": "Lorenzo Bocchi",
+          "eventName": "Gonzalo Villanueva - Lorenzo Bocchi",
+          "eventGroups": [
+            {
+              "id": 1000093193,
+              "name": "Tennis"
+            },
+            {
+              "id": 2000070865,
+              "name": "Qual. Challenger"
+            },
+            {
+              "id": 2000126374,
+              "name": "Trieste"
+            }
+          ],
+          "eventStartDate": "2026-07-06T08:00:00Z"
+        }
+      ],
+      "betOffers": [
+        {
+          "betOfferId": 2665496367,
+          "boType": "Match",
+          "boTypeId": 2,
+          "criterion": "Cotes du match",
+          "tags": []
+        }
+      ],
+      "systemBets": []
+    },
+    {
+      "couponRef": 12854619828,
+      "couponExternalRef": "9c72a017-0922-4e02-9f45-5f365baf6c60",
+      "placedDate": "2026-07-03T19:27:42.328Z",
+      "currency": "EUR",
+      "channel": "MOBILE",
+      "tags": [],
+      "bets": [
+        {
+          "betRef": 15983885139,
+          "couponRowIndexes": [
+            0
+          ],
+          "betOdds": 1000,
+          "playedOdds": 1700,
+          "betStatus": "VOID",
+          "stake": 30000,
+          "payout": 30000,
+          "potentialPayout": 30000,
+          "tags": []
+        }
+      ],
+      "outcomes": [
+        {
+          "outcomeId": 4239870875,
+          "eventId": 1026542670,
+          "betOfferId": 2662959678,
+          "label": "Moins de 5.5",
+          "settledInfo": {
+            "voidReason": "Différé",
+            "result": {
+              "score": "",
+              "correct": [],
+              "scratched": []
+            }
+          },
+          "status": "VOID",
+          "outcomeTags": [],
+          "earlySettlement": false,
+          "line": 5500
+        }
+      ],
+      "couponRows": [
+        {
+          "index": 0,
+          "outcomeId": 4239870875,
+          "status": "VOID",
+          "playedOdds": 1700,
+          "payoutOdds": 1000,
+          "bestOddsGuaranteed": false,
+          "tags": [],
+          "selectionType": "SIMPLE"
+        }
+      ],
+      "events": [
+        {
+          "eventId": 1026542670,
+          "sport": "FOOTBALL",
+          "homeName": "Launceston City",
+          "awayName": "Launceston United",
+          "eventName": "Launceston City - Launceston United",
+          "eventGroups": [
+            {
+              "id": 1000093190,
+              "name": "Football"
+            },
+            {
+              "id": 1000461755,
+              "name": "Australie"
+            },
+            {
+              "id": 2000064682,
+              "name": "NPL Tasmania"
+            }
+          ],
+          "eventStartDate": "2026-07-04T06:45:00Z"
+        }
+      ],
+      "betOffers": [
+        {
+          "betOfferId": 2662959678,
+          "boType": "Over/Under",
+          "boTypeId": 6,
+          "criterion": "Nombre total de buts",
+          "line": 5500,
+          "tags": []
+        }
+      ],
+      "systemBets": []
+    },
+    {
+      "couponRef": 12870972628,
+      "couponExternalRef": "c4e4a101-8ab4-4561-97b0-0f4d97761bd2",
+      "placedDate": "2026-07-06T17:24:46.774Z",
+      "currency": "EUR",
+      "channel": "MOBILE",
+      "tags": [],
+      "bets": [
+        {
+          "betRef": 16001979249,
+          "couponRowIndexes": [
+            0
+          ],
+          "betOdds": 2750,
+          "playedOdds": 2750,
+          "betStatus": "OPEN",
+          "stake": 16000,
+          "payout": 0,
+          "potentialPayout": 44000,
+          "tags": [
+            "EDITABLE"
+          ]
+        }
+      ],
+      "outcomes": [
+        {
+          "outcomeId": 4244014954,
+          "eventId": 1028229048,
+          "betOfferId": 2664214125,
+          "label": "Deportivo Muñiz",
+          "status": "OPEN",
+          "participantId": 1002636697,
+          "outcomeTags": [],
+          "earlySettlement": false
+        }
+      ],
+      "couponRows": [
+        {
+          "index": 0,
+          "outcomeId": 4244014954,
+          "status": "OPEN",
+          "playedOdds": 2750,
+          "bestOddsGuaranteed": false,
+          "tags": [],
+          "selectionType": "SIMPLE"
+        }
+      ],
+      "events": [
+        {
+          "eventId": 1028229048,
+          "sport": "FOOTBALL",
+          "homeName": "Deportivo Muñiz",
+          "awayName": "Deportivo Español",
+          "eventName": "Deportivo Muñiz - Deportivo Español",
+          "eventGroups": [
+            {
+              "id": 1000093190,
+              "name": "Football"
+            },
+            {
+              "id": 1000461754,
+              "name": "Argentine"
+            },
+            {
+              "id": 2000073003,
+              "name": "Primera C"
+            }
+          ],
+          "eventStartDate": "2026-07-06T18:00:00Z"
+        }
+      ],
+      "betOffers": [
+        {
+          "betOfferId": 2664214125,
+          "boType": "Match",
+          "boTypeId": 2,
+          "criterion": "Temps réglementaire",
+          "tags": []
+        }
+      ],
+      "systemBets": []
+    },
+    {
+      "couponRef": 12849555201,
+      "couponExternalRef": "9d430e4f-413a-4992-bd2d-79fd1ddb462c",
+      "placedDate": "2026-07-02T21:24:06.551Z",
+      "currency": "EUR",
+      "channel": "MOBILE",
+      "tags": [],
+      "bets": [
+        {
+          "betRef": 15978259807,
+          "couponRowIndexes": [
+            0,
+            1
+          ],
+          "betOdds": 0,
+          "playedOdds": 7056,
+          "betStatus": "LOST",
+          "stake": 10000,
+          "payout": 0,
+          "potentialPayout": 0,
+          "tags": []
+        }
+      ],
+      "outcomes": [
+        {
+          "outcomeId": 4238691670,
+          "eventId": 1028175697,
+          "betOfferId": 2662583943,
+          "label": "Oui",
+          "settledInfo": {
+            "result": {
+              "score": "",
+              "correct": [
+                "No"
+              ],
+              "scratched": []
+            }
+          },
+          "status": "LOST",
+          "outcomeTags": [],
+          "earlySettlement": false
+        },
+        {
+          "outcomeId": 4238589748,
+          "eventId": 1028174886,
+          "betOfferId": 2662594283,
+          "label": "Oui",
+          "settledInfo": {
+            "result": {
+              "score": "",
+              "correct": [
+                "Yes"
+              ],
+              "scratched": []
+            }
+          },
+          "status": "WON",
+          "outcomeTags": [],
+          "earlySettlement": false
+        }
+      ],
+      "couponRows": [
+        {
+          "index": 0,
+          "outcomeId": 4238589748,
+          "status": "WON",
+          "playedOdds": 1680,
+          "payoutOdds": 1680,
+          "bestOddsGuaranteed": false,
+          "tags": [],
+          "selectionType": "SIMPLE"
+        },
+        {
+          "index": 1,
+          "outcomeId": 4238691670,
+          "status": "LOST",
+          "playedOdds": 4200,
+          "payoutOdds": 0,
+          "bestOddsGuaranteed": false,
+          "tags": [],
+          "selectionType": "SIMPLE"
+        }
+      ],
+      "events": [
+        {
+          "eventId": 1028174886,
+          "sport": "FOOTBALL",
+          "homeName": "Portugal",
+          "awayName": "Croatie",
+          "eventName": "Portugal - Croatie",
+          "eventGroups": [
+            {
+              "id": 1000093190,
+              "name": "Football"
+            },
+            {
+              "id": 2010133908,
+              "name": "Coupe du Monde 2026"
+            }
+          ],
+          "eventStartDate": "2026-07-02T23:00:00Z"
+        },
+        {
+          "eventId": 1028175697,
+          "sport": "FOOTBALL",
+          "homeName": "Suisse",
+          "awayName": "Algérie",
+          "eventName": "Suisse - Algérie",
+          "eventGroups": [
+            {
+              "id": 1000093190,
+              "name": "Football"
+            },
+            {
+              "id": 2010133908,
+              "name": "Coupe du Monde 2026"
+            }
+          ],
+          "eventStartDate": "2026-07-03T03:00:00Z"
+        }
+      ],
+      "betOffers": [
+        {
+          "betOfferId": 2662583943,
+          "boType": "Yes/No",
+          "boTypeId": 18,
+          "criterion": "Suisse gagne et les deux équipes marquent",
+          "tags": []
+        },
+        {
+          "betOfferId": 2662594283,
+          "boType": "Yes/No",
+          "boTypeId": 18,
+          "criterion": "Les deux équipes marquent",
+          "tags": []
+        }
+      ],
+      "systemBets": []
+    }
+  ],
+  "range": {
+    "start": 0,
+    "size": 6,
+    "more": false
+  }
+}
