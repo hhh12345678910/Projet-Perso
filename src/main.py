@@ -1638,6 +1638,144 @@ def pnl_report():
     console.print(t)
 
 
+_RESULT_FR = {
+    "won": "Gagné", "lost": "Perdu", "void": "Remboursé",
+    "half_won": "Demi-gagné", "half_lost": "Demi-perdu",
+    "cashout": "Cash-out", "pending": "En attente",
+}
+
+
+@app.command(name="pnl-export")
+def pnl_export(
+    out: str = typer.Option("paris.xlsx", "--out", help="Chemin du fichier Excel de sortie."),
+):
+    """Exporter tous les paris importés (table settled_bets) vers un fichier
+    Excel : un onglet 'Paris' (une ligne par pari, du plus ancien au plus
+    récent) et un onglet 'Bilan' (P&L par book + total). Régénéré à chaque
+    appel — relance-le après chaque `import-history` pour un Excel à jour."""
+    try:
+        from openpyxl import Workbook
+        from openpyxl.styles import Font, PatternFill, Alignment
+        from openpyxl.utils import get_column_letter
+    except ImportError:
+        console.print(
+            "[red]openpyxl manquant.[/red] Installe-le : [bold]pip install openpyxl[/bold] "
+            "(ou pip install -r requirements.txt)."
+        )
+        raise typer.Exit(1)
+
+    storage = Storage(ScanConfig().db_path)
+    rows = storage.settled_bets()  # newest first
+    if not rows:
+        console.print(
+            "[bold]Aucun pari importé.[/bold] Lance d'abord [bold]valuebet import-history[/bold]."
+        )
+        raise typer.Exit(1)
+    rows = list(reversed(rows))  # oldest first, so the sheet reads chronologically
+
+    wb = Workbook()
+    ws = wb.active
+    ws.title = "Paris"
+    headers = [
+        "Date", "Bookmaker", "Sport", "Match", "Marché", "Sélection", "Cote",
+        "Mise (€)", "Résultat", "Payout (€)", "P&L (€)", "Type", "Réglé le", "ID pari",
+    ]
+    ws.append(headers)
+    header_font = Font(bold=True, color="FFFFFF")
+    header_fill = PatternFill("solid", fgColor="1F4E78")
+    for cell in ws[1]:
+        cell.font = header_font
+        cell.fill = header_fill
+        cell.alignment = Alignment(horizontal="center")
+    ws.freeze_panes = "A2"
+
+    win_fill = PatternFill("solid", fgColor="E2EFDA")   # vert clair
+    loss_fill = PatternFill("solid", fgColor="FCE4E4")  # rouge clair
+
+    def _short(ts):
+        return (ts or "")[:16].replace("T", " ")
+
+    for r in rows:
+        legs = int(r["legs"] or 1)
+        match = r["event_label"] or (f"Combiné {legs} sél." if legs > 1 else "—")
+        sel = r["selection"] or ("—" if legs > 1 else "")
+        line = r["line"]
+        if line is not None and sel and sel != "—":
+            sel = f"{sel} {line}"
+        pnl = float(r["pnl"] or 0.0)
+        ws.append([
+            _short(r["placed_at"]),
+            r["book"],
+            (r["sport"] or "").title() if r["sport"] else "",
+            match,
+            r["market"] or ("Combiné" if legs > 1 else ""),
+            sel,
+            round(float(r["odd"] or 0.0), 3),
+            round(float(r["stake"] or 0.0), 2),
+            _RESULT_FR.get(r["result"], r["result"]),
+            round(float(r["payout"]), 2) if r["payout"] is not None else None,
+            round(pnl, 2),
+            r["bet_type"] or "",
+            _short(r["settled_at"]),
+            r["bet_id"],
+        ])
+        row_idx = ws.max_row
+        if pnl > 0:
+            fill = win_fill
+        elif pnl < 0:
+            fill = loss_fill
+        else:
+            fill = None
+        if fill:
+            for cell in ws[row_idx]:
+                cell.fill = fill
+
+    # Largeurs de colonnes lisibles.
+    widths = [17, 16, 12, 32, 20, 22, 8, 10, 12, 11, 10, 10, 17, 16]
+    for i, w in enumerate(widths, start=1):
+        ws.column_dimensions[get_column_letter(i)].width = w
+
+    # Onglet Bilan.
+    bilan = wb.create_sheet("Bilan")
+    bilan.append(["Bookmaker", "Paris", "En attente", "Misé (€)", "P&L (€)", "ROI %", "Win %"])
+    for cell in bilan[1]:
+        cell.font = header_font
+        cell.fill = header_fill
+        cell.alignment = Alignment(horizontal="center")
+    tot_n = tot_pending = tot_wins = 0
+    tot_staked = tot_pnl = 0.0
+    for r in storage.pnl_by_book():
+        n = int(r["n"] or 0)
+        staked = float(r["staked"] or 0.0)
+        pnl = float(r["pnl"] or 0.0)
+        wins = int(r["wins"] or 0)
+        pending = int(r["pending"] or 0)
+        settled = n - pending
+        bilan.append([
+            r["book"], n, pending, round(staked, 2), round(pnl, 2),
+            round(pnl / staked * 100, 1) if staked else 0.0,
+            round(wins / settled * 100, 0) if settled else 0.0,
+        ])
+        tot_n += n; tot_pending += pending; tot_wins += wins
+        tot_staked += staked; tot_pnl += pnl
+    tot_settled = tot_n - tot_pending
+    bilan.append([
+        "TOTAL", tot_n, tot_pending, round(tot_staked, 2), round(tot_pnl, 2),
+        round(tot_pnl / tot_staked * 100, 1) if tot_staked else 0.0,
+        round(tot_wins / tot_settled * 100, 0) if tot_settled else 0.0,
+    ])
+    for cell in bilan[bilan.max_row]:
+        cell.font = Font(bold=True)
+    for i, w in enumerate([18, 8, 11, 10, 10, 8, 8], start=1):
+        bilan.column_dimensions[get_column_letter(i)].width = w
+
+    wb.save(out)
+    console.print(
+        f"[green]✓[/green] {len(rows)} paris exportés vers [bold]{out}[/bold] "
+        f"(P&L total : {tot_pnl:+.2f}€). Ouvre-le dans Excel."
+    )
+
+
 @app.command(name="inspect-kambi-history")
 def inspect_kambi_history(path: str):
     """Inspecter un dump JSON d'historique Kambi (capturé via --dump-raw ou
