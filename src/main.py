@@ -1498,6 +1498,188 @@ def inspect_betano(path: str):
         console.print(f"  {q.event_key} | {q.market.value} | {q.outcome.label} @ {q.decimal_odd}")
 
 
+@app.command(name="import-history")
+def import_history(
+    books: str = typer.Option(
+        "", "--books",
+        help="Books ciblés, séparés par des virgules (ex: unibet_be,bingoal_be). Vide = tous.",
+    ),
+    full: bool = typer.Option(
+        False, "--full",
+        help="Réimporte tout l'historique disponible au lieu de s'arrêter au dernier pari connu.",
+    ),
+    dump_raw: str = typer.Option(
+        "", "--dump-raw",
+        help="Sauvegarde le JSON brut du 1er book Kambi configuré dans ce fichier (pour décoder le schéma).",
+    ),
+):
+    """Importer l'historique des paris réglés depuis l'API de chaque bookmaker
+    vers la table settled_bets (suivi P&L réel). Idempotent : relançable, ne
+    ré-insère jamais un pari déjà stocké. Voir `pnl-report` pour le bilan."""
+    from datetime import datetime as _dt
+    from .history.registry import importers_for
+    from .history.base import HistoryImportError
+    from .history.kambi import KambiHistoryImporter
+
+    storage = Storage(ScanConfig().db_path)
+    teams.init(storage)
+    wanted = [b.strip() for b in books.split(",") if b.strip()]
+    importers = importers_for(wanted)
+
+    # --dump-raw : capturer le JSON brut pour verrouiller le schéma du parser.
+    if dump_raw:
+        kambi = next(
+            (imp for imp in importers
+             if isinstance(imp, KambiHistoryImporter) and imp.available()),
+            None,
+        )
+        if kambi is None:
+            console.print("[red]Aucun book Kambi configuré (URL + cookie) pour --dump-raw.[/red]")
+            raise typer.Exit(1)
+        try:
+            data = kambi.raw_first_page()
+        except HistoryImportError as e:
+            console.print(f"[red]{e}[/red]")
+            raise typer.Exit(1)
+        import json as _json
+        from pathlib import Path as _Path
+        _Path(dump_raw).write_text(_json.dumps(data, indent=2, ensure_ascii=False))
+        console.print(
+            f"[green]✓[/green] JSON brut de [bold]{kambi.book.value}[/bold] écrit dans "
+            f"[bold]{dump_raw}[/bold]. Top-level keys : "
+            f"{sorted(data.keys()) if isinstance(data, dict) else type(data).__name__}"
+        )
+        return
+
+    now = datetime.now(timezone.utc)
+    total_new = 0
+    for imp in importers:
+        if not imp.available():
+            note = getattr(imp, "note", "non configuré (URL/cookie manquant)")
+            console.print(f"[dim]— {imp.book.value:<18} ignoré : {note}[/dim]")
+            continue
+        since = None
+        if not full:
+            last = storage.last_settled_at(imp.book.value)
+            if last:
+                try:
+                    since = _dt.fromisoformat(last)
+                except ValueError:
+                    since = None
+        try:
+            bets = list(imp.fetch(since=since))
+        except HistoryImportError as e:
+            console.print(f"[red]✗ {imp.book.value:<18} {e}[/red]")
+            continue
+        except Exception as e:  # noqa: BLE001 — un book cassé ne doit pas tuer les autres
+            console.print(f"[red]✗ {imp.book.value:<18} erreur inattendue : {e}[/red]")
+            continue
+        rows = [b.to_row(now) for b in bets]
+        inserted, seen = storage.upsert_settled_bets(rows)
+        total_new += inserted
+        pnl = sum(b.pnl for b in bets)
+        console.print(
+            f"[green]✓[/green] {imp.book.value:<18} {inserted} nouveaux / {seen} vus "
+            f"(P&L lot : {pnl:+.2f}€)"
+        )
+    console.print(f"\n[bold]{total_new} paris importés.[/bold] Bilan : [bold]valuebet pnl-report[/bold]")
+
+
+@app.command(name="pnl-report")
+def pnl_report():
+    """Bilan P&L réel par book (depuis settled_bets), + total. Complète
+    clv-report (qui mesure la CLV de ce qu'on a détecté) avec le vrai résultat
+    encaissé sur chaque compte bookmaker."""
+    storage = Storage(ScanConfig().db_path)
+    rows = storage.pnl_by_book()
+    if not rows:
+        console.print(
+            "[bold]Aucun pari importé.[/bold] Lance d'abord [bold]valuebet import-history[/bold] "
+            "(après avoir renseigné les URL/cookies dans .env)."
+        )
+        return
+
+    t = Table(title="P&L réel par book")
+    for col in ("Book", "Paris", "En attente", "Misé (€)", "P&L (€)", "ROI %", "Win %"):
+        t.add_column(col, justify="left" if col == "Book" else "right")
+
+    tot_n = tot_pending = tot_wins = 0
+    tot_staked = tot_pnl = 0.0
+    for r in rows:
+        n = int(r["n"] or 0)
+        staked = float(r["staked"] or 0.0)
+        pnl = float(r["pnl"] or 0.0)
+        wins = int(r["wins"] or 0)
+        pending = int(r["pending"] or 0)
+        settled = n - pending
+        roi = (pnl / staked * 100) if staked else 0.0
+        win_pct = (wins / settled * 100) if settled else 0.0
+        pnl_str = f"[green]{pnl:+.2f}[/green]" if pnl >= 0 else f"[red]{pnl:+.2f}[/red]"
+        t.add_row(
+            r["book"], str(n), str(pending), f"{staked:.2f}",
+            pnl_str, f"{roi:+.1f}", f"{win_pct:.0f}",
+        )
+        tot_n += n
+        tot_staked += staked
+        tot_pnl += pnl
+        tot_wins += wins
+        tot_pending += pending
+
+    tot_settled = tot_n - tot_pending
+    tot_roi = (tot_pnl / tot_staked * 100) if tot_staked else 0.0
+    tot_win = (tot_wins / tot_settled * 100) if tot_settled else 0.0
+    tot_pnl_str = f"[green]{tot_pnl:+.2f}[/green]" if tot_pnl >= 0 else f"[red]{tot_pnl:+.2f}[/red]"
+    t.add_section()
+    t.add_row(
+        "[bold]TOTAL[/bold]", f"[bold]{tot_n}[/bold]", str(tot_pending),
+        f"[bold]{tot_staked:.2f}[/bold]", f"[bold]{tot_pnl_str}[/bold]",
+        f"[bold]{tot_roi:+.1f}[/bold]", f"[bold]{tot_win:.0f}[/bold]",
+    )
+    console.print(t)
+
+
+@app.command(name="inspect-kambi-history")
+def inspect_kambi_history(path: str):
+    """Inspecter un dump JSON d'historique Kambi (capturé via --dump-raw ou
+    DevTools → Response → save). Affiche la structure et ce que le parser en
+    tire, pour verrouiller le mapping des champs."""
+    import json as _json
+    from pathlib import Path as _Path
+    from .history.kambi import parse_history, _coupon_list, _outcomes
+
+    data = _json.loads(_Path(path).read_text())
+    console.print(
+        f"[bold]Top-level keys[/bold]: "
+        f"{sorted(data.keys()) if isinstance(data, dict) else type(data).__name__}"
+    )
+    coupons = _coupon_list(data)
+    console.print(f"[bold]Coupons trouvés[/bold]: {len(coupons)}")
+    if coupons:
+        first = coupons[0]
+        coupon = (
+            first.get("coupon")
+            if isinstance(first, dict) and isinstance(first.get("coupon"), dict)
+            else first
+        )
+        console.print(
+            f"[bold cyan]Champs coupon[/bold cyan]: "
+            f"{sorted(coupon.keys()) if isinstance(coupon, dict) else '?'}"
+        )
+        console.print(_json.dumps(coupon, indent=2, ensure_ascii=False)[:1200])
+        legs = _outcomes(coupon) if isinstance(coupon, dict) else []
+        if legs and isinstance(legs[0], dict):
+            console.print(f"\n[bold cyan]Champs 1ère sélection[/bold cyan]: {sorted(legs[0].keys())}")
+            console.print(_json.dumps(legs[0], indent=2, ensure_ascii=False)[:800])
+
+    bets = parse_history(data, Book.UNIBET_BE)
+    console.print(f"\n[bold]Parser → {len(bets)} SettledBet.[/bold]")
+    for b in bets[:5]:
+        console.print(
+            f"  {b.bet_id} | {b.result} | cote {b.odd} | mise {b.stake}€ | "
+            f"P&L {b.pnl:+.2f}€ | {b.event_label or '—'}"
+        )
+
+
 @app.command()
 def selftest():
     """Sanity check on math primitives."""
