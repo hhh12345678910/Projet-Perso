@@ -15,10 +15,6 @@ venv/
 htmlcov/
 data/
 logs/
-# Données perso / secrets — ne jamais committer
-*.xlsx
-*.har
-paris.xlsx
 .DS_Store
 .idea/
 .vscode/
