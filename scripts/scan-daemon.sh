@@ -8,6 +8,14 @@ set -uo pipefail
 # Derive the project dir from this script's own location (scripts/..), so the
 # wrapper is portable across hosts/users with no hard-coded path.
 PROJECT_DIR="${PROJECT_DIR:-$(cd "$(dirname "$0")/.." && pwd)}"
+
+# Load .env so SPORT_LIST / MIN_EV / BREATHER can be tuned there without editing
+# this file or the systemd unit. systemd doesn't source .env itself, and
+# runscan.sh only sources it for the Python process *after* these args are
+# built — so we source it here too, before reading the vars below. Set e.g.
+# SPORT_LIST=soccer,tennis,hockey,volleyball in .env to drop a sport (basket).
+set -a; [ -f "$PROJECT_DIR/.env" ] && . "$PROJECT_DIR/.env"; set +a
+
 SPORT_LIST="${SPORT_LIST:-soccer,tennis,basketball,hockey,volleyball}"
 BREATHER="${BREATHER:-10}"
 MIN_EV="${MIN_EV:-5}"
