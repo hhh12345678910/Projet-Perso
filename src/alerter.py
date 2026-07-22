@@ -50,6 +50,45 @@ def _round_stake5(eur: float) -> float:
     return max(5.0, round(eur / 5.0) * 5.0)
 
 
+# --- Staking mode -----------------------------------------------------------
+# "kelly" (default, legacy) = quarter-Kelly% × bankroll, capped. This embeds the
+#   1/(odds-1) term, which over-stakes short odds (their edge is thinnest) and
+#   leaks the edge to the book via stake size — a sharp tell.
+# "flat" = base fixe + léger palier EV, SANS pondération par la cote. Anti-
+#   limitation (mises plus uniformes) et aligné sur l'edge réel (l'EV, calibré).
+#   Active-le avec STAKE_MODE=flat dans .env.
+_STAKE_MODE = os.getenv("STAKE_MODE", "kelly").lower()
+_STAKE_BASE_EUR = float(os.getenv("STAKE_BASE_EUR", "25"))   # mise de base par value bet
+_STAKE_EV_TIER = float(os.getenv("STAKE_EV_TIER", "15"))     # EV% à partir duquel on booste
+_STAKE_EV_MULT = float(os.getenv("STAKE_EV_MULT", "1.5"))    # multiplicateur au-dessus du palier
+
+
+def _advised_stake_eur(ev_pct: float | None, kelly_stake_pct: float | None,
+                       bankroll: float) -> float | None:
+    """€ stake advised for a value bet, per _STAKE_MODE. Returns None when no
+    stake can be computed (kelly mode without a stored Kelly%)."""
+    if _STAKE_MODE == "flat":
+        mult = _STAKE_EV_MULT if (ev_pct is not None and ev_pct >= _STAKE_EV_TIER) else 1.0
+        return _round_stake(_STAKE_BASE_EUR * mult)
+    if kelly_stake_pct is None:
+        return None
+    pct = min(kelly_stake_pct, _MAX_STAKE_PCT)
+    return _round_stake(pct / 100.0 * bankroll)
+
+
+def _advised_stake_line(ev_pct: float | None, kelly_stake_pct: float | None,
+                        bankroll: float) -> str:
+    """The 'Mise conseillée : …' text (without leading newline), or '' if none."""
+    stake = _advised_stake_eur(ev_pct, kelly_stake_pct, bankroll)
+    if stake is None:
+        return ""
+    if _STAKE_MODE == "flat":
+        boost = "  ⚡" if (ev_pct is not None and ev_pct >= _STAKE_EV_TIER) else ""
+        return f"Mise conseillée : {stake:.0f}€{boost}"
+    pct = min(kelly_stake_pct, _MAX_STAKE_PCT)
+    return f"Mise conseillée : {stake:.0f}€ ({pct:.2f}% de {bankroll:.0f}€)"
+
+
 # Belgium-friendly display: dates relative to today, kickoff in local time.
 _LOCAL_TZ = ZoneInfo("Europe/Brussels") if ZoneInfo is not None else timezone.utc
 _FR_WEEKDAYS = ["Lundi", "Mardi", "Mercredi", "Jeudi", "Vendredi", "Samedi", "Dimanche"]
@@ -163,6 +202,12 @@ class TelegramConfig:
     min_premium_surebet_pct: float = 5.0  # prematch surebets (margin%) at/above this go to premium
     premium_min_odd: float = 1.5         # premium value bets only within this odds band
     premium_max_odd: float = 4.0
+    # Second premium lane: high odds only when the EV is big. Lets curated
+    # long-shot value (cotes 4–6) reach premium *without* opening the main band
+    # above 4.0. A bet qualifies for premium if it clears EITHER lane.
+    premium_hi_min_ev: float = 20.0      # cotes premium_hi_min_odd..max only if EV >= this
+    premium_hi_min_odd: float = 4.0
+    premium_hi_max_odd: float = 6.0
     # Totals middles — back Over low_line + Under high_line on two books; the
     # gap between the lines is profit. EV is priced against Pinnacle's devigged
     # totals ladder. Routed to the CLV channel (effective_clv_chat_id) per the
@@ -222,6 +267,9 @@ class TelegramConfig:
             min_premium_surebet_pct=float(os.getenv("TELEGRAM_MIN_PREMIUM_SUREBET", "5.0")),
             premium_min_odd=float(os.getenv("TELEGRAM_PREMIUM_MIN_ODD", "1.5")),
             premium_max_odd=float(os.getenv("TELEGRAM_PREMIUM_MAX_ODD", "4.0")),
+            premium_hi_min_ev=float(os.getenv("TELEGRAM_PREMIUM_HI_EV", "20.0")),
+            premium_hi_min_odd=float(os.getenv("TELEGRAM_PREMIUM_HI_MIN_ODD", "4.0")),
+            premium_hi_max_odd=float(os.getenv("TELEGRAM_PREMIUM_HI_MAX_ODD", "6.0")),
             min_middle_ev_pct=float(os.getenv("TELEGRAM_MIN_MIDDLE_EV", "2.0")),
             middle_dedup=os.getenv("TELEGRAM_MIDDLE_DEDUP", "1") == "1",
             middle_ev_delta_pct=float(os.getenv("TELEGRAM_MIDDLE_EV_DELTA", "2.0")),
@@ -390,13 +438,9 @@ def format_clv_alert(
     )
     line_suffix = f" {bet['line']}" if bet["line"] is not None else ""
 
-    kelly_pct = _clv_bet_kelly_pct(bet)
-    if kelly_pct is not None:
-        kelly_pct = min(kelly_pct, _MAX_STAKE_PCT)
-        stake_eur = _round_stake(kelly_pct / 100.0 * bankroll)
-        stake_line = f"\nMise conseillée : {stake_eur:.0f}€ ({kelly_pct:.2f}% de {bankroll:.0f}€)"
-    else:
-        stake_line = ""
+    ev_pct = bet["ev_pct"] if "ev_pct" in bet.keys() else None
+    _s = _advised_stake_line(ev_pct, _clv_bet_kelly_pct(bet), bankroll)
+    stake_line = ("\n" + _s) if _s else ""
 
     return (
         f"{header}\n"
@@ -437,8 +481,7 @@ def format_value_bet(bet: ValueBet, sport: str | None = None,
         f"{_sport_prefix(sport)}{matchup}\n"
         f"{when_line}"
         f"Pari : <b>{bet.outcome.label}{line_suffix}</b> @ {bet.odd_taken:.2f} (fair {bet.fair_odd:.2f})\n"
-        f"Mise conseillée : {_round_stake(min(bet.kelly_stake_pct, _MAX_STAKE_PCT) / 100.0 * bankroll):.0f}€ "
-        f"({min(bet.kelly_stake_pct, _MAX_STAKE_PCT):.2f}% de {bankroll:.0f}€)"
+        f"{_advised_stake_line(bet.ev_pct, bet.kelly_stake_pct, bankroll)}"
     )
 
 
@@ -496,7 +539,7 @@ def _value_bet_play_payload(bet: ValueBet, sport: str | None, bankroll: float) -
         "book": book_name,
         "selection": f"{bet.outcome.label}{line_suffix}",
         "cote": round(bet.odd_taken, 3),
-        "mise": _round_stake(min(bet.kelly_stake_pct, _MAX_STAKE_PCT) / 100.0 * bankroll),
+        "mise": _advised_stake_eur(bet.ev_pct, bet.kelly_stake_pct, bankroll) or 0.0,
         "ev": round(bet.ev_pct, 2),
         "dedup_key": f"{bet.event_key}|{bet.market.value}|{bet.outcome.label}|{bet.outcome.line}",
     }
@@ -599,11 +642,18 @@ class TelegramAlerter:
         ):
             delivered |= self._send(text, chat_id=cfg.chat_id)
 
+        _prem_standard = (
+            ev >= cfg.min_premium_ev_pct
+            and cfg.premium_min_odd <= bet.odd_taken <= cfg.premium_max_odd
+        )
+        _prem_high_odds = (
+            ev >= cfg.premium_hi_min_ev
+            and cfg.premium_hi_min_odd <= bet.odd_taken <= cfg.premium_hi_max_odd
+        )
         if (
             not is_live
             and cfg.effective_premium_chat_id
-            and ev >= cfg.min_premium_ev_pct
-            and cfg.premium_min_odd <= bet.odd_taken <= cfg.premium_max_odd
+            and (_prem_standard or _prem_high_odds)
         ):
             button = None
             try:
