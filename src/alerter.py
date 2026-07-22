@@ -58,9 +58,15 @@ def _round_stake5(eur: float) -> float:
 #   limitation (mises plus uniformes) et aligné sur l'edge réel (l'EV, calibré).
 #   Active-le avec STAKE_MODE=flat dans .env.
 _STAKE_MODE = os.getenv("STAKE_MODE", "kelly").lower()
-_STAKE_BASE_EUR = float(os.getenv("STAKE_BASE_EUR", "25"))   # mise de base par value bet
-_STAKE_EV_TIER = float(os.getenv("STAKE_EV_TIER", "15"))     # EV% à partir duquel on booste
-_STAKE_EV_MULT = float(os.getenv("STAKE_EV_MULT", "1.5"))    # multiplicateur au-dessus du palier
+# Mode "flat" = mise STABLE, indépendante de la cote, avec un léger nudge EV.
+#   base = STAKE_PCT % de la bankroll (look "Kelly" : mise en % du capital, donc
+#   la bankroll pilote le niveau) ; si STAKE_PCT=0 on retombe sur STAKE_BASE_EUR
+#   (€ fixe). Boost DOUX au-dessus de STAKE_EV_TIER (1.0 = l'EV n'influence pas
+#   du tout). La cote n'entre JAMAIS dans le calcul.
+_STAKE_PCT = float(os.getenv("STAKE_PCT", "2.0"))            # base = ce % de la bankroll (0 => € fixe)
+_STAKE_BASE_EUR = float(os.getenv("STAKE_BASE_EUR", "25"))   # base € fixe si STAKE_PCT=0
+_STAKE_EV_TIER = float(os.getenv("STAKE_EV_TIER", "15"))     # EV% à partir duquel léger boost
+_STAKE_EV_MULT = float(os.getenv("STAKE_EV_MULT", "1.25"))   # boost DOUX (1.0 = pas d'influence EV)
 
 
 def _advised_stake_eur(ev_pct: float | None, kelly_stake_pct: float | None,
@@ -68,8 +74,9 @@ def _advised_stake_eur(ev_pct: float | None, kelly_stake_pct: float | None,
     """€ stake advised for a value bet, per _STAKE_MODE. Returns None when no
     stake can be computed (kelly mode without a stored Kelly%)."""
     if _STAKE_MODE == "flat":
+        base = (_STAKE_PCT / 100.0 * bankroll) if _STAKE_PCT > 0 else _STAKE_BASE_EUR
         mult = _STAKE_EV_MULT if (ev_pct is not None and ev_pct >= _STAKE_EV_TIER) else 1.0
-        return _round_stake(_STAKE_BASE_EUR * mult)
+        return _round_stake(base * mult)
     if kelly_stake_pct is None:
         return None
     pct = min(kelly_stake_pct, _MAX_STAKE_PCT)
@@ -84,6 +91,8 @@ def _advised_stake_line(ev_pct: float | None, kelly_stake_pct: float | None,
         return ""
     if _STAKE_MODE == "flat":
         boost = "  ⚡" if (ev_pct is not None and ev_pct >= _STAKE_EV_TIER) else ""
+        if _STAKE_PCT > 0 and bankroll > 0:
+            return f"Mise conseillée : {stake:.0f}€ ({stake / bankroll * 100:.1f}% de {bankroll:.0f}€){boost}"
         return f"Mise conseillée : {stake:.0f}€{boost}"
     pct = min(kelly_stake_pct, _MAX_STAKE_PCT)
     return f"Mise conseillée : {stake:.0f}€ ({pct:.2f}% de {bankroll:.0f}€)"
