@@ -4,6 +4,7 @@
 // @version      1.0.0
 // @description  Fetch Betano's live overview from a real browser session (valid cf_clearance + DataDome cookies, home IP) and push it to the Valuebet VM. Keeps Betano fresh with zero manual cookie pasting.
 // @match        https://www.betanosports.be/*
+// @match        https://betanosports.be/*
 // @grant        GM_xmlhttpRequest
 // @connect      34.59.193.111
 // @run-at       document-idle
@@ -141,7 +142,12 @@
     }, Math.max(2000, INTERVAL_MS + jitter));
   }
 
-  if (TOKEN === "REPLACE_WITH_YOUR_TOKEN") {
+  // Guard against an unset token. Deliberately NOT an equality check against the
+  // placeholder string — a find-and-replace of REPLACE_WITH_YOUR_TOKEN would
+  // rewrite that literal too and defeat the guard. A real token is a long hex
+  // string, so "still contains the placeholder word" / "too short" catches the
+  // not-yet-configured case without matching any valid token.
+  if (TOKEN.indexOf("REPLACE_WITH") !== -1 || TOKEN.length < 16) {
     console.error(LOG, "TOKEN not set — edit the userscript and paste your BETANO_INGEST_TOKEN.");
     setBadge("TOKEN not set — edit the script", "#ff9800");
     return;
