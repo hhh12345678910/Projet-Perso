@@ -627,7 +627,7 @@ class TelegramAlerter:
         if f"{bet.event_key}|{bet.market.value}|{bet.outcome.label}|{bet.outcome.line}" in self._played_keys:
             return False
         ev = bet.ev_pct
-        text = format_value_bet(bet, sport=sport)
+        text = format_value_bet(bet, sport=sport, bankroll=cfg.bankroll)
         delivered = False
 
         # Premium is a prematch-only channel: a value bet whose kickoff has

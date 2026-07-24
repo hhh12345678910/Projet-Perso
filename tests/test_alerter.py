@@ -643,6 +643,30 @@ def test_high_clv_now_lands_in_normal_clv_channel():
     assert "🔥" in text  # high-CLV header retained even though routing merged
 
 
+def test_sent_value_bet_text_uses_configured_bankroll():
+    """Regression: send_value_bet must format the message with cfg.bankroll, not
+    the format_value_bet default (1000€). A bet on a 1250€ bankroll used to be
+    advertised with a stake computed on 1000€ (20€ instead of 25€ in flat mode;
+    the kelly-mode 'de 1000€' label here proves the same wiring bug)."""
+    texts = []
+
+    class FakeClient:
+        def post(self, url, json):
+            texts.append(json["text"])
+            r = MagicMock(); r.status_code = 200
+            return r
+        def close(self): pass
+
+    cfg = TelegramConfig(
+        bot_token="t", chat_id="c", min_ev_pct=3.0, main_max_ev_pct=100.0,
+        bankroll=1250.0, min_send_interval_s=0.0,
+    )
+    with TelegramAlerter(cfg, client=FakeClient()) as a:
+        assert a.send_value_bet(_bet(ev_pct=7.0)) is True
+    assert texts and "de 1250€" in texts[0]
+    assert "de 1000€" not in texts[0]
+
+
 def test_premium_channel_not_called_without_config():
     """No premium_chat_id → big value bets only hit the main channel."""
     client = MagicMock(spec=httpx.Client)
