@@ -99,9 +99,13 @@ class MeridianScraper:
 
     def fetch_all_events(self, sport: str = "soccer", *, max_pages: int = 25) -> dict:
         """Page through the offer until a page returns no leagues, merging every
-        league's events into one payload (the shape parse_offer consumes)."""
+        league's events into one payload (the shape parse_offer consumes).
+
+        The offer endpoint is 0-indexed: page 0 carries the first (and often the
+        headline) leagues. Starting at page 1 silently dropped that whole first
+        page — a chunk of the offer every scan — so we start at 0."""
         leagues: list = []
-        for page in range(1, max_pages + 1):
+        for page in range(0, max_pages):
             try:
                 payload = (self.fetch_offer_page(sport, page) or {}).get("payload") or {}
             except httpx.HTTPError:
