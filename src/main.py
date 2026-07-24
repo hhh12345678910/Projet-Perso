@@ -490,7 +490,7 @@ def _fetch_all_parallel(
         # MeridianBet: scraper prêt mais l'API exige un token (anti-bot
         # TrafficGuard) -> réactiver ici une fois le token capturé.
         # "MeridianBet": lambda: fetch_meridian_quotes(sport),
-        # "BetFirst":      lambda: fetch_betfirst_quotes(sport),  # desactive temporairement
+        "BetFirst":      lambda: fetch_betfirst_quotes(sport),
         "Ladbrokes":     lambda: fetch_ladbrokes_quotes(sport),
         "StarCasino":    lambda: fetch_starcasinosport_quotes(sport),
         "Napoleon":      lambda: fetch_napoleon_quotes(sport),
