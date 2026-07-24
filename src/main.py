@@ -490,11 +490,10 @@ def _fetch_all_parallel(
         # MeridianBet: scraper prêt mais l'API exige un token (anti-bot
         # TrafficGuard) -> réactiver ici une fois le token capturé.
         # "MeridianBet": lambda: fetch_meridian_quotes(sport),
-        # BetFirst: l'endpoint d-cf.betfirstplayground.net (CloudFront) blackhole
-        # désormais l'IP du VPS -> ReadTimeout (WAF anti-bot / host de staging
-        # déprécié). Laissé actif il bloque ~45s/cycle (15s x3 retries). À
-        # réactiver une fois la nouvelle API trouvée via un HAR de sports.betfirst.be.
-        # "BetFirst":      lambda: fetch_betfirst_quotes(sport),
+        # BetFirst: le backend exige désormais le sessiontoken invité + en-têtes
+        # x-sb-* complets (cf. _headers() dans betfirst.py) — sans quoi la requête
+        # est blackholée. Réactivé une fois ces en-têtes ajoutés.
+        "BetFirst":      lambda: fetch_betfirst_quotes(sport),
         "Ladbrokes":     lambda: fetch_ladbrokes_quotes(sport),
         "StarCasino":    lambda: fetch_starcasinosport_quotes(sport),
         "Napoleon":      lambda: fetch_napoleon_quotes(sport),

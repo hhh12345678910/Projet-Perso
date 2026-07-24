@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import uuid
 from datetime import datetime, timedelta, timezone
 from typing import Any, Iterator
 
@@ -39,22 +40,44 @@ def _is_retryable(exc: BaseException) -> bool:
 
 _BRAND_ID = "4a876283-f28e-4396-bb32-d72b02b2e535"  # BetFirst's brandId
 
+# Guest/anonymous session JWT the frontend ships to every visitor — payload is a
+# fixed placeholder identity (userId 111…, jurisdiction "Unknown"), not tied to a
+# login, so it's safe to embed. The backend started REQUIRING it: without a
+# sessiontoken the header-complete request is silently dropped (ReadTimeout) even
+# though the other x-sb-* headers are present — which is why BetFirst went dark.
+_GUEST_SESSION_TOKEN = (
+    "ew0KICAiYWxnIjogIkhTMjU2IiwNCiAgInR5cCI6ICJKV1QiDQp9."
+    "ew0KICAianVyaXNkaWN0aW9uIjogIlVua25vd24iLA0KICAidXNlcklkIjogIjExMTExMTExLTExMTEt"
+    "MTExMS0xMTExLTExMTExMTExMTExMSIsDQogICJsb2dpblNlc3Npb25JZCI6ICIxMTExMTExMS0xMTEx"
+    "LTExMTEtMTExMS0xMTExMTExMTExMTEiDQp9."
+    "yuBO_qNKJHtbCWK3z04cEqU59EKU8pZb2kXHhZ7IeuI"
+)
+# Guest context identifiers the SB platform stamps on anonymous traffic. Stable
+# (derived from brand/jurisdiction/segment, not a login session).
+_STATIC_CONTEXT_ID = "stc--1472654605"
+_SEGMENT_ID = "cd84f9f8-9d56-4985-94b1-773eaac4868a"
+
 
 def _headers() -> dict[str, str]:
     # The sportsbook backend validates a set of Entain OBG / SB-platform
-    # headers (brandid, marketcode, x-sb-*); without them every request 400s
-    # with E_VALIDATION_INVALIDHEADER.
+    # headers (brandid, marketcode, sessiontoken, x-sb-*); without the full set
+    # a request either 400s (E_VALIDATION_INVALIDHEADER) or, when only the
+    # sessiontoken is missing, is silently blackholed (ReadTimeout).
     return {
         "Accept": "application/json, text/plain, */*",
         "Accept-Language": "fr-BE,fr;q=0.9,en;q=0.8",
+        "Content-Type": "application/json",
         "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 "
-        "(KHTML, like Gecko) Chrome/148.0.0.0 Safari/537.36",
+        "(KHTML, like Gecko) Chrome/150.0.0.0 Safari/537.36",
         "Origin": "https://sports.betfirst.be",
         "Referer": "https://sports.betfirst.be/",
         "brandid": _BRAND_ID,
         "marketcode": "bx",
+        "correlationid": str(uuid.uuid4()),  # per-request trace id, like the browser
+        "sessiontoken": _GUEST_SESSION_TOKEN,
         "x-obg-channel": "Web",
         "x-obg-device": "Desktop",
+        "x-sb-app-version": "8.0.6.4335-r13a4254",
         "x-sb-channel": "Web",
         "x-sb-content-id": _BRAND_ID,
         "x-sb-country-code": "BE",
@@ -63,7 +86,10 @@ def _headers() -> dict[str, str]:
         "x-sb-identifier": "EVENT_TABLE_REQUEST",
         "x-sb-jurisdiction": "Bgc",
         "x-sb-language-code": "bx",
+        "x-sb-segment-id": _SEGMENT_ID,
+        "x-sb-static-context-id": _STATIC_CONTEXT_ID,
         "x-sb-type": "b2b",
+        "x-sb-user-context-id": _STATIC_CONTEXT_ID,
     }
 
 
