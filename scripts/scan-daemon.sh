@@ -20,12 +20,25 @@ SPORT_LIST="${SPORT_LIST:-soccer,tennis,basketball,hockey,volleyball}"
 BREATHER="${BREATHER:-10}"
 MIN_EV="${MIN_EV:-5}"
 LOG_FILE="${LOG_FILE:-$PROJECT_DIR/valuebet.log}"
+# Betano is fed by the browser userscript -> betano_ingest_server.py, which
+# writes this JSON file. Default matches the ingest server's default output.
+# Set BETANO_FILE= (empty) in .env to fall back to the live cookie path.
+BETANO_FILE="${BETANO_FILE:-$PROJECT_DIR/data/betano.json}"
 
 exec >> "$LOG_FILE" 2>&1
 
 cd "$PROJECT_DIR"
 
+# Only pass --betano-file when the file actually exists, so a fresh install
+# (server not started yet) doesn't wedge Betano on a missing path — the daemon
+# then just skips Betano until the first push lands.
+BETANO_ARGS=()
+if [ -n "$BETANO_FILE" ] && [ -f "$BETANO_FILE" ]; then
+    BETANO_ARGS=(--betano-file "$BETANO_FILE")
+fi
+
 exec "$PROJECT_DIR/runscan.sh" daemon \
     --sport "$SPORT_LIST" \
     --breather "$BREATHER" \
-    --min-ev "$MIN_EV"
+    --min-ev "$MIN_EV" \
+    "${BETANO_ARGS[@]}"
