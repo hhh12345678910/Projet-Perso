@@ -29,13 +29,19 @@
   const seen = new Set();
   let pending = [];
 
+  // Static assets only — everything else is reported. The previous version
+  // filtered to URLs containing "danae-webapi", which would silently hide a
+  // prematch API served from any other path or host; that assumption is
+  // exactly what needs testing, so it can't be baked into the filter.
+  const SKIP = /\.(js|mjs|css|png|jpe?g|gif|svg|webp|avif|woff2?|ttf|eot|ico|map)(\?|$)/i;
+
   function note(url, how) {
     try {
       const s = String(url);
-      if (s.indexOf("danae-webapi") === -1) return;
-      // Keep the query here — unlike the odds script's hook, the parameters are
-      // exactly what distinguishes a prematch call from a live one, so they're
-      // the interesting part. Only the volatile contentVersion is collapsed.
+      if (!s || SKIP.test(s)) return;
+      // Keep the query: the parameters are what distinguish a prematch call
+      // from a live one. Only volatile ids are collapsed so one polling
+      // endpoint doesn't fill the log.
       const key = how + " " + s.replace(/\/\d{6,}(\/|$)/g, "/{v}$1");
       if (seen.has(key)) return;
       seen.add(key);

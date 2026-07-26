@@ -1528,37 +1528,45 @@ def betano_coverage(
         console.print(f"[yellow]No events in {path}.[/yellow]")
         return
 
-    # league -> sport, so events can be attributed to a sport even when the
-    # event record itself only carries a league reference.
-    league_sport: dict[str, str] = {}
-    for lid, lg in leagues.items():
-        if isinstance(lg, dict):
-            league_sport[str(lid)] = str(
-                lg.get("sportName") or lg.get("sportId") or lg.get("sport") or "?"
-            )
+    # Events carry a sportId; the readable name lives in the top-level `sports`
+    # store. Leagues only have {id, name, eventIdList, displayOrder}, so they
+    # can't be used for this.
+    sports_raw = data.get("sports") or {}
+    sport_names: dict[str, str] = {}
+    for container in (sports_raw.get("byId"), sports_raw):
+        if isinstance(container, dict):
+            for sid, s in container.items():
+                if isinstance(s, dict) and s.get("name"):
+                    sport_names[str(sid)] = str(s["name"])
+    league_names = {
+        str(lid): str(lg.get("name") or lid)
+        for lid, lg in leagues.items()
+        if isinstance(lg, dict)
+    }
 
     now = datetime.now(timezone.utc)
     by_sport: dict[str, int] = defaultdict(int)
     live = upcoming = undated = 0
     horizons: dict[str, int] = defaultdict(int)
     latest: datetime | None = None
+    top_leagues: dict[str, int] = defaultdict(int)
 
     for ev in events.values():
         if not isinstance(ev, dict):
             continue
-        sport = (
-            ev.get("sportName")
-            or league_sport.get(str(ev.get("leagueId") or ev.get("league") or ""))
-            or ev.get("sportId")
-            or "?"
-        )
-        by_sport[str(sport)] += 1
+        sid = str(ev.get("sportId") or ev.get("ardSportId") or "")
+        by_sport[sport_names.get(sid, f"sportId={sid}" if sid else "?")] += 1
+        top_leagues[league_names.get(str(ev.get("leagueId") or ""), "?")] += 1
 
         start = _parse_datetime(_first(ev, _FIELDS_EVENT_START))
+        # Trust the feed's own isLive flag over comparing timestamps: an event
+        # can be past its start time and not yet in play (delays), and this is
+        # the field the site itself renders from.
+        is_live = ev.get("isLive")
         if start is None:
             undated += 1
             continue
-        if start <= now:
+        if is_live is True or (is_live is None and start <= now):
             live += 1
         else:
             upcoming += 1
@@ -1589,6 +1597,13 @@ def betano_coverage(
         for k, n in sorted(horizons.items(), key=lambda kv: -kv[1]):
             ht.add_row(k, str(n))
         console.print(ht)
+
+    lt = Table(title="Top 10 compétitions", show_lines=False)
+    lt.add_column("compétition")
+    lt.add_column("events", justify="right")
+    for name, n in sorted(top_leagues.items(), key=lambda kv: -kv[1])[:10]:
+        lt.add_row(name, str(n))
+    console.print(lt)
 
     quotes = list(betano_parse_overview(data))
     console.print(f"\n[bold]Parser produced {len(quotes)} OddQuote(s).[/bold]")
