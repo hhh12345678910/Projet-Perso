@@ -2195,8 +2195,21 @@ def doctor(hours: int = typer.Option(24, "--hours", help="Lookback window.")):
         console.print(f"[yellow]Base absente ({db}).[/yellow]")
     else:
         since = (now - timedelta(hours=hours)).isoformat()
-        con = _sq.connect(str(db))
+        # A short timeout rather than the default: the daemon writes constantly,
+        # and a diagnostic that blocks on its lock is useless.
+        con = _sq.connect(str(db), timeout=5.0)
         con.row_factory = _sq.Row
+
+        def _rows(sql: str, args: tuple = ()) -> list:
+            """Missing tables and lock contention must degrade to an empty
+            section, not kill the whole report — the services and feed checks
+            above are often the ones you actually came for."""
+            try:
+                return list(con.execute(sql, args))
+            except _sq.Error as e:
+                console.print(f"[yellow]  (lecture base impossible : {e})[/yellow]")
+                return []
+
         try:
             bt = Table(title=f"Par book sur {hours} h", show_lines=False)
             bt.add_column("book")
@@ -2205,12 +2218,12 @@ def doctor(hours: int = typer.Option(24, "--hours", help="Lookback window.")):
             bt.add_column("alertes envoyées", justify="right")
             bt.add_column("meilleur EV%", justify="right")
 
-            quotes = {r["book"]: r["n"] for r in con.execute(
+            quotes = {r["book"]: r["n"] for r in _rows(
                 "SELECT book, COUNT(*) n FROM quotes WHERE fetched_at >= ? GROUP BY book", (since,))}
-            vbs = {r["book"]: (r["n"], r["mx"]) for r in con.execute(
+            vbs = {r["book"]: (r["n"], r["mx"]) for r in _rows(
                 "SELECT book, COUNT(*) n, MAX(ev_pct) mx FROM value_bets "
                 "WHERE detected_at >= ? GROUP BY book", (since,))}
-            notified = {r["book"]: r["n"] for r in con.execute(
+            notified = {r["book"]: r["n"] for r in _rows(
                 "SELECT book, COUNT(*) n FROM notified_value_bets "
                 "WHERE notified_at >= ? GROUP BY book", (since,))}
 
