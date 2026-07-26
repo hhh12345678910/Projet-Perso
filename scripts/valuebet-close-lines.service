@@ -1,0 +1,8 @@
+[Unit]
+Description=Snapshot Pinnacle closing lines for value bets past kickoff
+
+[Service]
+Type=oneshot
+User=ubuntu
+WorkingDirectory=/home/ubuntu/Projet-Perso
+ExecStart=/home/ubuntu/Projet-Perso/runscan.sh close-lines

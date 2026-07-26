@@ -1,0 +1,13 @@
+[Unit]
+Description=Hourly closing-line capture
+
+[Timer]
+# Must run more often than the quotes retention window, and well within it:
+# the closing price only exists in our own capture (Pinnacle drops prematch
+# markets at kickoff), so once prune deletes those rows the CLV for those bets
+# is unrecoverable. Hourly against a 2-day retention leaves a wide margin.
+OnCalendar=*:05
+Persistent=true
+
+[Install]
+WantedBy=timers.target
