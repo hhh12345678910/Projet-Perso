@@ -32,7 +32,6 @@ from .scrapers.betfirst import BetFirstScraper, parse_events_table as betfirst_p
 from .scrapers.goldenpalace import GoldenPalaceScraper, parse_get_events as goldenpalace_parse_get_events
 from .scrapers.ladbrokes import LadbrokesScraper, parse_prematch as ladbrokes_parse_prematch
 from .scrapers.pinnacle import PinnacleScraper
-from .scrapers.smarkets import SmarketsScraper, iter_all_quotes as smarkets_iter_all_quotes
 from .scrapers.sevenelevenbe import SevenElevenScraper, parse_listview as sevenelevenbe_parse_listview
 from .scrapers.bingoal import BingoalScraper, parse_listview as bingoal_parse_listview
 from .scrapers.scooore import ScoooreScraper, parse_listview as scooore_parse_listview
@@ -117,7 +116,11 @@ def build_fair_lines(
             ref_book = Book.PINNACLE
         else:
             outcomes = sec_probs  # type: ignore[assignment]
-            ref_book = Book.SMARKETS
+            # Read the source off the quotes rather than naming one: nothing
+            # feeds this today, and hardcoding a particular book would be wrong
+            # the moment something else does.
+            group = secondary_groups.get(key) or []
+            ref_book = group[0].book if group else Book.PINNACLE
 
         if not outcomes:
             continue
@@ -271,39 +274,13 @@ def remap_to_reference(
     return out
 
 
-# Books used as sharp references, never as something to bet on. They price the
-# fair line; they're not soft books whose mistakes we're hunting.
+# Books used as sharp references, never as something to bet on: they price the
+# fair line rather than being where a mispricing is hunted. Smarkets is listed
+# because the exchange scraper still exists — it was wired in as a fallback
+# reference and removed again after a refresh was measured taking 26 minutes
+# and stalling scan cycles. Should it ever come back, it must land here and not
+# in the soft-book pool.
 SHARP_BOOKS = frozenset({Book.PINNACLE, Book.SMARKETS})
-
-
-def align_secondary_sharp(
-    pinnacle_q: list[OddQuote],
-    secondary_raw: list[OddQuote],
-) -> list[OddQuote]:
-    """Re-key a second sharp source onto Pinnacle's frame.
-
-    Two jobs at once. Where both price the same event, the quotes must land on
-    the same event_key or build_fair_lines would treat them as separate events
-    and never blend them. Where Pinnacle is absent, the event keeps its own key
-    and becomes the anchor for a fair line Pinnacle can't provide — which is
-    the entire point of a secondary sharp source."""
-    mapping = reconcile_event_keys(
-        reference_keys=[q.event_key for q in pinnacle_q],
-        candidate_keys={q.event_key for q in secondary_raw},
-    )
-    out: list[OddQuote] = []
-    for q in secondary_raw:
-        match = mapping.get(q.event_key)
-        if match is None:
-            out.append(q)
-            continue
-        ref_key, swap = match
-        if ref_key == q.event_key and not swap:
-            out.append(q)
-        else:
-            flipped = _flip_outcome_for_swap(q.outcome, q.market) if swap else q.outcome
-            out.append(replace(q, event_key=ref_key, outcome=flipped))
-    return out
 
 
 def canonicalize_for_surebets(
@@ -445,65 +422,6 @@ def fetch_betano_quotes(
     return quotes
 
 
-# Smarkets needs one request per event, paced 0.5s apart to stay under its
-# per-IP cap. Measured on a live install: a refresh took ~26 MINUTES, and
-# because it ran inside the scan cycle it blocked that sport entirely — no
-# alerts at all for the duration. Freshness here is worth far less than that:
-# this source is only consulted for markets Pinnacle doesn't price, which are
-# prematch prices that drift slowly.
-#
-# So the cycle never waits for it. It reads whatever snapshot exists and, when
-# that snapshot is stale, kicks off a background refresh for next time. The
-# first cycle after startup therefore has no fallback lines, which is the
-# correct trade: a missing fallback costs a few events, a blocked cycle costs
-# every alert on that sport.
-_SMARKETS_CACHE: dict[str, tuple[float, list[OddQuote]]] = {}
-_SMARKETS_REFRESHING: set[str] = set()
-_SMARKETS_LOCK = threading.Lock()
-
-
-def _smarkets_refresh(sport: str) -> None:
-    """Background worker. Never raises — a failure leaves the previous snapshot
-    in place and only resets the clock, so one bad scrape doesn't drop the
-    fallback and doesn't trigger an immediate retry storm either."""
-    quotes: list[OddQuote] | None = None
-    try:
-        with SmarketsScraper() as sm:
-            quotes = list(smarkets_iter_all_quotes(
-                sm, sport, max_events=int(os.getenv("SMARKETS_MAX_EVENTS", "150")),
-            ))
-    except Exception as e:
-        console.print(f"[yellow]Smarkets ({sport}) refresh échoué : {e}[/yellow]")
-    finally:
-        with _SMARKETS_LOCK:
-            previous = _SMARKETS_CACHE.get(sport)
-            kept = quotes if quotes is not None else (previous[1] if previous else [])
-            _SMARKETS_CACHE[sport] = (time.monotonic(), kept)
-            _SMARKETS_REFRESHING.discard(sport)
-
-
-def fetch_smarkets_quotes(sport: str) -> list[OddQuote]:
-    """Smarkets exchange mid-prices, used as a *fallback* sharp reference.
-
-    Returns immediately, always: the last snapshot, refreshed out of band.
-    Set USE_SMARKETS=1 to enable, SMARKETS_TTL_S to tune the refresh interval,
-    SMARKETS_MAX_EVENTS to bound how much one refresh walks."""
-    ttl = float(os.getenv("SMARKETS_TTL_S", "900"))
-    now = time.monotonic()
-    with _SMARKETS_LOCK:
-        cached = _SMARKETS_CACHE.get(sport)
-        stale = cached is None or (now - cached[0]) >= ttl
-        launch = stale and sport not in _SMARKETS_REFRESHING
-        if launch:
-            _SMARKETS_REFRESHING.add(sport)
-    if launch:
-        threading.Thread(
-            target=_smarkets_refresh, args=(sport,),
-            name=f"smarkets-{sport}", daemon=True,
-        ).start()
-    return list(cached[1]) if cached is not None else []
-
-
 def fetch_unibet_quotes(sport: str) -> list[OddQuote]:
     """Fetch + parse every Unibet (Kambi) event by iterating each leaf termKey
     under the sport's group — far better coverage than the bare listView."""
@@ -639,7 +557,7 @@ def _fetch_all_parallel(
     include_file_books: bool = True,
 ) -> list[OddQuote]:
     """Fetch Pinnacle + all soft books concurrently. Returns the merged list;
-    callers split by book to route Pinnacle/Smarkets as sharp references."""
+    callers split by book to route the sharp reference separately."""
     def _pinnacle() -> list[OddQuote]:
         with PinnacleScraper() as pin:
             return list(pin.fetch_market_quotes(sport))
@@ -661,9 +579,6 @@ def _fetch_all_parallel(
         "Ladbrokes":     lambda: fetch_ladbrokes_quotes(sport),
         "StarCasino":    lambda: fetch_starcasinosport_quotes(sport),
         "Napoleon":      lambda: fetch_napoleon_quotes(sport),
-        # Smarkets is a sharp reference, not a soft book — see SHARP_BOOKS.
-        **({"Smarkets": lambda: fetch_smarkets_quotes(sport)}
-           if os.getenv("USE_SMARKETS", "").strip() not in ("", "0", "false") else {}),
         # "Betcenter":     lambda: fetch_betcenter_quotes(sport),  # desactive: cotes erronees
         # Golden Palace retiré: compte limité, plus exploitable.
     }
@@ -966,18 +881,14 @@ def _daemon_scan_sport(
             include_file_books=(current_sport == "soccer"),
         )
         pinnacle_q = [q for q in all_q if q.book == Book.PINNACLE]
-        secondary_raw = [q for q in all_q if q.book == Book.SMARKETS]
         soft_raw   = [q for q in all_q if q.book not in SHARP_BOOKS]
 
-        if not pinnacle_q and not secondary_raw:
-            console.print(f"[yellow]\\[{current_sport}]   No sharp quotes — skipping[/yellow]")
+        if not pinnacle_q:
+            console.print(f"[yellow]\\[{current_sport}]   No Pinnacle quotes — skipping[/yellow]")
             return
 
         cfg = ScanConfig(sport=current_sport, min_ev_pct=min_ev, bankroll=bankroll)
-        fair = build_fair_lines(
-            pinnacle_q, cfg.devig_method,
-            secondary_quotes=align_secondary_sharp(pinnacle_q, secondary_raw) or None,
-        )
+        fair = build_fair_lines(pinnacle_q, cfg.devig_method)
         # Persist the event (with its sport) for every Pinnacle event in the
         # reference frame. Value bets are keyed onto these same event_keys, so
         # this lets clv-report break CLV down per sport instead of "unknown".
@@ -2403,67 +2314,6 @@ def doctor(hours: int = typer.Option(24, "--hours", help="Lookback window.")):
             console.print(f"  • {p}")
     else:
         console.print("[bold green]Tout est en ordre.[/bold green]")
-
-
-@app.command(name="smarkets-impact")
-def smarkets_impact(sport: str = typer.Option("soccer", "--sport")):
-    """Measure what the fallback sharp source actually adds.
-
-    The only question worth asking about it: how many markets does it price
-    that Pinnacle doesn't, and do those turn into value bets that would
-    otherwise be impossible? A source that merely duplicates Pinnacle costs a
-    scrape and changes nothing."""
-    if os.getenv("USE_SMARKETS", "").strip() in ("", "0", "false"):
-        console.print("[yellow]USE_SMARKETS n'est pas activé — rien à mesurer.[/yellow]")
-        raise typer.Exit(1)
-
-    for current_sport in [s.strip() for s in sport.split(",") if s.strip()]:
-        console.print(f"\n[bold green]══ {current_sport.upper()} ══[/bold green]")
-        cfg = ScanConfig(sport=current_sport)
-        all_q = _fetch_all_parallel(current_sport, "data/betano.json", include_file_books=True)
-        pinnacle_q = [q for q in all_q if q.book == Book.PINNACLE]
-        secondary_raw = [q for q in all_q if q.book == Book.SMARKETS]
-        soft_raw = [q for q in all_q if q.book not in SHARP_BOOKS]
-
-        if not secondary_raw:
-            console.print("[yellow]Smarkets n'a renvoyé aucune cote.[/yellow]")
-            continue
-
-        aligned = align_secondary_sharp(pinnacle_q, secondary_raw)
-        pin_events = {q.event_key for q in pinnacle_q}
-        sec_events = {q.event_key for q in aligned}
-
-        console.print(f"  Pinnacle : {len(pin_events)} événements")
-        console.print(f"  Smarkets : {len(sec_events)} événements "
-                      f"({len(sec_events & pin_events)} en commun)")
-        console.print(f"  [bold]exclusifs à Smarkets : {len(sec_events - pin_events)}[/bold]")
-
-        # With and without, so the delta is the fallback's actual contribution
-        # rather than a number that merely looks large.
-        fair_pin = build_fair_lines(pinnacle_q, cfg.devig_method)
-        fair_both = build_fair_lines(pinnacle_q, cfg.devig_method, secondary_quotes=aligned)
-        soft_pin = remap_to_reference(soft_raw, {f.event_key for f in fair_pin.values()})
-        soft_both = remap_to_reference(soft_raw, {f.event_key for f in fair_both.values()})
-        bets_pin = find_value_bets(soft_pin, fair_pin, cfg)
-        bets_both = find_value_bets(soft_both, fair_both, cfg)
-
-        console.print(f"\n  lignes justes : {len(fair_pin)} → [bold]{len(fair_both)}[/bold]")
-        console.print(f"  value bets    : {len(bets_pin)} → [bold]{len(bets_both)}[/bold] "
-                      f"(+{len(bets_both) - len(bets_pin)})")
-
-        added = [b for b in bets_both if b.reference_book is Book.SMARKETS]
-        if not added:
-            console.print("[yellow]  Aucun value bet ne repose sur Smarkets — "
-                          "il ne fait que doubler Pinnacle ici.[/yellow]")
-            continue
-        t = Table(title="Value bets rendus possibles par Smarkets", show_lines=False)
-        t.add_column("event", overflow="fold")
-        t.add_column("book")
-        t.add_column("cote", justify="right")
-        t.add_column("EV%", justify="right")
-        for b in sorted(added, key=lambda x: -x.ev_pct)[:15]:
-            t.add_row(b.event_key, b.book.value, f"{b.odd_taken:.2f}", f"{b.ev_pct:.2f}")
-        console.print(t)
 
 
 @app.command()
