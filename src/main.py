@@ -1614,6 +1614,52 @@ def betano_coverage(
         console.print(f"  {m}: {n}")
 
 
+@app.command(name="inspect-json")
+def inspect_json(
+    path: str = typer.Argument(..., help="JSON file to summarise."),
+    depth: int = typer.Option(4, "--depth", help="How deep to walk."),
+    samples: int = typer.Option(2, "--samples", help="Items to show per list/dict."),
+):
+    """Print the shape of an arbitrary JSON payload — keys, types, sample values.
+
+    Betano's prematch offer lives on a different API (/fr/api/...) whose shape
+    is unrelated to the danae-webapi overview parse_overview() handles. This
+    prints enough structure to write a parser against without dumping megabytes
+    of odds."""
+    import json as _json
+    from pathlib import Path as _Path
+
+    try:
+        data = _json.loads(_Path(path).read_text())
+    except (OSError, ValueError) as e:
+        console.print(f"[red]Unreadable {path}: {e}[/red]")
+        raise typer.Exit(1)
+
+    # Keys are printed inside brackets, which Rich would swallow as markup —
+    # escape everything that comes from the payload.
+    from rich.markup import escape as _esc
+
+    def walk(node: object, prefix: str, level: int) -> None:
+        if level > depth:
+            return
+        pad = "  " * level
+        p = _esc(prefix)
+        if isinstance(node, dict):
+            keys = _esc(str(sorted(map(str, node))[:25]))
+            console.print(f"{pad}{p} [cyan]dict[/cyan]({len(node)}) keys={keys}")
+            for k in list(node)[:samples]:
+                walk(node[k], f"[{k}]", level + 1)
+        elif isinstance(node, list):
+            console.print(f"{pad}{p} [magenta]list[/magenta]({len(node)})")
+            for item in node[:samples]:
+                walk(item, "[]", level + 1)
+        else:
+            console.print(f"{pad}{p} {type(node).__name__} = {_esc(repr(node)[:120])}")
+
+    console.print(f"[bold]{path}[/bold]")
+    walk(data, "root", 0)
+
+
 @app.command()
 def selftest():
     """Sanity check on math primitives."""

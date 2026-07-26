@@ -65,6 +65,8 @@ OUT_FILE = Path(
 COOKIE_FILE = Path(
     os.getenv("BETANO_COOKIE_FILE", str(_project_dir() / "data" / "betano_cookie.json"))
 )
+# Captured payloads from endpoints whose shape isn't known yet.
+SAMPLE_DIR = Path(os.getenv("BETANO_SAMPLE_DIR", str(_project_dir() / "data" / "samples")))
 HOST = os.getenv("BETANO_INGEST_HOST", "0.0.0.0")
 PORT = int(os.getenv("BETANO_INGEST_PORT", "8787"))
 MAX_BYTES = int(float(os.getenv("BETANO_INGEST_MAX_MB", "32")) * 1024 * 1024)
@@ -199,9 +201,35 @@ class Handler(BaseHTTPRequestHandler):
             _log(f"DISCOVERED: {u}")
         self._send(200, {"ok": True, "logged": len(urls[:100])})
 
+    def _handle_sample(self, raw: bytes) -> None:
+        """Store an arbitrary JSON payload under data/samples/ for inspection.
+
+        The prematch offer lives on a different API (/fr/api/...) with an
+        unknown shape, so a sample has to be captured before a parser can be
+        written for it."""
+        from urllib.parse import parse_qs, urlparse
+
+        qs = parse_qs(urlparse(self.path).query)
+        raw_name = (qs.get("name") or ["sample"])[0]
+        # Whitelist rather than blacklist: this value becomes a filename.
+        name = "".join(c for c in raw_name if c.isalnum() or c in "-_")[:64] or "sample"
+        try:
+            json.loads(raw)
+        except ValueError as e:
+            self._send(400, {"error": f"invalid JSON: {e}"})
+            return
+        path = SAMPLE_DIR / f"{name}.json"
+        try:
+            _atomic_write(path, raw)
+        except OSError as e:
+            self._send(500, {"error": f"write failed: {e}"})
+            return
+        _log(f"200 sample '{name}' stored ({len(raw)} B) -> {path}")
+        self._send(200, {"ok": True, "name": name, "bytes": len(raw)})
+
     def do_POST(self) -> None:  # noqa: N802
         route = self.path.split("?", 1)[0]
-        if route not in ("/ingest", "/ingest-cookie", "/discover"):
+        if route not in ("/ingest", "/ingest-cookie", "/discover", "/sample"):
             self._send(404, {"error": "not found"})
             return
         if not self._authorized():
@@ -223,6 +251,9 @@ class Handler(BaseHTTPRequestHandler):
             return
         if route == "/discover":
             self._handle_discover(raw)
+            return
+        if route == "/sample":
+            self._handle_sample(raw)
             return
         try:
             data = json.loads(raw)
