@@ -1796,7 +1796,26 @@ def betano_prematch_shape(
 
     console.print(f"\n[bold]Champs de selection[/bold]: {sorted(sel_keys)}")
     if first_selection is not None:
-        console.print(_json.dumps(first_selection, indent=2, ensure_ascii=False)[:800])
+        console.print(_json.dumps(first_selection, indent=2, ensure_ascii=False)[:400])
+
+    # What the parser actually gets out of it. The market code set differs per
+    # sport and only tennis was fully observed, so an unmapped code here means
+    # quotes are being dropped for this sport.
+    unknown: set[str] = set()
+    quotes = list(betano_parse_prematch(data, unknown_types=unknown))
+    by_market: dict[str, int] = defaultdict(int)
+    for q in quotes:
+        by_market[q.market.value] += 1
+    console.print(f"\n[bold]Parser: {len(quotes)} OddQuote(s)[/bold]")
+    for m, n in sorted(by_market.items(), key=lambda kv: -kv[1]):
+        console.print(f"  {m}: {n}")
+    if unknown:
+        console.print(
+            f"[yellow]Codes non mappés (cotes perdues): {sorted(unknown)}[/yellow]\n"
+            f"[dim]  → ajouter à _PREMATCH_MARKET_BY_TYPE dans src/scrapers/betano.py[/dim]"
+        )
+    else:
+        console.print("[green]  tous les codes marché sont mappés[/green]")
 
 
 @app.command()
