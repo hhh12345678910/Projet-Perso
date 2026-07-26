@@ -4,7 +4,7 @@ import os
 from collections import defaultdict
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from dataclasses import replace
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from typing import Callable, Iterable
 
 import time
@@ -1990,6 +1990,149 @@ def betano_value_test(
                 f"{b.odd_taken:.2f}", f"{b.fair_odd:.2f}", f"{b.ev_pct:.2f}",
             )
         console.print(t)
+
+
+@app.command()
+def doctor(hours: int = typer.Option(24, "--hours", help="Lookback window.")):
+    """One-shot health check: services, feeds, config, and what each book produced.
+
+    Reads only local state (systemd, files, SQLite) — no scraping — so it's
+    safe to run any time and answers the question that actually comes up:
+    "everything looks running, so why no alerts from book X?" """
+    import sqlite3 as _sq
+    import subprocess as _sp
+    from pathlib import Path as _P
+
+    project = _P(__file__).resolve().parent.parent
+    now = datetime.now(timezone.utc)
+    problems: list[str] = []
+
+    # ── services ─────────────────────────────────────────────────────────
+    st = Table(title="Services", show_lines=False)
+    st.add_column("unit")
+    st.add_column("état")
+    for unit in ("betano-ingest", "valuebet-daemon"):
+        try:
+            out = _sp.run(["systemctl", "is-active", unit],
+                          capture_output=True, text=True, timeout=5).stdout.strip()
+        except Exception as e:
+            out = f"inconnu ({e})"
+        # systemctl prints nothing when the unit doesn't exist at all, which
+        # would otherwise render as a blank cell rather than a problem.
+        out = out or "introuvable"
+        good = out == "active"
+        st.add_row(unit, ("[green]" if good else "[red]") + out + ("[/green]" if good else "[/red]"))
+        if not good:
+            problems.append(f"{unit} n'est pas actif → sudo systemctl restart {unit}")
+    console.print(st)
+
+    # ── pushed feeds ─────────────────────────────────────────────────────
+    ft = Table(title="Flux poussés par le navigateur", show_lines=False)
+    ft.add_column("fichier")
+    ft.add_column("taille", justify="right")
+    ft.add_column("âge", justify="right")
+    ft.add_column("verdict")
+
+    live_max = float(os.getenv("BETANO_LIVE_MAX_AGE_MIN", "5"))
+    pm_max = float(os.getenv("BETANO_PREMATCH_MAX_AGE_MIN", "30"))
+    feeds = [(project / "data" / "betano.json", live_max, "live")]
+    pm_dir = project / "data" / "prematch"
+    if pm_dir.is_dir():
+        feeds += [(p, pm_max, f"prématch {p.stem}") for p in sorted(pm_dir.glob("*.json"))]
+
+    for path, max_age, label in feeds:
+        if not path.exists():
+            ft.add_row(label, "-", "-", "[red]absent[/red]")
+            problems.append(f"{label} absent — l'onglet Betano a-t-il déjà tourné ?")
+            continue
+        age_min = (now.timestamp() - path.stat().st_mtime) / 60
+        stale = age_min > max_age
+        ft.add_row(
+            label, f"{path.stat().st_size / 1024:.0f} Ko", f"{age_min:.0f} min",
+            "[red]PÉRIMÉ[/red]" if stale else "[green]frais[/green]",
+        )
+        if stale:
+            problems.append(
+                f"{label} périmé ({age_min:.0f} min > {max_age:.0f}) — onglet Betano fermé ?"
+            )
+    console.print(ft)
+
+    # ── telegram ─────────────────────────────────────────────────────────
+    tg = TelegramConfig.from_env()
+    if tg is None:
+        console.print("[red]Telegram non configuré[/red] — aucune alerte ne partira.")
+        problems.append("TELEGRAM_BOT_TOKEN / TELEGRAM_CHAT_ID manquants")
+    else:
+        console.print(
+            f"[green]Telegram configuré[/green] — seuil value {tg.min_ev_pct}%, "
+            f"premium ≥ {tg.min_premium_ev_pct}% (cotes {tg.premium_min_odd}-{tg.premium_max_odd}), "
+            f"max {tg.valuebet_max_alerts} alertes/pari"
+        )
+
+    # ── what each book actually produced ─────────────────────────────────
+    db = project / ScanConfig().db_path
+    if not db.exists():
+        console.print(f"[yellow]Base absente ({db}).[/yellow]")
+    else:
+        since = (now - timedelta(hours=hours)).isoformat()
+        con = _sq.connect(str(db))
+        con.row_factory = _sq.Row
+        try:
+            bt = Table(title=f"Par book sur {hours} h", show_lines=False)
+            bt.add_column("book")
+            bt.add_column("cotes stockées", justify="right")
+            bt.add_column("value bets", justify="right")
+            bt.add_column("alertes envoyées", justify="right")
+            bt.add_column("meilleur EV%", justify="right")
+
+            quotes = {r["book"]: r["n"] for r in con.execute(
+                "SELECT book, COUNT(*) n FROM quotes WHERE fetched_at >= ? GROUP BY book", (since,))}
+            vbs = {r["book"]: (r["n"], r["mx"]) for r in con.execute(
+                "SELECT book, COUNT(*) n, MAX(ev_pct) mx FROM value_bets "
+                "WHERE detected_at >= ? GROUP BY book", (since,))}
+            notified = {r["book"]: r["n"] for r in con.execute(
+                "SELECT book, COUNT(*) n FROM notified_value_bets "
+                "WHERE notified_at >= ? GROUP BY book", (since,))}
+
+            for book in sorted(set(quotes) | set(vbs) | set(notified)):
+                n_vb, best = vbs.get(book, (0, None))
+                bt.add_row(
+                    book, str(quotes.get(book, 0)), str(n_vb),
+                    str(notified.get(book, 0)),
+                    f"{best:.1f}" if best is not None else "-",
+                )
+            console.print(bt)
+
+            # The common confusion: quotes stored but no alerts. Each stage
+            # below is a different cause, so name the one that actually applies.
+            b = Book.BETANO_BE.value
+            if quotes.get(b) and not vbs.get(b):
+                problems.append(
+                    "Betano fournit des cotes mais aucun value bet détecté — "
+                    "soit ses événements ne matchent pas Pinnacle, soit ses prix "
+                    "ne dépassent pas le seuil. Lance : betano-value-test --min-ev 0.5"
+                )
+            elif vbs.get(b) and not notified.get(b):
+                n_vb, best = vbs[b]
+                thr = tg.min_ev_pct if tg else 0
+                problems.append(
+                    f"Betano a {n_vb} value bets (meilleur {best:.1f}%) mais 0 alerte : "
+                    + (f"aucun n'atteint le seuil Telegram de {thr}%."
+                       if best is not None and best < thr
+                       else "probablement le dédoublonnage (déjà alerté).")
+                )
+            elif not quotes.get(b):
+                problems.append("Aucune cote Betano stockée sur la période.")
+        finally:
+            con.close()
+
+    console.print()
+    if problems:
+        console.print("[bold red]À regarder :[/bold red]")
+        for p in problems:
+            console.print(f"  • {p}")
+    else:
+        console.print("[bold green]Tout est en ordre.[/bold green]")
 
 
 @app.command()
