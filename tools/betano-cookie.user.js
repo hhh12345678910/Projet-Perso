@@ -6,7 +6,6 @@
 // @match        https://www.betanosports.be/*
 // @match        https://betanosports.be/*
 // @grant        GM_xmlhttpRequest
-// @grant        GM_cookie
 // @connect      34.59.193.111
 // @run-at       document-idle
 // @noframes
@@ -60,34 +59,21 @@
   const info = (t) => banner("⏳ BETANO → VM : " + t, "#455a64");
 
   // ── read cookies ─────────────────────────────────────────────────────────
-  // cf_clearance is HttpOnly, so document.cookie cannot see it — GM_cookie is
-  // the only way to read it. We fall back to document.cookie anyway so the
-  // script degrades to "datadome only" instead of dying, and report which
-  // names were actually captured.
+  // document.cookie only — deliberately no GM_cookie. Requesting that grant
+  // made Tampermonkey decline to run the script at all (silently: no banner,
+  // no log, nothing reached the server), which is far worse than the one thing
+  // it buys us. HttpOnly cookies are therefore invisible here; whether that
+  // matters depends on which tokens the API actually gates on, and the server
+  // logs which ones arrived so we can tell.
+  //
+  // Send every cookie rather than filtering to WANTED: the payload is still
+  // ~1 KB, and replaying the browser's full jar is closer to what the real
+  // page sends than a hand-picked subset.
   function readCookies() {
-    return new Promise((resolve) => {
-      if (typeof GM_cookie === "undefined" || !GM_cookie || !GM_cookie.list) {
-        resolve({ pairs: fromDocument(), via: "document.cookie" });
-        return;
-      }
-      GM_cookie.list({ domain: "betanosports.be" }, (cookies, error) => {
-        if (error || !cookies || !cookies.length) {
-          resolve({ pairs: fromDocument(), via: "document.cookie (GM_cookie: " + (error || "vide") + ")" });
-          return;
-        }
-        const pairs = cookies
-          .filter((c) => WANTED.indexOf(c.name) !== -1)
-          .map((c) => c.name + "=" + c.value);
-        resolve({ pairs: pairs, via: "GM_cookie" });
-      });
-    });
-  }
-
-  function fromDocument() {
     return document.cookie
       .split(";")
       .map((s) => s.trim())
-      .filter((s) => WANTED.some((w) => s.indexOf(w + "=") === 0));
+      .filter(Boolean);
   }
 
   // ── push ─────────────────────────────────────────────────────────────────
@@ -110,26 +96,29 @@
   }
 
   async function tick() {
+    const pairs = readCookies();
+    const names = pairs.map((p) => p.split("=")[0]);
     try {
-      const { pairs, via } = await readCookies();
-      if (!pairs.length) {
-        err("aucun cookie trouvé.\nRecharge la page, puis réessaie. (source: " + via + ")");
-        return;
-      }
-      const names = pairs.map((p) => p.split("=")[0]);
-      await send({ cookie: pairs.join("; "), user_agent: navigator.userAgent });
+      // Always POST, even with an empty jar: the server logs the note, so a
+      // "script ran but found no cookies" state is visible on the VM instead
+      // of looking identical to "script never ran".
+      await send({
+        cookie: pairs.join("; "),
+        user_agent: navigator.userAgent,
+        note: "v3 document.cookie, " + pairs.length + " cookies: " + names.join(","),
+      });
       const missing = WANTED.filter((w) => names.indexOf(w) === -1);
       const when = new Date().toLocaleTimeString();
       if (missing.length) {
         banner(
-          "⚠️ BETANO → VM : envoyé à " + when + " mais il manque : " + missing.join(", ") +
-          "\n(via " + via + " — active GM_cookie dans Tampermonkey pour lire les cookies HttpOnly)",
+          "⚠️ BETANO → VM : envoyé à " + when + " (" + pairs.length + " cookies)\n" +
+          "manquant : " + missing.join(", "),
           "#ef6c00"
         );
       } else {
-        ok("cookie envoyé à " + when + " (" + names.join(" + ") + ") — tout est bon 🎉");
+        ok("cookie envoyé à " + when + " (" + pairs.length + " cookies) — tout est bon 🎉");
       }
-      console.log(LOG, "pushed", names, via);
+      console.log(LOG, "pushed", names);
     } catch (e) {
       err(e.message);
       console.warn(LOG, e.message);

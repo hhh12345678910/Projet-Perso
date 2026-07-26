@@ -144,8 +144,17 @@ class Handler(BaseHTTPRequestHandler):
         if not isinstance(data, dict):
             self._send(400, {"error": "expected a JSON object"})
             return
+        # Log the userscript's own account of what it found before validating.
+        # When a push fails, this line is the only evidence that the script ran
+        # at all — the browser-side banner may not render on an SPA, so the
+        # server log has to be able to stand alone as the diagnostic.
+        note = str(data.get("note") or "").strip()
+        if note:
+            _log(f"userscript note: {note}")
+
         cookie = str(data.get("cookie") or "").strip()
         if not cookie:
+            _log(f"400 empty cookie from {self.client_address[0]} — script ran but found nothing")
             self._send(400, {"error": "missing 'cookie'"})
             return
         # datadome is the token that actually gates the API; warn (but still
