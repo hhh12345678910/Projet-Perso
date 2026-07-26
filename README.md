@@ -38,23 +38,32 @@ pytest
 
 ## Including Betano in a scan
 
-Betano sits behind Cloudflare + DataDome. Their tokens expire every few hours,
-so the VM needs a periodically refreshed cookie.
+Betano is behind DataDome, which scores the *requesting IP*. A datacenter IP
+gets 403 even with a valid, freshly-minted session cookie, so the fetch has to
+happen from a browser DataDome already trusts.
+
+Pushing the cookie to the VM and letting it fetch was tried and does not work —
+measured, not assumed. `cf_clearance` never even appears on the session, so the
+block is DataDome's, not Cloudflare's. `tools/betano-cookie.user.js` and the
+server's `/ingest-cookie` route are what remains of that attempt; they're kept
+because `BetanoScraper` still accepts a pushed cookie, which is useful if you
+ever run the daemon from a residential IP.
 
 ### Automatic (recommended)
 
-`tools/betano-cookie.user.js` is a Tampermonkey userscript: leave a
-`betanosports.be` tab open and every 5 min it reads the session cookie and
-POSTs it to `scripts/betano_ingest_server.py` on the VM, which stores it in
-`data/betano_cookie.json`. `BetanoScraper` re-reads that file on every fetch,
-so a new cookie takes effect with no daemon restart and no manual pasting.
+`tools/betano-ingest.user.js` is a Tampermonkey userscript that automates the
+manual capture below. Leave a `betanosports.be` tab open; every minute it
+fetches the live overview and POSTs it to `scripts/betano_ingest_server.py` on
+the VM, which writes `data/betano.json` atomically. `scan-daemon.sh` passes
+that file as `--betano-file` automatically when it exists.
 
 Setup: generate a token (`openssl rand -hex 32`) into `BETANO_INGEST_TOKEN`,
-run the ingest server (`scripts/betano-ingest.service`), open the port, then
-paste the same token into the userscript's `TOKEN`.
+run the ingest server (`scripts/betano-ingest.service`), open the port in the
+firewall, then paste the same token into the userscript's `TOKEN`.
 
-The script never calls Betano's API — it only reads cookies the browser
-already holds — so it adds no traffic for DataDome to score.
+Betano freshness equals the push interval. The upload is the full overview
+(several MB), so that interval is the knob to turn if a home connection can't
+keep up — the on-page banner reports the payload size each cycle.
 
 ### Manual fallback
 

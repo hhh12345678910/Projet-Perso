@@ -1,8 +1,8 @@
 // ==UserScript==
-// @name         Betano → Valuebet ingest
+// @name         Betano → Valuebet odds push
 // @namespace    valuebet.local
-// @version      1.0.0
-// @description  Fetch Betano's live overview from a real browser session (valid cf_clearance + DataDome cookies, home IP) and push it to the Valuebet VM. Keeps Betano fresh with zero manual cookie pasting.
+// @version      2.0.0
+// @description  Fetch Betano's live overview from a real browser session and push it to the Valuebet VM, automating the manual capture the README describes.
 // @match        https://www.betanosports.be/*
 // @match        https://betanosports.be/*
 // @grant        GM_xmlhttpRequest
@@ -11,87 +11,80 @@
 // @noframes
 // ==/UserScript==
 
+// Why the browser does the fetching
+// --------------------------------
+// Pushing the session cookie and letting the VM fetch does NOT work: DataDome
+// scores the requesting IP, and the VM's datacenter address gets a 403 even
+// with a valid, freshly-minted cookie. (cf_clearance isn't even in play here —
+// it's never set on this session; the block is DataDome's, not Cloudflare's.)
+//
+// So the fetch has to happen from the browser that DataDome already trusts,
+// which is exactly the manual capture the README documents. This just does it
+// on a timer and ships the result, instead of by hand.
+
 (function () {
   "use strict";
 
-  // ─────────────────────────────────────────────────────────────────────────
-  // CONFIG — edit these two, then save.
-  // ─────────────────────────────────────────────────────────────────────────
-  // Your VM's public IP + the ingest port you opened (8787).
+  // ─── CONFIG ──────────────────────────────────────────────────────────────
   const VPS_URL = "http://34.59.193.111:8787/ingest";
-  // MUST match BETANO_INGEST_TOKEN in the VM's .env. Generate with:
-  //   openssl rand -hex 32
-  const TOKEN = "REPLACE_WITH_YOUR_TOKEN";
-  // How often to fetch + push, in milliseconds. 15 s ≈ how often Betano's own
-  // page refreshes live odds; going much faster gains nothing and is noisier.
-  const INTERVAL_MS = 15000;
-  // Random +/- jitter so pushes don't land on a robotic fixed beat.
-  const JITTER_MS = 3000;
-  // Show a small status badge in the page corner.
-  const SHOW_BADGE = true;
+  const TOKEN = "PASTE_TOKEN_HERE";
+  // 60 s to start. The payload is the full overview, so this is the knob to
+  // turn if the upload can't keep up — the banner reports the size each cycle.
+  const INTERVAL_MS = 60 * 1000;
   // ─────────────────────────────────────────────────────────────────────────
 
-  // Same endpoint the Betano frontend hits for the initial bulk load. It's
-  // same-origin here, so the browser attaches the CF/DataDome cookies itself
-  // and there is no CORS problem — this is ordinary site traffic.
+  const LOG = "[betano-odds]";
   const OVERVIEW_URL =
     "/fr/danae-webapi/api/live/overview/latest" +
     "?includeVirtuals=true&queryLanguageId=9&queryOperatorId=22";
 
-  const LOG = "[betano-ingest]";
-  let inFlight = false;
-  let lastOk = null;
-  let lastErr = null;
-
-  // ── tiny status badge ────────────────────────────────────────────────────
-  let badge = null;
-  function ensureBadge() {
-    if (!SHOW_BADGE || badge) return;
-    badge = document.createElement("div");
-    badge.style.cssText = [
-      "position:fixed", "bottom:10px", "right:10px", "z-index:2147483647",
-      "font:12px/1.4 monospace", "padding:6px 9px", "border-radius:6px",
-      "background:rgba(0,0,0,.8)", "color:#eee", "pointer-events:none",
-      "max-width:280px", "white-space:pre",
-    ].join(";");
-    document.body.appendChild(badge);
-  }
-  function setBadge(text, color) {
-    if (!SHOW_BADGE) return;
-    ensureBadge();
-    if (badge) {
-      badge.textContent = "Betano→VM " + text;
-      badge.style.borderLeft = "4px solid " + (color || "#888");
+  let el = null;
+  function banner(text, bg) {
+    if (!el) {
+      el = document.createElement("div");
+      el.style.cssText = [
+        "position:fixed", "top:0", "left:0", "right:0", "z-index:2147483647",
+        "font:bold 15px/1.5 system-ui,sans-serif", "padding:12px 16px",
+        "color:#fff", "text-align:center", "white-space:pre-wrap",
+        "box-shadow:0 2px 10px rgba(0,0,0,.4)",
+      ].join(";");
+      document.body.appendChild(el);
     }
+    el.style.background = bg;
+    el.textContent = text;
   }
+  const ok = (t) => banner("✅ BETANO → VM : " + t, "#2e7d32");
+  const err = (t) => banner("❌ BETANO → VM : " + t, "#c62828");
+  const info = (t) => banner("⏳ BETANO → VM : " + t, "#455a64");
 
-  // ── push to the VM via the privileged cross-origin request ───────────────
-  function push(jsonText, counts) {
+  const mb = (n) => (n / 1048576).toFixed(2) + " Mo";
+
+  function send(text) {
     return new Promise((resolve, reject) => {
       GM_xmlhttpRequest({
         method: "POST",
         url: VPS_URL,
-        headers: {
-          "Content-Type": "application/json",
-          "X-Ingest-Token": TOKEN,
-        },
-        data: jsonText,
-        timeout: 20000,
-        onload: (res) => {
-          if (res.status >= 200 && res.status < 300) resolve(res);
-          else reject(new Error("VM " + res.status + ": " + res.responseText));
-        },
-        onerror: () => reject(new Error("VM unreachable (network/CORS/port?)")),
-        ontimeout: () => reject(new Error("VM timeout")),
+        headers: { "Content-Type": "application/json", "X-Ingest-Token": TOKEN },
+        data: text,
+        // Generous: a multi-MB upload on a home connection is slow, and a
+        // premature timeout here looks identical to a server failure.
+        timeout: 120000,
+        onload: (r) =>
+          r.status >= 200 && r.status < 300
+            ? resolve(r)
+            : reject(new Error("VM a répondu " + r.status + " — " + r.responseText)),
+        onerror: () => reject(new Error("VM injoignable (service arrêté ?)")),
+        ontimeout: () => reject(new Error("upload trop lent (>120 s) — augmente INTERVAL_MS")),
       });
     });
   }
 
-  // ── one fetch + push cycle ───────────────────────────────────────────────
+  let running = false;
   async function tick() {
-    if (inFlight) return; // never overlap two cycles
-    inFlight = true;
+    if (running) return; // never let a slow upload overlap the next cycle
+    running = true;
     try {
+      info("récupération des cotes…");
       const res = await fetch(OVERVIEW_URL, {
         method: "GET",
         credentials: "include",
@@ -101,59 +94,49 @@
           "x-operator": "22",
         },
       });
-      if (!res.ok) throw new Error("Betano fetch " + res.status +
-        (res.status === 403 ? " (Cloudflare/DataDome — reload the page?)" : ""));
+      if (!res.ok) {
+        throw new Error(
+          "Betano a répondu " + res.status +
+          (res.status === 403 ? " — DataDome bloque, recharge la page" : "")
+        );
+      }
       const text = await res.text();
       let data;
-      try { data = JSON.parse(text); }
-      catch (e) { throw new Error("Betano returned non-JSON (blocked?)"); }
-
-      const counts = {
+      try {
+        data = JSON.parse(text);
+      } catch (e) {
+        throw new Error("Betano n'a pas renvoyé du JSON (page de blocage ?)");
+      }
+      const c = {
         events: Object.keys(data.events || {}).length,
         markets: Object.keys(data.markets || {}).length,
         selections: Object.keys(data.selections || {}).length,
       };
-      if (!(counts.events || counts.markets || counts.selections))
-        throw new Error("empty overview (not logged in / no live events?)");
+      if (!(c.events || c.markets || c.selections)) {
+        throw new Error("overview vide (aucun match en direct ?)");
+      }
 
-      await push(text, counts);
-      lastOk = new Date();
-      lastErr = null;
-      console.log(LOG, "pushed", counts, "at", lastOk.toLocaleTimeString());
-      setBadge(
-        "OK " + lastOk.toLocaleTimeString() + "\nev=" + counts.events +
-        " mk=" + counts.markets + " sel=" + counts.selections,
-        "#4caf50"
+      info("envoi de " + mb(text.length) + " vers la VM…");
+      await send(text);
+      ok(
+        "envoyé à " + new Date().toLocaleTimeString() + " — " + mb(text.length) +
+        "\n" + c.events + " matchs, " + c.selections + " cotes 🎉"
       );
+      console.log(LOG, "pushed", c, text.length);
     } catch (e) {
-      lastErr = e;
-      console.warn(LOG, "cycle failed:", e.message);
-      setBadge("ERR " + new Date().toLocaleTimeString() + "\n" + e.message, "#e53935");
+      err(e.message);
+      console.warn(LOG, e.message);
     } finally {
-      inFlight = false;
+      running = false;
     }
   }
 
-  function scheduleNext() {
-    const jitter = (Math.random() * 2 - 1) * JITTER_MS;
-    setTimeout(async () => {
-      await tick();
-      scheduleNext();
-    }, Math.max(2000, INTERVAL_MS + jitter));
-  }
-
-  // Guard against an unset token. Deliberately NOT an equality check against the
-  // placeholder string — a find-and-replace of REPLACE_WITH_YOUR_TOKEN would
-  // rewrite that literal too and defeat the guard. A real token is a long hex
-  // string, so "still contains the placeholder word" / "too short" catches the
-  // not-yet-configured case without matching any valid token.
-  if (TOKEN.indexOf("REPLACE_WITH") !== -1 || TOKEN.length < 16) {
-    console.error(LOG, "TOKEN not set — edit the userscript and paste your BETANO_INGEST_TOKEN.");
-    setBadge("TOKEN not set — edit the script", "#ff9800");
+  if (TOKEN.indexOf("PASTE_TOKEN") !== -1 || TOKEN.length < 16) {
+    err("token non configuré — édite le script.");
     return;
   }
 
-  console.log(LOG, "started, pushing every ~" + (INTERVAL_MS / 1000) + "s to", VPS_URL);
-  setBadge("starting…", "#888");
-  tick().then(scheduleNext);
+  info("démarrage…");
+  tick();
+  setInterval(tick, INTERVAL_MS);
 })();
