@@ -264,3 +264,45 @@ def test_parse_prematch_tolerates_empty_and_malformed_payloads():
     assert list(parse_prematch({})) == []
     assert list(parse_prematch({"data": {"blocks": []}})) == []
     assert list(parse_prematch({"data": {"blocks": [{"events": [{}]}]}})) == []
+
+
+def test_parse_prematch_maps_superodds_boosted_1x2():
+    """MR12 is 'Résultat de match SuperOdds' — a boosted 1X2. Boosted prices are
+    exactly where value shows up, so it must not be dropped."""
+    market = {
+        "type": "MR12",
+        "selections": [
+            {"name": "1", "fullName": "Daria Snigur", "price": 2.60},
+            {"name": "2", "fullName": "Lilli Tagger", "price": 2.05},
+        ],
+    }
+    quotes = list(parse_prematch(_prematch_payload([market])))
+    assert {q.outcome.label for q in quotes} == {"home", "away"}
+    assert all(q.market is MarketType.H2H for q in quotes)
+
+
+def test_parse_prematch_drops_first_half_totals():
+    """OUH1 is first-half goals. Treating it as TOTALS would price it against
+    Pinnacle's full-match ladder and manufacture phantom value bets."""
+    market = {
+        "type": "OUH1",
+        "name": "But en première mi-temps Plus de/Moins de",
+        "handicap": 1.5,
+        "selections": [
+            {"name": "Plus de", "price": 1.90, "handicap": 1.5},
+            {"name": "Moins de", "price": 1.90, "handicap": 1.5},
+        ],
+    }
+    assert list(parse_prematch(_prematch_payload([market]))) == []
+
+
+def test_parse_prematch_known_exclusions_are_not_reported_as_unknown():
+    """Deliberate exclusions must stay out of the unknown set, or the warning
+    fires every cycle and hides a genuinely new code."""
+    unknown: set[str] = set()
+    markets = [
+        {"type": t, "selections": [{"name": "x", "price": 2.0}]}
+        for t in ("OUH1", "DBLC", "DNOB", "BTSC")
+    ]
+    assert list(parse_prematch(_prematch_payload(markets), unknown_types=unknown)) == []
+    assert unknown == set()

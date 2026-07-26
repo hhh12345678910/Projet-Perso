@@ -406,12 +406,31 @@ def parse_overview(data: dict) -> Iterator[OddQuote]:
 _PREMATCH_MARKET_BY_TYPE = {
     "HTOH": MarketType.H2H,        # Vainqueur — 2-way winner
     "HTHP": MarketType.H2H,        # Vainqueur 0% — zero-margin winner
-    "MRES": MarketType.H2H,        # Résultat du match — 1X2
-    "FTGO": MarketType.TOTALS,     # Total (jeux / buts)
-    "HCTG": MarketType.TOTALS,
+    "MRES": MarketType.H2H,        # Résultat de match — 1X2
+    "MR12": MarketType.H2H,        # Résultat de match SuperOdds — boosted 1X2
+    "FTGO": MarketType.TOTALS,     # Total jeux
+    "HCTG": MarketType.TOTALS,     # Total des buts Plus de/Moins de
     "TGHC": MarketType.HANDICAP,   # Handicap jeux
     "HCAP": MarketType.HANDICAP,
     "AHCP": MarketType.HANDICAP,
+}
+
+# Codes we've seen and deliberately drop. Kept explicit so the "unmapped code"
+# warning stays meaningful: without this, these five would fire on every cycle
+# and train the eye to ignore it, hiding a genuinely new code.
+#
+# Each is excluded because the pipeline has no sharp reference for it —
+# Pinnacle only prices moneyline/total/spread, and no other scraper emits BTTS
+# — so a quote here could never be devigged into a fair line. OUH1 is the
+# dangerous one: it looks like a totals market, but it's first-half goals.
+# Mapping it to TOTALS would price it against Pinnacle's full-match ladder and
+# manufacture phantom value bets, the same trap the handicap exclusion in
+# find_value_bets already guards against.
+_PREMATCH_IGNORED_TYPES = {
+    "OUH1",   # But en première mi-temps — period market, not full-time totals
+    "DBLC",   # Double chance — no Pinnacle equivalent
+    "DNOB",   # Draw No Bet — no Pinnacle equivalent
+    "BTSC",   # Les deux équipes marquent — nothing else prices BTTS
 }
 
 # Betano's sport codes -> the sport names this project uses.
@@ -461,7 +480,7 @@ def parse_prematch(data: dict, unknown_types: set[str] | None = None) -> Iterato
                 code = str(market.get("type") or "").upper()
                 market_type = _PREMATCH_MARKET_BY_TYPE.get(code)
                 if market_type is None:
-                    if unknown_types is not None and code:
+                    if unknown_types is not None and code and code not in _PREMATCH_IGNORED_TYPES:
                         unknown_types.add(code)
                     continue
 
