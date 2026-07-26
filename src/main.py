@@ -339,22 +339,54 @@ def fetch_betano_quotes(
     both arrive via tools/betano-ingest.user.js. The live path falls back to a
     direct fetch (useful only from a residential IP) when no dump is present."""
     import json as _json
+    import time as _time
     from pathlib import Path as _Path
 
-    def _load(path: str) -> dict | None:
+    def _load(path: str, max_age_min: float, label: str) -> dict | None:
+        """Load a pushed file, refusing it once it's too old to trust.
+
+        Both feeds only advance while a browser tab is open on betanosports.be
+        — nothing on the VM can refresh them. If that tab closes or the machine
+        sleeps, the files simply stop changing, and without this check the
+        daemon would keep pricing hours-old odds as if they were live, with no
+        signal that anything was wrong. Staleness is the silent failure mode
+        this whole design has, so it's worth failing loudly on."""
+        p = _Path(path)
         try:
-            return _json.loads(_Path(path).read_text())
+            raw = p.read_text()
         except FileNotFoundError:
             return None
         except (OSError, ValueError) as e:
-            console.print(f"[yellow]Betano file unreadable ({path}):[/yellow] {e}")
+            console.print(f"[yellow]Betano {label} unreadable ({path}):[/yellow] {e}")
             return None
+        if max_age_min > 0:
+            try:
+                age_min = (_time.time() - p.stat().st_mtime) / 60
+            except OSError:
+                age_min = 0.0
+            if age_min > max_age_min:
+                console.print(
+                    f"[red]Betano {label} périmé ({age_min:.0f} min > {max_age_min:.0f}) "
+                    f"— onglet Betano fermé ? Données ignorées.[/red]"
+                )
+                return None
+        try:
+            return _json.loads(raw)
+        except ValueError as e:
+            console.print(f"[yellow]Betano {label} invalide ({path}):[/yellow] {e}")
+            return None
+
+    # Live odds go stale in minutes; prematch prices move slowly enough that a
+    # much longer window is still usable. One threshold for both would either
+    # accept dead in-play odds or throw away good prematch ones.
+    live_max_age = float(os.getenv("BETANO_LIVE_MAX_AGE_MIN", "5"))
+    prematch_max_age = float(os.getenv("BETANO_PREMATCH_MAX_AGE_MIN", "30"))
 
     quotes: list[OddQuote] = []
 
     if include_live:
         if betano_file:
-            data = _load(betano_file)
+            data = _load(betano_file, live_max_age, "live")
             if data is not None:
                 quotes.extend(betano_parse_overview(data))
         else:
@@ -365,7 +397,7 @@ def fetch_betano_quotes(
                 console.print(f"[yellow]Betano live skipped:[/yellow] {e}")
 
     if sport:
-        pm = _load(betano_prematch_file(sport))
+        pm = _load(betano_prematch_file(sport), prematch_max_age, f"prématch {sport}")
         if pm is not None:
             unknown: set[str] = set()
             quotes.extend(betano_parse_prematch(pm, unknown_types=unknown))

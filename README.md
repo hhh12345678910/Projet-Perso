@@ -66,6 +66,13 @@ The prematch feed is the one that matters: the live overview is in-play only
 (measured: 165 of 172 events already started), so without it Betano
 contributes nothing to prematch value betting.
 
+**The tab has to stay open.** Nothing on the VM can refresh these files, so if
+the browser closes or the machine sleeps they freeze rather than disappear —
+which would otherwise look exactly like fresh data. `BETANO_LIVE_MAX_AGE_MIN`
+(default 5) and `BETANO_PREMATCH_MAX_AGE_MIN` (default 30) make the daemon
+ignore a feed past that age and log why. Set either to 0 to replay an old dump
+offline.
+
 Setup: generate a token (`openssl rand -hex 32`) into `BETANO_INGEST_TOKEN`,
 run the ingest server (`scripts/betano-ingest.service`), open the port in the
 firewall, then paste the same token into the userscript's `TOKEN`.

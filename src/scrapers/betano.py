@@ -406,6 +406,7 @@ def parse_overview(data: dict) -> Iterator[OddQuote]:
 _PREMATCH_MARKET_BY_TYPE = {
     "HTOH": MarketType.H2H,        # Vainqueur — 2-way winner
     "HTHP": MarketType.H2H,        # Vainqueur 0% — zero-margin winner
+    "H2HT": MarketType.H2H,        # Vainqueur — 2-way (volley); same code as live
     "MRES": MarketType.H2H,        # Résultat de match — 1X2
     "MR12": MarketType.H2H,        # Résultat de match SuperOdds — boosted 1X2
     "FTGO": MarketType.TOTALS,     # Total jeux

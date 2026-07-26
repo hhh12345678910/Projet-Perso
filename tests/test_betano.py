@@ -306,3 +306,75 @@ def test_parse_prematch_known_exclusions_are_not_reported_as_unknown():
     ]
     assert list(parse_prematch(_prematch_payload(markets), unknown_types=unknown)) == []
     assert unknown == set()
+
+
+def test_parse_prematch_maps_two_way_volleyball_winner():
+    """Volleyball reuses H2HT, the same code the live feed uses for a 2-way
+    winner. The prematch map is separate, so it needs its own entry."""
+    market = {
+        "type": "H2HT",
+        "selections": [
+            {"name": "Daria Snigur", "price": 1.8},
+            {"name": "Lilli Tagger", "price": 2.2},
+        ],
+    }
+    quotes = list(parse_prematch(_prematch_payload([market])))
+    assert {q.outcome.label for q in quotes} == {"home", "away"}
+
+
+# ---------------------------------------------------------------------------
+# Freshness guard. Both feeds only advance while a browser tab is open on
+# betanosports.be, so a closed tab leaves the files frozen rather than absent —
+# a silent failure the daemon would otherwise price as live odds.
+# ---------------------------------------------------------------------------
+
+def _write_prematch(dirpath, sport: str, age_minutes: float) -> None:
+    import os, time
+    payload = {
+        "data": {"blocks": [{"name": "L", "events": [{
+            "id": "1", "startTime": 1785146400000,
+            "participants": [{"name": "A"}, {"name": "B"}],
+            "markets": [{"type": "H2HT", "selections": [
+                {"name": "A", "price": 1.8}, {"name": "B", "price": 2.2}]}],
+        }]}]}
+    }
+    p = dirpath / f"{sport}.json"
+    p.write_text(json.dumps(payload))
+    t = time.time() - age_minutes * 60
+    os.utime(p, (t, t))
+
+
+def test_fresh_prematch_file_is_used(tmp_path, monkeypatch):
+    from src.main import fetch_betano_quotes
+
+    monkeypatch.setenv("BETANO_PREMATCH_DIR", str(tmp_path))
+    _write_prematch(tmp_path, "volleyball", age_minutes=1)
+    assert len(fetch_betano_quotes(sport="volleyball", include_live=False)) == 2
+
+
+def test_stale_prematch_file_is_refused(tmp_path, monkeypatch):
+    from src.main import fetch_betano_quotes
+
+    monkeypatch.setenv("BETANO_PREMATCH_DIR", str(tmp_path))
+    monkeypatch.setenv("BETANO_PREMATCH_MAX_AGE_MIN", "30")
+    _write_prematch(tmp_path, "volleyball", age_minutes=90)
+    assert fetch_betano_quotes(sport="volleyball", include_live=False) == []
+
+
+def test_staleness_threshold_is_configurable(tmp_path, monkeypatch):
+    from src.main import fetch_betano_quotes
+
+    monkeypatch.setenv("BETANO_PREMATCH_DIR", str(tmp_path))
+    monkeypatch.setenv("BETANO_PREMATCH_MAX_AGE_MIN", "120")
+    _write_prematch(tmp_path, "volleyball", age_minutes=90)
+    assert len(fetch_betano_quotes(sport="volleyball", include_live=False)) == 2
+
+
+def test_staleness_check_can_be_disabled(tmp_path, monkeypatch):
+    """0 disables the guard — useful when replaying a captured dump offline."""
+    from src.main import fetch_betano_quotes
+
+    monkeypatch.setenv("BETANO_PREMATCH_DIR", str(tmp_path))
+    monkeypatch.setenv("BETANO_PREMATCH_MAX_AGE_MIN", "0")
+    _write_prematch(tmp_path, "volleyball", age_minutes=6000)
+    assert len(fetch_betano_quotes(sport="volleyball", include_live=False)) == 2
