@@ -1619,6 +1619,12 @@ def inspect_json(
     path: str = typer.Argument(..., help="JSON file to summarise."),
     depth: int = typer.Option(4, "--depth", help="How deep to walk."),
     samples: int = typer.Option(2, "--samples", help="Items to show per list/dict."),
+    at: str = typer.Option(
+        "", "--path",
+        help="Dotted path to focus on, e.g. 'data.blocks.0.events.0'. "
+        "Without it, only the first --samples keys of each dict are shown, "
+        "which hides the interesting branch in wide payloads.",
+    ),
 ):
     """Print the shape of an arbitrary JSON payload — keys, types, sample values.
 
@@ -1656,8 +1662,28 @@ def inspect_json(
         else:
             console.print(f"{pad}{p} {type(node).__name__} = {_esc(repr(node)[:120])}")
 
-    console.print(f"[bold]{path}[/bold]")
-    walk(data, "root", 0)
+    node: object = data
+    if at:
+        for part in at.split("."):
+            if isinstance(node, list):
+                try:
+                    node = node[int(part)]
+                except (ValueError, IndexError):
+                    console.print(f"[red]Path stops at '{part}': list has {len(node)} items.[/red]")
+                    raise typer.Exit(1)
+            elif isinstance(node, dict):
+                if part not in node:
+                    console.print(
+                        f"[red]Path stops at '{part}'.[/red] Available: {sorted(map(str, node))[:30]}"
+                    )
+                    raise typer.Exit(1)
+                node = node[part]
+            else:
+                console.print(f"[red]Path stops at '{part}': reached a {type(node).__name__}.[/red]")
+                raise typer.Exit(1)
+
+    console.print(f"[bold]{path}[/bold]" + (f"  →  {at}" if at else ""))
+    walk(node, at or "root", 0)
 
 
 @app.command()
