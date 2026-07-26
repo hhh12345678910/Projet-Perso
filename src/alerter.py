@@ -487,11 +487,21 @@ def format_value_bet(bet: ValueBet, sport: str | None = None,
     # Only some sources carry a competition name, so this line is conditional
     # rather than showing an empty placeholder.
     league_line = f"🏆 {bet.league}\n" if bet.league else ""
+    # Only flagged when it isn't Pinnacle. A fallback reference is thinner, so
+    # the same EV% deserves less confidence — and silently presenting the two
+    # as equivalent is how a shaky number gets treated as a sure thing.
+    ref_line = ""
+    if bet.reference_book is not None and bet.reference_book is not Book.PINNACLE:
+        ref_line = (
+            f"⚠️ référence : {_BOOK_NAMES.get(bet.reference_book, bet.reference_book.value)}"
+            f" (Pinnacle ne price pas ce match)\n"
+        )
 
     return (
         f"🎯 <b>+{bet.ev_pct:.2f}% EV</b> — {book_name}\n"
         f"{_sport_prefix(sport)}{matchup}\n"
         f"{league_line}"
+        f"{ref_line}"
         f"{when_line}"
         f"Pari : <b>{bet.outcome.label}{line_suffix}</b> @ {bet.odd_taken:.2f} (fair {bet.fair_odd:.2f})\n"
         f"{_advised_stake_line(bet.ev_pct, bet.kelly_stake_pct, bankroll)}"

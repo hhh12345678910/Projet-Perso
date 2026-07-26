@@ -184,3 +184,35 @@ class _NullScraper:
 
     def __exit__(self, *a):
         return False
+
+
+def test_value_bet_records_which_reference_valued_it():
+    """A bet measured against a fallback deserves less confidence than one
+    measured against Pinnacle. Without this they're indistinguishable later."""
+    from src.main import build_fair_lines, find_value_bets
+    from src.config import ScanConfig
+    from src.models import Book, MarketType, OddQuote, Outcome
+    from datetime import datetime, timezone
+
+    other = "202607261900::gamma__vs__delta"
+    pin = [_sharp_quote(Book.PINNACLE, "home", 2.00),
+           _sharp_quote(Book.PINNACLE, "away", 2.00)]
+    sec = [_sharp_quote(Book.SMARKETS, "home", 2.00, other),
+           _sharp_quote(Book.SMARKETS, "away", 2.00, other)]
+    fair = build_fair_lines(pin, "shin", secondary_quotes=sec)
+
+    def soft(key):
+        return [
+            OddQuote(event_key=key, book=Book.BETANO_BE, market=MarketType.H2H,
+                     outcome=Outcome(label=lbl), decimal_odd=2.6,
+                     fetched_at=datetime.now(timezone.utc), source_event_id="x")
+            for lbl in ("home", "away")
+        ]
+
+    cfg = ScanConfig(sport="soccer", min_ev_pct=1.0)
+    by_ref = {
+        b.event_key: b.reference_book
+        for b in find_value_bets(soft("202607261800::alpha__vs__beta") + soft(other), fair, cfg)
+    }
+    assert by_ref["202607261800::alpha__vs__beta"] is Book.PINNACLE
+    assert by_ref[other] is Book.SMARKETS

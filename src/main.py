@@ -188,6 +188,7 @@ def find_value_bets(
             kelly_stake_pct=kelly_fraction(q.decimal_odd, p) * cfg.kelly_fraction * 100.0,
             detected_at=now,
             league=q.league,
+            reference_book=fl.reference_book,
         ))
     return out
 
@@ -2380,6 +2381,67 @@ def doctor(hours: int = typer.Option(24, "--hours", help="Lookback window.")):
             console.print(f"  • {p}")
     else:
         console.print("[bold green]Tout est en ordre.[/bold green]")
+
+
+@app.command(name="smarkets-impact")
+def smarkets_impact(sport: str = typer.Option("soccer", "--sport")):
+    """Measure what the fallback sharp source actually adds.
+
+    The only question worth asking about it: how many markets does it price
+    that Pinnacle doesn't, and do those turn into value bets that would
+    otherwise be impossible? A source that merely duplicates Pinnacle costs a
+    scrape and changes nothing."""
+    if os.getenv("USE_SMARKETS", "").strip() in ("", "0", "false"):
+        console.print("[yellow]USE_SMARKETS n'est pas activé — rien à mesurer.[/yellow]")
+        raise typer.Exit(1)
+
+    for current_sport in [s.strip() for s in sport.split(",") if s.strip()]:
+        console.print(f"\n[bold green]══ {current_sport.upper()} ══[/bold green]")
+        cfg = ScanConfig(sport=current_sport)
+        all_q = _fetch_all_parallel(current_sport, "data/betano.json", include_file_books=True)
+        pinnacle_q = [q for q in all_q if q.book == Book.PINNACLE]
+        secondary_raw = [q for q in all_q if q.book == Book.SMARKETS]
+        soft_raw = [q for q in all_q if q.book not in SHARP_BOOKS]
+
+        if not secondary_raw:
+            console.print("[yellow]Smarkets n'a renvoyé aucune cote.[/yellow]")
+            continue
+
+        aligned = align_secondary_sharp(pinnacle_q, secondary_raw)
+        pin_events = {q.event_key for q in pinnacle_q}
+        sec_events = {q.event_key for q in aligned}
+
+        console.print(f"  Pinnacle : {len(pin_events)} événements")
+        console.print(f"  Smarkets : {len(sec_events)} événements "
+                      f"({len(sec_events & pin_events)} en commun)")
+        console.print(f"  [bold]exclusifs à Smarkets : {len(sec_events - pin_events)}[/bold]")
+
+        # With and without, so the delta is the fallback's actual contribution
+        # rather than a number that merely looks large.
+        fair_pin = build_fair_lines(pinnacle_q, cfg.devig_method)
+        fair_both = build_fair_lines(pinnacle_q, cfg.devig_method, secondary_quotes=aligned)
+        soft_pin = remap_to_reference(soft_raw, {f.event_key for f in fair_pin.values()})
+        soft_both = remap_to_reference(soft_raw, {f.event_key for f in fair_both.values()})
+        bets_pin = find_value_bets(soft_pin, fair_pin, cfg)
+        bets_both = find_value_bets(soft_both, fair_both, cfg)
+
+        console.print(f"\n  lignes justes : {len(fair_pin)} → [bold]{len(fair_both)}[/bold]")
+        console.print(f"  value bets    : {len(bets_pin)} → [bold]{len(bets_both)}[/bold] "
+                      f"(+{len(bets_both) - len(bets_pin)})")
+
+        added = [b for b in bets_both if b.reference_book is Book.SMARKETS]
+        if not added:
+            console.print("[yellow]  Aucun value bet ne repose sur Smarkets — "
+                          "il ne fait que doubler Pinnacle ici.[/yellow]")
+            continue
+        t = Table(title="Value bets rendus possibles par Smarkets", show_lines=False)
+        t.add_column("event", overflow="fold")
+        t.add_column("book")
+        t.add_column("cote", justify="right")
+        t.add_column("EV%", justify="right")
+        for b in sorted(added, key=lambda x: -x.ev_pct)[:15]:
+            t.add_row(b.event_key, b.book.value, f"{b.odd_taken:.2f}", f"{b.ev_pct:.2f}")
+        console.print(t)
 
 
 @app.command()

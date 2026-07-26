@@ -90,6 +90,11 @@ class ValueBet:
     kelly_stake_pct: float
     detected_at: datetime
     league: Optional[str] = None
+    # Which sharp source produced the fair line this was measured against.
+    # Pinnacle unless it didn't price the market and a fallback stood in — a
+    # bet valued against a thinner reference deserves less confidence, and
+    # without this the two are indistinguishable after the fact.
+    reference_book: Optional[Book] = None
     # Twin books offering the exact same price for this bet (e.g. Unibet & 711
     # share the Kambi feed). Listed alongside `book` in the alert so the same
     # opportunity fires once, naming every book where you can take it.
