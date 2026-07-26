@@ -132,35 +132,83 @@ def test_secondary_labels_do_not_leak_into_a_pinnacle_market():
 # markets Pinnacle doesn't price, which drift slowly.
 # ---------------------------------------------------------------------------
 
-def test_smarkets_result_is_cached_between_cycles(monkeypatch):
-    import httpx
+def _drain_smarkets_threads():
+    import threading
+    for t in threading.enumerate():
+        if t.name.startswith("smarkets-"):
+            t.join(timeout=5)
+
+
+def test_smarkets_never_blocks_the_cycle(monkeypatch):
+    """A live install saw a 26-minute refresh run inside the scan cycle, which
+    silenced that sport for the duration. The call must return at once."""
+    import time as _t
     import src.main as main
 
     main._SMARKETS_CACHE.clear()
+    main._SMARKETS_REFRESHING.clear()
+
+    def slow(sm, sport, **kw):
+        _t.sleep(1.0)
+        return iter([])
+
+    monkeypatch.setattr(main, "smarkets_iter_all_quotes", slow)
+    monkeypatch.setattr(main, "SmarketsScraper", lambda *a, **k: _NullScraper())
+
+    t0 = _t.monotonic()
+    assert main.fetch_smarkets_quotes("soccer") == []
+    assert _t.monotonic() - t0 < 0.3
+    _drain_smarkets_threads()
+
+
+def test_smarkets_refreshes_only_once_at_a_time(monkeypatch):
+    import time as _t
+    import src.main as main
+
+    main._SMARKETS_CACHE.clear()
+    main._SMARKETS_REFRESHING.clear()
     calls = {"n": 0}
 
     def fake(sm, sport, **kw):
         calls["n"] += 1
+        _t.sleep(0.5)
         return iter([])
 
     monkeypatch.setattr(main, "smarkets_iter_all_quotes", fake)
     monkeypatch.setattr(main, "SmarketsScraper", lambda *a, **k: _NullScraper())
-    monkeypatch.setenv("SMARKETS_TTL_S", "900")
 
-    main.fetch_smarkets_quotes("soccer")
-    main.fetch_smarkets_quotes("soccer")
-    main.fetch_smarkets_quotes("soccer")
+    for _ in range(5):
+        main.fetch_smarkets_quotes("soccer")
+    _drain_smarkets_threads()
     assert calls["n"] == 1
 
 
+def test_smarkets_serves_the_snapshot_once_refreshed(monkeypatch):
+    import src.main as main
+    from src.models import Book
+
+    main._SMARKETS_CACHE.clear()
+    main._SMARKETS_REFRESHING.clear()
+    good = [_sharp_quote(Book.SMARKETS, "home", 2.0)]
+
+    monkeypatch.setattr(main, "smarkets_iter_all_quotes", lambda sm, sport, **kw: iter(good))
+    monkeypatch.setattr(main, "SmarketsScraper", lambda *a, **k: _NullScraper())
+    monkeypatch.setenv("SMARKETS_TTL_S", "900")
+
+    assert main.fetch_smarkets_quotes("soccer") == []      # nothing cached yet
+    _drain_smarkets_threads()
+    assert len(main.fetch_smarkets_quotes("soccer")) == 1   # snapshot now served
+
+
 def test_smarkets_failure_keeps_the_previous_snapshot(monkeypatch):
-    """One failed scrape shouldn't drop the fallback entirely — the events it
-    covers have no other sharp reference."""
+    """One failed scrape shouldn't drop the fallback — the events it covers
+    have no other sharp reference at all."""
     import httpx
     import src.main as main
     from src.models import Book
 
     main._SMARKETS_CACHE.clear()
+    main._SMARKETS_REFRESHING.clear()
     good = [_sharp_quote(Book.SMARKETS, "home", 2.0)]
     state = {"first": True}
 
@@ -172,10 +220,13 @@ def test_smarkets_failure_keeps_the_previous_snapshot(monkeypatch):
 
     monkeypatch.setattr(main, "smarkets_iter_all_quotes", fake)
     monkeypatch.setattr(main, "SmarketsScraper", lambda *a, **k: _NullScraper())
-    monkeypatch.setenv("SMARKETS_TTL_S", "0")   # force a refetch every call
+    monkeypatch.setenv("SMARKETS_TTL_S", "0")   # every call sees a stale cache
 
+    main.fetch_smarkets_quotes("soccer")
+    _drain_smarkets_threads()
     assert len(main.fetch_smarkets_quotes("soccer")) == 1
-    assert len(main.fetch_smarkets_quotes("soccer")) == 1   # served from cache
+    _drain_smarkets_threads()
+    assert len(main.fetch_smarkets_quotes("soccer")) == 1
 
 
 class _NullScraper:

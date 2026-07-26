@@ -446,40 +446,62 @@ def fetch_betano_quotes(
 
 
 # Smarkets needs one request per event, paced 0.5s apart to stay under its
-# per-IP cap — roughly 100s for a single sport. Run inline every cycle it would
-# become the bottleneck for every other book, so results are cached and reused.
-# That costs nothing in accuracy here: this source is only ever consulted for
-# markets Pinnacle doesn't price, which are prematch prices that drift slowly.
+# per-IP cap. Measured on a live install: a refresh took ~26 MINUTES, and
+# because it ran inside the scan cycle it blocked that sport entirely — no
+# alerts at all for the duration. Freshness here is worth far less than that:
+# this source is only consulted for markets Pinnacle doesn't price, which are
+# prematch prices that drift slowly.
+#
+# So the cycle never waits for it. It reads whatever snapshot exists and, when
+# that snapshot is stale, kicks off a background refresh for next time. The
+# first cycle after startup therefore has no fallback lines, which is the
+# correct trade: a missing fallback costs a few events, a blocked cycle costs
+# every alert on that sport.
 _SMARKETS_CACHE: dict[str, tuple[float, list[OddQuote]]] = {}
+_SMARKETS_REFRESHING: set[str] = set()
 _SMARKETS_LOCK = threading.Lock()
+
+
+def _smarkets_refresh(sport: str) -> None:
+    """Background worker. Never raises — a failure leaves the previous snapshot
+    in place and only resets the clock, so one bad scrape doesn't drop the
+    fallback and doesn't trigger an immediate retry storm either."""
+    quotes: list[OddQuote] | None = None
+    try:
+        with SmarketsScraper() as sm:
+            quotes = list(smarkets_iter_all_quotes(
+                sm, sport, max_events=int(os.getenv("SMARKETS_MAX_EVENTS", "150")),
+            ))
+    except Exception as e:
+        console.print(f"[yellow]Smarkets ({sport}) refresh échoué : {e}[/yellow]")
+    finally:
+        with _SMARKETS_LOCK:
+            previous = _SMARKETS_CACHE.get(sport)
+            kept = quotes if quotes is not None else (previous[1] if previous else [])
+            _SMARKETS_CACHE[sport] = (time.monotonic(), kept)
+            _SMARKETS_REFRESHING.discard(sport)
 
 
 def fetch_smarkets_quotes(sport: str) -> list[OddQuote]:
     """Smarkets exchange mid-prices, used as a *fallback* sharp reference.
 
-    An exchange has no margin to remove, so its mid is a fair price by
-    construction, and it lists events Pinnacle doesn't — which is what lets a
-    soft-book quote be valued at all on those matches. Off by default: set
-    USE_SMARKETS=1 to enable, SMARKETS_TTL_S to tune the refresh interval."""
+    Returns immediately, always: the last snapshot, refreshed out of band.
+    Set USE_SMARKETS=1 to enable, SMARKETS_TTL_S to tune the refresh interval,
+    SMARKETS_MAX_EVENTS to bound how much one refresh walks."""
     ttl = float(os.getenv("SMARKETS_TTL_S", "900"))
     now = time.monotonic()
     with _SMARKETS_LOCK:
         cached = _SMARKETS_CACHE.get(sport)
-        if cached is not None and (now - cached[0]) < ttl:
-            return cached[1]
-    try:
-        with SmarketsScraper() as sm:
-            quotes = list(smarkets_iter_all_quotes(sm, sport))
-    except httpx.HTTPError as e:
-        console.print(f"[yellow]Smarkets skipped:[/yellow] {e}")
-        # Keep serving the previous snapshot rather than dropping the fallback
-        # entirely on one failed scrape.
-        with _SMARKETS_LOCK:
-            cached = _SMARKETS_CACHE.get(sport)
-        return cached[1] if cached is not None else []
-    with _SMARKETS_LOCK:
-        _SMARKETS_CACHE[sport] = (now, quotes)
-    return quotes
+        stale = cached is None or (now - cached[0]) >= ttl
+        launch = stale and sport not in _SMARKETS_REFRESHING
+        if launch:
+            _SMARKETS_REFRESHING.add(sport)
+    if launch:
+        threading.Thread(
+            target=_smarkets_refresh, args=(sport,),
+            name=f"smarkets-{sport}", daemon=True,
+        ).start()
+    return list(cached[1]) if cached is not None else []
 
 
 def fetch_unibet_quotes(sport: str) -> list[OddQuote]:
