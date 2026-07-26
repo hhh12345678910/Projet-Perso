@@ -52,10 +52,19 @@ ever run the daemon from a residential IP.
 ### Automatic (recommended)
 
 `tools/betano-ingest.user.js` is a Tampermonkey userscript that automates the
-manual capture below. Leave a `betanosports.be` tab open; every 15 s it
-fetches the live overview and POSTs it to `scripts/betano_ingest_server.py` on
-the VM, which writes `data/betano.json` atomically. `scan-daemon.sh` passes
-that file as `--betano-file` automatically when it exists.
+manual capture below. Leave a `betanosports.be` tab open and it pushes two
+feeds to `scripts/betano_ingest_server.py` on the VM:
+
+- **live** (every 15 s) — `/danae-webapi/api/live/overview`, all sports in one
+  payload, in-play only. Written to `data/betano.json`; `scan-daemon.sh` passes
+  it as `--betano-file` when present.
+- **prematch** (every 2 min) — `/fr/api/sport/{slug}/matchs-a-venir`, a
+  *different* API with its own market codes, one payload per sport. Written to
+  `data/prematch/{sport}.json` and read by `fetch_betano_quotes`.
+
+The prematch feed is the one that matters: the live overview is in-play only
+(measured: 165 of 172 events already started), so without it Betano
+contributes nothing to prematch value betting.
 
 Setup: generate a token (`openssl rand -hex 32`) into `BETANO_INGEST_TOKEN`,
 run the ingest server (`scripts/betano-ingest.service`), open the port in the

@@ -67,6 +67,11 @@ COOKIE_FILE = Path(
 )
 # Captured payloads from endpoints whose shape isn't known yet.
 SAMPLE_DIR = Path(os.getenv("BETANO_SAMPLE_DIR", str(_project_dir() / "data" / "samples")))
+# Prematch offer, one file per sport (the API is per-sport, unlike the live
+# overview which mixes them). Read by fetch_betano_quotes().
+PREMATCH_DIR = Path(
+    os.getenv("BETANO_PREMATCH_DIR", str(_project_dir() / "data" / "prematch"))
+)
 HOST = os.getenv("BETANO_INGEST_HOST", "0.0.0.0")
 PORT = int(os.getenv("BETANO_INGEST_PORT", "8787"))
 MAX_BYTES = int(float(os.getenv("BETANO_INGEST_MAX_MB", "32")) * 1024 * 1024)
@@ -227,9 +232,48 @@ class Handler(BaseHTTPRequestHandler):
         _log(f"200 sample '{name}' stored ({len(raw)} B) -> {path}")
         self._send(200, {"ok": True, "name": name, "bytes": len(raw)})
 
+    def _handle_prematch(self, raw: bytes) -> None:
+        """Store the prematch offer for one sport.
+
+        The prematch API is per-sport (a different URL per sport slug), unlike
+        the live overview which mixes every sport into one payload — hence one
+        file per sport rather than a single dump."""
+        from urllib.parse import parse_qs, urlparse
+
+        qs = parse_qs(urlparse(self.path).query)
+        raw_sport = (qs.get("sport") or [""])[0]
+        sport = "".join(c for c in raw_sport if c.isalnum() or c in "-_")[:32]
+        if not sport:
+            self._send(400, {"error": "missing 'sport' query parameter"})
+            return
+        try:
+            data = json.loads(raw)
+        except ValueError as e:
+            self._send(400, {"error": f"invalid JSON: {e}"})
+            return
+        blocks = ((data.get("data") or {}).get("blocks")) if isinstance(data, dict) else None
+        if not blocks:
+            # Betano serves an empty payload for a sport with no fixtures in
+            # window; refuse it rather than overwrite a good file with nothing.
+            _log(f"422 prematch '{sport}' has no blocks — not overwriting")
+            self._send(422, {"error": "no data.blocks in payload"})
+            return
+        n_events = sum(len(b.get("events") or []) for b in blocks if isinstance(b, dict))
+        try:
+            _atomic_write(PREMATCH_DIR / f"{sport}.json", raw)
+        except OSError as e:
+            _log(f"500 prematch write failed: {e}")
+            self._send(500, {"error": f"write failed: {e}"})
+            return
+        _log(
+            f"200 prematch '{sport}' stored ({len(raw)} B, "
+            f"{len(blocks)} leagues, {n_events} events)"
+        )
+        self._send(200, {"ok": True, "sport": sport, "leagues": len(blocks), "events": n_events})
+
     def do_POST(self) -> None:  # noqa: N802
         route = self.path.split("?", 1)[0]
-        if route not in ("/ingest", "/ingest-cookie", "/discover", "/sample"):
+        if route not in ("/ingest", "/ingest-cookie", "/discover", "/sample", "/ingest-prematch"):
             self._send(404, {"error": "not found"})
             return
         if not self._authorized():
@@ -254,6 +298,9 @@ class Handler(BaseHTTPRequestHandler):
             return
         if route == "/sample":
             self._handle_sample(raw)
+            return
+        if route == "/ingest-prematch":
+            self._handle_prematch(raw)
             return
         try:
             data = json.loads(raw)

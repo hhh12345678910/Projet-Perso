@@ -17,6 +17,7 @@ from src.scrapers.betano import (
     _parse_datetime,
     _side_from_team,
     parse_overview,
+    parse_prematch,
 )
 
 
@@ -147,3 +148,119 @@ def test_is_retryable_skips_auth_and_4xx():
     assert _is_retryable(forbidden) is False
     assert _is_retryable(server_err) is True
     assert _is_retryable(httpx.ConnectError("boom")) is True
+
+
+# ---------------------------------------------------------------------------
+# Prematch offer (/fr/api/sport/{slug}/matchs-a-venir)
+# Shapes below mirror a real tennis capture: startTime in epoch millis,
+# selections named after the participant, price as the decimal odd.
+# ---------------------------------------------------------------------------
+
+def _prematch_payload(markets: list[dict]) -> dict:
+    return {
+        "data": {
+            "blocks": [
+                {
+                    "id": 1,
+                    "name": "ATP - Estoril",
+                    "events": [
+                        {
+                            "id": "89684492",
+                            "sportId": "TENN",
+                            "startTime": 1785146400000,
+                            "participants": [
+                                {"id": 1, "name": "Daria Snigur"},
+                                {"id": 2, "name": "Lilli Tagger"},
+                            ],
+                            "markets": markets,
+                        }
+                    ],
+                }
+            ]
+        }
+    }
+
+
+def _winner_market(mtype: str = "HTOH") -> dict:
+    return {
+        "id": "2875196453",
+        "name": "Vainqueur",
+        "type": mtype,
+        "handicap": 0.0,
+        "selections": [
+            {"id": "a", "name": "Daria Snigur", "price": 1.7, "handicap": 0.0},
+            {"id": "b", "name": "Lilli Tagger", "price": 2.1, "handicap": 0.0},
+        ],
+    }
+
+
+def test_parse_prematch_maps_winner_to_h2h_sides():
+    quotes = list(parse_prematch(_prematch_payload([_winner_market()])))
+    assert {q.outcome.label for q in quotes} == {"home", "away"}
+    assert all(q.market is MarketType.H2H for q in quotes)
+    assert all(q.book is Book.BETANO_BE for q in quotes)
+    by_label = {q.outcome.label: q.decimal_odd for q in quotes}
+    assert by_label == {"home": 1.7, "away": 2.1}
+
+
+def test_parse_prematch_drops_padding_line_on_two_way_winner():
+    """A 0.0 handicap on a winner market is padding. Keeping it would stop the
+    quote matching Pinnacle's line-less H2H fair line."""
+    quotes = list(parse_prematch(_prematch_payload([_winner_market()])))
+    assert all(q.outcome.line is None for q in quotes)
+
+
+def test_parse_prematch_reads_epoch_millis_start_time():
+    quotes = list(parse_prematch(_prematch_payload([_winner_market()])))
+    # 1785146400000 ms -> 2026-07-26 in UTC; event_key is prefixed with it.
+    assert quotes[0].event_key.startswith("202607")
+
+
+def test_parse_prematch_totals_carry_the_line():
+    totals = {
+        "id": "m2",
+        "name": "Jeux",
+        "type": "FTGO",
+        "handicap": 21.5,
+        "selections": [
+            {"name": "Plus de", "price": 1.85, "handicap": 21.5},
+            {"name": "Moins de", "price": 1.95, "handicap": 21.5},
+        ],
+    }
+    quotes = list(parse_prematch(_prematch_payload([totals])))
+    assert {q.outcome.label for q in quotes} == {"over", "under"}
+    assert all(q.market is MarketType.TOTALS for q in quotes)
+    assert all(q.outcome.line == 21.5 for q in quotes)
+
+
+def test_parse_prematch_zero_rake_winner_is_still_h2h():
+    """HTHP is the 0%-margin winner market — a genuinely bettable price, so it
+    must not be dropped just because its code differs from HTOH."""
+    quotes = list(parse_prematch(_prematch_payload([_winner_market("HTHP")])))
+    assert len(quotes) == 2
+    assert all(q.market is MarketType.H2H for q in quotes)
+
+
+def test_parse_prematch_reports_unknown_market_codes():
+    unknown: set[str] = set()
+    payload = _prematch_payload([{"type": "XXNEW", "selections": [{"name": "x", "price": 2.0}]}])
+    assert list(parse_prematch(payload, unknown_types=unknown)) == []
+    assert unknown == {"XXNEW"}
+
+
+def test_parse_prematch_skips_unusable_prices():
+    market = {
+        "type": "HTOH",
+        "selections": [
+            {"name": "Daria Snigur", "price": 1.0},      # no value at evens-or-worse
+            {"name": "Lilli Tagger", "price": None},
+            {"name": "Daria Snigur", "price": "abc"},
+        ],
+    }
+    assert list(parse_prematch(_prematch_payload([market]))) == []
+
+
+def test_parse_prematch_tolerates_empty_and_malformed_payloads():
+    assert list(parse_prematch({})) == []
+    assert list(parse_prematch({"data": {"blocks": []}})) == []
+    assert list(parse_prematch({"data": {"blocks": [{"events": [{}]}]}})) == []

@@ -391,6 +391,128 @@ def parse_overview(data: dict) -> Iterator[OddQuote]:
         )
 
 
+# ---------------------------------------------------------------------------
+# Prematch offer (/fr/api/sport/{slug}/matchs-a-venir)
+#
+# A different API from the danae-webapi live feed, with its own market codes —
+# the live map above (MRES/HCTG/...) does not apply. Shape:
+#     data.blocks[]            leagues
+#       .events[]              fixtures (startTime is epoch millis)
+#         .participants[]      {id, name}
+#         .markets[]           {type, name, handicap, selections[]}
+#           .selections[]      {name, price, handicap}
+# ---------------------------------------------------------------------------
+
+_PREMATCH_MARKET_BY_TYPE = {
+    "HTOH": MarketType.H2H,        # Vainqueur — 2-way winner
+    "HTHP": MarketType.H2H,        # Vainqueur 0% — zero-margin winner
+    "MRES": MarketType.H2H,        # Résultat du match — 1X2
+    "FTGO": MarketType.TOTALS,     # Total (jeux / buts)
+    "HCTG": MarketType.TOTALS,
+    "TGHC": MarketType.HANDICAP,   # Handicap jeux
+    "HCAP": MarketType.HANDICAP,
+    "AHCP": MarketType.HANDICAP,
+}
+
+# Betano's sport codes -> the sport names this project uses.
+PREMATCH_SPORT_CODES = {
+    "FOOT": "soccer",
+    "TENN": "tennis",
+    "BASK": "basketball",
+    "VOLL": "volleyball",
+    "ICEH": "hockey",
+}
+
+
+def prematch_file(sport: str) -> str:
+    """Path where the userscript's prematch push for `sport` lands."""
+    default_dir = os.path.join(
+        os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__)))),
+        "data", "prematch",
+    )
+    return os.path.join(os.getenv("BETANO_PREMATCH_DIR", default_dir), f"{sport}.json")
+
+
+def parse_prematch(data: dict, unknown_types: set[str] | None = None) -> Iterator[OddQuote]:
+    """Walk a prematch payload and yield OddQuote objects.
+
+    `unknown_types`, when given, collects market codes that aren't mapped, so
+    callers can surface them instead of silently dropping markets — the code
+    set differs per sport and only tennis has been observed so far."""
+    blocks = ((data.get("data") or {}).get("blocks")) or []
+    now = datetime.now(timezone.utc)
+
+    for block in blocks:
+        if not isinstance(block, dict):
+            continue
+        for ev in (block.get("events") or []):
+            if not isinstance(ev, dict):
+                continue
+            start = _parse_datetime(_first(ev, _FIELDS_EVENT_START))
+            if start is None:
+                continue
+            home, away = _extract_home_away(ev.get("participants"))
+            if not (home and away):
+                continue
+
+            for market in (ev.get("markets") or []):
+                if not isinstance(market, dict):
+                    continue
+                code = str(market.get("type") or "").upper()
+                market_type = _PREMATCH_MARKET_BY_TYPE.get(code)
+                if market_type is None:
+                    if unknown_types is not None and code:
+                        unknown_types.add(code)
+                    continue
+
+                for sel in (market.get("selections") or []):
+                    if not isinstance(sel, dict):
+                        continue
+                    try:
+                        decimal_odd = float(sel.get("price"))
+                    except (TypeError, ValueError):
+                        continue
+                    if decimal_odd <= 1.0:
+                        continue
+
+                    raw_label = str(sel.get("name") or "")
+                    if market_type == MarketType.H2H:
+                        label = _h2h_label(raw_label, home, away)
+                    elif market_type == MarketType.HANDICAP:
+                        label = _side_from_team(raw_label, home, away)
+                    else:
+                        label = _normalise_outcome_label(raw_label, market_type)
+                    if label is None:
+                        continue
+
+                    # Totals carry the line on the market; handicaps carry a
+                    # per-side value on the selection. Prefer the selection's
+                    # when present so each side keeps its own signed line.
+                    raw_line = sel.get("handicap")
+                    if raw_line is None:
+                        raw_line = market.get("handicap")
+                    try:
+                        line_val = float(raw_line) if raw_line is not None else None
+                    except (TypeError, ValueError):
+                        line_val = None
+                    # A 0.0 line on a 2-way winner is padding, not a real line;
+                    # keeping it would prevent the quote matching Pinnacle's
+                    # line-less H2H fair line.
+                    if market_type == MarketType.H2H:
+                        line_val = None
+
+                    record_pair(home, away)
+                    yield OddQuote(
+                        event_key=event_key(home, away, start),
+                        book=Book.BETANO_BE,
+                        market=market_type,
+                        outcome=Outcome(label=label, line=line_val),
+                        decimal_odd=decimal_odd,
+                        fetched_at=now,
+                        source_event_id=str(ev.get("id") or ""),
+                    )
+
+
 def _extract_home_away(participants: Any) -> tuple[str | None, str | None]:
     if not isinstance(participants, list):
         return None, None

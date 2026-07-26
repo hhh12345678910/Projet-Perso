@@ -1,8 +1,8 @@
 // ==UserScript==
 // @name         Betano → Valuebet odds push
 // @namespace    valuebet.local
-// @version      2.0.0
-// @description  Fetch Betano's live overview from a real browser session and push it to the Valuebet VM, automating the manual capture the README describes.
+// @version      3.0.0
+// @description  Push Betano's live overview and per-sport prematch offer to the Valuebet VM from a browser session DataDome trusts.
 // @match        https://www.betanosports.be/*
 // @match        https://betanosports.be/*
 // @grant        GM_xmlhttpRequest
@@ -83,12 +83,10 @@
   }
 
   // ── endpoint discovery ───────────────────────────────────────────────────
-  // /live/overview only carries in-play events, so Betano currently
-  // contributes nothing prematch — where the engine actually works.
-  // fetch_prematch_overview() still guesses its path among three candidates.
-  // Hook fetch/XHR to record the danae-webapi URLs the page really calls:
-  // browsing to a prematch section surfaces the correct one in the VM log,
-  // with no DevTools spelunking.
+  // Kept after it did its job (it's how the prematch API was found on /fr/api
+  // rather than danae-webapi): Betano ships new endpoints periodically, and a
+  // passive record of what the page calls is cheap. Note the deliberate use of
+  // origFetch for our own requests below, so the script doesn't log itself.
   const seenUrls = new Set();
   let pendingUrls = [];
   function noteUrl(u) {
@@ -135,12 +133,16 @@
   }
 
   let running = false;
+  // Set by the prematch cycle; shown on the live banner so one glance covers
+  // both feeds.
+  let lastPrematch = "";
+
   async function tick() {
     if (running) return; // never let a slow upload overlap the next cycle
     running = true;
     try {
       info("récupération des cotes…");
-      const res = await fetch(OVERVIEW_URL, {
+      const res = await origFetch(OVERVIEW_URL, {
         method: "GET",
         credentials: "include",
         headers: {
@@ -174,8 +176,9 @@
       info("envoi de " + mb(text.length) + " vers la VM…");
       await send(text);
       ok(
-        "envoyé à " + new Date().toLocaleTimeString() + " — " + mb(text.length) +
-        "\n" + c.events + " matchs, " + c.selections + " cotes 🎉"
+        "live envoyé à " + new Date().toLocaleTimeString() + " — " + mb(text.length) +
+        "\n" + c.events + " matchs, " + c.selections + " cotes" +
+        (lastPrematch ? "\nprématch : " + lastPrematch : "")
       );
       console.log(LOG, "pushed", c, text.length);
     } catch (e) {
@@ -187,6 +190,82 @@
     }
   }
 
+  // ── prematch offer ───────────────────────────────────────────────────────
+  // A separate API from the live overview, one URL per sport. This is where
+  // the fixtures the engine actually prices live — the live feed is in-play
+  // only (measured: 165 of 172 events already started).
+  //
+  // The `req` parameter differs between sports in the captured traffic
+  // (football omits the leading `la,`), and it's not clear which part is
+  // load-bearing, so try the observed variant first and fall back.
+  const PREMATCH = [
+    ["soccer",     "le-football"],
+    ["tennis",     "tennis"],
+    ["basketball", "basketball"],
+    ["volleyball", "volleyball"],
+  ];
+  const REQ_VARIANTS = ["la,s,stnf,c,mb", "s,stnf,c,mb"];
+  // Prematch odds move far slower than in-play ones, so this doesn't need the
+  // live cadence.
+  const PREMATCH_INTERVAL_MS = 2 * 60 * 1000;
+
+  function sendTo(url, text) {
+    return new Promise((resolve, reject) => {
+      GM_xmlhttpRequest({
+        method: "POST",
+        url: url,
+        headers: { "Content-Type": "application/json", "X-Ingest-Token": TOKEN },
+        data: text,
+        timeout: 120000,
+        onload: (r) =>
+          r.status >= 200 && r.status < 300
+            ? resolve(r)
+            : reject(new Error("VM " + r.status + " " + r.responseText)),
+        onerror: () => reject(new Error("VM injoignable")),
+        ontimeout: () => reject(new Error("timeout")),
+      });
+    });
+  }
+
+  let pmRunning = false;
+  async function tickPrematch() {
+    if (pmRunning) return;
+    pmRunning = true;
+    const done = [];
+    try {
+      for (const [sport, slug] of PREMATCH) {
+        let text = null;
+        for (const req of REQ_VARIANTS) {
+          try {
+            const res = await origFetch(
+              "/fr/api/sport/" + slug + "/matchs-a-venir/?req=" + req,
+              { method: "GET", credentials: "include",
+                headers: { Accept: "application/json, text/plain, */*" } }
+            );
+            if (res.ok) { text = await res.text(); break; }
+          } catch (e) { /* try the next variant */ }
+        }
+        if (!text) { done.push(sport + ":✗"); continue; }
+        try {
+          await sendTo(
+            VPS_URL.replace("/ingest", "/ingest-prematch") + "?sport=" + sport,
+            text
+          );
+          done.push(sport + ":" + Math.round(text.length / 1024) + "Ko");
+        } catch (e) {
+          // 422 = Betano returned no fixtures for this sport right now. That's
+          // normal off-season/overnight, not a failure worth flagging.
+          done.push(sport + (/\b422\b/.test(e.message) ? ":vide" : ":✗"));
+        }
+        await new Promise((r) => setTimeout(r, 1000));
+      }
+      console.log(LOG, "prematch", done.join(" "));
+      lastPrematch = done.join("  ");
+    } finally {
+      pmRunning = false;
+    }
+  }
+
   if (TOKEN.indexOf("PASTE_TOKEN") !== -1 || TOKEN.length < 16) {
     err("token non configuré — édite le script.");
     return;
@@ -194,5 +273,7 @@
 
   info("démarrage…");
   tick();
+  tickPrematch();
   setInterval(tick, INTERVAL_MS);
+  setInterval(tickPrematch, PREMATCH_INTERVAL_MS);
 })();

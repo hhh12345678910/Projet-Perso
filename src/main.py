@@ -19,7 +19,13 @@ from .devig import devig
 from .ev import ev_pct, fair_odd, kelly_fraction, kelly_stake
 from .matcher import parse_event_key, reconcile_event_keys
 from .models import Book, FairLine, MarketType, OddQuote, Outcome, ValueBet
-from .scrapers.betano import BetanoAuthError, BetanoScraper, parse_overview as betano_parse_overview
+from .scrapers.betano import (
+    BetanoAuthError,
+    BetanoScraper,
+    parse_overview as betano_parse_overview,
+    parse_prematch as betano_parse_prematch,
+    prematch_file as betano_prematch_file,
+)
 from .scrapers.betcenter import BetCenterScraper
 from .scrapers.betfirst import BetFirstScraper, parse_events_table as betfirst_parse_events_table
 from .scrapers.goldenpalace import GoldenPalaceScraper, parse_get_events as goldenpalace_parse_get_events
@@ -317,28 +323,60 @@ def canonicalize_for_surebets(
     return canonical
 
 
-def fetch_betano_quotes(betano_file: str | None = None) -> list[OddQuote]:
-    """Parse Betano data. If `betano_file` is given, load the JSON from disk
-    (the response body the user captured in their browser) instead of doing a
-    live fetch — Cloudflare+DataDome bind cookies to the browser IP, so the
-    live path only works from that machine. Returns [] with a warning if no
-    file is given and the cookie is missing/expired."""
-    if betano_file:
-        import json as _json
-        from pathlib import Path as _Path
+def fetch_betano_quotes(
+    betano_file: str | None = None,
+    sport: str | None = None,
+    include_live: bool = True,
+) -> list[OddQuote]:
+    """Parse Betano data from the browser userscript's pushes.
+
+    Two feeds, because Betano exposes two unrelated APIs:
+      - the live overview (danae-webapi), all sports in one dump, in-play only;
+      - the prematch offer (/fr/api/sport/{slug}/matchs-a-venir), one payload
+        per sport, which is where the fixtures the engine actually prices live.
+
+    DataDome scores the requesting IP, so neither can be fetched from the VM —
+    both arrive via tools/betano-ingest.user.js. The live path falls back to a
+    direct fetch (useful only from a residential IP) when no dump is present."""
+    import json as _json
+    from pathlib import Path as _Path
+
+    def _load(path: str) -> dict | None:
         try:
-            data = _json.loads(_Path(betano_file).read_text())
+            return _json.loads(_Path(path).read_text())
+        except FileNotFoundError:
+            return None
         except (OSError, ValueError) as e:
-            console.print(f"[yellow]Betano file unreadable:[/yellow] {e}")
-            return []
-        return list(betano_parse_overview(data))
-    try:
-        with BetanoScraper() as bet:
-            data = bet.fetch_live_overview()
-        return list(betano_parse_overview(data))
-    except BetanoAuthError as e:
-        console.print(f"[yellow]Betano skipped:[/yellow] {e}")
-        return []
+            console.print(f"[yellow]Betano file unreadable ({path}):[/yellow] {e}")
+            return None
+
+    quotes: list[OddQuote] = []
+
+    if include_live:
+        if betano_file:
+            data = _load(betano_file)
+            if data is not None:
+                quotes.extend(betano_parse_overview(data))
+        else:
+            try:
+                with BetanoScraper() as bet:
+                    quotes.extend(betano_parse_overview(bet.fetch_live_overview()))
+            except BetanoAuthError as e:
+                console.print(f"[yellow]Betano live skipped:[/yellow] {e}")
+
+    if sport:
+        pm = _load(betano_prematch_file(sport))
+        if pm is not None:
+            unknown: set[str] = set()
+            quotes.extend(betano_parse_prematch(pm, unknown_types=unknown))
+            if unknown:
+                # Surface unmapped codes: the set differs per sport, so a new
+                # one means quotes are being dropped silently.
+                console.print(
+                    f"[yellow]Betano prematch ({sport}): unmapped market codes "
+                    f"{sorted(unknown)} — add them to _PREMATCH_MARKET_BY_TYPE.[/yellow]"
+                )
+    return quotes
 
 
 def fetch_unibet_quotes(sport: str) -> list[OddQuote]:
@@ -500,8 +538,12 @@ def _fetch_all_parallel(
         # "Betcenter":     lambda: fetch_betcenter_quotes(sport),  # desactive: cotes erronees
         # Golden Palace retiré: compte limité, plus exploitable.
     }
-    if include_file_books:
-        tasks["Betano"]        = lambda: fetch_betano_quotes(betano_file=betano_file)
+    # The live dump mixes every sport, so it's parsed once (on the sport that
+    # owns include_file_books) to avoid duplicating it across sport threads.
+    # The prematch feed is per-sport and must run every time.
+    tasks["Betano"] = lambda: fetch_betano_quotes(
+        betano_file=betano_file, sport=sport, include_live=include_file_books,
+    )
 
     all_quotes: list[OddQuote] = []
     with ThreadPoolExecutor(max_workers=len(tasks)) as executor:
