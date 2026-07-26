@@ -6,6 +6,7 @@
 // @match        https://www.betanosports.be/*
 // @match        https://betanosports.be/*
 // @grant        GM_xmlhttpRequest
+// @grant        GM_cookie
 // @connect      34.59.193.111
 // @run-at       document-idle
 // @noframes
@@ -59,21 +60,56 @@
   const info = (t) => banner("⏳ BETANO → VM : " + t, "#455a64");
 
   // ── read cookies ─────────────────────────────────────────────────────────
-  // document.cookie only — deliberately no GM_cookie. Requesting that grant
-  // made Tampermonkey decline to run the script at all (silently: no banner,
-  // no log, nothing reached the server), which is far worse than the one thing
-  // it buys us. HttpOnly cookies are therefore invisible here; whether that
-  // matters depends on which tokens the API actually gates on, and the server
-  // logs which ones arrived so we can tell.
+  // cf_clearance is HttpOnly, so document.cookie can't see it — and the API
+  // returns 403 without it, so GM_cookie (the only API that reads HttpOnly
+  // cookies) is required rather than a nice-to-have.
   //
-  // Send every cookie rather than filtering to WANTED: the payload is still
-  // ~1 KB, and replaying the browser's full jar is closer to what the real
-  // page sends than a hand-picked subset.
+  // GM_cookie's result is merged over document.cookie rather than replacing
+  // it: if the grant is unavailable or returns nothing, we still push the
+  // visible jar and the banner names what's missing, instead of regressing to
+  // sending nothing at all.
   function readCookies() {
-    return document.cookie
-      .split(";")
-      .map((s) => s.trim())
-      .filter(Boolean);
+    return new Promise((resolve) => {
+      const visible = {};
+      document.cookie.split(";").forEach((s) => {
+        const t = s.trim();
+        const i = t.indexOf("=");
+        if (i > 0) visible[t.slice(0, i)] = t.slice(i + 1);
+      });
+
+      const done = (via) =>
+        resolve({
+          pairs: Object.keys(visible).map((k) => k + "=" + visible[k]),
+          via: via,
+        });
+
+      if (typeof GM_cookie === "undefined" || !GM_cookie || !GM_cookie.list) {
+        done("document.cookie (GM_cookie indisponible)");
+        return;
+      }
+      let settled = false;
+      // Some Tampermonkey builds never invoke the callback when the grant is
+      // present but blocked; without this the script would hang silently and
+      // look exactly like the failure mode we just spent hours on.
+      const guard = setTimeout(() => {
+        if (!settled) { settled = true; done("document.cookie (GM_cookie sans réponse)"); }
+      }, 5000);
+      try {
+        GM_cookie.list({ domain: "betanosports.be" }, (cookies, error) => {
+          if (settled) return;
+          settled = true;
+          clearTimeout(guard);
+          if (error || !cookies || !cookies.length) {
+            done("document.cookie (GM_cookie: " + (error || "vide") + ")");
+            return;
+          }
+          cookies.forEach((c) => { visible[c.name] = c.value; });
+          done("GM_cookie (" + cookies.length + " dont HttpOnly)");
+        });
+      } catch (e) {
+        if (!settled) { settled = true; clearTimeout(guard); done("document.cookie (GM_cookie a levé: " + e.message + ")"); }
+      }
+    });
   }
 
   // ── push ─────────────────────────────────────────────────────────────────
@@ -96,7 +132,7 @@
   }
 
   async function tick() {
-    const pairs = readCookies();
+    const { pairs, via } = await readCookies();
     const names = pairs.map((p) => p.split("=")[0]);
     try {
       // Always POST, even with an empty jar: the server logs the note, so a
@@ -105,14 +141,14 @@
       await send({
         cookie: pairs.join("; "),
         user_agent: navigator.userAgent,
-        note: "v3 document.cookie, " + pairs.length + " cookies: " + names.join(","),
+        note: "v4 via " + via + ", " + pairs.length + " cookies: " + names.join(","),
       });
       const missing = WANTED.filter((w) => names.indexOf(w) === -1);
       const when = new Date().toLocaleTimeString();
       if (missing.length) {
         banner(
           "⚠️ BETANO → VM : envoyé à " + when + " (" + pairs.length + " cookies)\n" +
-          "manquant : " + missing.join(", "),
+          "manquant : " + missing.join(", ") + "  —  source : " + via,
           "#ef6c00"
         );
       } else {
