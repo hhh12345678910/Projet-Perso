@@ -83,13 +83,20 @@ def build_fair_lines(
     method: str,
     *,
     secondary_quotes: list[OddQuote] | None = None,
-    primary_weight: float = 0.7,
 ) -> dict[tuple[str, MarketType, float | None], FairLine]:
-    """Build fair lines from Pinnacle, optionally blending with a secondary
-    sharp source (Smarkets exchange) to cross-validate. Pinnacle keeps the
-    higher weight by default because its volume and stability are higher;
-    Smarkets fills in events Pinnacle doesn't price and gently pulls the
-    estimate where the two disagree."""
+    """Build fair lines from Pinnacle, with a secondary sharp source used
+    strictly as a fallback.
+
+    Where Pinnacle prices a market, its devigged line is used alone. It is the
+    reference precisely because it is the most accurate source available;
+    averaging it with anything less accurate can only move the estimate away
+    from the truth, and would quietly change what "fair" means on the events
+    that matter most.
+
+    The secondary is therefore only consulted for markets Pinnacle does not
+    price at all. Those fair lines are tagged with their actual source
+    (reference_book), so a bet valued against the fallback is distinguishable
+    from one valued against Pinnacle."""
     primary_groups = _group_quotes(pinnacle_quotes)
     secondary_groups = _group_quotes(secondary_quotes or [])
 
@@ -100,23 +107,11 @@ def build_fair_lines(
         pin_probs = _devig_group(primary_groups.get(key, []), method)
         sec_probs = _devig_group(secondary_groups.get(key, []), method)
 
-        if pin_probs and sec_probs:
-            # Weighted blend on outcomes that both sources price; fall back to
-            # the available source when only one carries a given label.
-            blended: dict[str, float] = {}
-            for label in set(pin_probs) | set(sec_probs):
-                p, s = pin_probs.get(label), sec_probs.get(label)
-                if p is not None and s is not None:
-                    blended[label] = primary_weight * p + (1 - primary_weight) * s
-                else:
-                    blended[label] = p if p is not None else s
-            # Renormalise so the row still sums to 1 after the blend.
-            total = sum(blended.values())
-            if total > 0:
-                blended = {k: v / total for k, v in blended.items()}
-            outcomes = blended
-            ref_book = Book.PINNACLE
-        elif pin_probs:
+        # Pinnacle wins outright whenever it prices the market — no blending,
+        # and no borrowing a label from the secondary either: if Pinnacle lists
+        # a 2-way market, a "draw" from an exchange's 3-way one doesn't belong
+        # in the same fair line.
+        if pin_probs:
             outcomes = pin_probs
             ref_book = Book.PINNACLE
         else:
