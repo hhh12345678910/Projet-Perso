@@ -1299,8 +1299,30 @@ def alert_test():
         margin=cfg.min_premium_surebet_pct / 100 + 0.005,
     )
 
+    # Critical is the one channel with no odds band, so the sample deliberately
+    # carries an absurd EV on a long shot — the shape of the alerts that get
+    # filtered out everywhere else and are the whole reason to run this channel.
+    sample_critical_bet = ValueBet(
+        event_key="202607010000::testteamA__vs__testteamB",
+        book=Book.BETANO_BE,
+        market=MarketType.H2H,
+        outcome=Outcome(label="away"),
+        odd_taken=9.80,                    # far outside every other channel's band
+        fair_prob=0.50,
+        fair_odd=2.00,
+        ev_pct=max(cfg.min_critical_ev_pct + 5.0, 40.0),
+        kelly_stake_pct=1.50,
+        detected_at=datetime.now(timezone.utc),
+        league="Suisse - Super League",
+    )
+
     bet_sent = send_alerts(
         [sample_bet], cfg, print_fn=lambda s: console.print(f"[yellow]{s}[/yellow]"),
+        sport="soccer",
+    )
+    critical_sent = send_alerts(
+        [sample_critical_bet], cfg,
+        print_fn=lambda s: console.print(f"[yellow]{s}[/yellow]"),
         sport="soccer",
     )
     sb_prematch_sent = send_surebet_alerts(
@@ -1366,6 +1388,16 @@ def alert_test():
         clv_high_sent, clv_chat, "CLV élevé (18%, header 🔥)",
         " (même canal CLV)",
     )
+
+    crit_chat = cfg.effective_critical_chat_id
+    if crit_chat:
+        _status(critical_sent, crit_chat,
+                f"Critique (EV {sample_critical_bet.ev_pct:.0f}% @ cote 9.80, hors bandes)")
+    else:
+        console.print(
+            "[dim]Critique : TELEGRAM_CRITICAL_CHAT_ID non défini — les gros EV à "
+            "cote élevée ne sont routés nulle part.[/dim]"
+        )
 
     premium_chat = cfg.effective_premium_chat_id
     if premium_chat:
