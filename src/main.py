@@ -1850,6 +1850,78 @@ def betano_prematch_shape(
         console.print("[green]  tous les codes marché sont mappés[/green]")
 
 
+@app.command(name="books-coverage")
+def books_coverage(
+    sport: str = typer.Option("soccer", "--sport", help="Comma-separated sports."),
+    betano_file: str = typer.Option(
+        "data/betano.json", "--betano-file", help="Betano live dump.",
+    ),
+):
+    """Compare what every book actually returns, side by side.
+
+    Answers "is this book's coverage low?" with numbers rather than intuition:
+    distinct events, quotes, markets offered, and how far ahead each book
+    prices. A book with far fewer events than its peers is either genuinely
+    thin or being parsed incompletely — this is what distinguishes the two."""
+    for current_sport in [s.strip() for s in sport.split(",") if s.strip()]:
+        console.print(f"\n[bold green]══ {current_sport.upper()} ══[/bold green]")
+        all_q = _fetch_all_parallel(current_sport, betano_file, include_file_books=True)
+        if not all_q:
+            console.print("[yellow]Aucune cote récupérée.[/yellow]")
+            continue
+
+        now = datetime.now(timezone.utc)
+        per_book: dict[Book, list[OddQuote]] = defaultdict(list)
+        for q in all_q:
+            per_book[q.book].append(q)
+
+        ref_events = {q.event_key for q in per_book.get(Book.PINNACLE, [])}
+
+        table = Table(title=f"Couverture par book ({current_sport})", show_lines=False)
+        table.add_column("book")
+        table.add_column("events", justify="right")
+        table.add_column("cotes", justify="right")
+        table.add_column("marchés", overflow="fold")
+        table.add_column("à venir", justify="right")
+        table.add_column("horizon", justify="right")
+        table.add_column("∩ Pinnacle", justify="right")
+
+        rows = []
+        for book, quotes in per_book.items():
+            events = {q.event_key for q in quotes}
+            markets = sorted({q.market.value for q in quotes})
+            upcoming = 0
+            latest: datetime | None = None
+            for ek in events:
+                parsed = parse_event_key(ek)
+                if parsed is None:
+                    continue
+                start = parsed[0]
+                if start > now:
+                    upcoming += 1
+                    if latest is None or start > latest:
+                        latest = start
+            # Overlap with the sharp reference is what actually matters: a book
+            # can list thousands of events and still be useless if none of them
+            # are ones Pinnacle prices, since there'd be no fair line.
+            overlap = len(events & ref_events) if ref_events and book != Book.PINNACLE else None
+            horizon = f"J+{(latest - now).days}" if latest else "-"
+            rows.append((
+                book.value, len(events), len(quotes), ",".join(markets),
+                upcoming, horizon,
+                "-" if overlap is None else str(overlap),
+            ))
+
+        for r in sorted(rows, key=lambda r: -r[1]):
+            table.add_row(r[0], str(r[1]), str(r[2]), r[3], str(r[4]), r[5], r[6])
+        console.print(table)
+        console.print(
+            "[dim]« à venir » = événements pas encore commencés ; "
+            "« ∩ Pinnacle » = événements partagés avec la référence sharp "
+            "(avant matching flou, donc minoré).[/dim]"
+        )
+
+
 @app.command()
 def selftest():
     """Sanity check on math primitives."""
