@@ -58,9 +58,12 @@ feeds to `scripts/betano_ingest_server.py` on the VM:
 - **live** (every 15 s) — `/danae-webapi/api/live/overview`, all sports in one
   payload, in-play only. Written to `data/betano.json`; `scan-daemon.sh` passes
   it as `--betano-file` when present.
-- **prematch** (every 2 min) — `/fr/api/sport/{slug}/matchs-a-venir`, a
-  *different* API with its own market codes, one payload per sport. Written to
-  `data/prematch/{sport}.json` and read by `fetch_betano_quotes`.
+- **prematch** (every 5 min) — `/fr/api/sport/{slug}/matchs-a-venir`, a
+  *different* API with its own market codes. That endpoint only covers ~24 h,
+  so the script uses its blocks as a competition index and walks each
+  competition's own url for the full calendar, merging the results into one
+  payload per sport. Written to `data/prematch/{sport}.json` and read by
+  `fetch_betano_quotes`.
 
 The prematch feed is the one that matters: the live overview is in-play only
 (measured: 165 of 172 events already started), so without it Betano

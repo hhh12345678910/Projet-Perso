@@ -206,9 +206,16 @@
     ["tennis", "tennis"],
   ];
   const REQ_VARIANTS = ["la,s,stnf,c,mb", "s,stnf,c,mb"];
-  // Prematch odds move far slower than in-play ones, so this doesn't need the
-  // live cadence.
-  const PREMATCH_INTERVAL_MS = 2 * 60 * 1000;
+  // A full sweep takes ~40 s (one request per competition, spaced), and
+  // prematch prices move slowly, so there's no reason to run it often.
+  const PREMATCH_INTERVAL_MS = 5 * 60 * 1000;
+  // matchs-a-venir only returns roughly the next 24 h — measured: Betano's
+  // horizon was J+0 while every other book reached J+35 to J+84. Each of its
+  // blocks carries the competition's own url, and fetching that returns the
+  // competition's full calendar. Iterating them is what lifts Betano from a
+  // one-day window to the coverage the other books already have.
+  const MAX_COMPETITIONS = 150;   // guard against an unexpectedly huge list
+  const COMPETITION_DELAY_MS = 300;
 
   function sendTo(url, text) {
     return new Promise((resolve, reject) => {
@@ -228,6 +235,55 @@
     });
   }
 
+  async function getJson(url) {
+    for (const req of REQ_VARIANTS) {
+      try {
+        const res = await origFetch(url + "?req=" + req, {
+          method: "GET",
+          credentials: "include",
+          headers: { Accept: "application/json, text/plain, */*" },
+        });
+        if (res.ok) return await res.json();
+      } catch (e) { /* try the next variant */ }
+    }
+    return null;
+  }
+
+  // Merge every response into one payload shaped like a single
+  // matchs-a-venir: the parser already handles data.blocks[].events[], so
+  // nothing server-side needs to know this came from many requests.
+  // Competitions overlap (a fixture can appear in both the 24 h list and its
+  // own competition), hence the dedup by event id.
+  function mergeBlocks(payloads) {
+    const byBlock = new Map();
+    for (const p of payloads) {
+      const blocks = (p && p.data && p.data.blocks) || [];
+      for (const b of blocks) {
+        if (!b) continue;
+        const key = String(b.id || b.name || Math.random());
+        let target = byBlock.get(key);
+        if (!target) {
+          target = Object.assign({}, b, { events: [], _seen: new Set() });
+          byBlock.set(key, target);
+        }
+        for (const ev of (b.events || [])) {
+          const id = String(ev && ev.id);
+          if (!id || target._seen.has(id)) continue;
+          target._seen.add(id);
+          target.events.push(ev);
+        }
+      }
+    }
+    const blocks = [];
+    let events = 0;
+    for (const b of byBlock.values()) {
+      delete b._seen;
+      events += b.events.length;
+      blocks.push(b);
+    }
+    return { payload: { data: { blocks: blocks } }, blocks: blocks.length, events: events };
+  }
+
   let pmRunning = false;
   async function tickPrematch() {
     if (pmRunning) return;
@@ -235,30 +291,39 @@
     const done = [];
     try {
       for (const [sport, slug] of PREMATCH) {
-        let text = null;
-        for (const req of REQ_VARIANTS) {
-          try {
-            const res = await origFetch(
-              "/fr/api/sport/" + slug + "/matchs-a-venir/?req=" + req,
-              { method: "GET", credentials: "include",
-                headers: { Accept: "application/json, text/plain, */*" } }
-            );
-            if (res.ok) { text = await res.text(); break; }
-          } catch (e) { /* try the next variant */ }
+        // The 24 h list doubles as the competition index: its blocks carry the
+        // per-competition urls we then walk for the full calendar.
+        const seed = await getJson("/fr/api/sport/" + slug + "/matchs-a-venir/");
+        if (!seed) { done.push(sport + ":✗"); continue; }
+
+        const urls = [];
+        for (const b of ((seed.data && seed.data.blocks) || [])) {
+          if (b && b.url && urls.indexOf(b.url) === -1) urls.push(b.url);
         }
-        if (!text) { done.push(sport + ":✗"); continue; }
+
+        const payloads = [seed];
+        const budget = urls.slice(0, MAX_COMPETITIONS);
+        for (let i = 0; i < budget.length; i++) {
+          info("prématch " + sport + " : compétition " + (i + 1) + "/" + budget.length + "…");
+          const p = await getJson("/fr/api" + budget[i]);
+          if (p) payloads.push(p);
+          await new Promise((r) => setTimeout(r, COMPETITION_DELAY_MS));
+        }
+
+        const merged = mergeBlocks(payloads);
+        const text = JSON.stringify(merged.payload);
         try {
           await sendTo(
             VPS_URL.replace("/ingest", "/ingest-prematch") + "?sport=" + sport,
             text
           );
-          done.push(sport + ":" + Math.round(text.length / 1024) + "Ko");
+          done.push(sport + ":" + merged.events + "ev/" + budget.length + "comp");
         } catch (e) {
-          // 422 = Betano returned no fixtures for this sport right now. That's
-          // normal off-season/overnight, not a failure worth flagging.
+          // 422 = Betano returned no fixtures at all for this sport. Normal
+          // overnight or off-season, and the server deliberately keeps the
+          // previous file rather than blanking it.
           done.push(sport + (/\b422\b/.test(e.message) ? ":vide" : ":✗"));
         }
-        await new Promise((r) => setTimeout(r, 1000));
       }
       console.log(LOG, "prematch", done.join(" "));
       lastPrematch = done.join("  ");
