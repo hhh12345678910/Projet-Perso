@@ -2211,15 +2211,32 @@ def doctor(hours: int = typer.Option(24, "--hours", help="Lookback window.")):
                 return []
 
         try:
+            size_mb = db.stat().st_size / 1048576
+            console.print(f"Base : [bold]{size_mb:,.0f} Mo[/bold] ({db})")
+            if size_mb > 2000:
+                problems.append(
+                    f"Base à {size_mb/1024:.1f} Go — lance `python -m src.main prune` "
+                    f"(et vérifie que valuebet-prune.timer est actif)."
+                )
+
             bt = Table(title=f"Par book sur {hours} h", show_lines=False)
             bt.add_column("book")
-            bt.add_column("cotes stockées", justify="right")
+            bt.add_column("cotes (échantillon récent)", justify="right")
             bt.add_column("value bets", justify="right")
             bt.add_column("alertes envoyées", justify="right")
             bt.add_column("meilleur EV%", justify="right")
 
+            # Bounded on purpose. quotes grows by tens of millions of rows a
+            # day (every book's every price, every cycle), so an unbounded
+            # aggregate over 24h scans far too much and the whole check hangs —
+            # which is exactly what it did. Reading the most recent slice via
+            # the fetched_at index answers "is this book producing?" just as
+            # well, in constant time.
             quotes = {r["book"]: r["n"] for r in _rows(
-                "SELECT book, COUNT(*) n FROM quotes WHERE fetched_at >= ? GROUP BY book", (since,))}
+                "SELECT book, COUNT(*) n FROM ("
+                "  SELECT book FROM quotes WHERE fetched_at >= ?"
+                "  ORDER BY fetched_at DESC LIMIT 200000"
+                ") GROUP BY book", (since,))}
             vbs = {r["book"]: (r["n"], r["mx"]) for r in _rows(
                 "SELECT book, COUNT(*) n, MAX(ev_pct) mx FROM value_bets "
                 "WHERE detected_at >= ? GROUP BY book", (since,))}
