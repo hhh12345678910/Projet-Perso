@@ -1456,10 +1456,11 @@ def _ev_bucket(ev: float) -> str:
 @app.command()
 def prune(
     retention_days: int = typer.Option(
-        7, "--days",
-        help="Delete raw quote rows older than this many days, then reclaim "
-        "disk with VACUUM. 7 is safe: closing lines are captured within hours "
-        "of kickoff. Run from cron to keep the DB from filling the disk.",
+        2, "--days",
+        help="Delete raw quote rows older than this many days. 2 is ample: "
+        "closing lines are captured within hours of kickoff, and the table "
+        "grows by tens of millions of rows a day, so a longer window costs "
+        "gigabytes for data nothing reads.",
     ),
     vacuum: bool = typer.Option(True, "--vacuum/--no-vacuum",
                                 help="Run VACUUM to actually shrink the file on disk."),
@@ -1479,8 +1480,25 @@ def prune(
     n = storage.prune_notifications()
     console.print(f"Deleted {q} quote rows (> {retention_days}d) and {n} stale dedup rows.")
     if vacuum:
-        console.print("VACUUM en cours (peut prendre un moment)…")
-        storage.vacuum()
+        # VACUUM rebuilds the database into a temporary copy alongside it, so
+        # it needs free space of roughly the file's own size. On a DB that has
+        # outgrown the disk — the exact situation that makes pruning urgent —
+        # running it blind fills the disk and takes the daemon down with it.
+        import shutil as _shutil
+
+        free_mb = _shutil.disk_usage(os.path.dirname(os.path.abspath(db_path)) or ".").free / (1024 * 1024)
+        need_mb = _size_mb(db_path) * 1.1
+        if free_mb < need_mb:
+            console.print(
+                f"[yellow]VACUUM ignoré : il faudrait ~{need_mb/1024:.1f} Go libres, "
+                f"il en reste {free_mb/1024:.1f} Go.[/yellow]\n"
+                "[dim]  Les lignes sont bien supprimées et l'espace libéré sera réutilisé "
+                "par les prochaines écritures — le fichier ne grossira plus. Relance avec "
+                "--vacuum une fois assez d'espace disponible pour le réduire réellement.[/dim]"
+            )
+        else:
+            console.print("VACUUM en cours (peut prendre un moment)…")
+            storage.vacuum()
     after = _size_mb(db_path)
     console.print(f"DB : {before:.0f} Mo → {after:.0f} Mo (récupéré {before - after:.0f} Mo)")
 
