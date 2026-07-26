@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import re
 import os
 from datetime import datetime, timezone
 from typing import Any, Iterator
@@ -154,7 +155,11 @@ class BetanoScraper:
     def fetch_live_overview(self, content_version: int | str = "latest", is_init: bool = True) -> dict:
         """Fetch the live overview. Use 'latest' for an initial bulk fetch,
         or pass a previous contentVersion (with is_init=False) to receive a delta."""
-        params: dict[str, str] = {"includeVirtuals": "true"}
+        # Virtuals are simulated games ("NBA H2H GG League 4x5 minutes",
+        # "Battle - La Liga - Match de 2x4 minutes"), not real fixtures. No
+        # sharp book prices them, so they can never yield a fair line — they
+        # only pad the payload and the coverage numbers.
+        params: dict[str, str] = {"includeVirtuals": "false"}
         if is_init:
             params["queryLanguageId"] = os.getenv("BETANO_X_LANGUAGE", "9")
             params["queryOperatorId"] = os.getenv("BETANO_X_OPERATOR", "22")
@@ -162,27 +167,22 @@ class BetanoScraper:
             params["isInit"] = "false"
         return self._get(f"/live/overview/{content_version}", params=params)
 
-    def fetch_prematch_overview(self, content_version: int = 0, is_init: bool = True) -> dict:
-        """Best-effort: sibling path of /live/overview. Adjust path here once
-        confirmed by capturing a prematch XHR (e.g. on a competition page)."""
-        params = {
-            "isInit": "true" if is_init else "false",
-            "includeVirtuals": "true",
-        }
-        for path in (
-            f"/prematch/overview/{content_version}",
-            f"/overview/{content_version}",
-            f"/sport/overview/{content_version}",
-        ):
-            try:
-                return self._get(path, params=params)
-            except httpx.HTTPStatusError as e:
-                if e.response.status_code == 404:
-                    continue
-                raise
-        raise RuntimeError(
-            "Could not discover the prematch overview path. Capture a prematch "
-            "XHR in DevTools and add its path to fetch_prematch_overview()."
+    def fetch_prematch_overview(self, *_: object, **__: object) -> dict:
+        """Not reachable from here — kept only to fail with the reason.
+
+        This used to guess at /prematch/overview and two siblings. All three
+        return 404, because the prematch offer isn't on danae-webapi at all: it
+        lives on /fr/api/sport/{slug}/matchs-a-venir, a different API found by
+        instrumenting the page. And that one can't be called from the VM either,
+        since DataDome scores the requesting IP.
+
+        The working path is the browser userscript pushing to
+        /ingest-prematch; parse_prematch() handles what it sends."""
+        raise NotImplementedError(
+            "Betano's prematch offer is on /fr/api/sport/{slug}/matchs-a-venir, "
+            "not danae-webapi, and is IP-gated by DataDome. Use the userscript "
+            "(tools/betano-ingest.user.js), which pushes it to the ingest "
+            "server; the daemon reads data/prematch/{sport}.json."
         )
 
 
@@ -285,6 +285,23 @@ def _normalise_outcome_label(label: str, market: MarketType) -> str:
     return s
 
 
+# Second line of defence behind includeVirtuals=false: if the parameter is
+# ever ignored, or a dump captured with it set to true is replayed, virtual
+# leagues would flow straight through. Every observed one carries its round
+# length in the name ("4x5 minutes", "Match de 2x4 minutes"), which no real
+# competition does, so that pattern is a safe discriminator. "GG League" is
+# matched too as a belt-and-braces case.
+_VIRTUAL_LEAGUE_RE = re.compile(r"\d+\s*x\s*\d+\s*min|gg\s+league", re.IGNORECASE)
+
+
+def _virtual_league_ids(leagues: dict) -> set[str]:
+    return {
+        str(lid)
+        for lid, lg in leagues.items()
+        if isinstance(lg, dict) and _VIRTUAL_LEAGUE_RE.search(str(lg.get("name") or ""))
+    }
+
+
 def parse_overview(data: dict) -> Iterator[OddQuote]:
     """Walk a danae-webapi overview JSON and yield OddQuote objects.
 
@@ -301,6 +318,7 @@ def parse_overview(data: dict) -> Iterator[OddQuote]:
     if not (events and markets and selections):
         return
 
+    virtual_leagues = _virtual_league_ids(data.get("leagues") or {})
     now = datetime.now(timezone.utc)
 
     # Index: market_id -> event_id (preferred via market.eventId; fall back to event.marketIdList)
@@ -338,6 +356,8 @@ def parse_overview(data: dict) -> Iterator[OddQuote]:
             continue
         ev = events.get(eid) or (events.get(int(eid)) if eid.isdigit() else None)
         if ev is None:
+            continue
+        if virtual_leagues and str(ev.get("leagueId") or "") in virtual_leagues:
             continue
 
         market_type = _market_type(market)

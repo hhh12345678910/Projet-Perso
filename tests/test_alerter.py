@@ -93,11 +93,13 @@ def test_format_includes_kickoff_date():
 
 
 def test_format_includes_euro_stake_on_default_bankroll():
-    # kelly_stake_pct=1.50 on a 1000€ bankroll -> 15.00€.
+    # kelly_stake_pct=1.50 on a 1000€ bankroll -> 15€.
+    # The stake is shown rounded to the euro: a 15.37€ recommendation implies a
+    # precision the model doesn't have, and nobody places a bet to the cent.
     msg = format_value_bet(_bet())
     assert "1.50%" in msg
-    assert "15.00€" in msg
-    assert "sur 1000€" in msg
+    assert "15€" in msg
+    assert "de 1000€" in msg
 
 
 def test_format_includes_line_when_present():

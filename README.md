@@ -89,7 +89,7 @@ is comfortable; the on-page banner reports the size each cycle if it grows.
 Capture the response once and feed it to `scan`.
 
 1. In Chrome on `betanosports.be` (logged in), open the URL directly:
-   `https://www.betanosports.be/fr/danae-webapi/api/live/overview/latest?includeVirtuals=true&queryLanguageId=9&queryOperatorId=22`
+   `https://www.betanosports.be/fr/danae-webapi/api/live/overview/latest?includeVirtuals=false&queryLanguageId=9&queryOperatorId=22`
 2. Save the JSON the page returns (Ctrl+S) to e.g. `betano.json`.
 3. Run with the flag:
    ```bash

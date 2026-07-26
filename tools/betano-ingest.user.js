@@ -39,7 +39,7 @@
   const LOG = "[betano-odds]";
   const OVERVIEW_URL =
     "/fr/danae-webapi/api/live/overview/latest" +
-    "?includeVirtuals=true&queryLanguageId=9&queryOperatorId=22";
+    "?includeVirtuals=false&queryLanguageId=9&queryOperatorId=22";
 
   // The live and prematch cycles run concurrently, so a single banner would
   // just be whichever wrote last — which reads as one cycle interrupting the

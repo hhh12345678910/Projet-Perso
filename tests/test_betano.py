@@ -18,6 +18,7 @@ from src.scrapers.betano import (
     _side_from_team,
     parse_overview,
     parse_prematch,
+    BetanoScraper,
 )
 
 
@@ -378,3 +379,68 @@ def test_staleness_check_can_be_disabled(tmp_path, monkeypatch):
     monkeypatch.setenv("BETANO_PREMATCH_MAX_AGE_MIN", "0")
     _write_prematch(tmp_path, "volleyball", age_minutes=6000)
     assert len(fetch_betano_quotes(sport="volleyball", include_live=False)) == 2
+
+
+# ---------------------------------------------------------------------------
+# Virtual games. Betano's live feed mixes in simulated matches
+# ("NBA H2H GG League 4x5 minutes"). No sharp book prices them, so they can
+# never produce a fair line — they only pad the payload and the coverage
+# numbers. includeVirtuals=false is the primary fix; this is the backstop for
+# a replayed dump or an ignored parameter.
+# ---------------------------------------------------------------------------
+
+def _overview_with_leagues(league_name: str) -> dict:
+    return {
+        "events": {"1": {
+            "leagueId": "900",
+            "startTime": "2026-07-26T18:00:00Z",
+            "participants": [{"name": "Alpha", "isHome": True}, {"name": "Beta"}],
+            "marketIdList": ["m1"],
+        }},
+        "leagues": {"900": {"id": 900, "name": league_name, "eventIdList": ["1"]}},
+        "markets": {"m1": {"eventId": "1", "type": "MRES", "selectionIdList": ["s1", "s2"]}},
+        "selections": {
+            "s1": {"marketId": "m1", "name": "1", "odds": 2.0},
+            "s2": {"marketId": "m1", "name": "2", "odds": 3.0},
+        },
+    }
+
+
+def test_parse_overview_keeps_real_competitions():
+    quotes = list(parse_overview(_overview_with_leagues("Angleterre - Premier League")))
+    assert len(quotes) == 2
+
+
+def test_parse_overview_drops_virtual_round_length_leagues():
+    for name in (
+        "NBA H2H GG League 4x5 minutes",
+        "Battle - La Liga - Match de 2x4 minutes",
+        "Battle - Coupe du Monde - Match de 2x4 minutes",
+    ):
+        assert list(parse_overview(_overview_with_leagues(name))) == [], name
+
+
+def test_virtual_filter_does_not_fire_on_ordinary_names():
+    """The pattern keys on a round length, which real competitions don't carry.
+    Guard against it broadening into names that merely contain digits or 'x'."""
+    for name in (
+        "Bundesliga 2",
+        "Coupe de Belgique",
+        "CONMEBOL Libertadores",
+        "Liga MX",
+        "Boxe - 12 rounds",
+    ):
+        assert len(list(parse_overview(_overview_with_leagues(name)))) == 2, name
+
+
+def test_fetch_prematch_overview_explains_it_is_unreachable():
+    """It used to guess three danae-webapi paths that all 404. Failing with the
+    reason beats silently trying dead endpoints."""
+    import pytest as _pytest
+
+    scraper = BetanoScraper(cookie="datadome=x")
+    try:
+        with _pytest.raises(NotImplementedError, match="matchs-a-venir"):
+            scraper.fetch_prematch_overview()
+    finally:
+        scraper.close()
