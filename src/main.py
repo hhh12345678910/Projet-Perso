@@ -7,6 +7,7 @@ from dataclasses import replace
 from datetime import datetime, timedelta, timezone
 from typing import Callable, Iterable
 
+import threading
 import time
 
 import httpx
@@ -443,19 +444,41 @@ def fetch_betano_quotes(
     return quotes
 
 
+# Smarkets needs one request per event, paced 0.5s apart to stay under its
+# per-IP cap — roughly 100s for a single sport. Run inline every cycle it would
+# become the bottleneck for every other book, so results are cached and reused.
+# That costs nothing in accuracy here: this source is only ever consulted for
+# markets Pinnacle doesn't price, which are prematch prices that drift slowly.
+_SMARKETS_CACHE: dict[str, tuple[float, list[OddQuote]]] = {}
+_SMARKETS_LOCK = threading.Lock()
+
+
 def fetch_smarkets_quotes(sport: str) -> list[OddQuote]:
-    """Smarkets exchange mid-prices, used as a *second* sharp reference.
+    """Smarkets exchange mid-prices, used as a *fallback* sharp reference.
 
     An exchange has no margin to remove, so its mid is a fair price by
     construction, and it lists events Pinnacle doesn't — which is what lets a
-    soft-book quote be valued at all on those matches. Off by default because
-    it adds a scrape per cycle: set USE_SMARKETS=1 to enable."""
+    soft-book quote be valued at all on those matches. Off by default: set
+    USE_SMARKETS=1 to enable, SMARKETS_TTL_S to tune the refresh interval."""
+    ttl = float(os.getenv("SMARKETS_TTL_S", "900"))
+    now = time.monotonic()
+    with _SMARKETS_LOCK:
+        cached = _SMARKETS_CACHE.get(sport)
+        if cached is not None and (now - cached[0]) < ttl:
+            return cached[1]
     try:
         with SmarketsScraper() as sm:
-            return list(smarkets_iter_all_quotes(sm, sport))
+            quotes = list(smarkets_iter_all_quotes(sm, sport))
     except httpx.HTTPError as e:
         console.print(f"[yellow]Smarkets skipped:[/yellow] {e}")
-        return []
+        # Keep serving the previous snapshot rather than dropping the fallback
+        # entirely on one failed scrape.
+        with _SMARKETS_LOCK:
+            cached = _SMARKETS_CACHE.get(sport)
+        return cached[1] if cached is not None else []
+    with _SMARKETS_LOCK:
+        _SMARKETS_CACHE[sport] = (now, quotes)
+    return quotes
 
 
 def fetch_unibet_quotes(sport: str) -> list[OddQuote]:
@@ -2118,9 +2141,24 @@ def doctor(hours: int = typer.Option(24, "--hours", help="Lookback window.")):
     live_max = float(os.getenv("BETANO_LIVE_MAX_AGE_MIN", "5"))
     pm_max = float(os.getenv("BETANO_PREMATCH_MAX_AGE_MIN", "30"))
     feeds = [(project / "data" / "betano.json", live_max, "live")]
+    # Only feeds for sports actually scanned. A leftover file from a sport
+    # since removed is expected to be stale — flagging it as a problem trains
+    # the eye to skip this section, which is exactly when a real staleness
+    # would be missed.
+    scanned = {
+        s.strip() for s in
+        os.getenv("SPORT_LIST", "soccer,tennis,hockey").split(",") if s.strip()
+    }
     pm_dir = project / "data" / "prematch"
     if pm_dir.is_dir():
-        feeds += [(p, pm_max, f"prématch {p.stem}") for p in sorted(pm_dir.glob("*.json"))]
+        for f in sorted(pm_dir.glob("*.json")):
+            if f.stem in scanned:
+                feeds.append((f, pm_max, f"prématch {f.stem}"))
+            else:
+                console.print(
+                    f"[dim]  (data/prematch/{f.name} ignoré — {f.stem} n'est pas "
+                    f"dans SPORT_LIST ; supprimable)[/dim]"
+                )
 
     for path, max_age, label in feeds:
         if not path.exists():
