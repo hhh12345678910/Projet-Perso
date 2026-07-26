@@ -179,9 +179,29 @@ class Handler(BaseHTTPRequestHandler):
         )
         self._send(200, {"ok": True, "cookies": sorted(names), "missing": missing})
 
+    def _handle_discover(self, raw: bytes) -> None:
+        """Log the danae-webapi URLs the Betano page actually calls.
+
+        The prematch overview path was never confirmed — fetch_prematch_overview()
+        still guesses among three candidates. Rather than have someone dig
+        through DevTools, the userscript hooks fetch/XHR and reports the real
+        URLs here; browsing to a prematch section then reveals the right path."""
+        try:
+            data = json.loads(raw)
+            urls = data.get("urls") or []
+        except ValueError:
+            self._send(400, {"error": "invalid JSON"})
+            return
+        if not isinstance(urls, list):
+            self._send(400, {"error": "'urls' must be a list"})
+            return
+        for u in urls[:100]:
+            _log(f"DISCOVERED: {u}")
+        self._send(200, {"ok": True, "logged": len(urls[:100])})
+
     def do_POST(self) -> None:  # noqa: N802
         route = self.path.split("?", 1)[0]
-        if route not in ("/ingest", "/ingest-cookie"):
+        if route not in ("/ingest", "/ingest-cookie", "/discover"):
             self._send(404, {"error": "not found"})
             return
         if not self._authorized():
@@ -200,6 +220,9 @@ class Handler(BaseHTTPRequestHandler):
         raw = self.rfile.read(length)
         if route == "/ingest-cookie":
             self._handle_cookie(raw)
+            return
+        if route == "/discover":
+            self._handle_discover(raw)
             return
         try:
             data = json.loads(raw)

@@ -82,6 +82,58 @@
     });
   }
 
+  // ── endpoint discovery ───────────────────────────────────────────────────
+  // /live/overview only carries in-play events, so Betano currently
+  // contributes nothing prematch — where the engine actually works.
+  // fetch_prematch_overview() still guesses its path among three candidates.
+  // Hook fetch/XHR to record the danae-webapi URLs the page really calls:
+  // browsing to a prematch section surfaces the correct one in the VM log,
+  // with no DevTools spelunking.
+  const seenUrls = new Set();
+  let pendingUrls = [];
+  function noteUrl(u) {
+    try {
+      const s = String(u);
+      if (s.indexOf("danae-webapi") === -1) return;
+      // Collapse the volatile parts so a polling endpoint doesn't flood the
+      // log with one entry per contentVersion.
+      const key = s.split("?")[0].replace(/\/\d{3,}(\/|$)/g, "/{id}$1");
+      if (seenUrls.has(key)) return;
+      seenUrls.add(key);
+      pendingUrls.push(key);
+    } catch (e) { /* never let instrumentation break the page */ }
+  }
+
+  const origFetch = window.fetch;
+  window.fetch = function (input) {
+    noteUrl(input && input.url ? input.url : input);
+    return origFetch.apply(this, arguments);
+  };
+  const origOpen = XMLHttpRequest.prototype.open;
+  XMLHttpRequest.prototype.open = function (method, url) {
+    noteUrl(url);
+    return origOpen.apply(this, arguments);
+  };
+
+  function flushUrls() {
+    if (!pendingUrls.length) return;
+    const batch = pendingUrls;
+    pendingUrls = [];
+    GM_xmlhttpRequest({
+      method: "POST",
+      url: VPS_URL.replace("/ingest", "/discover"),
+      headers: { "Content-Type": "application/json", "X-Ingest-Token": TOKEN },
+      data: JSON.stringify({ urls: batch }),
+      timeout: 15000,
+      onload: () => {},
+      // Discovery is a side quest; if it fails, put the URLs back and let the
+      // next cycle retry rather than losing them or surfacing an error that
+      // would be mistaken for an odds-push failure.
+      onerror: () => { pendingUrls = batch.concat(pendingUrls); },
+      ontimeout: () => { pendingUrls = batch.concat(pendingUrls); },
+    });
+  }
+
   let running = false;
   async function tick() {
     if (running) return; // never let a slow upload overlap the next cycle
@@ -131,6 +183,7 @@
       console.warn(LOG, e.message);
     } finally {
       running = false;
+      flushUrls();
     }
   }
 
