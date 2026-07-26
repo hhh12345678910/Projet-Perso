@@ -28,9 +28,12 @@
   // ─── CONFIG ──────────────────────────────────────────────────────────────
   const VPS_URL = "http://34.59.193.111:8787/ingest";
   const TOKEN = "PASTE_TOKEN_HERE";
-  // 60 s to start. The payload is the full overview, so this is the knob to
-  // turn if the upload can't keep up — the banner reports the size each cycle.
-  const INTERVAL_MS = 60 * 1000;
+  // 15 s. The full overview measures ~430 KB (163 events / 1239 selections),
+  // not the multi-MB first assumed, so this is a light upload and roughly the
+  // cadence Betano's own page refreshes live odds at — fast enough that the
+  // daemon's cycle, not this, is what bounds freshness. The banner reports the
+  // size each cycle if it ever grows.
+  const INTERVAL_MS = 15 * 1000;
   // ─────────────────────────────────────────────────────────────────────────
 
   const LOG = "[betano-odds]";

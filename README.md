@@ -17,7 +17,7 @@ src/
   scrapers/
     base.py       Scraper interface
     pinnacle.py   Pinnacle public guest API (sharp reference)
-    betano.py     Betano.be (danae-webapi; needs cookie)
+    betano.py     Betano.be (danae-webapi; fed by browser userscript)
     unibet.py     Unibet.be (Kambi offering API; guest)
     betfirst.py   BetFirst.be (Entain sportsbook API; guest)
     ladbrokes.py  Ladbrokes.be (Eurobet sport-schedule; guest)
@@ -52,7 +52,7 @@ ever run the daemon from a residential IP.
 ### Automatic (recommended)
 
 `tools/betano-ingest.user.js` is a Tampermonkey userscript that automates the
-manual capture below. Leave a `betanosports.be` tab open; every minute it
+manual capture below. Leave a `betanosports.be` tab open; every 15 s it
 fetches the live overview and POSTs it to `scripts/betano_ingest_server.py` on
 the VM, which writes `data/betano.json` atomically. `scan-daemon.sh` passes
 that file as `--betano-file` automatically when it exists.
@@ -61,9 +61,9 @@ Setup: generate a token (`openssl rand -hex 32`) into `BETANO_INGEST_TOKEN`,
 run the ingest server (`scripts/betano-ingest.service`), open the port in the
 firewall, then paste the same token into the userscript's `TOKEN`.
 
-Betano freshness equals the push interval. The upload is the full overview
-(several MB), so that interval is the knob to turn if a home connection can't
-keep up — the on-page banner reports the payload size each cycle.
+Betano freshness equals the push interval, bounded below by the daemon's own
+cycle. The upload is ~430 KB measured (163 events / 1239 selections), so 15 s
+is comfortable; the on-page banner reports the size each cycle if it grows.
 
 ### Manual fallback
 
