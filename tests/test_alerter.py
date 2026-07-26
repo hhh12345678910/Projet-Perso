@@ -3,6 +3,7 @@ from __future__ import annotations
 from datetime import datetime, timezone
 from unittest.mock import MagicMock
 
+import sqlite3
 import httpx
 import pytest
 
@@ -764,3 +765,88 @@ def test_surebet_outside_kickoff_window_is_sent(monkeypatch):
                          min_send_interval_s=0.0)
     sent = send_surebet_alerts([_surebet(margin=0.04, event_key=_ek_in(45))], cfg)
     assert len(sent) == 1 and "sb" in calls
+
+
+# ---------------------------------------------------------------------------
+# Playing a bet silences the whole market, not just that selection: once 1 is
+# backed on a 1X2, X and 2 are the other side of a position already held.
+# ---------------------------------------------------------------------------
+
+def test_market_key_strips_only_the_outcome():
+    from src.alerter import _market_key
+
+    assert _market_key("EV|h2h|home|None") == "EV|h2h|None"
+    assert _market_key("EV|totals|over|2.5") == "EV|totals|2.5"
+
+
+def test_market_key_keeps_the_line_so_middles_survive():
+    """Over 2.5 and under 3.5 are different bets — holding both is a middle,
+    which this engine looks for. Collapsing lines would suppress its own signal."""
+    from src.alerter import _market_key
+
+    assert _market_key("EV|totals|over|2.5") != _market_key("EV|totals|under|3.5")
+
+
+def test_market_key_rejects_malformed_input():
+    from src.alerter import _market_key
+
+    assert _market_key("nonsense") is None
+    assert _market_key("a|b|c") is None
+
+
+def test_played_outcome_suppresses_competing_outcomes(tmp_path, monkeypatch):
+    import src.alerter as alerter
+
+    db = tmp_path / "valuebet.db"
+    con = sqlite3.connect(db)
+    con.execute("CREATE TABLE played_bets (dedup_key TEXT PRIMARY KEY, played_at TEXT)")
+    # "home" was backed on this match's 1X2.
+    con.execute("INSERT INTO played_bets VALUES (?, ?)",
+                ("202606010000::boise__vs__sarasota|h2h|home|None", "now"))
+    con.commit()
+    con.close()
+    monkeypatch.setattr(alerter, "_PLAYS_DB", db)
+
+    keys, markets = alerter._load_played_keys()
+    assert "202606010000::boise__vs__sarasota|h2h|None" in markets
+
+    def suppressed(label):
+        return f"202606010000::boise__vs__sarasota|h2h|None" in markets
+
+    # Every side of that 1X2 is now silenced, not just the one played.
+    for label in ("home", "draw", "away"):
+        assert suppressed(label), label
+
+
+def test_played_market_does_not_leak_to_other_markets(tmp_path, monkeypatch):
+    """Backing the 1X2 must not silence totals on the same match."""
+    import src.alerter as alerter
+
+    db = tmp_path / "valuebet.db"
+    con = sqlite3.connect(db)
+    con.execute("CREATE TABLE played_bets (dedup_key TEXT PRIMARY KEY, played_at TEXT)")
+    con.execute("INSERT INTO played_bets VALUES (?, ?)", ("EV|h2h|home|None", "now"))
+    con.commit()
+    con.close()
+    monkeypatch.setattr(alerter, "_PLAYS_DB", db)
+
+    _, markets = alerter._load_played_keys()
+    assert "EV|h2h|None" in markets
+    assert "EV|totals|2.5" not in markets
+
+
+# ---------------------------------------------------------------------------
+# League in the message
+# ---------------------------------------------------------------------------
+
+def test_format_shows_league_when_known():
+    bet = _bet()
+    bet.league = "Suisse - Super League"
+    assert "🏆 Suisse - Super League" in format_value_bet(bet)
+
+
+def test_format_omits_league_line_when_absent():
+    """Sources other than Betano don't carry one — show nothing rather than an
+    empty row."""
+    msg = format_value_bet(_bet())
+    assert "🏆" not in msg

@@ -1,0 +1,12 @@
+[Unit]
+Description=Nightly valuebet database prune
+
+[Timer]
+# The quotes table is the only thing that grows without bound: every scan
+# stores every book's prices, so it accumulates continuously while the pushed
+# Betano files are simply overwritten in place. Nightly is ample.
+OnCalendar=*-*-* 04:30:00
+Persistent=true
+
+[Install]
+WantedBy=timers.target

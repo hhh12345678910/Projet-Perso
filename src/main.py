@@ -190,6 +190,7 @@ def find_value_bets(
             ev_pct=ev,
             kelly_stake_pct=kelly_fraction(q.decimal_odd, p) * cfg.kelly_fraction * 100.0,
             detected_at=now,
+            league=q.league,
         ))
     return out
 

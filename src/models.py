@@ -61,6 +61,10 @@ class OddQuote:
     decimal_odd: float
     fetched_at: datetime
     source_event_id: str
+    # Human-readable competition ("Suisse - Super League"), when the source
+    # provides one. The event_key only carries normalised team names, so this
+    # is the only way an alert can name the competition.
+    league: Optional[str] = None
 
 
 @dataclass
@@ -85,6 +89,7 @@ class ValueBet:
     ev_pct: float
     kelly_stake_pct: float
     detected_at: datetime
+    league: Optional[str] = None
     # Twin books offering the exact same price for this bet (e.g. Unibet & 711
     # share the Kambi feed). Listed alongside `book` in the alert so the same
     # opportunity fires once, naming every book where you can take it.

@@ -484,10 +484,14 @@ def format_value_bet(bet: ValueBet, sport: str | None = None,
         when_line = ""
 
     line_suffix = f" {bet.outcome.line}" if bet.outcome.line is not None else ""
+    # Only some sources carry a competition name, so this line is conditional
+    # rather than showing an empty placeholder.
+    league_line = f"🏆 {bet.league}\n" if bet.league else ""
 
     return (
         f"🎯 <b>+{bet.ev_pct:.2f}% EV</b> — {book_name}\n"
         f"{_sport_prefix(sport)}{matchup}\n"
+        f"{league_line}"
         f"{when_line}"
         f"Pari : <b>{bet.outcome.label}{line_suffix}</b> @ {bet.odd_taken:.2f} (fair {bet.fair_odd:.2f})\n"
         f"{_advised_stake_line(bet.ev_pct, bet.kelly_stake_pct, bankroll)}"
@@ -554,8 +558,29 @@ def _value_bet_play_payload(bet: ValueBet, sport: str | None, bankroll: float) -
     }
 
 
-def _load_played_keys() -> set:
-    """Selections deja jouees (clic Jouer) a ne plus alerter, tous books/cotes."""
+def _market_key(dedup_key: str) -> str | None:
+    """event|market|line from an event|market|label|line dedup key.
+
+    Identifies the whole betting market, so playing one side silences the
+    others: once 1 is backed on a 1X2, alerts on X and 2 are noise — they're
+    the opposite side of a position already taken. Same for over/under on a
+    given line.
+
+    The line stays in the key on purpose. Over 2.5 and under 3.5 are different
+    bets, and deliberately holding both is a middle — which this engine hunts
+    for — so collapsing across lines would suppress its own signal."""
+    parts = dedup_key.split("|")
+    if len(parts) != 4:
+        return None
+    event, market, _label, line = parts
+    return f"{event}|{market}|{line}"
+
+
+def _load_played_keys() -> tuple[set, set]:
+    """(selections, markets) already played — neither should alert again.
+
+    Markets are returned alongside the exact selections so one click silences
+    every competing outcome, not just the one that was backed."""
     try:
         con = sqlite3.connect(str(_PLAYS_DB))
         con.execute("PRAGMA busy_timeout=3000")
@@ -564,9 +589,10 @@ def _load_played_keys() -> set:
         )
         rows = con.execute("SELECT dedup_key FROM played_bets").fetchall()
         con.close()
-        return {r[0] for r in rows}
+        keys = {r[0] for r in rows}
+        return keys, {mk for mk in (_market_key(k) for k in keys) if mk}
     except Exception:
-        return set()
+        return set(), set()
 
 
 class TelegramAlerter:
@@ -597,7 +623,7 @@ class TelegramAlerter:
         self._client = client or httpx.Client(timeout=10.0)
         self._owns_client = client is None
         self._print = print_fn
-        self._played_keys = _load_played_keys()
+        self._played_keys, self._played_markets = _load_played_keys()
 
     def close(self) -> None:
         if self._owns_client:
@@ -624,7 +650,10 @@ class TelegramAlerter:
         double-posting a channel that already succeeded (main and premium are
         disjoint EV bands, so a bet normally targets a single channel)."""
         cfg = self.config
-        if f"{bet.event_key}|{bet.market.value}|{bet.outcome.label}|{bet.outcome.line}" in self._played_keys:
+        # Market-level, not selection-level: backing 1 on a 1X2 should also
+        # silence X and 2 on that match, since they're the other side of a
+        # position already held.
+        if f"{bet.event_key}|{bet.market.value}|{bet.outcome.line}" in self._played_markets:
             return False
         ev = bet.ev_pct
         text = format_value_bet(bet, sport=sport, bankroll=cfg.bankroll)

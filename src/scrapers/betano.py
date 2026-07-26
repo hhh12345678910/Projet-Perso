@@ -318,7 +318,13 @@ def parse_overview(data: dict) -> Iterator[OddQuote]:
     if not (events and markets and selections):
         return
 
-    virtual_leagues = _virtual_league_ids(data.get("leagues") or {})
+    leagues = data.get("leagues") or {}
+    virtual_leagues = _virtual_league_ids(leagues)
+    league_names = {
+        str(lid): str(lg.get("name") or "").strip()
+        for lid, lg in leagues.items()
+        if isinstance(lg, dict)
+    }
     now = datetime.now(timezone.utc)
 
     # Index: market_id -> event_id (preferred via market.eventId; fall back to event.marketIdList)
@@ -408,6 +414,7 @@ def parse_overview(data: dict) -> Iterator[OddQuote]:
             decimal_odd=decimal_odd,
             fetched_at=now,
             source_event_id=str(eid),
+            league=league_names.get(str(ev.get("leagueId") or "")) or None,
         )
 
 
@@ -485,6 +492,7 @@ def parse_prematch(data: dict, unknown_types: set[str] | None = None) -> Iterato
     for block in blocks:
         if not isinstance(block, dict):
             continue
+        block_league = str(block.get("name") or "").strip()
         for ev in (block.get("events") or []):
             if not isinstance(ev, dict):
                 continue
@@ -494,6 +502,7 @@ def parse_prematch(data: dict, unknown_types: set[str] | None = None) -> Iterato
             home, away = _extract_home_away(ev.get("participants"))
             if not (home and away):
                 continue
+            league = str(ev.get("leagueName") or "").strip() or block_league or None
 
             for market in (ev.get("markets") or []):
                 if not isinstance(market, dict):
@@ -550,6 +559,7 @@ def parse_prematch(data: dict, unknown_types: set[str] | None = None) -> Iterato
                         decimal_odd=decimal_odd,
                         fetched_at=now,
                         source_event_id=str(ev.get("id") or ""),
+                        league=league,
                     )
 
 
