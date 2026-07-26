@@ -1686,6 +1686,77 @@ def inspect_json(
     walk(node, at or "root", 0)
 
 
+@app.command(name="betano-prematch-shape")
+def betano_prematch_shape(
+    path: str = typer.Argument(..., help="A data/samples/*-prematch.json capture."),
+):
+    """Summarise a prematch capture: sizes, market type codes, selection shape.
+
+    The prematch API (/fr/api/sport/{slug}/matchs-a-venir) uses different market
+    type codes from the danae-webapi live feed — the first sample shows 'HTHP',
+    which _MARKET_BY_TYPE doesn't know. Rather than discover them one round-trip
+    at a time, count every code present with an example name, and show one
+    fully-expanded selection."""
+    import json as _json
+    from pathlib import Path as _Path
+
+    try:
+        data = _json.loads(_Path(path).read_text())
+    except (OSError, ValueError) as e:
+        console.print(f"[red]Unreadable {path}: {e}[/red]")
+        raise typer.Exit(1)
+
+    blocks = ((data.get("data") or {}).get("blocks")) or []
+    n_events = 0
+    market_types: dict[str, int] = defaultdict(int)
+    type_example: dict[str, str] = {}
+    sel_keys: set[str] = set()
+    first_selection: dict | None = None
+    first_market_of_type: dict[str, dict] = {}
+    sports: dict[str, int] = defaultdict(int)
+    horizon_min: str | None = None
+    horizon_max: str | None = None
+
+    for b in blocks:
+        for ev in (b.get("events") or []):
+            n_events += 1
+            sports[str(ev.get("sportId") or "?")] += 1
+            st = str(ev.get("startTime") or "")
+            if st:
+                horizon_min = st if horizon_min is None or st < horizon_min else horizon_min
+                horizon_max = st if horizon_max is None or st > horizon_max else horizon_max
+            for m in (ev.get("markets") or []):
+                code = str(m.get("type") or "?")
+                market_types[code] += 1
+                type_example.setdefault(code, str(m.get("name") or ""))
+                first_market_of_type.setdefault(code, m)
+                for s in (m.get("selections") or []):
+                    sel_keys.update(s.keys())
+                    if first_selection is None:
+                        first_selection = s
+
+    console.print(f"[bold]{path}[/bold]")
+    console.print(f"  compétitions (blocks) : {len(blocks)}")
+    console.print(f"  événements            : {n_events}")
+    console.print(f"  sports                : {dict(sports)}")
+    if horizon_min:
+        console.print(f"  fenêtre               : {horizon_min}  →  {horizon_max}")
+
+    mt = Table(title="Codes marché", show_lines=False)
+    mt.add_column("type")
+    mt.add_column("n", justify="right")
+    mt.add_column("exemple de nom", overflow="fold")
+    mt.add_column("handicap")
+    for code, n in sorted(market_types.items(), key=lambda kv: -kv[1]):
+        hc = first_market_of_type.get(code, {}).get("handicap")
+        mt.add_row(code, str(n), type_example.get(code, ""), "" if hc is None else str(hc))
+    console.print(mt)
+
+    console.print(f"\n[bold]Champs de selection[/bold]: {sorted(sel_keys)}")
+    if first_selection is not None:
+        console.print(_json.dumps(first_selection, indent=2, ensure_ascii=False)[:800])
+
+
 @app.command()
 def selftest():
     """Sanity check on math primitives."""
