@@ -2233,10 +2233,25 @@ def doctor(hours: int = typer.Option(24, "--hours", help="Lookback window.")):
         console.print("[red]Telegram non configuré[/red] — aucune alerte ne partira.")
         problems.append("TELEGRAM_BOT_TOKEN / TELEGRAM_CHAT_ID manquants")
     else:
+        ct = Table(title="Canaux Telegram", show_lines=False)
+        ct.add_column("canal")
+        ct.add_column("configuré")
+        ct.add_column("condition")
+        ct.add_row("principal", "oui" if tg.chat_id else "[red]non[/red]",
+                   f"EV {tg.min_ev_pct}–{tg.main_max_ev_pct}%, cotes "
+                   f"{tg.main_min_odd}–{tg.main_max_odd}")
+        ct.add_row("premium", "oui" if tg.effective_premium_chat_id else "[yellow]non[/yellow]",
+                   f"EV ≥ {tg.min_premium_ev_pct}% cotes {tg.premium_min_odd}–{tg.premium_max_odd}"
+                   f"  ou  EV ≥ {tg.premium_hi_min_ev}% cotes "
+                   f"{tg.premium_hi_min_odd}–{tg.premium_hi_max_odd}")
+        ct.add_row("critique", "oui" if tg.effective_critical_chat_id else "[yellow]non[/yellow]",
+                   f"EV ≥ {tg.min_critical_ev_pct}% — [bold]aucune limite de cote[/bold], "
+                   f"prématch uniquement")
+        console.print(ct)
         console.print(
-            f"[green]Telegram configuré[/green] — seuil value {tg.min_ev_pct}%, "
-            f"premium ≥ {tg.min_premium_ev_pct}% (cotes {tg.premium_min_odd}-{tg.premium_max_odd}), "
-            f"max {tg.valuebet_max_alerts} alertes/pari"
+            f"[dim]  dédoublonnage : max {tg.valuebet_max_alerts} alertes par pari ; "
+            f"alertes prématch supprimées à moins de {tg.min_minutes_to_kickoff} min du "
+            f"coup d'envoi[/dim]"
         )
 
     # ── what each book actually produced ─────────────────────────────────
@@ -2323,6 +2338,38 @@ def doctor(hours: int = typer.Option(24, "--hours", help="Lookback window.")):
                 )
             elif not quotes.get(b):
                 problems.append("Aucune cote Betano stockée sur la période.")
+
+            # High-EV bets that never routed anywhere. Extreme EV only clears a
+            # channel via `critique`, and that one is prematch-only — a bet
+            # detected after kickoff is dropped even when the channel exists,
+            # which is invisible from the summary table alone.
+            if tg is not None:
+                extreme = _rows(
+                    "SELECT event_key, book, odd_taken, ev_pct FROM value_bets "
+                    "WHERE detected_at >= ? AND ev_pct >= ? ORDER BY ev_pct DESC LIMIT 8",
+                    (since, tg.min_critical_ev_pct),
+                )
+                if extreme:
+                    et = Table(
+                        title=f"EV ≥ {tg.min_critical_ev_pct}% (voie critique)",
+                        show_lines=False,
+                    )
+                    et.add_column("book")
+                    et.add_column("cote", justify="right")
+                    et.add_column("EV%", justify="right")
+                    et.add_column("routage")
+                    for r in extreme:
+                        parsed = parse_event_key(r["event_key"])
+                        live = parsed is not None and parsed[0] <= now
+                        if not tg.effective_critical_chat_id:
+                            verdict = "[yellow]canal critique non configuré[/yellow]"
+                        elif live:
+                            verdict = "[yellow]live — critique est prématch only[/yellow]"
+                        else:
+                            verdict = "[green]→ critique[/green]"
+                        et.add_row(r["book"], f"{r['odd_taken']:.2f}",
+                                   f"{r['ev_pct']:.0f}", verdict)
+                    console.print(et)
         finally:
             con.close()
 
