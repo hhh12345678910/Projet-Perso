@@ -198,11 +198,12 @@
   // The `req` parameter differs between sports in the captured traffic
   // (football omits the leading `la,`), and it's not clear which part is
   // load-bearing, so try the observed variant first and fall back.
+  // Only sports the daemon actually scans. Volleyball and basketball are out:
+  // Pinnacle prices 2 volleyball events, so no fair line exists for it however
+  // many Betano offers.
   const PREMATCH = [
-    ["soccer",     "le-football"],
-    ["tennis",     "tennis"],
-    ["basketball", "basketball"],
-    ["volleyball", "volleyball"],
+    ["soccer", "le-football"],
+    ["tennis", "tennis"],
   ];
   const REQ_VARIANTS = ["la,s,stnf,c,mb", "s,stnf,c,mb"];
   // Prematch odds move far slower than in-play ones, so this doesn't need the

@@ -13,10 +13,12 @@ PROJECT_DIR="${PROJECT_DIR:-$(cd "$(dirname "$0")/.." && pwd)}"
 # this file or the systemd unit. systemd doesn't source .env itself, and
 # runscan.sh only sources it for the Python process *after* these args are
 # built — so we source it here too, before reading the vars below. Set e.g.
-# SPORT_LIST=soccer,tennis,hockey,volleyball in .env to drop a sport (basket).
+# SPORT_LIST=... in .env to change the set without editing this file.
+# Volleyball and basketball are out of the default: Pinnacle prices only 2
+# volleyball events, so no fair line can be built for it at all.
 set -a; [ -f "$PROJECT_DIR/.env" ] && . "$PROJECT_DIR/.env"; set +a
 
-SPORT_LIST="${SPORT_LIST:-soccer,tennis,basketball,hockey,volleyball}"
+SPORT_LIST="${SPORT_LIST:-soccer,tennis,hockey}"
 BREATHER="${BREATHER:-10}"
 MIN_EV="${MIN_EV:-5}"
 LOG_FILE="${LOG_FILE:-$PROJECT_DIR/valuebet.log}"

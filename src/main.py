@@ -1078,7 +1078,7 @@ def _daemon_scan_sport(
 
 @app.command()
 def daemon(
-    sport: str = "soccer,tennis,basketball,hockey,volleyball",
+    sport: str = "soccer,tennis,hockey",
     min_ev: float = typer.Option(
         5.0, "--min-ev",
         help="Minimum EV% to detect/store a value bet. Defaults to 5 to match "
@@ -1921,6 +1921,75 @@ def books_coverage(
             "« ∩ Pinnacle » = événements partagés avec la référence sharp "
             "(avant matching flou, donc minoré).[/dim]"
         )
+
+
+@app.command(name="betano-value-test")
+def betano_value_test(
+    sport: str = typer.Option("soccer", "--sport", help="Comma-separated sports."),
+    min_ev: float = typer.Option(
+        1.0, "--min-ev",
+        help="Deliberately lower than the daemon's 5.0: this is a diagnostic, "
+        "and seeing small edges proves the chain works even on a quiet day.",
+    ),
+    betano_file: str = typer.Option("data/betano.json", "--betano-file"),
+):
+    """Dry-run the full pipeline and show only Betano's value bets.
+
+    Sends nothing to Telegram and writes nothing to the database — it answers
+    "is Betano actually producing value?" without waiting for the daemon to
+    alert. Also reports how many Betano quotes survive each stage, since a zero
+    at the end is usually a matching problem rather than an absence of edge."""
+    for current_sport in [s.strip() for s in sport.split(",") if s.strip()]:
+        console.print(f"\n[bold green]══ {current_sport.upper()} ══[/bold green]")
+        cfg = ScanConfig(sport=current_sport, min_ev_pct=min_ev)
+        all_q = _fetch_all_parallel(current_sport, betano_file, include_file_books=True)
+
+        pinnacle_q = [q for q in all_q if q.book == Book.PINNACLE]
+        betano_raw = [q for q in all_q if q.book == Book.BETANO_BE]
+        if not pinnacle_q:
+            console.print("[yellow]Pas de cotes Pinnacle — aucune ligne de référence.[/yellow]")
+            continue
+        if not betano_raw:
+            console.print("[yellow]Pas de cotes Betano — onglet fermé ou fichier périmé ?[/yellow]")
+            continue
+
+        fair = build_fair_lines(pinnacle_q, cfg.devig_method)
+        ref_keys = {fl.event_key for fl in fair.values()}
+        betano_matched = remap_to_reference(betano_raw, ref_keys)
+        bets = [
+            b for b in find_value_bets(betano_matched, fair, cfg)
+            if b.book == Book.BETANO_BE
+        ]
+        bets.sort(key=lambda b: b.ev_pct, reverse=True)
+
+        # The funnel is the diagnostic: each stage that drops everything points
+        # at a different cause (stale push, failed matching, no edge).
+        console.print(
+            f"  {len(betano_raw)} cotes Betano  →  {len(betano_matched)} appariées à un "
+            f"événement Pinnacle  →  [bold]{len(bets)} value bets ≥ {min_ev}%[/bold]"
+        )
+        if betano_raw and not betano_matched:
+            console.print(
+                "[yellow]  Aucune cote appariée : les événements Betano ne correspondent "
+                "à aucun événement Pinnacle (noms d'équipes ou horaires trop éloignés).[/yellow]"
+            )
+        if not bets:
+            continue
+
+        t = Table(title=f"Value bets Betano ({current_sport})", show_lines=False)
+        t.add_column("event", overflow="fold")
+        t.add_column("marché")
+        t.add_column("issue")
+        t.add_column("cote", justify="right")
+        t.add_column("juste", justify="right")
+        t.add_column("EV%", justify="right")
+        for b in bets[:25]:
+            line = f" {b.outcome.line}" if b.outcome.line is not None else ""
+            t.add_row(
+                b.event_key, b.market.value, f"{b.outcome.label}{line}",
+                f"{b.odd_taken:.2f}", f"{b.fair_odd:.2f}", f"{b.ev_pct:.2f}",
+            )
+        console.print(t)
 
 
 @app.command()
