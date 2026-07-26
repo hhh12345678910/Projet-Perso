@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Betano → Valuebet odds push
 // @namespace    valuebet.local
-// @version      3.0.0
+// @version      4.0.0
 // @description  Push Betano's live overview and per-sport prematch offer to the Valuebet VM from a browser session DataDome trusts.
 // @match        https://www.betanosports.be/*
 // @match        https://betanosports.be/*
@@ -41,24 +41,32 @@
     "/fr/danae-webapi/api/live/overview/latest" +
     "?includeVirtuals=true&queryLanguageId=9&queryOperatorId=22";
 
+  // The live and prematch cycles run concurrently, so a single banner would
+  // just be whichever wrote last — which reads as one cycle interrupting the
+  // other when in fact neither blocks the other. Render a line each.
   let el = null;
-  function banner(text, bg) {
+  let liveLine = "démarrage…";
+  let liveColor = "#455a64";
+  let pmLine = "prématch : en attente";
+
+  function render() {
     if (!el) {
       el = document.createElement("div");
       el.style.cssText = [
         "position:fixed", "top:0", "left:0", "right:0", "z-index:2147483647",
-        "font:bold 15px/1.5 system-ui,sans-serif", "padding:12px 16px",
+        "font:bold 14px/1.5 system-ui,sans-serif", "padding:10px 16px",
         "color:#fff", "text-align:center", "white-space:pre-wrap",
         "box-shadow:0 2px 10px rgba(0,0,0,.4)",
       ].join(";");
       document.body.appendChild(el);
     }
-    el.style.background = bg;
-    el.textContent = text;
+    el.style.background = liveColor;
+    el.textContent = "BETANO → VM\n" + liveLine + "\n" + pmLine;
   }
-  const ok = (t) => banner("✅ BETANO → VM : " + t, "#2e7d32");
-  const err = (t) => banner("❌ BETANO → VM : " + t, "#c62828");
-  const info = (t) => banner("⏳ BETANO → VM : " + t, "#455a64");
+  const ok = (t) => { liveLine = "✅ " + t; liveColor = "#2e7d32"; render(); };
+  const err = (t) => { liveLine = "❌ " + t; liveColor = "#c62828"; render(); };
+  const info = (t) => { liveLine = "⏳ " + t; liveColor = "#455a64"; render(); };
+  const pmInfo = (t) => { pmLine = t; render(); };
 
   const mb = (n) => (n / 1048576).toFixed(2) + " Mo";
 
@@ -133,9 +141,6 @@
   }
 
   let running = false;
-  // Set by the prematch cycle; shown on the live banner so one glance covers
-  // both feeds.
-  let lastPrematch = "";
 
   async function tick() {
     if (running) return; // never let a slow upload overlap the next cycle
@@ -177,8 +182,7 @@
       await send(text);
       ok(
         "live envoyé à " + new Date().toLocaleTimeString() + " — " + mb(text.length) +
-        "\n" + c.events + " matchs, " + c.selections + " cotes" +
-        (lastPrematch ? "\nprématch : " + lastPrematch : "")
+        "\n" + c.events + " matchs, " + c.selections + " cotes"
       );
       console.log(LOG, "pushed", c, text.length);
     } catch (e) {
@@ -206,9 +210,14 @@
     ["tennis", "tennis"],
   ];
   const REQ_VARIANTS = ["la,s,stnf,c,mb", "s,stnf,c,mb"];
-  // A full sweep takes ~40 s (one request per competition, spaced), and
-  // prematch prices move slowly, so there's no reason to run it often.
-  const PREMATCH_INTERVAL_MS = 5 * 60 * 1000;
+  // Two cadences, because the two things being refreshed change at very
+  // different rates. The 24 h list is cheap (one request) and covers the
+  // fixtures whose odds actually move, so it runs often. The competition walk
+  // is ~110 requests and only exists to reach fixtures weeks out, whose prices
+  // barely drift — running it every few minutes would be ~1300 requests/hour
+  // at Betano for almost no new information, and would look like a bot.
+  const PREMATCH_INTERVAL_MS = 2 * 60 * 1000;
+  const FULL_SWEEP_INTERVAL_MS = 30 * 60 * 1000;
   // matchs-a-venir only returns roughly the next 24 h — measured: Betano's
   // horizon was J+0 while every other book reached J+35 to J+84. Each of its
   // blocks carries the competition's own url, and fetching that returns the
@@ -284,6 +293,10 @@
     return { payload: { data: { blocks: blocks } }, blocks: blocks.length, events: events };
   }
 
+  // Last full competition walk per sport, reused between sweeps so the
+  // far-out calendar survives without being re-fetched every cycle.
+  const sweepCache = new Map();   // sport -> { payloads, at, competitions }
+
   let pmRunning = false;
   async function tickPrematch() {
     if (pmRunning) return;
@@ -291,33 +304,49 @@
     const done = [];
     try {
       for (const [sport, slug] of PREMATCH) {
-        // The 24 h list doubles as the competition index: its blocks carry the
-        // per-competition urls we then walk for the full calendar.
+        // The 24 h list is both the freshest source for imminent fixtures and
+        // the index of competitions to walk for the rest.
         const seed = await getJson("/fr/api/sport/" + slug + "/matchs-a-venir/");
         if (!seed) { done.push(sport + ":✗"); continue; }
 
-        const urls = [];
-        for (const b of ((seed.data && seed.data.blocks) || [])) {
-          if (b && b.url && urls.indexOf(b.url) === -1) urls.push(b.url);
+        const cached = sweepCache.get(sport);
+        const due = !cached || (Date.now() - cached.at) > FULL_SWEEP_INTERVAL_MS;
+
+        let payloads;
+        let competitions;
+        if (due) {
+          const urls = [];
+          for (const b of ((seed.data && seed.data.blocks) || [])) {
+            if (b && b.url && urls.indexOf(b.url) === -1) urls.push(b.url);
+          }
+          const budget = urls.slice(0, MAX_COMPETITIONS);
+          const walked = [];
+          for (let i = 0; i < budget.length; i++) {
+            pmInfo("prématch " + sport + " : balayage " + (i + 1) + "/" + budget.length +
+                   " (toutes les 30 min)");
+            const p = await getJson("/fr/api" + budget[i]);
+            if (p) walked.push(p);
+            await new Promise((r) => setTimeout(r, COMPETITION_DELAY_MS));
+          }
+          payloads = walked;
+          competitions = budget.length;
+          sweepCache.set(sport, { payloads: walked, at: Date.now(), competitions: competitions });
+        } else {
+          payloads = cached.payloads;
+          competitions = cached.competitions;
         }
 
-        const payloads = [seed];
-        const budget = urls.slice(0, MAX_COMPETITIONS);
-        for (let i = 0; i < budget.length; i++) {
-          info("prématch " + sport + " : compétition " + (i + 1) + "/" + budget.length + "…");
-          const p = await getJson("/fr/api" + budget[i]);
-          if (p) payloads.push(p);
-          await new Promise((r) => setTimeout(r, COMPETITION_DELAY_MS));
-        }
-
-        const merged = mergeBlocks(payloads);
+        // seed first: mergeBlocks keeps the first event it sees for an id, so
+        // the freshly-fetched 24 h prices win over the cached sweep's copies.
+        const merged = mergeBlocks([seed].concat(payloads));
         const text = JSON.stringify(merged.payload);
         try {
           await sendTo(
             VPS_URL.replace("/ingest", "/ingest-prematch") + "?sport=" + sport,
             text
           );
-          done.push(sport + ":" + merged.events + "ev/" + budget.length + "comp");
+          done.push(sport + ":" + merged.events + "ev/" + competitions + "comp" +
+                    (due ? "*" : ""));
         } catch (e) {
           // 422 = Betano returned no fixtures at all for this sport. Normal
           // overnight or off-season, and the server deliberately keeps the
@@ -326,7 +355,7 @@
         }
       }
       console.log(LOG, "prematch", done.join(" "));
-      lastPrematch = done.join("  ");
+      pmInfo("prématch : " + done.join("  ") + "  (" + new Date().toLocaleTimeString() + ")");
     } finally {
       pmRunning = false;
     }
