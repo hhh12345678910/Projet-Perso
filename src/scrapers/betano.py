@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import json
 import os
 from datetime import datetime, timezone
 from typing import Any, Iterator
@@ -47,6 +48,47 @@ def _headers(user_agent: str, x_language: str, x_operator: str) -> dict[str, str
     }
 
 
+_DEFAULT_UA = (
+    "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 "
+    "(KHTML, like Gecko) Chrome/148.0.0.0 Safari/537.36"
+)
+
+
+def _cookie_file_path() -> str:
+    """Where the browser userscript's cookie push lands (written by
+    scripts/betano_ingest_server.py)."""
+    default = os.path.join(
+        os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__)))),
+        "data", "betano_cookie.json",
+    )
+    return os.getenv("BETANO_COOKIE_FILE", default)
+
+
+def load_pushed_credentials() -> tuple[str, str] | None:
+    """Read the cookie + User-Agent most recently pushed by the browser
+    userscript. Returns None when no usable push is on disk.
+
+    Read on every scraper construction rather than cached at import: the
+    userscript refreshes the file every few minutes, and re-reading is what
+    lets a new cookie take effect without restarting the daemon.
+
+    The User-Agent travels with the cookie because Cloudflare/DataDome bind
+    the clearance token to the UA that solved the challenge — replaying the
+    cookie under a different UA gets it rejected."""
+    path = _cookie_file_path()
+    try:
+        with open(path, "r") as fh:
+            data = json.load(fh)
+    except (OSError, ValueError):
+        return None
+    if not isinstance(data, dict):
+        return None
+    cookie = str(data.get("cookie") or "").strip()
+    if not cookie:
+        return None
+    return cookie, str(data.get("user_agent") or "").strip() or _DEFAULT_UA
+
+
 class BetanoScraper:
     book = Book.BETANO_BE
 
@@ -58,17 +100,22 @@ class BetanoScraper:
         x_operator: str | None = None,
         timeout: float = 15.0,
     ):
+        # Precedence: explicit arg > userscript push > .env. The pushed cookie
+        # outranks .env because it's the one that auto-refreshes; a stale
+        # hand-pasted BETANO_COOKIE should never shadow a fresh push.
+        pushed_ua: str | None = None
+        if not cookie:
+            pushed = load_pushed_credentials()
+            if pushed is not None:
+                cookie, pushed_ua = pushed
         cookie = cookie or os.getenv("BETANO_COOKIE", "")
         if not cookie:
             raise BetanoAuthError(
-                "BETANO_COOKIE not set. Capture cf_clearance + datadome from your "
-                "browser (DevTools → Network → any /danae-webapi/ request → Copy as cURL)."
+                "No Betano cookie. Either run the browser userscript "
+                "(tools/betano-ingest.user.js) so it pushes one, or set "
+                "BETANO_COOKIE in .env."
             )
-        ua = user_agent or os.getenv(
-            "BETANO_USER_AGENT",
-            "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 "
-            "(KHTML, like Gecko) Chrome/148.0.0.0 Safari/537.36",
-        )
+        ua = user_agent or pushed_ua or os.getenv("BETANO_USER_AGENT", _DEFAULT_UA)
         xl = x_language or os.getenv("BETANO_X_LANGUAGE", "9")
         xo = x_operator or os.getenv("BETANO_X_OPERATOR", "22")
 

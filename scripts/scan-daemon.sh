@@ -20,9 +20,13 @@ SPORT_LIST="${SPORT_LIST:-soccer,tennis,basketball,hockey,volleyball}"
 BREATHER="${BREATHER:-10}"
 MIN_EV="${MIN_EV:-5}"
 LOG_FILE="${LOG_FILE:-$PROJECT_DIR/valuebet.log}"
-# Betano is fed by the browser userscript -> betano_ingest_server.py, which
-# writes this JSON file. Default matches the ingest server's default output.
-# Set BETANO_FILE= (empty) in .env to fall back to the live cookie path.
+# Betano has two feeds, and the preferred one needs nothing here:
+#   1. Cookie push (default). The userscript sends the session cookie, the
+#      ingest server stores it, and BetanoScraper picks it up on every fetch —
+#      no --betano-file involved. data/betano.json simply won't exist, so the
+#      block below stays empty and the daemon uses the live path.
+#   2. Odds-dump push (fallback). If something writes data/betano.json, it's
+#      passed as --betano-file instead.
 BETANO_FILE="${BETANO_FILE:-$PROJECT_DIR/data/betano.json}"
 
 exec >> "$LOG_FILE" 2>&1

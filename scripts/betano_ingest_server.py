@@ -30,8 +30,15 @@ Config (env vars)
 
 Endpoints
 ---------
-  GET  /health   -> 200 "ok"        (no token; for connectivity tests)
-  POST /ingest   -> 200 {...stats}  (requires X-Ingest-Token; writes the file)
+  GET  /health         -> 200 "ok"   (no token; for connectivity tests)
+  POST /ingest-cookie  -> 200 {...}  (preferred) stores the cookie + UA the
+                         browser pushed; the daemon then fetches Betano itself.
+  POST /ingest         -> 200 {...}  (fallback) stores a full odds dump the
+                         browser fetched, for `--betano-file`.
+
+Prefer /ingest-cookie: ~0.5 KB per push instead of a multi-MB dump, the
+browser never touches Betano's API (nothing for DataDome to see), and the VM
+reuses the already-working BetanoScraper fetch path.
 """
 from __future__ import annotations
 
@@ -52,6 +59,11 @@ def _project_dir() -> Path:
 TOKEN = os.getenv("BETANO_INGEST_TOKEN", "")
 OUT_FILE = Path(
     os.getenv("BETANO_INGEST_FILE", str(_project_dir() / "data" / "betano.json"))
+)
+# Where /ingest-cookie stores the pushed credentials. Must match
+# BETANO_COOKIE_FILE as read by src/scrapers/betano.py.
+COOKIE_FILE = Path(
+    os.getenv("BETANO_COOKIE_FILE", str(_project_dir() / "data" / "betano_cookie.json"))
 )
 HOST = os.getenv("BETANO_INGEST_HOST", "0.0.0.0")
 PORT = int(os.getenv("BETANO_INGEST_PORT", "8787"))
@@ -117,8 +129,50 @@ class Handler(BaseHTTPRequestHandler):
         else:
             self._send(404, {"error": "not found"})
 
+    def _handle_cookie(self, raw: bytes) -> None:
+        """Store a cookie + User-Agent pushed by the userscript.
+
+        This is the preferred feed: the browser sends ~0.5 KB of credentials
+        instead of a multi-MB odds dump, makes no request to Betano's API at
+        all (so nothing for DataDome to flag), and the VM does the fetching
+        through the already-proven BetanoScraper path."""
+        try:
+            data = json.loads(raw)
+        except ValueError as e:
+            self._send(400, {"error": f"invalid JSON: {e}"})
+            return
+        if not isinstance(data, dict):
+            self._send(400, {"error": "expected a JSON object"})
+            return
+        cookie = str(data.get("cookie") or "").strip()
+        if not cookie:
+            self._send(400, {"error": "missing 'cookie'"})
+            return
+        # datadome is the token that actually gates the API; warn (but still
+        # store) if it's absent so a partial capture is visible in the log
+        # rather than failing silently at scrape time.
+        names = {p.split("=", 1)[0].strip() for p in cookie.split(";") if "=" in p}
+        payload = json.dumps({
+            "cookie": cookie,
+            "user_agent": str(data.get("user_agent") or "").strip(),
+            "received_at": datetime.now(timezone.utc).isoformat(),
+        }).encode()
+        try:
+            _atomic_write(COOKIE_FILE, payload)
+        except OSError as e:
+            _log(f"500 cookie write failed: {e}")
+            self._send(500, {"error": f"write failed: {e}"})
+            return
+        missing = [n for n in ("datadome", "cf_clearance") if n not in names]
+        _log(
+            f"200 cookie stored ({len(cookie)} chars, {len(names)} cookies)"
+            + (f" — WARNING missing: {', '.join(missing)}" if missing else "")
+        )
+        self._send(200, {"ok": True, "cookies": sorted(names), "missing": missing})
+
     def do_POST(self) -> None:  # noqa: N802
-        if self.path.split("?", 1)[0] != "/ingest":
+        route = self.path.split("?", 1)[0]
+        if route not in ("/ingest", "/ingest-cookie"):
             self._send(404, {"error": "not found"})
             return
         if not self._authorized():
@@ -135,6 +189,9 @@ class Handler(BaseHTTPRequestHandler):
             return
 
         raw = self.rfile.read(length)
+        if route == "/ingest-cookie":
+            self._handle_cookie(raw)
+            return
         try:
             data = json.loads(raw)
         except ValueError as e:

@@ -38,9 +38,27 @@ pytest
 
 ## Including Betano in a scan
 
-Betano sits behind Cloudflare + DataDome that bind their session cookie to the
-browser IP, so live fetching only works from the machine that solved the
-challenge. Workaround: capture the response once and feed it to `scan`.
+Betano sits behind Cloudflare + DataDome. Their tokens expire every few hours,
+so the VM needs a periodically refreshed cookie.
+
+### Automatic (recommended)
+
+`tools/betano-cookie.user.js` is a Tampermonkey userscript: leave a
+`betanosports.be` tab open and every 5 min it reads the session cookie and
+POSTs it to `scripts/betano_ingest_server.py` on the VM, which stores it in
+`data/betano_cookie.json`. `BetanoScraper` re-reads that file on every fetch,
+so a new cookie takes effect with no daemon restart and no manual pasting.
+
+Setup: generate a token (`openssl rand -hex 32`) into `BETANO_INGEST_TOKEN`,
+run the ingest server (`scripts/betano-ingest.service`), open the port, then
+paste the same token into the userscript's `TOKEN`.
+
+The script never calls Betano's API — it only reads cookies the browser
+already holds — so it adds no traffic for DataDome to score.
+
+### Manual fallback
+
+Capture the response once and feed it to `scan`.
 
 1. In Chrome on `betanosports.be` (logged in), open the URL directly:
    `https://www.betanosports.be/fr/danae-webapi/api/live/overview/latest?includeVirtuals=true&queryLanguageId=9&queryOperatorId=22`
