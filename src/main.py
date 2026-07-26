@@ -1501,6 +1501,104 @@ def inspect_betano(path: str):
         console.print(f"  {q.event_key} | {q.market.value} | {q.outcome.label} @ {q.decimal_odd}")
 
 
+@app.command(name="betano-coverage")
+def betano_coverage(
+    path: str = typer.Argument("data/betano.json", help="Betano overview dump to inspect."),
+):
+    """Summarise what a Betano dump actually covers: sports, and how far ahead.
+
+    The endpoint is named /live/overview, which reads as "in-play only" — but
+    the site's homepage lists upcoming fixtures from the same call, so the name
+    is about the feed being real-time, not about the events being in progress.
+    This prints the breakdown that settles it, instead of inferring coverage
+    from the path name."""
+    import json as _json
+    from pathlib import Path as _Path
+    from .scrapers.betano import _FIELDS_EVENT_START, _first, _parse_datetime
+
+    try:
+        data = _json.loads(_Path(path).read_text())
+    except (OSError, ValueError) as e:
+        console.print(f"[red]Unreadable dump {path}: {e}[/red]")
+        raise typer.Exit(1)
+
+    events = data.get("events") or {}
+    leagues = data.get("leagues") or {}
+    if not events:
+        console.print(f"[yellow]No events in {path}.[/yellow]")
+        return
+
+    # league -> sport, so events can be attributed to a sport even when the
+    # event record itself only carries a league reference.
+    league_sport: dict[str, str] = {}
+    for lid, lg in leagues.items():
+        if isinstance(lg, dict):
+            league_sport[str(lid)] = str(
+                lg.get("sportName") or lg.get("sportId") or lg.get("sport") or "?"
+            )
+
+    now = datetime.now(timezone.utc)
+    by_sport: dict[str, int] = defaultdict(int)
+    live = upcoming = undated = 0
+    horizons: dict[str, int] = defaultdict(int)
+    latest: datetime | None = None
+
+    for ev in events.values():
+        if not isinstance(ev, dict):
+            continue
+        sport = (
+            ev.get("sportName")
+            or league_sport.get(str(ev.get("leagueId") or ev.get("league") or ""))
+            or ev.get("sportId")
+            or "?"
+        )
+        by_sport[str(sport)] += 1
+
+        start = _parse_datetime(_first(ev, _FIELDS_EVENT_START))
+        if start is None:
+            undated += 1
+            continue
+        if start <= now:
+            live += 1
+        else:
+            upcoming += 1
+            if latest is None or start > latest:
+                latest = start
+            days = (start - now).days
+            horizons["J+%d" % days if days else "aujourd'hui"] += 1
+
+    console.print(f"[bold]{len(events)} events in {path}[/bold]")
+    console.print(f"  déjà commencés (live) : {live}")
+    console.print(f"  à venir (prématch)    : {upcoming}")
+    if undated:
+        console.print(f"  sans date             : {undated}")
+    if latest is not None:
+        console.print(f"  horizon le plus loin  : {latest:%Y-%m-%d %H:%M} UTC")
+
+    st = Table(title="Par sport", show_lines=False)
+    st.add_column("sport")
+    st.add_column("events", justify="right")
+    for name, n in sorted(by_sport.items(), key=lambda kv: -kv[1]):
+        st.add_row(str(name), str(n))
+    console.print(st)
+
+    if horizons:
+        ht = Table(title="Prématch par échéance", show_lines=False)
+        ht.add_column("quand")
+        ht.add_column("events", justify="right")
+        for k, n in sorted(horizons.items(), key=lambda kv: -kv[1]):
+            ht.add_row(k, str(n))
+        console.print(ht)
+
+    quotes = list(betano_parse_overview(data))
+    console.print(f"\n[bold]Parser produced {len(quotes)} OddQuote(s).[/bold]")
+    by_market: dict[str, int] = defaultdict(int)
+    for q in quotes:
+        by_market[q.market.value] += 1
+    for m, n in sorted(by_market.items(), key=lambda kv: -kv[1]):
+        console.print(f"  {m}: {n}")
+
+
 @app.command()
 def selftest():
     """Sanity check on math primitives."""
