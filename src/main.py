@@ -31,6 +31,7 @@ from .scrapers.betfirst import BetFirstScraper, parse_events_table as betfirst_p
 from .scrapers.goldenpalace import GoldenPalaceScraper, parse_get_events as goldenpalace_parse_get_events
 from .scrapers.ladbrokes import LadbrokesScraper, parse_prematch as ladbrokes_parse_prematch
 from .scrapers.pinnacle import PinnacleScraper
+from .scrapers.smarkets import SmarketsScraper, iter_all_quotes as smarkets_iter_all_quotes
 from .scrapers.sevenelevenbe import SevenElevenScraper, parse_listview as sevenelevenbe_parse_listview
 from .scrapers.bingoal import BingoalScraper, parse_listview as bingoal_parse_listview
 from .scrapers.scooore import ScoooreScraper, parse_listview as scooore_parse_listview
@@ -273,6 +274,41 @@ def remap_to_reference(
     return out
 
 
+# Books used as sharp references, never as something to bet on. They price the
+# fair line; they're not soft books whose mistakes we're hunting.
+SHARP_BOOKS = frozenset({Book.PINNACLE, Book.SMARKETS})
+
+
+def align_secondary_sharp(
+    pinnacle_q: list[OddQuote],
+    secondary_raw: list[OddQuote],
+) -> list[OddQuote]:
+    """Re-key a second sharp source onto Pinnacle's frame.
+
+    Two jobs at once. Where both price the same event, the quotes must land on
+    the same event_key or build_fair_lines would treat them as separate events
+    and never blend them. Where Pinnacle is absent, the event keeps its own key
+    and becomes the anchor for a fair line Pinnacle can't provide — which is
+    the entire point of a secondary sharp source."""
+    mapping = reconcile_event_keys(
+        reference_keys=[q.event_key for q in pinnacle_q],
+        candidate_keys={q.event_key for q in secondary_raw},
+    )
+    out: list[OddQuote] = []
+    for q in secondary_raw:
+        match = mapping.get(q.event_key)
+        if match is None:
+            out.append(q)
+            continue
+        ref_key, swap = match
+        if ref_key == q.event_key and not swap:
+            out.append(q)
+        else:
+            flipped = _flip_outcome_for_swap(q.outcome, q.market) if swap else q.outcome
+            out.append(replace(q, event_key=ref_key, outcome=flipped))
+    return out
+
+
 def canonicalize_for_surebets(
     pinnacle_q: list[OddQuote],
     soft_raw: list[OddQuote],
@@ -410,6 +446,21 @@ def fetch_betano_quotes(
                     f"{sorted(unknown)} — add them to _PREMATCH_MARKET_BY_TYPE.[/yellow]"
                 )
     return quotes
+
+
+def fetch_smarkets_quotes(sport: str) -> list[OddQuote]:
+    """Smarkets exchange mid-prices, used as a *second* sharp reference.
+
+    An exchange has no margin to remove, so its mid is a fair price by
+    construction, and it lists events Pinnacle doesn't — which is what lets a
+    soft-book quote be valued at all on those matches. Off by default because
+    it adds a scrape per cycle: set USE_SMARKETS=1 to enable."""
+    try:
+        with SmarketsScraper() as sm:
+            return list(smarkets_iter_all_quotes(sm, sport))
+    except httpx.HTTPError as e:
+        console.print(f"[yellow]Smarkets skipped:[/yellow] {e}")
+        return []
 
 
 def fetch_unibet_quotes(sport: str) -> list[OddQuote]:
@@ -569,6 +620,9 @@ def _fetch_all_parallel(
         "Ladbrokes":     lambda: fetch_ladbrokes_quotes(sport),
         "StarCasino":    lambda: fetch_starcasinosport_quotes(sport),
         "Napoleon":      lambda: fetch_napoleon_quotes(sport),
+        # Smarkets is a sharp reference, not a soft book — see SHARP_BOOKS.
+        **({"Smarkets": lambda: fetch_smarkets_quotes(sport)}
+           if os.getenv("USE_SMARKETS", "").strip() not in ("", "0", "false") else {}),
         # "Betcenter":     lambda: fetch_betcenter_quotes(sport),  # desactive: cotes erronees
         # Golden Palace retiré: compte limité, plus exploitable.
     }
@@ -871,14 +925,18 @@ def _daemon_scan_sport(
             include_file_books=(current_sport == "soccer"),
         )
         pinnacle_q = [q for q in all_q if q.book == Book.PINNACLE]
-        soft_raw   = [q for q in all_q if q.book != Book.PINNACLE]
+        secondary_raw = [q for q in all_q if q.book == Book.SMARKETS]
+        soft_raw   = [q for q in all_q if q.book not in SHARP_BOOKS]
 
-        if not pinnacle_q:
-            console.print(f"[yellow]\\[{current_sport}]   No Pinnacle quotes — skipping[/yellow]")
+        if not pinnacle_q and not secondary_raw:
+            console.print(f"[yellow]\\[{current_sport}]   No sharp quotes — skipping[/yellow]")
             return
 
         cfg = ScanConfig(sport=current_sport, min_ev_pct=min_ev, bankroll=bankroll)
-        fair = build_fair_lines(pinnacle_q, cfg.devig_method)
+        fair = build_fair_lines(
+            pinnacle_q, cfg.devig_method,
+            secondary_quotes=align_secondary_sharp(pinnacle_q, secondary_raw) or None,
+        )
         # Persist the event (with its sport) for every Pinnacle event in the
         # reference frame. Value bets are keyed onto these same event_keys, so
         # this lets clv-report break CLV down per sport instead of "unknown".
@@ -1906,7 +1964,18 @@ def books_coverage(
             # Overlap with the sharp reference is what actually matters: a book
             # can list thousands of events and still be useless if none of them
             # are ones Pinnacle prices, since there'd be no fair line.
-            overlap = len(events & ref_events) if ref_events and book != Book.PINNACLE else None
+            #
+            # Measured AFTER fuzzy matching, not by raw key equality. Keys embed
+            # the exact kickoff minute and normalised names, so raw equality
+            # counts only the events two books happen to spell and schedule
+            # identically — it understates badly, and reading it as the ceiling
+            # on a book's usable events is simply wrong.
+            if ref_events and book != Book.PINNACLE:
+                overlap = len({
+                    q.event_key for q in remap_to_reference(quotes, ref_events)
+                })
+            else:
+                overlap = None
             horizon = f"J+{(latest - now).days}" if latest else "-"
             rows.append((
                 book.value, len(events), len(quotes), ",".join(markets),
