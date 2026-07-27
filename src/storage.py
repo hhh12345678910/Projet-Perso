@@ -756,17 +756,35 @@ class Storage:
         book: str = "", odd_taken: Optional[float] = None,
         ev_pct: Optional[float] = None,
     ) -> None:
-        """Log a tap on Jouer. INSERT OR IGNORE keeps the existing suppression
-        behaviour intact: re-tapping a selection must not create a second bet."""
+        """Log a tap on Jouer.
+
+        Upsert rather than plain insert: the alert-suppression path writes a
+        bare (dedup_key, played_at) row first and must keep working on its own,
+        so this has to be able to fill in the detail afterwards. Every column
+        is COALESCEd, which makes a re-tap harmless — the first click's price
+        and stake are what actually happened, and a later one must not rewrite
+        them."""
         parts = dedup_key.split("|")
         event_key = parts[0] if parts else ""
         market = parts[1] if len(parts) > 1 else ""
         outcome_label = parts[2] if len(parts) > 2 else ""
         with self._conn() as c:
             c.execute(
-                "INSERT OR IGNORE INTO played_bets(dedup_key, played_at, value_bet_id, "
+                "INSERT INTO played_bets(dedup_key, played_at, value_bet_id, "
                 "event_key, sport, book, market, outcome_label, line, odd_taken, "
-                "fair_odd, ev_pct, stake) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?)",
+                "fair_odd, ev_pct, stake) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?) "
+                "ON CONFLICT(dedup_key) DO UPDATE SET "
+                "value_bet_id=COALESCE(played_bets.value_bet_id, excluded.value_bet_id), "
+                "event_key=COALESCE(played_bets.event_key, excluded.event_key), "
+                "sport=COALESCE(NULLIF(played_bets.sport,''), excluded.sport), "
+                "book=COALESCE(NULLIF(played_bets.book,''), excluded.book), "
+                "market=COALESCE(played_bets.market, excluded.market), "
+                "outcome_label=COALESCE(played_bets.outcome_label, excluded.outcome_label), "
+                "line=COALESCE(played_bets.line, excluded.line), "
+                "odd_taken=COALESCE(played_bets.odd_taken, excluded.odd_taken), "
+                "fair_odd=COALESCE(played_bets.fair_odd, excluded.fair_odd), "
+                "ev_pct=COALESCE(played_bets.ev_pct, excluded.ev_pct), "
+                "stake=COALESCE(played_bets.stake, excluded.stake)",
                 (
                     dedup_key, played_at.isoformat(),
                     int(value_bet["id"]) if value_bet is not None else None,

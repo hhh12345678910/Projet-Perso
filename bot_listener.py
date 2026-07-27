@@ -162,6 +162,33 @@ def _record_played(bet: dict) -> None:
         return
     now = datetime.now(timezone.utc)
 
+    # La suppression d'alerte d'abord, en sqlite nu : c'est elle qui compte, et
+    # elle ne doit dependre d'aucun des enrichissements qui suivent. Si le
+    # suivi casse, on perd une ligne de tableur ; si celui-ci casse, la
+    # selection continue d'alerter apres avoir ete jouee.
+    con = sqlite3.connect(str(DB_PATH))
+    try:
+        con.execute("PRAGMA busy_timeout=5000")
+        con.execute(
+            "CREATE TABLE IF NOT EXISTS played_bets (dedup_key TEXT PRIMARY KEY, played_at TEXT)"
+        )
+        con.execute(
+            "INSERT OR IGNORE INTO played_bets(dedup_key, played_at) VALUES (?, ?)",
+            (dedup_key, now.isoformat()),
+        )
+        con.commit()
+    finally:
+        con.close()
+
+    try:
+        _track_played(bet, dedup_key, now)
+    except Exception as e:      # le suivi est informatif, jamais bloquant
+        print(f"suivi non enregistre ({type(e).__name__}: {e})")
+
+
+def _track_played(bet: dict, dedup_key: str, now: datetime) -> None:
+    """Enrichit le clic (value bet d'origine, cote, EV, mise) et ajoute une
+    ligne au fichier de suivi."""
     from src.storage import Storage
     from src import track
 
@@ -172,7 +199,10 @@ def _record_played(bet: dict) -> None:
         line = None if parts[3] in ("None", "") else float(parts[3])
         vb = storage.latest_value_bet_for(parts[0], parts[1], parts[2], line)
 
-    already = storage.played_bet(dedup_key) is not None
+    # La ligne existe forcement : la suppression d'alerte vient de l'inserer.
+    # Ce qui distingue un re-clic, c'est qu'elle porte deja une mise.
+    existing = storage.played_bet(dedup_key)
+    already = existing is not None and existing["stake"] is not None
     storage.record_played_bet(
         dedup_key=dedup_key, played_at=now, stake=track.STAKE_EUR,
         value_bet=vb, sport=bet.get("sport") or "", book=bet.get("book") or "",
