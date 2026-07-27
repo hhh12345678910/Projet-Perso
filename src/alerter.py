@@ -424,7 +424,11 @@ def format_clv_alert(
 ) -> str:
     """Message envoyé peu avant le coup d'envoi quand la CLV est confirmée positive.
     is_high=True → header 🔥 et libellé différent pour le groupe prioritaire.
-    bankroll sert à convertir le Kelly% stocké en mise conseillée en €."""
+    bankroll sert à convertir le Kelly% stocké en mise conseillée en €.
+
+    current_pin_odd est la ligne Pinnacle DÉVIGÉE, pas son prix affiché : le
+    prix affiché contient la commission, et mesurer la CLV contre lui ajoute
+    cette commission à chaque pari."""
     from .models import Book as _Book  # local import to avoid circular at module level
     parsed = parse_event_key(bet["event_key"])
     if parsed is not None:
@@ -456,7 +460,7 @@ def format_clv_alert(
         f"{_sport_prefix(sport)}{matchup}\n"
         f"{when_line}"
         f"Pari : <b>{bet['outcome_label']}{line_suffix}</b> @ {float(bet['odd_taken']):.2f}\n"
-        f"Pinnacle actuel : {current_pin_odd:.2f}"
+        f"Ligne juste actuelle : {current_pin_odd:.2f}"
         f"{stake_line}"
     )
 

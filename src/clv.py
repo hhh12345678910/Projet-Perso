@@ -9,13 +9,58 @@ from .matcher import parse_event_key
 from .models import OddQuote
 
 
-def clv_pct(odd_taken: float, closing_pinnacle_odd: float) -> float:
+def clv_pct(odd_taken: float, closing_fair_odd: float) -> float:
     """Beating the sharp closing line is the single most reliable indicator of
     long-run profitability — a CLV of +2 % means the price you took is 2 %
-    longer than where the market settled."""
-    if closing_pinnacle_odd <= 0:
+    longer than where the market settled.
+
+    The second argument must be the *devigged* closing odd. Passing Pinnacle's
+    displayed price instead adds its commission to every single bet: on a
+    portfolio with a 6.6 % margin, a bet worth exactly nothing scores +6.6 %,
+    and a bet the market moved against still shows comfortably positive. EV is
+    already measured against the devigged line, so anything else here compares
+    the two ends of the same bet with two different rulers."""
+    if closing_fair_odd <= 0:
         return 0.0
-    return odd_taken / closing_pinnacle_odd - 1.0
+    return odd_taken / closing_fair_odd - 1.0
+
+
+def settle(
+    market: str, outcome_label: str, line: float | None,
+    winner: str | None, home_score: float | None, away_score: float | None,
+) -> str | None:
+    """Grade one selection against a final score: 'won', 'lost', 'void', or
+    None when the result can't decide it. Push (exact total on the line) is a
+    void, not a loss — treating it as one would quietly bias measured P&L down."""
+    if market == "h2h":
+        if not winner:
+            return None
+        return "won" if winner == outcome_label else "lost"
+
+    if market == "totals":
+        if line is None or home_score is None or away_score is None:
+            return None
+        total = home_score + away_score
+        if total == line:
+            return "void"
+        side = outcome_label.split()[0].lower() if outcome_label else ""
+        if side not in ("over", "under"):
+            return None
+        return "won" if ((total > line) == (side == "over")) else "lost"
+
+    return None
+
+
+def pnl(status: str | None, odd: float, stake: float) -> float | None:
+    """Profit or loss on a settled bet. None while the result is unknown, so an
+    unsettled bet is never silently counted as a break-even one."""
+    if status == "won":
+        return stake * (odd - 1.0)
+    if status == "lost":
+        return -stake
+    if status == "void":
+        return 0.0
+    return None
 
 
 def event_started(event_key: str, now: datetime | None = None) -> bool:

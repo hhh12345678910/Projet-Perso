@@ -64,6 +64,14 @@ CREATE TABLE IF NOT EXISTS clv_snapshots (
     closing         INTEGER DEFAULT 0,
     pinnacle_odd    REAL NOT NULL,
     pinnacle_prob   REAL NOT NULL,
+    -- The devigged closing line. pinnacle_odd is the price Pinnacle DISPLAYS,
+    -- commission included; comparing a taken odd against it overstates CLV by
+    -- the whole margin (~6-7% on this portfolio). fair_odd is that same closing
+    -- price with the margin removed, i.e. the number EV is already measured
+    -- against — so CLV and EV finally use the same ruler.
+    fair_odd        REAL,
+    fair_prob       REAL,
+    overround       REAL,
     FOREIGN KEY (value_bet_id) REFERENCES value_bets(id)
 );
 
@@ -113,7 +121,58 @@ CREATE TABLE IF NOT EXISTS teams (
     display_name     TEXT NOT NULL,
     last_seen_at     TEXT NOT NULL
 );
+
+-- One row per tap on "Jouer". dedup_key stays the primary key because the
+-- alert-suppression path keys on it; everything else is what turns a click
+-- into a measurable bet (which value_bet it was, at what price, for what EV).
+CREATE TABLE IF NOT EXISTS played_bets (
+    dedup_key       TEXT PRIMARY KEY,
+    played_at       TEXT,
+    value_bet_id    INTEGER,
+    event_key       TEXT,
+    sport           TEXT,
+    book            TEXT,
+    market          TEXT,
+    outcome_label   TEXT,
+    line            REAL,
+    odd_taken       REAL,
+    fair_odd        REAL,
+    ev_pct          REAL,
+    stake           REAL
+);
+
+-- Settled outcomes, keyed by event. Populated by `settle`; kept apart from
+-- value_bets so re-importing results never rewrites detection history.
+CREATE TABLE IF NOT EXISTS results (
+    event_key       TEXT PRIMARY KEY,
+    winner          TEXT,
+    home_score      REAL,
+    away_score      REAL,
+    source          TEXT,
+    settled_at      TEXT NOT NULL
+);
 """
+
+# (table, column, type) added after the table shipped. SQLite has no
+# "ADD COLUMN IF NOT EXISTS", so each is attempted and its duplicate-column
+# error swallowed — that keeps an existing production database upgradable
+# without a dump/restore.
+MIGRATIONS = [
+    ("clv_snapshots", "fair_odd", "REAL"),
+    ("clv_snapshots", "fair_prob", "REAL"),
+    ("clv_snapshots", "overround", "REAL"),
+    ("played_bets", "value_bet_id", "INTEGER"),
+    ("played_bets", "event_key", "TEXT"),
+    ("played_bets", "sport", "TEXT"),
+    ("played_bets", "book", "TEXT"),
+    ("played_bets", "market", "TEXT"),
+    ("played_bets", "outcome_label", "TEXT"),
+    ("played_bets", "line", "REAL"),
+    ("played_bets", "odd_taken", "REAL"),
+    ("played_bets", "fair_odd", "REAL"),
+    ("played_bets", "ev_pct", "REAL"),
+    ("played_bets", "stake", "REAL"),
+]
 
 
 class Storage:
@@ -122,6 +181,11 @@ class Storage:
         self.path.parent.mkdir(parents=True, exist_ok=True)
         with self._conn() as c:
             c.executescript(SCHEMA)
+            for table, column, coltype in MIGRATIONS:
+                try:
+                    c.execute(f"ALTER TABLE {table} ADD COLUMN {column} {coltype}")
+                except sqlite3.OperationalError:
+                    pass  # column already present
 
     @contextmanager
     def _conn(self) -> Iterator[sqlite3.Connection]:
@@ -605,29 +669,182 @@ class Storage:
             )
             return c.execute(sql, params).fetchone()
 
+    def pinnacle_closing_group(
+        self, event_key: str, market: str, line: Optional[float], before: datetime,
+    ) -> list[sqlite3.Row]:
+        """Every competing outcome Pinnacle priced in one market, taken from the
+        single most recent capture before kickoff.
+
+        Deviging needs the whole market, not one side of it: the margin can only
+        be removed by normalising the competing outcomes against each other. All
+        rows come from the same fetched_at so the set is internally consistent —
+        mixing two capture times would leave a spurious margin behind."""
+        with self._conn() as c:
+            line_clause = "line IS NULL" if line is None else "line = ?"
+            head: list = [event_key, market]
+            tail: list = [] if line is None else [line]
+            last = c.execute(
+                f"SELECT MAX(fetched_at) FROM quotes "
+                f"WHERE book = 'pinnacle' AND event_key = ? AND market = ? "
+                f"  AND {line_clause} AND fetched_at < ?",
+                (*head, *tail, before.isoformat()),
+            ).fetchone()
+            if last is None or last[0] is None:
+                return []
+            return list(c.execute(
+                f"SELECT * FROM quotes "
+                f"WHERE book = 'pinnacle' AND event_key = ? AND market = ? "
+                f"  AND {line_clause} AND fetched_at = ?",
+                (*head, *tail, last[0]),
+            ))
+
     def all_closed_bets(self) -> list[sqlite3.Row]:
         """Bets joined with their closing snapshot, ready for CLV aggregation.
         The events LEFT JOIN carries the sport so clv-report can break CLV down
         per sport (sport is NULL when the event row was never persisted)."""
         with self._conn() as c:
             return list(c.execute(
-                "SELECT vb.*, cs.pinnacle_odd AS closing_odd, cs.snapshot_at AS closed_at, "
-                "e.sport AS sport "
+                "SELECT vb.*, cs.pinnacle_odd AS closing_odd, "
+                "cs.fair_odd AS closing_fair_odd, cs.overround AS closing_overround, "
+                "cs.snapshot_at AS closed_at, e.sport AS sport, "
+                "pb.dedup_key IS NOT NULL AS played, r.winner AS winner "
                 "FROM value_bets vb "
                 "JOIN clv_snapshots cs ON cs.value_bet_id = vb.id AND cs.closing = 1 "
                 "LEFT JOIN events e ON e.event_key = vb.event_key "
+                "LEFT JOIN played_bets pb ON pb.value_bet_id = vb.id "
+                "LEFT JOIN results r ON r.event_key = vb.event_key "
                 "ORDER BY vb.detected_at DESC"
             ))
 
     def insert_clv_snapshot(
         self, value_bet_id: int, pinnacle_odd: float, pinnacle_prob: float,
         snapshot_at: datetime, closing: bool = False,
+        fair_odd: Optional[float] = None, fair_prob: Optional[float] = None,
+        overround: Optional[float] = None,
     ) -> None:
         with self._conn() as c:
             c.execute(
                 "INSERT INTO clv_snapshots(value_bet_id, snapshot_at, closing, pinnacle_odd, "
-                "pinnacle_prob) VALUES (?, ?, ?, ?, ?)",
-                (value_bet_id, snapshot_at.isoformat(), 1 if closing else 0, pinnacle_odd, pinnacle_prob),
+                "pinnacle_prob, fair_odd, fair_prob, overround) VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
+                (value_bet_id, snapshot_at.isoformat(), 1 if closing else 0, pinnacle_odd,
+                 pinnacle_prob, fair_odd, fair_prob, overround),
+            )
+
+    # ------------------------------------------------------------ played ----
+    def latest_value_bet_for(
+        self, event_key: str, market: str, outcome_label: str, line: Optional[float],
+    ) -> Optional[sqlite3.Row]:
+        """The most recent detection of one selection. A tap on Jouer carries
+        only the dedup_key, which is exactly (event, market, outcome, line) —
+        this resolves it back to the value_bet row so the click inherits the
+        bet's EV, fair line and, later, its closing line."""
+        with self._conn() as c:
+            line_clause = "line IS NULL" if line is None else "line = ?"
+            params: list = [event_key, market, outcome_label]
+            if line is not None:
+                params.append(line)
+            return c.execute(
+                f"SELECT * FROM value_bets WHERE event_key = ? AND market = ? "
+                f"  AND outcome_label = ? AND {line_clause} "
+                f"ORDER BY detected_at DESC LIMIT 1",
+                params,
+            ).fetchone()
+
+    def record_played_bet(
+        self, dedup_key: str, played_at: datetime, stake: float,
+        value_bet: Optional[sqlite3.Row] = None, sport: str = "",
+        book: str = "", odd_taken: Optional[float] = None,
+        ev_pct: Optional[float] = None,
+    ) -> None:
+        """Log a tap on Jouer. INSERT OR IGNORE keeps the existing suppression
+        behaviour intact: re-tapping a selection must not create a second bet."""
+        parts = dedup_key.split("|")
+        event_key = parts[0] if parts else ""
+        market = parts[1] if len(parts) > 1 else ""
+        outcome_label = parts[2] if len(parts) > 2 else ""
+        with self._conn() as c:
+            c.execute(
+                "INSERT OR IGNORE INTO played_bets(dedup_key, played_at, value_bet_id, "
+                "event_key, sport, book, market, outcome_label, line, odd_taken, "
+                "fair_odd, ev_pct, stake) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?)",
+                (
+                    dedup_key, played_at.isoformat(),
+                    int(value_bet["id"]) if value_bet is not None else None,
+                    value_bet["event_key"] if value_bet is not None else event_key,
+                    sport,
+                    book or (value_bet["book"] if value_bet is not None else ""),
+                    value_bet["market"] if value_bet is not None else market,
+                    value_bet["outcome_label"] if value_bet is not None else outcome_label,
+                    value_bet["line"] if value_bet is not None else None,
+                    odd_taken if odd_taken is not None
+                    else (value_bet["odd_taken"] if value_bet is not None else None),
+                    value_bet["fair_odd"] if value_bet is not None else None,
+                    ev_pct if ev_pct is not None
+                    else (value_bet["ev_pct"] if value_bet is not None else None),
+                    stake,
+                ),
+            )
+
+    def closing_snapshots_missing_fair(self) -> list[sqlite3.Row]:
+        """Closing snapshots taken before the devig fix, with the bet details
+        needed to recompute them. Only those whose Pinnacle quotes survived the
+        retention window can be recovered — the rest are gone for good."""
+        with self._conn() as c:
+            return list(c.execute(
+                "SELECT cs.id AS snapshot_id, vb.id AS value_bet_id, vb.event_key, "
+                "vb.market, vb.outcome_label, vb.line "
+                "FROM clv_snapshots cs JOIN value_bets vb ON vb.id = cs.value_bet_id "
+                "WHERE cs.closing = 1 AND cs.fair_odd IS NULL"
+            ))
+
+    def update_snapshot_fair(
+        self, snapshot_id: int, fair_odd: float, fair_prob: float, overround: float,
+    ) -> None:
+        with self._conn() as c:
+            c.execute(
+                "UPDATE clv_snapshots SET fair_odd=?, fair_prob=?, overround=? WHERE id=?",
+                (fair_odd, fair_prob, overround, snapshot_id),
+            )
+
+    def played_bet(self, dedup_key: str) -> Optional[sqlite3.Row]:
+        with self._conn() as c:
+            return c.execute(
+                "SELECT * FROM played_bets WHERE dedup_key = ?", (dedup_key,)
+            ).fetchone()
+
+    def played_bets_with_clv(self) -> list[sqlite3.Row]:
+        """Every played bet with its closing line and result when known. This is
+        the population that actually matters — clv-report's headline number has
+        always been computed over every detection, most of which were never
+        backed."""
+        with self._conn() as c:
+            return list(c.execute(
+                "SELECT pb.*, cs.pinnacle_odd AS closing_odd, cs.fair_odd AS closing_fair_odd, "
+                "cs.overround AS closing_overround, e.sport AS event_sport, "
+                "e.start_time AS start_time, r.winner AS winner, "
+                "r.home_score AS home_score, r.away_score AS away_score, "
+                "r.source AS result_source "
+                "FROM played_bets pb "
+                "LEFT JOIN clv_snapshots cs ON cs.value_bet_id = pb.value_bet_id AND cs.closing = 1 "
+                "LEFT JOIN events e ON e.event_key = pb.event_key "
+                "LEFT JOIN results r ON r.event_key = pb.event_key "
+                "ORDER BY pb.played_at"
+            ))
+
+    # ----------------------------------------------------------- results ----
+    def record_result(
+        self, event_key: str, winner: str, settled_at: datetime,
+        home_score: Optional[float] = None, away_score: Optional[float] = None,
+        source: str = "manual",
+    ) -> None:
+        with self._conn() as c:
+            c.execute(
+                "INSERT INTO results(event_key, winner, home_score, away_score, source, settled_at) "
+                "VALUES (?,?,?,?,?,?) ON CONFLICT(event_key) DO UPDATE SET "
+                "winner=excluded.winner, home_score=excluded.home_score, "
+                "away_score=excluded.away_score, source=excluded.source, "
+                "settled_at=excluded.settled_at",
+                (event_key, winner, home_score, away_score, source, settled_at.isoformat()),
             )
 
     def recent_value_bets(self, limit: int = 50) -> list[sqlite3.Row]:

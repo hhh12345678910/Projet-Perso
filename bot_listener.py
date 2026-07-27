@@ -30,8 +30,10 @@ from openpyxl.worksheet.datavalidation import DataValidation
 ROOT = Path(__file__).resolve().parent
 DB_PATH = ROOT / "data" / "valuebet.db"
 XLSX_PATH = ROOT / "data" / "paris.xlsx"
+TRACK_PATH = ROOT / "data" / "paris_track.csv"
 OFFSET_PATH = ROOT / "data" / ".telegram_offset"
 BANKROLL = 1000.0  # capital de depart pour la colonne "Capital"
+TRACK_STAKE_EUR = 25.0  # mise fictive constante, pour comparer des signaux
 
 # --- colonnes de l'Excel (ordre = ordre d'ecriture) ---
 HEADERS = [
@@ -148,21 +150,59 @@ def fetch_bet(token: str) -> dict | None:
     }
 
 
-def _record_played(dedup_key) -> None:
-    """Marque la selection comme jouee -> plus d'alerte dessus (tous books/cotes)."""
+def _record_played(bet: dict) -> None:
+    """Enregistre le pari joue : suppression des alertes sur la selection, et
+    une ligne dans le fichier de suivi.
+
+    Le dedup_key vaut exactement event_key|market|outcome|line, ce qui suffit a
+    retrouver le value_bet correspondant — et donc a rattacher plus tard la
+    ligne de cloture, le CLV et le resultat a ce clic."""
+    dedup_key = bet.get("dedup_key")
     if not dedup_key:
         return
-    con = sqlite3.connect(str(DB_PATH))
-    con.execute("PRAGMA busy_timeout=5000")
-    con.execute(
-        "CREATE TABLE IF NOT EXISTS played_bets (dedup_key TEXT PRIMARY KEY, played_at TEXT)"
+    now = datetime.now(timezone.utc)
+
+    from src.storage import Storage
+    from src import track
+
+    storage = Storage(DB_PATH)
+    parts = dedup_key.split("|")
+    vb = None
+    if len(parts) == 4:
+        line = None if parts[3] in ("None", "") else float(parts[3])
+        vb = storage.latest_value_bet_for(parts[0], parts[1], parts[2], line)
+
+    already = storage.played_bet(dedup_key) is not None
+    storage.record_played_bet(
+        dedup_key=dedup_key, played_at=now, stake=track.STAKE_EUR,
+        value_bet=vb, sport=bet.get("sport") or "", book=bet.get("book") or "",
+        odd_taken=bet.get("cote"), ev_pct=bet.get("ev"),
     )
-    con.execute(
-        "INSERT OR IGNORE INTO played_bets(dedup_key, played_at) VALUES (?, ?)",
-        (dedup_key, datetime.now(timezone.utc).isoformat()),
-    )
-    con.commit()
-    con.close()
+    if already:
+        return  # deja suivi : ne pas dupliquer la ligne du fichier
+
+    row = [""] * len(track.HEADERS)
+    def put(col: str, value) -> None:
+        row[track.HEADERS.index(col)] = value
+
+    put("Date", now.strftime("%Y-%m-%d %H:%M"))
+    put("Sport", bet.get("sport") or "")
+    put("Match", bet.get("match") or "")
+    put("Book", bet.get("book") or "")
+    put("Sélection", bet.get("selection") or "")
+    put("Cote prise", f"{float(bet['cote']):.2f}" if bet.get("cote") else "")
+    put("EV %", f"{float(bet['ev']):.2f}" if bet.get("ev") is not None else "")
+    put("Mise fictive", f"{track.STAKE_EUR:.2f}")
+    if vb is not None:
+        put("Marché", vb["market"])
+        put("Cote fair (détection)", f"{float(vb['fair_odd']):.2f}")
+        put("event_key", vb["event_key"])
+    elif len(parts) == 4:
+        put("Marché", parts[1])
+        put("event_key", parts[0])
+    # CLV, resultat et P&L restent vides : ils n'existent qu'apres le coup
+    # d'envoi. `track-update` reconstruit le fichier complet a ce moment-la.
+    track.append(TRACK_PATH, row)
 
 
 # ----------------------------------------------------------- Callbacks ------
@@ -187,7 +227,7 @@ def handle_callback(cb: dict) -> None:
         return
 
     append_bet(bet)
-    _record_played(bet.get("dedup_key"))
+    _record_played(bet)
     _mark_button_done(cb)
     tg("answerCallbackQuery", callback_query_id=cb_id,
        text=f"Enregistre : {bet['mise']:.2f} EUR @ {bet['cote']}")

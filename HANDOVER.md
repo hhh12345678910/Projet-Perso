@@ -31,10 +31,20 @@ chance.
 | ROI estimé | ~4 % sur ~41 000 € de volume |
 | CLV moyen déclaré | **+10 %** (mesuré à la main dans un tableur) |
 
-⚠️ Le CLV de +10 % n'a **jamais été vérifié par le système** — `close-lines`
-n'était pas planifié. L'écart entre CLV +10 % et ROI +4 % doit être expliqué :
-soit malchance (le résultat devrait s'améliorer), soit CLV surestimé (cote de
-clôture relevée trop tôt, ou biais de saisie).
+⚠️ **Le CLV était surestimé, et l'écart avec le ROI est expliqué.** Il était
+mesuré contre la cote de clôture *affichée* par Pinnacle, commission comprise,
+alors que l'EV est mesurée contre la ligne dévigée. Sur ce portefeuille la
+commission médiane de Pinnacle vaut 6,6 % (mesurée sur 111 078 marchés 1X2
+complets), ce qui gonflait chaque pari d'autant : un pari sans le moindre
+avantage affichait +6,6 % de CLV.
+
+Vérification sur 14 238 paris clôturés : EV moyenne 14,26 % + 6,6 % de
+commission = 21,80 % attendu, contre 21,71 % affiché. Idem en médiane (15,31 %
+attendu, 15,36 % affiché). Le CLV ne faisait donc que répéter l'EV de départ.
+
+Corrigé : `close-lines` dévige désormais la ligne de clôture. **Le CLV réel est
+de l'ordre de +5 à +7 %**, cohérent avec le ROI de ~4 %. L'edge est réel, il
+vaut la moitié de ce qu'on croyait.
 
 ---
 
@@ -234,13 +244,20 @@ référence dans les cotes au lieu de nommer un book. Une future source
 ## 6. Ce qui reste à faire
 
 ### Priorité 1 — mesurer
-1. **Vérifier le CLV** avec `close-lines` + `clv-report`. Le +10 % déclaré vient
-   d'un tableur manuel. Le système doit produire sa propre mesure.
-2. **Importer l'historique de paris** dans la base. Aujourd'hui le P&L vit dans
-   un tableur ; `tools/value_bet_tracker.csv` ne contient que 3 lignes d'exemple.
-   `played_bets` ne stocke que « ce pari a été cliqué », sans mise ni résultat.
-3. **Segmenter** : ROI et CLV par tranche d'EV, par book, par marché, par cote.
-   C'est ce qui dira quels paris arrêter de jouer sans perdre un euro.
+1. ✅ **CLV dévigé** — `close-lines` capture tout le marché de clôture et en
+   retire la commission. `backfill-fair-lines` rattrape les clôtures d'avant le
+   correctif dont les cotes n'ont pas encore été purgées.
+2. ✅ **Suivi des paris joués** — chaque clic sur Jouer écrit une ligne dans
+   `data/paris_track.csv` (EV de départ, CLV réel, mise fictive de 25 €).
+   `track-update` régénère le fichier, `settle --from` y injecte les résultats.
+   `clv-report` sépare désormais « paris joués » et « toutes détections ».
+3. **Résultats automatiques** — il n'existe encore aucune source de scores. Les
+   scores se saisissent à la main dans le fichier de suivi, ou s'importent
+   depuis l'historique de paris du book. Piste la plus propre : capturer le
+   score depuis le flux live de Pinnacle, qui couvre exactement notre univers.
+4. **Segmenter** : ROI et CLV par tranche d'EV, par book, par marché, par cote,
+   sur les paris joués. C'est ce qui dira quoi arrêter de jouer sans perdre un
+   euro. Attendre ~2 semaines de données mesurées correctement.
 
 ### Priorité 2 — bookmakers
 - **Bet777** (groupe Ardent, comme Circus) et **Magic Betting** : lancer

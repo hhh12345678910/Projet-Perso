@@ -5,6 +5,7 @@ from collections import defaultdict
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from dataclasses import replace
 from datetime import datetime, timedelta, timezone
+from pathlib import Path
 from typing import Callable, Iterable
 
 import threading
@@ -48,9 +49,11 @@ from .clv import (
     event_started,
     group_by as clv_group_by,
     index_quotes_by_market,
+    pnl as clv_pnl,
+    settle as clv_settle,
 )
 from .alerter import TelegramConfig, send_alerts, send_surebet_alerts, send_clv_alerts, send_middle_alerts
-from . import teams
+from . import teams, track
 
 
 app = typer.Typer(add_completion=False)
@@ -908,12 +911,20 @@ def _daemon_scan_sport(
         # ── CLV pre-kickoff alerts ────────────────────────────────────
         if tg_cfg is not None and tg_cfg.clv_window_minutes > 0:
             now_utc = datetime.now(timezone.utc)
+            # Index the DEVIGGED lines, not Pinnacle's displayed prices. The
+            # displayed price carries the commission, so measuring CLV against
+            # it hands every bet the whole margin for free — a bet worth
+            # nothing scores +6-7%, and one the market moved against still
+            # reads positive. clv-report was fixed the same way.
             pin_idx: dict[tuple, float] = {}
-            for _q in pinnacle_q:
-                if "::" in _q.event_key:
-                    _d = _q.event_key[:8]
-                    _t = _q.event_key.split("::", 1)[1]
-                    pin_idx[(_d, _t, _q.market.value, _q.outcome.label, _q.outcome.line)] = _q.decimal_odd
+            for (_ek, _mkt, _ln), _fl in fair.items():
+                if "::" not in _ek:
+                    continue
+                _d = _ek[:8]
+                _t = _ek.split("::", 1)[1]
+                for _label, _prob in _fl.outcomes.items():
+                    if _prob > 0:
+                        pin_idx[(_d, _t, _mkt.value, _label, _ln)] = 1.0 / _prob
 
             clv_pending: list[tuple] = []
             for _bet in storage.open_value_bets():
@@ -1343,6 +1354,39 @@ def alert_test():
         )
 
 
+def _closing_prices(storage: Storage, cfg: ScanConfig, bet) -> tuple | None:
+    """(raw odd, fair odd, fair prob, overround) for one bet's closing market.
+
+    Returns None when no pre-kickoff Pinnacle quote survives for the selection,
+    and a fair_odd of None when the captured market is too incomplete to devig
+    — the margin is only visible in how competing outcomes over-sum, so a lone
+    quote can never be devigged."""
+    parsed = parse_event_key(bet["event_key"])
+    if parsed is None:
+        return None
+    kickoff, _, _ = parsed
+    group = storage.pinnacle_closing_group(
+        event_key=bet["event_key"], market=bet["market"],
+        line=bet["line"], before=kickoff,
+    )
+    row = next((q for q in group if q["outcome_label"] == bet["outcome_label"]), None)
+    if row is None:
+        return None
+    pinnacle_odd = float(row["decimal_odd"])
+
+    if len(group) < 2:
+        return pinnacle_odd, None, None, None
+    odds = [float(q["decimal_odd"]) for q in group]
+    try:
+        probs = devig(odds, method=cfg.devig_method)
+    except Exception:
+        return pinnacle_odd, None, None, None
+    prob = {q["outcome_label"]: p for q, p in zip(group, probs)}.get(bet["outcome_label"])
+    if not prob or prob <= 0:
+        return pinnacle_odd, None, None, None
+    return pinnacle_odd, 1.0 / prob, prob, sum(1.0 / o for o in odds)
+
+
 @app.command(name="close-lines")
 def close_lines(sport: str = "soccer"):
     """For every detected value bet whose event has kicked off, snapshot the
@@ -1368,41 +1412,84 @@ def close_lines(sport: str = "soccer"):
 
     closed = 0
     missing = 0
+    thin = 0
     for b in due:
-        parsed = parse_event_key(b["event_key"])
-        if parsed is None:
+        priced = _closing_prices(storage, cfg, b)
+        if priced is None:
             missing += 1
             continue
-        kickoff, _, _ = parsed
-        row = storage.latest_pinnacle_quote_before(
-            event_key=b["event_key"],
-            market=b["market"],
-            outcome_label=b["outcome_label"],
-            line=b["line"],
-            before=kickoff,
-        )
-        if row is None:
-            missing += 1
+        pinnacle_odd, fair_odd, fair_prob, book_overround = priced
+        if fair_odd is None:
+            # Better a bet with no CLV than a bet with an inflated one: an
+            # incomplete closing market cannot be devigged, and falling back to
+            # the raw price here is exactly the bug this command fixes.
+            thin += 1
             continue
-        pinnacle_odd = float(row["decimal_odd"])
+
         storage.insert_clv_snapshot(
             value_bet_id=int(b["id"]),
             pinnacle_odd=pinnacle_odd,
-            # Inverse of the closing odd is the quickest implied-prob estimate
-            # — close to the devigged fair but not normalised; the fair_prob
-            # column on the value_bet row is the proper sharp estimate.
             pinnacle_prob=1.0 / pinnacle_odd,
             snapshot_at=now,
             closing=True,
+            fair_odd=fair_odd,
+            fair_prob=fair_prob,
+            overround=book_overround,
         )
         closed += 1
     console.print(
         f"  → {closed} closing snapshots written; {missing} bets with no "
-        f"pre-kickoff Pinnacle quote on file"
+        f"pre-kickoff Pinnacle quote on file; {thin} skipped (closing market "
+        f"too incomplete to devig)"
+    )
+
+
+@app.command(name="backfill-fair-lines")
+def backfill_fair_lines():
+    """Recalculer la ligne juste des clôtures capturées avant le correctif.
+
+    Ne récupère que ce que la rétention a laissé : les cotes Pinnacle des paris
+    plus anciens ont été purgées, et leur CLV est définitivement perdu."""
+    cfg = ScanConfig()
+    storage = Storage(cfg.db_path)
+    pending = storage.closing_snapshots_missing_fair()
+    if not pending:
+        console.print("[bold]Toutes les clôtures ont déjà une ligne juste.[/bold]")
+        return
+
+    fixed = lost = 0
+    for row in pending:
+        priced = _closing_prices(storage, cfg, row)
+        if priced is None or priced[1] is None:
+            lost += 1
+            continue
+        _, fair_odd, fair_prob, book_overround = priced
+        storage.update_snapshot_fair(
+            int(row["snapshot_id"]), fair_odd, fair_prob, book_overround
+        )
+        fixed += 1
+
+    console.print(
+        f"[green]✓[/green] {fixed} clôtures recalculées ; {lost} irrécupérables "
+        f"(cotes Pinnacle purgées)"
     )
 
 
 _EV_BUCKET_ORDER = ["<5%", "5-8%", "8-15%", "15-35%", "35%+"]
+
+_RESULT_FR = {"won": "Gagné", "lost": "Perdu", "void": "Annulé"}
+
+TRACK_PATH = track.PATH
+TRACK_HEADERS = track.HEADERS
+TRACK_STAKE_EUR = track.STAKE_EUR
+
+
+def _pretty_match(event_key: str) -> str:
+    parsed = parse_event_key(event_key)
+    if parsed is None:
+        return event_key
+    _, home, away = parsed
+    return f"{teams.display(home)} vs {teams.display(away)}"
 
 
 def _ev_bucket(ev: float) -> str:
@@ -1469,70 +1556,120 @@ def prune(
     console.print(f"DB : {before:.0f} Mo → {after:.0f} Mo (récupéré {before - after:.0f} Mo)")
 
 
+def _clv_breakdown(rows: list[dict], dim: str, title: str,
+                   order: list[str] | None = None) -> None:
+    groups = clv_group_by(rows, dim)
+    stats = {k: clv_aggregate(v) for k, v in groups.items() if v}
+    if not stats:
+        return
+    t = Table(title=title, show_lines=False)
+    t.add_column(dim)
+    t.add_column("n", justify="right")
+    t.add_column("CLV moy%", justify="right")
+    t.add_column("médiane%", justify="right")
+    t.add_column("positifs%", justify="right")
+    # EV buckets read best in natural order; the rest by mean CLV descending.
+    keys = ([k for k in order if k in stats] if order
+            else sorted(stats, key=lambda k: stats[k].mean_clv_pct, reverse=True))
+    for k in keys:
+        s = stats[k]
+        t.add_row(
+            str(k), str(s.n),
+            f"{s.mean_clv_pct:+.2f}", f"{s.median_clv_pct:+.2f}",
+            f"{s.positive_rate * 100:.1f}",
+        )
+    console.print(t)
+
+
 @app.command(name="clv-report")
-def clv_report():
-    """Aggregate Closing Line Value over every closed value bet. CLV is the
-    single most reliable indicator of long-run profitability — if your mean
-    CLV is positive and stable, the engine is finding real edges."""
+def clv_report(
+    detected: bool = typer.Option(
+        False, "--detected",
+        help="Inclure aussi la population complète des détections (bruyante).",
+    ),
+):
+    """CLV mesuré contre la ligne de clôture DÉVIGÉE.
+
+    Deux populations, et seule la première compte pour décider : les paris que
+    tu as réellement joués, et l'ensemble des détections — dont l'immense
+    majorité n'a jamais été jouée."""
     cfg = ScanConfig()
     storage = Storage(cfg.db_path)
     teams.init(storage)
     rows = [dict(r) for r in storage.all_closed_bets()]
     if not rows:
-        console.print("[bold]No closed bets yet — run `close-lines` after kickoffs.[/bold]")
+        console.print("[bold]Aucun pari clôturé — lance `close-lines` après des coups d'envoi.[/bold]")
         return
 
-    pairs = [(r["odd_taken"], r["closing_odd"]) for r in rows]
-    overall = clv_aggregate(pairs)
-    console.print(
-        f"[bold]Overall:[/bold] n={overall.n}  mean CLV {overall.mean_clv_pct:+.2f}%  "
-        f"median {overall.median_clv_pct:+.2f}%  positive {overall.positive_rate * 100:.1f}%"
-    )
+    legacy = [r for r in rows if r.get("closing_fair_odd") is None]
+    rows = [r for r in rows if r.get("closing_fair_odd")]
+    if legacy:
+        console.print(
+            f"[yellow]{len(legacy)} paris ignorés : clôture capturée avant le "
+            f"correctif, sans ligne dévigée. Ils ne reviendront pas — les cotes "
+            f"Pinnacle correspondantes ont été purgées.[/yellow]"
+        )
+    if not rows:
+        console.print(
+            "[bold]Aucune clôture dévigée pour l'instant.[/bold] "
+            "Relance `close-lines` : les nouvelles captures en auront une."
+        )
+        return
 
-    # Normalise the sport label (the LEFT JOIN yields None when the event row
-    # was never persisted) and tag each row with its EV bucket.
     for r in rows:
         r["sport"] = r["sport"] or "unknown"
         r["ev_bucket"] = _ev_bucket(float(r["ev_pct"]))
+        r["odd_taken"] = float(r["odd_taken"])
+        # clv_aggregate consumes (taken, closing) pairs; the closing side is
+        # the devigged line from here on.
+        r["closing_odd"] = float(r["closing_fair_odd"])
 
-    def _print_clv_table(title: str, dim: str, order: list[str] | None = None) -> None:
-        groups = clv_group_by(rows, dim)
-        stats = {k: clv_aggregate(v) for k, v in groups.items() if v}
-        if not stats:
+    played = [r for r in rows if r.get("played")]
+
+    def _headline(label: str, subset: list[dict]) -> None:
+        if not subset:
+            console.print(f"[bold]{label} :[/bold] aucun pari")
             return
-        t = Table(title=title, show_lines=False)
-        t.add_column(dim)
-        t.add_column("n", justify="right")
-        t.add_column("mean CLV%", justify="right")
-        t.add_column("median%", justify="right")
-        t.add_column("positive%", justify="right")
-        # EV buckets read best in natural order; the rest by mean CLV descending.
-        keys = ([k for k in order if k in stats] if order
-                else sorted(stats, key=lambda k: stats[k].mean_clv_pct, reverse=True))
-        for k in keys:
-            s = stats[k]
-            t.add_row(
-                str(k), str(s.n),
-                f"{s.mean_clv_pct:+.2f}", f"{s.median_clv_pct:+.2f}",
-                f"{s.positive_rate * 100:.1f}",
-            )
-        console.print(t)
+        s = clv_aggregate([(r["odd_taken"], r["closing_odd"]) for r in subset])
+        console.print(
+            f"[bold]{label} :[/bold] n={s.n}  CLV moyen {s.mean_clv_pct:+.2f}%  "
+            f"médiane {s.median_clv_pct:+.2f}%  positifs {s.positive_rate * 100:.1f}%"
+        )
 
-    _print_clv_table("CLV by book", "book")
-    _print_clv_table("CLV by market", "market")
-    _print_clv_table("CLV by sport", "sport")
-    _print_clv_table("CLV by EV bucket", "ev_bucket", order=_EV_BUCKET_ORDER)
+    _headline("Paris joués", played)
+    _headline("Toutes détections", rows)
+    console.print(
+        "[dim]CLV = cote prise ÷ ligne juste à la clôture. La commission de "
+        "Pinnacle est retirée des deux côtés.[/dim]\n"
+    )
+
+    target = played if played else rows
+    if not played:
+        console.print(
+            "[yellow]Aucun pari joué encore relié à une clôture — ventilation "
+            "sur les détections. Les clics sur Jouer alimenteront la vue « joués ».[/yellow]"
+        )
+    _clv_breakdown(target, "book", "CLV par book (joués)" if played else "CLV par book")
+    _clv_breakdown(target, "market", "CLV par marché")
+    _clv_breakdown(target, "sport", "CLV par sport")
+    _clv_breakdown(target, "ev_bucket", "CLV par tranche d'EV", order=_EV_BUCKET_ORDER)
+
+    if detected and played:
+        console.print("\n[bold]— Population complète des détections —[/bold]")
+        _clv_breakdown(rows, "ev_bucket", "CLV par tranche d'EV (tout)",
+                       order=_EV_BUCKET_ORDER)
 
 
 @app.command(name="export-history")
 def export_history(
     out: str = typer.Option("history.csv", "--out", help="Chemin du fichier CSV de sortie."),
-    bankroll: float = typer.Option(1000.0, "--bankroll", help="Capital de départ pour la simulation."),
 ):
-    """Exporter chaque value bet clôturé (avec ligne de clôture + CLV) en CSV,
-    prêt pour Excel : date, match, book, cotes, EV%, clôture, CLV%, mise, et un
-    capital simulé sur la CLV. Colonnes Résultat/P&L laissées vides (à remplir
-    à la main ou via un futur flux de résultats)."""
+    """Exporter chaque value bet clôturé en CSV, prêt pour Excel : date, match,
+    book, cotes, EV%, clôture brute ET dévigée, CLV%, et le résultat quand il
+    est connu.
+
+    Pour le suivi des paris réellement joués avec mise et P&L, c'est
+    `track-update` qu'il faut : ce fichier-ci couvre toutes les détections."""
     import csv
     storage = Storage(ScanConfig().db_path)
     teams.init(storage)
@@ -1544,32 +1681,26 @@ def export_history(
     # Oldest first so the simulated capital curve reads chronologically.
     rows.sort(key=lambda r: r.get("detected_at") or "")
 
-    def _match(ek: str) -> str:
-        parsed = parse_event_key(ek)
-        if parsed is None:
-            return ek
-        _, home, away = parsed
-        return f"{home.replace('_', ' ').title()} vs {away.replace('_', ' ').title()}"
+    _match = _pretty_match
 
     headers = [
-        "Date", "Sport", "Match", "Book", "Marché", "Pari", "Cote prise",
-        "Cote fair", "EV %", "Cote clôture (Pinnacle)", "CLV %", "Mise % (Kelly)",
-        "Capital simulé (CLV)", "Résultat", "P&L réel",
+        "Date", "Sport", "Match", "Book", "Marché", "Pari", "Joué", "Cote prise",
+        "Cote fair (détection)", "EV %", "Clôture brute (Pinnacle)",
+        "Clôture juste (dévigée)", "CLV %", "Mise % (Kelly)", "Résultat", "P&L réel",
     ]
-    capital = bankroll
     with open(out, "w", newline="", encoding="utf-8") as f:
         w = csv.writer(f)
         w.writerow(headers)
         for r in rows:
             taken = float(r["odd_taken"])
-            closing = float(r["closing_odd"]) if r.get("closing_odd") else 0.0
-            clv = clv_pct(taken, closing) * 100 if closing else 0.0
-            kelly = float(r.get("kelly_pct") or 0.0)
-            # Capital simulé : on mise kelly% du capital, gain espéré ≈ CLV.
-            stake = capital * kelly / 100.0
-            capital += stake * (clv / 100.0)
+            raw = float(r["closing_odd"]) if r.get("closing_odd") else 0.0
+            fair_close = float(r["closing_fair_odd"]) if r.get("closing_fair_odd") else 0.0
+            clv = clv_pct(taken, fair_close) * 100 if fair_close else None
             line = r.get("line")
             pari = f"{r['outcome_label']}{(' ' + str(line)) if line is not None else ''}"
+            status = clv_settle(
+                r["market"], r["outcome_label"], line, r.get("winner"), None, None,
+            )
             w.writerow([
                 (r.get("detected_at") or "")[:19],
                 r.get("sport") or "",
@@ -1577,21 +1708,178 @@ def export_history(
                 r["book"],
                 r["market"],
                 pari,
+                "oui" if r.get("played") else "",
                 f"{taken:.2f}",
                 f"{float(r['fair_odd']):.2f}",
                 f"{float(r['ev_pct']):.2f}",
-                f"{closing:.2f}" if closing else "",
-                f"{clv:+.2f}" if closing else "",
-                f"{kelly:.2f}",
-                f"{capital:.2f}",
-                "",   # Résultat (à remplir)
-                "",   # P&L réel (à remplir)
+                f"{raw:.2f}" if raw else "",
+                f"{fair_close:.2f}" if fair_close else "",
+                f"{clv:+.2f}" if clv is not None else "",
+                f"{float(r.get('kelly_pct') or 0.0):.2f}",
+                _RESULT_FR.get(status, ""),
+                "",   # P&L réel (mises réelles : voir track-update)
             ])
+    n_fair = sum(1 for r in rows if r.get("closing_fair_odd"))
     console.print(
-        f"[green]✓[/green] {len(rows)} paris exportés vers [bold]{out}[/bold]  "
-        f"(capital simulé CLV : {bankroll:.0f}€ → {capital:.0f}€)"
+        f"[green]✓[/green] {len(rows)} paris exportés vers [bold]{out}[/bold] "
+        f"({n_fair} avec une clôture dévigée exploitable)"
     )
 
+
+
+def _track_rows(storage: Storage) -> list[list]:
+    """Build the tracker's rows from the database. Every played bet appears,
+    settled or not — a bet with no closing line yet is still a bet, and hiding
+    it would make the file look like the engine had stopped firing."""
+    out: list[list] = []
+    running = 0.0
+    for r in storage.played_bets_with_clv():
+        odd = float(r["odd_taken"]) if r["odd_taken"] else 0.0
+        stake = float(r["stake"]) if r["stake"] is not None else TRACK_STAKE_EUR
+        fair_close = r["closing_fair_odd"]
+        clv = clv_pct(odd, float(fair_close)) * 100 if (fair_close and odd) else None
+        status = clv_settle(
+            r["market"] or "", r["outcome_label"] or "", r["line"],
+            r["winner"], r["home_score"] if "home_score" in r.keys() else None,
+            r["away_score"] if "away_score" in r.keys() else None,
+        )
+        bet_pnl = clv_pnl(status, odd, stake)
+        if bet_pnl is not None:
+            running += bet_pnl
+        line = r["line"]
+        out.append([
+            (r["played_at"] or "")[:19],
+            r["sport"] or r["event_sport"] or "",
+            _pretty_match(r["event_key"] or ""),
+            r["book"] or "",
+            r["market"] or "",
+            f"{r['outcome_label'] or ''}{(' ' + str(line)) if line is not None else ''}",
+            f"{odd:.2f}" if odd else "",
+            f"{float(r['fair_odd']):.2f}" if r["fair_odd"] else "",
+            f"{float(r['ev_pct']):.2f}" if r["ev_pct"] is not None else "",
+            f"{float(fair_close):.2f}" if fair_close else "",
+            f"{clv:+.2f}" if clv is not None else "",
+            f"{stake:.2f}",
+            # Scores written back once known, so the regenerated file stays a
+            # complete record instead of asking for them a second time.
+            "" if r["home_score"] is None else f"{r['home_score']:g}",
+            "" if r["away_score"] is None else f"{r['away_score']:g}",
+            _RESULT_FR.get(status, ""),
+            f"{bet_pnl:+.2f}" if bet_pnl is not None else "",
+            f"{running:+.2f}" if bet_pnl is not None else "",
+            r["event_key"] or "",
+        ])
+    return out
+
+
+@app.command(name="track-update")
+def track_update(
+    out: str = typer.Option(TRACK_PATH, "--out", help="Fichier de suivi à régénérer."),
+):
+    """Régénérer le fichier de suivi des paris joués.
+
+    Une ligne par clic sur Jouer, avec l'EV de départ, le CLV réel une fois la
+    clôture capturée, et le P&L sur une mise fictive constante. Le fichier est
+    reconstruit entièrement à chaque appel : remplis les colonnes de score,
+    passe-les en base avec `settle --from`, relance cette commande."""
+    storage = Storage(ScanConfig().db_path)
+    teams.init(storage)
+    rows = _track_rows(storage)
+    if not rows:
+        console.print("[bold]Aucun pari joué enregistré pour l'instant.[/bold]")
+        return
+
+    track.write_all(out, rows)
+
+    i_clv, i_res, i_pnl = (TRACK_HEADERS.index(h) for h in ("CLV %", "Résultat", "P&L"))
+    clvs = [float(r[i_clv]) for r in rows if r[i_clv]]
+    settled = [r for r in rows if r[i_res]]
+    total = sum(float(r[i_pnl]) for r in settled if r[i_pnl])
+
+    console.print(f"[green]✓[/green] {len(rows)} paris joués → [bold]{out}[/bold]")
+    if clvs:
+        pos = sum(1 for c in clvs if c > 0) / len(clvs) * 100
+        console.print(
+            f"  CLV réel : n={len(clvs)}  moyen {sum(clvs)/len(clvs):+.2f}%  "
+            f"positifs {pos:.1f}%"
+        )
+    else:
+        console.print("  [yellow]Aucune clôture dévigée encore rattachée — "
+                      "lance `close-lines`.[/yellow]")
+    if settled:
+        staked = len(settled) * TRACK_STAKE_EUR
+        console.print(
+            f"  Résultats connus : {len(settled)}/{len(rows)}  "
+            f"P&L {total:+.2f}€ sur {staked:.0f}€ misés "
+            f"(ROI {total / staked * 100:+.2f}%)"
+        )
+    else:
+        console.print(
+            f"  [yellow]Aucun résultat connu — remplis « Score dom. » / "
+            f"« Score ext. » puis `settle --from {out}`.[/yellow]"
+        )
+
+
+@app.command(name="settle")
+def settle_results(
+    source: str = typer.Option(..., "--from", help="CSV contenant les scores."),
+):
+    """Importer des résultats depuis un CSV et calculer les P&L.
+
+    Le fichier doit porter une colonne `event_key` (ou `Match`) et soit deux
+    colonnes de score, soit une colonne `winner` valant home / draw / away. Le
+    fichier de suivi produit par `track-update` convient tel quel : remplis ses
+    deux colonnes de score et repasse-le ici."""
+    import csv
+    storage = Storage(ScanConfig().db_path)
+    teams.init(storage)
+
+    by_name = {}
+    for r in storage.played_bets_with_clv():
+        if r["event_key"]:
+            by_name.setdefault(_pretty_match(r["event_key"]).lower(), r["event_key"])
+
+    def _num(v: str | None) -> float | None:
+        if v is None or str(v).strip() == "":
+            return None
+        try:
+            return float(str(v).strip().replace(",", "."))
+        except ValueError:
+            return None
+
+    now = datetime.now(timezone.utc)
+    imported = skipped = 0
+    with open(source, newline="", encoding="utf-8") as f:
+        for raw in csv.DictReader(f):
+            row = {(k or "").strip().lower(): v for k, v in raw.items()}
+            ek = (row.get("event_key") or "").strip()
+            if not ek:
+                ek = by_name.get((row.get("match") or "").strip().lower(), "")
+            if not ek:
+                skipped += 1
+                continue
+
+            home = _num(row.get("score dom.") or row.get("home_score"))
+            away = _num(row.get("score ext.") or row.get("away_score"))
+            winner = (row.get("winner") or "").strip().lower() or None
+            if winner is None and home is not None and away is not None:
+                winner = "home" if home > away else ("away" if away > home else "draw")
+            if winner not in ("home", "draw", "away"):
+                skipped += 1
+                continue
+
+            storage.record_result(
+                event_key=ek, winner=winner, settled_at=now,
+                home_score=home, away_score=away, source=Path(source).name,
+            )
+            imported += 1
+
+    console.print(
+        f"[green]✓[/green] {imported} résultats importés"
+        + (f", {skipped} lignes sans score exploitable" if skipped else "")
+    )
+    if imported:
+        console.print("[dim]Relance `track-update` pour recalculer les P&L.[/dim]")
 
 
 @app.command(name="inspect-betano")
