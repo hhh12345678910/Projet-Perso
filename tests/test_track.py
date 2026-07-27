@@ -163,3 +163,38 @@ def test_append_writes_the_header_once(tmp_path: Path):
     rows = list(csv.reader(path.open(encoding="utf-8")))
     assert rows[0] == track.HEADERS
     assert len(rows) == 3
+
+
+def test_backfill_links_a_bare_click_to_its_detection(storage: Storage):
+    """Clicks logged before the tracker existed carry only a key and a date.
+    That key is (event, market, outcome, line), so the detection behind it is
+    still recoverable — otherwise clv-report's "played" view stays empty
+    despite hundreds of recorded clicks."""
+    vb_id = _bet(storage)
+    key = f"{EVENT}|h2h|home|None"
+    with storage._conn() as c:
+        c.execute("INSERT INTO played_bets(dedup_key, played_at) VALUES (?, ?)",
+                  (key, KICKOFF.isoformat()))
+
+    assert len(storage.played_bets_unlinked()) == 1
+    vb = storage.latest_value_bet_for(EVENT, "h2h", "home", None)
+    storage.link_played_bet(key, vb, track.STAKE_EUR)
+
+    row = storage.played_bet(key)
+    assert row["value_bet_id"] == vb_id
+    assert row["odd_taken"] == pytest.approx(4.00)
+    assert row["ev_pct"] == pytest.approx(9.89)
+    assert storage.played_bets_unlinked() == []
+
+
+def test_backfill_keeps_a_stake_already_recorded(storage: Storage):
+    """A click logged by the current listener already has its stake; relinking
+    must not overwrite it."""
+    _bet(storage)
+    key = f"{EVENT}|h2h|home|None"
+    vb = storage.latest_value_bet_for(EVENT, "h2h", "home", None)
+    storage.record_played_bet(key, KICKOFF, 40.0, vb, "soccer", "StarCasino")
+
+    storage.link_played_bet(key, vb, track.STAKE_EUR)
+
+    assert storage.played_bet(key)["stake"] == pytest.approx(40.0)

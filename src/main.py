@@ -1772,6 +1772,46 @@ def _track_rows(storage: Storage) -> list[list]:
     return out
 
 
+@app.command(name="backfill-played-bets")
+def backfill_played_bets():
+    """Rattacher les anciens clics sur Jouer à leur value bet.
+
+    Avant le suivi, un clic n'enregistrait qu'une clé et une date. Cette clé
+    vaut event_key|marché|issue|ligne, ce qui suffit à retrouver le pari
+    détecté — et donc sa cote, son EV et sa ligne de clôture. Sans ça, la vue
+    « paris joués » de clv-report reste vide malgré des centaines de clics."""
+    cfg = ScanConfig()
+    storage = Storage(cfg.db_path)
+    teams.init(storage)
+    pending = storage.played_bets_unlinked()
+    if not pending:
+        console.print("[bold]Tous les clics sont déjà rattachés.[/bold]")
+        return
+
+    linked = orphan = 0
+    for row in pending:
+        parts = (row["dedup_key"] or "").split("|")
+        if len(parts) != 4:
+            orphan += 1
+            continue
+        line = None if parts[3] in ("None", "") else float(parts[3])
+        vb = storage.latest_value_bet_for(parts[0], parts[1], parts[2], line)
+        if vb is None:
+            # La détection a été purgée : le clic reste, mais plus rien à quoi
+            # le rattacher.
+            orphan += 1
+            continue
+        storage.link_played_bet(row["dedup_key"], vb, track.STAKE_EUR)
+        linked += 1
+
+    console.print(
+        f"[green]✓[/green] {linked} clics rattachés à leur value bet ; "
+        f"{orphan} orphelins (détection purgée)"
+    )
+    if linked:
+        console.print("[dim]Relance `track-update` puis `clv-report`.[/dim]")
+
+
 @app.command(name="track-update")
 def track_update(
     out: str = typer.Option(TRACK_PATH, "--out", help="Fichier de suivi à régénérer."),

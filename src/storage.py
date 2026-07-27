@@ -806,6 +806,27 @@ class Storage:
                 (fair_odd, fair_prob, overround, snapshot_id),
             )
 
+    def played_bets_unlinked(self) -> list[sqlite3.Row]:
+        """Clicks logged before the tracker existed: a dedup_key and a date,
+        nothing else. The key is (event, market, outcome, line), so each one can
+        still be resolved back to the value_bet it came from."""
+        with self._conn() as c:
+            return list(c.execute(
+                "SELECT dedup_key, played_at FROM played_bets WHERE value_bet_id IS NULL"
+            ))
+
+    def link_played_bet(self, dedup_key: str, value_bet: sqlite3.Row, stake: float) -> None:
+        with self._conn() as c:
+            c.execute(
+                "UPDATE played_bets SET value_bet_id=?, event_key=?, book=?, market=?, "
+                "outcome_label=?, line=?, odd_taken=?, fair_odd=?, ev_pct=?, "
+                "stake=COALESCE(stake, ?) WHERE dedup_key=?",
+                (int(value_bet["id"]), value_bet["event_key"], value_bet["book"],
+                 value_bet["market"], value_bet["outcome_label"], value_bet["line"],
+                 value_bet["odd_taken"], value_bet["fair_odd"], value_bet["ev_pct"],
+                 stake, dedup_key),
+            )
+
     def played_bet(self, dedup_key: str) -> Optional[sqlite3.Row]:
         with self._conn() as c:
             return c.execute(
