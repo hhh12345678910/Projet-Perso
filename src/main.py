@@ -1684,9 +1684,10 @@ def export_history(
     _match = _pretty_match
 
     headers = [
-        "Date", "Sport", "Match", "Book", "Marché", "Pari", "Joué", "Cote prise",
-        "Cote fair (détection)", "EV %", "Clôture brute (Pinnacle)",
-        "Clôture juste (dévigée)", "CLV %", "Mise % (Kelly)", "Résultat", "P&L réel",
+        "Date", "Coup d'envoi", "Délai (h)", "Sport", "Match", "Book", "Marché",
+        "Pari", "Joué", "Cote prise", "Cote fair (détection)", "EV %",
+        "Clôture brute (Pinnacle)", "Clôture juste (dévigée)", "Overround clôture",
+        "CLV %", "Mise % (Kelly)", "Résultat", "P&L réel", "event_key",
     ]
     with open(out, "w", newline="", encoding="utf-8") as f:
         w = csv.writer(f)
@@ -1701,8 +1702,26 @@ def export_history(
             status = clv_settle(
                 r["market"], r["outcome_label"], line, r.get("winner"), None, None,
             )
+            # Le délai avant coup d'envoi et l'overround de la référence sont
+            # les deux variables continues qui expliquent le mieux le CLV : la
+            # première parce que la ligne de référence est bruitée loin du
+            # match, la seconde parce qu'une grosse marge Pinnacle signale un
+            # marché sur lequel Pinnacle lui-même n'est pas sûr.
+            kickoff = parse_event_key(r["event_key"])
+            detected = r.get("detected_at") or ""
+            delai = ""
+            if kickoff is not None and detected:
+                try:
+                    d = datetime.fromisoformat(detected)
+                    if d.tzinfo is None:
+                        d = d.replace(tzinfo=timezone.utc)
+                    delai = f"{(kickoff[0] - d).total_seconds() / 3600:.1f}"
+                except ValueError:
+                    pass
             w.writerow([
-                (r.get("detected_at") or "")[:19],
+                detected[:19],
+                kickoff[0].isoformat()[:19] if kickoff is not None else "",
+                delai,
                 r.get("sport") or "",
                 _match(r["event_key"]),
                 r["book"],
@@ -1714,10 +1733,12 @@ def export_history(
                 f"{float(r['ev_pct']):.2f}",
                 f"{raw:.2f}" if raw else "",
                 f"{fair_close:.2f}" if fair_close else "",
+                f"{float(r['closing_overround']):.4f}" if r.get("closing_overround") else "",
                 f"{clv:+.2f}" if clv is not None else "",
                 f"{float(r.get('kelly_pct') or 0.0):.2f}",
                 _RESULT_FR.get(status, ""),
                 "",   # P&L réel (mises réelles : voir track-update)
+                r["event_key"],
             ])
     n_fair = sum(1 for r in rows if r.get("closing_fair_odd"))
     console.print(
