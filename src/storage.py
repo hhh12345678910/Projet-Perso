@@ -815,6 +815,17 @@ class Storage:
                 "WHERE cs.closing = 1 AND cs.fair_odd IS NULL"
             ))
 
+    def oldest_quote_at(self) -> Optional[str]:
+        """Horodatage de la plus ancienne cote encore en base.
+
+        La purge coupe à deux jours : toute clôture antérieure n'a plus de
+        cotes Pinnacle à déviger, et l'interroger revient à balayer une table
+        de 150 M de lignes pour un résultat connu d'avance. Indexé, donc
+        instantané."""
+        with self._conn() as c:
+            row = c.execute("SELECT MIN(fetched_at) FROM quotes").fetchone()
+            return row[0] if row else None
+
     def update_snapshot_fair(
         self, snapshot_id: int, fair_odd: float, fair_prob: float, overround: float,
     ) -> None:

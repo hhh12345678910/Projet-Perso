@@ -1457,21 +1457,44 @@ def backfill_fair_lines():
         console.print("[bold]Toutes les clôtures ont déjà une ligne juste.[/bold]")
         return
 
-    fixed = lost = 0
+    # Ne pas interroger la base pour des clôtures dont les cotes sont déjà
+    # purgées : sur 150 M de lignes, chaque tentative coûte cher et le
+    # résultat est connu d'avance. La borne est la plus ancienne cote encore
+    # stockée.
+    oldest = storage.oldest_quote_at()
+    recuperable, perdu = [], 0
     for row in pending:
+        parsed = parse_event_key(row["event_key"])
+        if oldest and parsed is not None and parsed[0].isoformat() < oldest:
+            perdu += 1
+        else:
+            recuperable.append(row)
+
+    console.print(
+        f"[bold]{len(pending)} clôtures sans ligne juste[/bold] — {perdu} hors "
+        f"rétention (cotes purgées), {len(recuperable)} à tenter."
+    )
+    if not recuperable:
+        console.print("[yellow]Rien de récupérable : tout précède la rétention.[/yellow]")
+        return
+
+    fixed = lost = 0
+    for i, row in enumerate(recuperable, 1):
         priced = _closing_prices(storage, cfg, row)
         if priced is None or priced[1] is None:
             lost += 1
-            continue
-        _, fair_odd, fair_prob, book_overround = priced
-        storage.update_snapshot_fair(
-            int(row["snapshot_id"]), fair_odd, fair_prob, book_overround
-        )
-        fixed += 1
+        else:
+            _, fair_odd, fair_prob, book_overround = priced
+            storage.update_snapshot_fair(
+                int(row["snapshot_id"]), fair_odd, fair_prob, book_overround
+            )
+            fixed += 1
+        if i % 200 == 0 or i == len(recuperable):
+            console.print(f"  … {i}/{len(recuperable)} — {fixed} recalculées", end="\r")
 
     console.print(
-        f"[green]✓[/green] {fixed} clôtures recalculées ; {lost} irrécupérables "
-        f"(cotes Pinnacle purgées)"
+        f"\n[green]✓[/green] {fixed} clôtures recalculées ; {lost + perdu} "
+        f"irrécupérables (cotes Pinnacle purgées)"
     )
 
 
