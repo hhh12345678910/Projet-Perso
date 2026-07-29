@@ -3,12 +3,13 @@
 // @namespace    valuebet.local
 // @version      1.0.0
 // @description  Capture les trames WebSocket d'un book, pour les books qui ne servent pas leurs cotes en HTTP.
-// @match        https://www.bet777.be/*
-// @match        https://www.magicbetting.be/*
-// @match        https://www.circus.be/*
+// @match        *://*.circus-sport.be/*
+// @match        *://*.circus.be/*
+// @match        *://*.bet777.be/*
+// @match        *://*.777.be/*
+// @match        *://*.magicbetting.be/*
 // @grant        none
 // @run-at       document-start
-// @noframes
 // ==/UserScript==
 
 // Le pendant de betano-spy pour les books temps reel. Certaines plateformes
@@ -27,6 +28,7 @@
 
   const MAX = 4000;              // garde-fou memoire : un flux live est bavard
   const frames = [];
+  console.log("[ws-spy] actif sur", location.href);
   const Native = window.WebSocket;
   if (!Native) return;
 
@@ -75,5 +77,9 @@
     el.textContent = "🔌 " + frames.length + " trames — cliquer pour télécharger";
   }
 
+  // Affiche le bandeau meme a zero trame : sans ce repere, "pas installe"
+  // et "installe mais aucune WebSocket" sont indistinguables.
   document.addEventListener("DOMContentLoaded", paint);
+  setTimeout(paint, 1500);
+  setInterval(paint, 5000);
 })();
