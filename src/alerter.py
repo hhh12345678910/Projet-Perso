@@ -156,24 +156,24 @@ def _prettify_team_name(normalized: str) -> str:
 
 
 def _time_to_kickoff(start: datetime, now: datetime | None = None) -> str:
-    """Délai avant le coup d'envoi, en clair, avec un sablier au-delà de 12 h.
+    """Délai avant le coup d'envoi, en clair.
 
-    Purement informatif — rien n'est filtré ici. Mesuré sur 541 paris réglés,
-    le CLV réel passe de +9,8 % à moins de 12 h à +1,5 % au-delà de 24 h : loin
-    du match, la ligne de référence est elle-même trop bruitée pour que l'écart
-    détecté veuille dire quelque chose. Le voir dans l'alerte évite d'avoir à
-    calculer l'écart de tête à chaque fois."""
+    Purement informatif — rien n'est filtré ici. Le délai reste utile à voir :
+    mesuré sur 296 opportunités du canal premium, le CLV réel tombe de +11,2 %
+    à +4,6 % au-delà de 24 h, la ligne de référence étant elle-même trop
+    bruitée loin du match pour qu'un écart détecté veuille dire grand-chose.
+
+    Aucun marqueur visuel de seuil : le premier essai en plaçait un à 12 h,
+    or les données ont ensuite montré que la tranche 12-24 h est aussi bonne
+    que les plus courtes. Signaler un seuil que la mesure ne soutient pas
+    revient à pousser vers la mauvaise décision."""
     now = now or datetime.now(timezone.utc)
     hours = (start - now).total_seconds() / 3600
     if hours < 0:
         return ""
     if hours < 1:
         return f" — dans {hours * 60:.0f} min"
-    if hours < 12:
-        # Tronqué, pas arrondi : 11,6 h affiché « 12 h » sans le sablier se
-        # lirait comme une contradiction avec le seuil.
-        return f" — dans {int(hours)} h"
-    return f" — dans {hours:.0f} h ⏳"
+    return f" — dans {int(hours)} h"
 
 
 def _format_kickoff(start: datetime, now: datetime | None = None) -> str:
