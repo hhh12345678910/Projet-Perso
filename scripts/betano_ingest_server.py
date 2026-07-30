@@ -78,6 +78,30 @@ PREMATCH_DIR = Path(
 CIRCUS_DIR = Path(
     os.getenv("CIRCUS_INGEST_DIR", str(_project_dir() / "data" / "circus"))
 )
+# SportId Gaming1 attendus par sport, pour refuser un push mal routé. Doit
+# rester aligné sur CIRCUS_SPORTS dans src/main.py. Un sport absent d'ici est
+# accepté sans vérification, pour qu'ajouter un sport ne casse rien.
+CIRCUS_SPORT_IDS = {"soccer": 844, "tennis": 848}
+
+
+def circus_sport_mismatch(blocks, sport: str) -> set | None:
+    """Les SportId présents ne correspondent pas au sport annoncé ?
+
+    Renvoie l'ensemble des SportId vus, ou None si le push est acceptable.
+    Un sport inconnu ou des blocs sans SportId passent : mieux vaut accepter
+    un push qu'on ne sait pas juger que couper le book sur une supposition."""
+    expect = CIRCUS_SPORT_IDS.get(sport)
+    if expect is None:
+        return None
+    seen = {
+        lg.get("SportId")
+        for b in blocks if isinstance(b, dict)
+        for lg in (b.get("Leagues") or [])
+        if isinstance(lg, dict) and lg.get("SportId") is not None
+    }
+    if not seen or seen == {expect}:
+        return None
+    return seen
 HOST = os.getenv("BETANO_INGEST_HOST", "0.0.0.0")
 PORT = int(os.getenv("BETANO_INGEST_PORT", "8787"))
 MAX_BYTES = int(float(os.getenv("BETANO_INGEST_MAX_MB", "32")) * 1024 * 1024)
@@ -251,7 +275,12 @@ class Handler(BaseHTTPRequestHandler):
         daemon ne verrait rien puisque l'horodatage, lui, serait frais.
 
         Un fichier par sport : le daemon scanne sport par sport, et un fichier
-        commun ferait porter les cotes tennis au scan football."""
+        commun ferait porter les cotes tennis au scan football.
+
+        Le contenu est vérifié contre le sport annoncé. Un onglet resté ouvert
+        sur une ancienne version du userscript a déjà écrit le tennis dans
+        soccer.json ; le refuser ici préserve le dernier bon fichier, là où
+        l'écraser aurait fait disparaître le book jusqu'au cycle suivant."""
         from urllib.parse import parse_qs, urlparse
 
         qs = parse_qs(urlparse(self.path).query)
@@ -278,6 +307,14 @@ class Handler(BaseHTTPRequestHandler):
         if not n_events:
             _log("422 circus push has no events — not overwriting")
             self._send(422, {"error": "no events in payload"})
+            return
+        wrong = circus_sport_mismatch(blocks, sport)
+        if wrong is not None:
+            expect = CIRCUS_SPORT_IDS[sport]
+            _log(f"422 circus '{sport}' push carries SportId {sorted(wrong)} "
+                 f"(expected {expect}) — not overwriting")
+            self._send(422, {"error": "sport mismatch",
+                             "expected": expect, "found": sorted(wrong)})
             return
         try:
             CIRCUS_DIR.mkdir(parents=True, exist_ok=True)
