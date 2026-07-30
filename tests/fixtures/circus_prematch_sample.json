@@ -1,0 +1,1087 @@
+{
+ "Leagues": [
+  {
+   "SportId": 844,
+   "RegionName": "International Clubs",
+   "RegionId": 39312,
+   "LeagueName": "Amicaux clubs",
+   "LeagueId": 682,
+   "Order": 2,
+   "EventDisplayType": 1,
+   "Events": [
+    {
+     "DefaultMarketType": "P1XP2",
+     "EventId": 7297805601,
+     "LeagueId": 682,
+     "IsBlocked": false,
+     "StartDate": "2026-07-30T17:00:00Z",
+     "Markets": [
+      {
+       "MarketId": 932043636,
+       "EventId": 7297805601,
+       "Order": 1,
+       "MarketName": "Vainqueur",
+       "BetType": "P1XP2",
+       "UnifiedMarketTypeId": "60452bac-475a-46d1-b40d-6819a6494076",
+       "Outcomes": [
+        {
+         "OutcomeId": 2675054194,
+         "MarketId": 932043636,
+         "EventId": 7297805601,
+         "Odd": 2.09,
+         "Name": "Malaga",
+         "GroupOrder": 1,
+         "Order": 1,
+         "ProviderProbabilities": 0.440645
+        },
+        {
+         "OutcomeId": 4241138135,
+         "MarketId": 932043636,
+         "EventId": 7297805601,
+         "Odd": 3.55,
+         "Name": "X",
+         "GroupOrder": 2,
+         "Order": 2,
+         "ProviderProbabilities": 0.251775
+        },
+        {
+         "OutcomeId": 1512254780,
+         "MarketId": 932043636,
+         "EventId": 7297805601,
+         "Odd": 2.95,
+         "Name": "Al Ittihad",
+         "GroupOrder": 3,
+         "Order": 3,
+         "ProviderProbabilities": 0.307576
+        }
+       ],
+       "ColCount": 3,
+       "MarketGroupKey": "Main",
+       "ShowcaseMarketId": "659d369d-fbb3-4cb8-8fdb-1630bcb03283",
+       "IsReversible": false,
+       "IsCashable": true,
+       "HasOptiOdds": true,
+       "State": 0,
+       "Provider": 20,
+       "ColumnReorder": 2,
+       "ShowAllOutcomes": false
+      },
+      {
+       "MarketId": 662657234,
+       "EventId": 7297805601,
+       "Order": 2,
+       "MarketName": "Les 2 équipes marquent",
+       "BetType": "both-teams-to-score",
+       "UnifiedMarketTypeId": "a3ee68b0-e0e4-4d46-a32c-a94a6838856f",
+       "Outcomes": [
+        {
+         "OutcomeId": 2708659833,
+         "MarketId": 662657234,
+         "EventId": 7297805601,
+         "Odd": 1.5,
+         "Name": "Oui",
+         "GroupOrder": 1,
+         "Order": 1,
+         "ProviderProbabilities": 0.619216
+        },
+        {
+         "OutcomeId": 2708659831,
+         "MarketId": 662657234,
+         "EventId": 7297805601,
+         "Odd": 2.31,
+         "Name": "Non",
+         "GroupOrder": 2,
+         "Order": 2,
+         "ProviderProbabilities": 0.380784
+        }
+       ],
+       "ColCount": 2,
+       "MarketGroupKey": "Main",
+       "ShowcaseMarketId": "0d9dbeee-8345-4f88-9812-66fcbe318937",
+       "IsReversible": false,
+       "IsCashable": true,
+       "HasOptiOdds": true,
+       "State": 0,
+       "Provider": 20,
+       "ColumnReorder": 0,
+       "ShowAllOutcomes": false
+      },
+      {
+       "MarketId": 3900910670,
+       "EventId": 7297805601,
+       "Order": 4,
+       "MarketName": "Total de buts ",
+       "BetType": "total-OverUnder",
+       "UnifiedMarketTypeId": "fcd5c70e-55ca-4743-8589-c332e9573f62",
+       "Outcomes": [
+        {
+         "OutcomeId": 2715478825,
+         "MarketId": 3900910670,
+         "EventId": 7297805601,
+         "Base": 2.5,
+         "Odd": 1.57,
+         "Name": "Plus de",
+         "GroupOrder": 1,
+         "Order": 1,
+         "ProviderProbabilities": 0.593561483319153
+        },
+        {
+         "OutcomeId": 1149394884,
+         "MarketId": 3900910670,
+         "EventId": 7297805601,
+         "Base": 2.5,
+         "Odd": 2.21,
+         "Name": "Moins de",
+         "GroupOrder": 2,
+         "Order": 2,
+         "ProviderProbabilities": 0.40643851748153
+        }
+       ],
+       "ColCount": 2,
+       "MarketGroupKey": "Main",
+       "ShowcaseMarketId": "cc81d29d-31c8-4abf-bbee-e6de31b9d708",
+       "Base": 2.5,
+       "IsReversible": false,
+       "IsCashable": true,
+       "HasOptiOdds": true,
+       "State": 0,
+       "Provider": 20,
+       "ColumnReorder": 2,
+       "ShowAllOutcomes": false
+      },
+      {
+       "MarketId": 1966619157,
+       "EventId": 7297805601,
+       "Order": 5,
+       "MarketName": "Vainqueur (Remboursé si match nul)",
+       "BetType": "draw-no-bet",
+       "Outcomes": [
+        {
+         "OutcomeId": 1356414382,
+         "MarketId": 1966619157,
+         "EventId": 7297805601,
+         "Odd": 1.57,
+         "Name": "Malaga",
+         "GroupOrder": 1,
+         "Order": 1,
+         "ProviderProbabilities": 0.589054603080374
+        },
+        {
+         "OutcomeId": 1356414381,
+         "MarketId": 1966619157,
+         "EventId": 7297805601,
+         "Odd": 2.17,
+         "Name": "Al Ittihad",
+         "GroupOrder": 2,
+         "Order": 2,
+         "ProviderProbabilities": 0.4109453976357
+        }
+       ],
+       "ColCount": 2,
+       "MarketGroupKey": "Main",
+       "ShowcaseMarketId": "3aa3184a-7cce-4955-9d0e-4257582f6bfa",
+       "IsReversible": false,
+       "IsCashable": true,
+       "HasOptiOdds": true,
+       "State": 0,
+       "Provider": 20,
+       "ColumnReorder": 0,
+       "ShowAllOutcomes": false
+      },
+      {
+       "MarketId": 1966619158,
+       "EventId": 7297805601,
+       "Order": 8,
+       "MarketName": "Double chance",
+       "BetType": "1X12X2",
+       "UnifiedMarketTypeId": "59efc174-d2e0-42af-906a-f70fe7e7b102",
+       "Outcomes": [
+        {
+         "OutcomeId": 1356414736,
+         "MarketId": 1966619158,
+         "EventId": 7297805601,
+         "Odd": 1.29,
+         "Name": "1X",
+         "GroupOrder": 1,
+         "Order": 1,
+         "ProviderProbabilities": 0.693299
+        },
+        {
+         "OutcomeId": 10632520,
+         "MarketId": 1966619158,
+         "EventId": 7297805601,
+         "Odd": 1.22,
+         "Name": "12",
+         "GroupOrder": 2,
+         "Order": 2,
+         "ProviderProbabilities": 0.746092
+        },
+        {
+         "OutcomeId": 2739515875,
+         "MarketId": 1966619158,
+         "EventId": 7297805601,
+         "Odd": 1.52,
+         "Name": "X2",
+         "GroupOrder": 3,
+         "Order": 3,
+         "ProviderProbabilities": 0.560609
+        }
+       ],
+       "ColCount": 3,
+       "MarketGroupKey": "Main",
+       "ShowcaseMarketId": "9903950f-75db-4487-ba26-06b156fae39b",
+       "IsReversible": false,
+       "IsCashable": true,
+       "HasOptiOdds": true,
+       "State": 0,
+       "Provider": 20,
+       "ColumnReorder": 0,
+       "ShowAllOutcomes": false
+      },
+      {
+       "MarketId": 4036744175,
+       "EventId": 7297805601,
+       "Order": 1,
+       "MarketName": "1ère mi-temps - Vainqueur",
+       "BetType": "1st-half-1x2",
+       "UnifiedMarketTypeId": "dd8f9c7e-8b4f-4fc4-aae5-c72cb8fc22e7",
+       "Outcomes": [
+        {
+         "OutcomeId": 2045412949,
+         "MarketId": 4036744175,
+         "EventId": 7297805601,
+         "Odd": 2.55,
+         "Name": "Malaga",
+         "GroupOrder": 1,
+         "Order": 1,
+         "ProviderProbabilities": 0.347348
+        },
+        {
+         "OutcomeId": 2045412948,
+         "MarketId": 4036744175,
+         "EventId": 7297805601,
+         "Odd": 2.26,
+         "Name": "X",
+         "GroupOrder": 2,
+         "Order": 2,
+         "ProviderProbabilities": 0.391904
+        },
+        {
+         "OutcomeId": 2045412947,
+         "MarketId": 4036744175,
+         "EventId": 7297805601,
+         "Odd": 3.3,
+         "Name": "Al Ittihad",
+         "GroupOrder": 3,
+         "Order": 3,
+         "ProviderProbabilities": 0.260748
+        }
+       ],
+       "ColCount": 3,
+       "MarketGroupKey": "First Half",
+       "ShowcaseMarketId": "eef85f38-8607-4e60-8bfd-643972e4c518",
+       "IsReversible": false,
+       "IsCashable": true,
+       "HasOptiOdds": true,
+       "State": 0,
+       "Provider": 20,
+       "ColumnReorder": 0,
+       "ShowAllOutcomes": false
+      },
+      {
+       "MarketId": 421291816,
+       "EventId": 7297805601,
+       "Order": 2,
+       "MarketName": "1ère mi-temps - Total de buts (Plus de/Moins de)",
+       "BetType": "1st-half-total-OverUnder",
+       "Outcomes": [
+        {
+         "OutcomeId": 553111368,
+         "MarketId": 421291816,
+         "EventId": 7297805601,
+         "Base": 1.5,
+         "Odd": 2.25,
+         "Name": "Plus de",
+         "GroupOrder": 1,
+         "Order": 1,
+         "ProviderProbabilities": 0.398202
+        },
+        {
+         "OutcomeId": 553111369,
+         "MarketId": 421291816,
+         "EventId": 7297805601,
+         "Base": 1.5,
+         "Odd": 1.55,
+         "Name": "Moins de",
+         "GroupOrder": 2,
+         "Order": 2,
+         "ProviderProbabilities": 0.601798
+        }
+       ],
+       "ColCount": 2,
+       "MarketGroupKey": "First Half",
+       "ShowcaseMarketId": "36e8f690-1ecf-41de-9891-c153dcea198f",
+       "Base": 1.5,
+       "IsReversible": false,
+       "IsCashable": true,
+       "HasOptiOdds": true,
+       "State": 0,
+       "Provider": 20,
+       "ColumnReorder": 2,
+       "ShowAllOutcomes": false
+      },
+      {
+       "MarketId": 3014492206,
+       "EventId": 7297805601,
+       "Order": 5,
+       "MarketName": "Handicap asiatique",
+       "BetType": "handicap-TeamNumber",
+       "UnifiedMarketTypeId": "26530d80-2662-44a3-b8b8-0e778ba02247",
+       "Outcomes": [
+        {
+         "OutcomeId": 2092524011,
+         "MarketId": 3014492206,
+         "EventId": 7297805601,
+         "Base": -0.5,
+         "Odd": 2.06,
+         "Name": "Malaga",
+         "GroupOrder": 1,
+         "Order": 1,
+         "ProviderProbabilities": 0.439391
+        },
+        {
+         "OutcomeId": 526440070,
+         "MarketId": 3014492206,
+         "EventId": 7297805601,
+         "Base": 0.5,
+         "Odd": 1.65,
+         "Name": "Al Ittihad",
+         "GroupOrder": 2,
+         "Order": 2,
+         "ProviderProbabilities": 0.560609
+        }
+       ],
+       "ColCount": 2,
+       "MarketGroupKey": "Handicaps",
+       "ShowcaseMarketId": "40fd5efc-bffe-482d-a036-e5ef7c77ac34",
+       "Base": -0.5,
+       "IsReversible": false,
+       "IsCashable": true,
+       "HasOptiOdds": true,
+       "State": 0,
+       "Provider": 20,
+       "ColumnReorder": 2,
+       "ShowAllOutcomes": false
+      }
+     ],
+     "PlayerProps": [],
+     "NbTotalMarkets": 28,
+     "HomeName": "Malaga",
+     "AwayName": "Al Ittihad",
+     "EventType": 1,
+     "IsCashable": true,
+     "Order": 8,
+     "IsWinner": false,
+     "StreamingDescriptor": [
+      {
+       "StreamId": "72978056",
+       "StreamingState": 2,
+       "Type": 1,
+       "ProviderName": "BetRadar"
+      }
+     ],
+     "UrlStats": "https://s5.sir.sportradar.com/circus/fr/match/72978056",
+     "IsTopEvent": true
+    },
+    {
+     "DefaultMarketType": "P1XP2",
+     "EventId": 7289334401,
+     "LeagueId": 682,
+     "IsBlocked": false,
+     "StartDate": "2026-07-30T17:00:00Z",
+     "Markets": [
+      {
+       "MarketId": 1085105802,
+       "EventId": 7289334401,
+       "Order": 1,
+       "MarketName": "Vainqueur",
+       "BetType": "P1XP2",
+       "UnifiedMarketTypeId": "60452bac-475a-46d1-b40d-6819a6494076",
+       "Outcomes": [
+        {
+         "OutcomeId": 3266411950,
+         "MarketId": 1085105802,
+         "EventId": 7289334401,
+         "Odd": 1.86,
+         "Name": "FC Andorra",
+         "GroupOrder": 1,
+         "Order": 1,
+         "ProviderProbabilities": 0.498677
+        },
+        {
+         "OutcomeId": 3266411953,
+         "MarketId": 1085105802,
+         "EventId": 7289334401,
+         "Odd": 3.35,
+         "Name": "X",
+         "GroupOrder": 2,
+         "Order": 2,
+         "ProviderProbabilities": 0.265955
+        },
+        {
+         "OutcomeId": 3266411952,
+         "MarketId": 1085105802,
+         "EventId": 7289334401,
+         "Odd": 3.8,
+         "Name": "CE Europa",
+         "GroupOrder": 3,
+         "Order": 3,
+         "ProviderProbabilities": 0.23536
+        }
+       ],
+       "ColCount": 3,
+       "MarketGroupKey": "Main",
+       "ShowcaseMarketId": "659d369d-fbb3-4cb8-8fdb-1630bcb03283",
+       "IsReversible": false,
+       "IsCashable": true,
+       "HasOptiOdds": true,
+       "State": 0,
+       "Provider": 20,
+       "ColumnReorder": 2,
+       "ShowAllOutcomes": false
+      },
+      {
+       "MarketId": 2412909540,
+       "EventId": 7289334401,
+       "Order": 2,
+       "MarketName": "Les 2 équipes marquent",
+       "BetType": "both-teams-to-score",
+       "UnifiedMarketTypeId": "a3ee68b0-e0e4-4d46-a32c-a94a6838856f",
+       "Outcomes": [
+        {
+         "OutcomeId": 4195855034,
+         "MarketId": 2412909540,
+         "EventId": 7289334401,
+         "Odd": 1.71,
+         "Name": "Oui",
+         "GroupOrder": 1,
+         "Order": 1,
+         "ProviderProbabilities": 0.536016
+        },
+        {
+         "OutcomeId": 3033055620,
+         "MarketId": 2412909540,
+         "EventId": 7289334401,
+         "Odd": 1.94,
+         "Name": "Non",
+         "GroupOrder": 2,
+         "Order": 2,
+         "ProviderProbabilities": 0.463984
+        }
+       ],
+       "ColCount": 2,
+       "MarketGroupKey": "Main",
+       "ShowcaseMarketId": "0d9dbeee-8345-4f88-9812-66fcbe318937",
+       "IsReversible": false,
+       "IsCashable": true,
+       "HasOptiOdds": true,
+       "State": 0,
+       "Provider": 20,
+       "ColumnReorder": 0,
+       "ShowAllOutcomes": false
+      },
+      {
+       "MarketId": 2335246888,
+       "EventId": 7289334401,
+       "Order": 4,
+       "MarketName": "Total de buts ",
+       "BetType": "total-OverUnder",
+       "UnifiedMarketTypeId": "fcd5c70e-55ca-4743-8589-c332e9573f62",
+       "Outcomes": [
+        {
+         "OutcomeId": 2504037577,
+         "MarketId": 2335246888,
+         "EventId": 7289334401,
+         "Base": 2.5,
+         "Odd": 1.82,
+         "Name": "Plus de",
+         "GroupOrder": 1,
+         "Order": 1,
+         "ProviderProbabilities": 0.504939
+        },
+        {
+         "OutcomeId": 4070121518,
+         "MarketId": 2335246888,
+         "EventId": 7289334401,
+         "Base": 2.5,
+         "Odd": 1.85,
+         "Name": "Moins de",
+         "GroupOrder": 2,
+         "Order": 2,
+         "ProviderProbabilities": 0.495061
+        }
+       ],
+       "ColCount": 2,
+       "MarketGroupKey": "Main",
+       "ShowcaseMarketId": "cc81d29d-31c8-4abf-bbee-e6de31b9d708",
+       "Base": 2.5,
+       "IsReversible": false,
+       "IsCashable": true,
+       "HasOptiOdds": true,
+       "State": 0,
+       "Provider": 20,
+       "ColumnReorder": 2,
+       "ShowAllOutcomes": false
+      },
+      {
+       "MarketId": 3999196449,
+       "EventId": 7289334401,
+       "Order": 5,
+       "MarketName": "Vainqueur (Remboursé si match nul)",
+       "BetType": "draw-no-bet",
+       "Outcomes": [
+        {
+         "OutcomeId": 3088940376,
+         "MarketId": 3999196449,
+         "EventId": 7289334401,
+         "Odd": 1.37,
+         "Name": "FC Andorra",
+         "GroupOrder": 1,
+         "Order": 1,
+         "ProviderProbabilities": 0.679361
+        },
+        {
+         "OutcomeId": 3088940377,
+         "MarketId": 3999196449,
+         "EventId": 7289334401,
+         "Odd": 2.7,
+         "Name": "CE Europa",
+         "GroupOrder": 2,
+         "Order": 2,
+         "ProviderProbabilities": 0.320639
+        }
+       ],
+       "ColCount": 2,
+       "MarketGroupKey": "Main",
+       "ShowcaseMarketId": "3aa3184a-7cce-4955-9d0e-4257582f6bfa",
+       "IsReversible": false,
+       "IsCashable": true,
+       "HasOptiOdds": true,
+       "State": 0,
+       "Provider": 20,
+       "ColumnReorder": 0,
+       "ShowAllOutcomes": false
+      },
+      {
+       "MarketId": 3999196448,
+       "EventId": 7289334401,
+       "Order": 8,
+       "MarketName": "Double chance",
+       "BetType": "1X12X2",
+       "UnifiedMarketTypeId": "59efc174-d2e0-42af-906a-f70fe7e7b102",
+       "Outcomes": [
+        {
+         "OutcomeId": 3088940484,
+         "MarketId": 3999196448,
+         "EventId": 7289334401,
+         "Odd": 1.2,
+         "Name": "1X",
+         "GroupOrder": 1,
+         "Order": 1,
+         "ProviderProbabilities": 0.765178504960922
+        },
+        {
+         "OutcomeId": 4052530892,
+         "MarketId": 3999196448,
+         "EventId": 7289334401,
+         "Odd": 1.24,
+         "Name": "12",
+         "GroupOrder": 2,
+         "Order": 2,
+         "ProviderProbabilities": 0.731866810768574
+        },
+        {
+         "OutcomeId": 1323647537,
+         "MarketId": 3999196448,
+         "EventId": 7289334401,
+         "Odd": 1.64,
+         "Name": "X2",
+         "GroupOrder": 3,
+         "Order": 3,
+         "ProviderProbabilities": 0.50295498415315
+        }
+       ],
+       "ColCount": 3,
+       "MarketGroupKey": "Main",
+       "ShowcaseMarketId": "9903950f-75db-4487-ba26-06b156fae39b",
+       "IsReversible": false,
+       "IsCashable": true,
+       "HasOptiOdds": true,
+       "State": 0,
+       "Provider": 20,
+       "ColumnReorder": 0,
+       "ShowAllOutcomes": false
+      },
+      {
+       "MarketId": 3333789895,
+       "EventId": 7289334401,
+       "Order": 1,
+       "MarketName": "1ère mi-temps - Vainqueur",
+       "BetType": "1st-half-1x2",
+       "UnifiedMarketTypeId": "dd8f9c7e-8b4f-4fc4-aae5-c72cb8fc22e7",
+       "Outcomes": [
+        {
+         "OutcomeId": 3147012054,
+         "MarketId": 3333789895,
+         "EventId": 7289334401,
+         "Odd": 2.33,
+         "Name": "FC Andorra",
+         "GroupOrder": 1,
+         "Order": 1,
+         "ProviderProbabilities": 0.377532
+        },
+        {
+         "OutcomeId": 3147012053,
+         "MarketId": 3333789895,
+         "EventId": 7289334401,
+         "Odd": 2.13,
+         "Name": "X",
+         "GroupOrder": 2,
+         "Order": 2,
+         "ProviderProbabilities": 0.41689
+        },
+        {
+         "OutcomeId": 3147012052,
+         "MarketId": 3333789895,
+         "EventId": 7289334401,
+         "Odd": 4.15,
+         "Name": "CE Europa",
+         "GroupOrder": 3,
+         "Order": 3,
+         "ProviderProbabilities": 0.205577
+        }
+       ],
+       "ColCount": 3,
+       "MarketGroupKey": "First Half",
+       "ShowcaseMarketId": "eef85f38-8607-4e60-8bfd-643972e4c518",
+       "IsReversible": false,
+       "IsCashable": true,
+       "HasOptiOdds": true,
+       "State": 0,
+       "Provider": 20,
+       "ColumnReorder": 0,
+       "ShowAllOutcomes": false
+      },
+      {
+       "MarketId": 1919930190,
+       "EventId": 7289334401,
+       "Order": 2,
+       "MarketName": "1ère mi-temps - Total de buts (Plus de/Moins de)",
+       "BetType": "1st-half-total-OverUnder",
+       "Outcomes": [
+        {
+         "OutcomeId": 1767205562,
+         "MarketId": 1919930190,
+         "EventId": 7289334401,
+         "Base": 1.5,
+         "Odd": 2.6,
+         "Name": "Plus de",
+         "GroupOrder": 1,
+         "Order": 1,
+         "ProviderProbabilities": 0.340027
+        },
+        {
+         "OutcomeId": 201121621,
+         "MarketId": 1919930190,
+         "EventId": 7289334401,
+         "Base": 1.5,
+         "Odd": 1.42,
+         "Name": "Moins de",
+         "GroupOrder": 2,
+         "Order": 2,
+         "ProviderProbabilities": 0.659973
+        }
+       ],
+       "ColCount": 2,
+       "MarketGroupKey": "First Half",
+       "ShowcaseMarketId": "36e8f690-1ecf-41de-9891-c153dcea198f",
+       "Base": 1.5,
+       "IsReversible": false,
+       "IsCashable": true,
+       "HasOptiOdds": true,
+       "State": 0,
+       "Provider": 20,
+       "ColumnReorder": 2,
+       "ShowAllOutcomes": false
+      },
+      {
+       "MarketId": 3312243024,
+       "EventId": 7289334401,
+       "Order": 5,
+       "MarketName": "Handicap asiatique",
+       "BetType": "handicap-TeamNumber",
+       "UnifiedMarketTypeId": "26530d80-2662-44a3-b8b8-0e778ba02247",
+       "Outcomes": [
+        {
+         "OutcomeId": 2291829884,
+         "MarketId": 3312243024,
+         "EventId": 7289334401,
+         "Base": -0.5,
+         "Odd": 1.84,
+         "Name": "FC Andorra",
+         "GroupOrder": 1,
+         "Order": 1,
+         "ProviderProbabilities": 0.497298
+        },
+        {
+         "OutcomeId": 725745943,
+         "MarketId": 3312243024,
+         "EventId": 7289334401,
+         "Base": 0.5,
+         "Odd": 1.83,
+         "Name": "CE Europa",
+         "GroupOrder": 2,
+         "Order": 2,
+         "ProviderProbabilities": 0.502702
+        }
+       ],
+       "ColCount": 2,
+       "MarketGroupKey": "Handicaps",
+       "ShowcaseMarketId": "40fd5efc-bffe-482d-a036-e5ef7c77ac34",
+       "Base": -0.5,
+       "IsReversible": false,
+       "IsCashable": true,
+       "HasOptiOdds": true,
+       "State": 0,
+       "Provider": 20,
+       "ColumnReorder": 2,
+       "ShowAllOutcomes": false
+      }
+     ],
+     "PlayerProps": [],
+     "NbTotalMarkets": 28,
+     "HomeName": "FC Andorra",
+     "AwayName": "CE Europa",
+     "EventType": 1,
+     "IsCashable": true,
+     "Order": 0,
+     "IsWinner": false,
+     "StreamingDescriptor": [
+      {
+       "StreamId": "72893344",
+       "StreamingState": 2,
+       "Type": 1,
+       "ProviderName": "BetRadar"
+      }
+     ],
+     "UrlStats": "https://s5.sir.sportradar.com/circus/fr/match/72893344",
+     "IsTopEvent": false
+    }
+   ]
+  },
+  {
+   "SportId": 844,
+   "RegionName": "Finlande",
+   "RegionId": 262165,
+   "LeagueName": "Kolmonen Uusimaa 2",
+   "LeagueId": 2010,
+   "Order": 5,
+   "EventDisplayType": 1,
+   "Events": [
+    {
+     "DefaultMarketType": "P1XP2",
+     "EventId": 13733180,
+     "LeagueId": 2010,
+     "IsBlocked": false,
+     "StartDate": "2026-07-30T17:00:00Z",
+     "Markets": [
+      {
+       "MarketId": 2248388776,
+       "EventId": 13733180,
+       "Order": 5,
+       "MarketName": "Vainqueur (Remboursé si match nul)",
+       "BetType": "draw-no-bet",
+       "Outcomes": [
+        {
+         "OutcomeId": 2703124584,
+         "MarketId": 2248388776,
+         "EventId": 13733180,
+         "Odd": 1.17,
+         "Name": "PPJ/Lauttasaari",
+         "GroupOrder": 1,
+         "Order": 1,
+         "ProviderProbabilities": 0.7979
+        },
+        {
+         "OutcomeId": 867534593,
+         "MarketId": 2248388776,
+         "EventId": 13733180,
+         "Odd": 3.77,
+         "Name": "LPS",
+         "GroupOrder": 2,
+         "Order": 2,
+         "ProviderProbabilities": 0.2021
+        }
+       ],
+       "ColCount": 2,
+       "MarketGroupKey": "Main",
+       "ShowcaseMarketId": "3aa3184a-7cce-4955-9d0e-4257582f6bfa",
+       "IsReversible": false,
+       "IsCashable": true,
+       "HasOptiOdds": true,
+       "State": 0,
+       "Provider": 10,
+       "ColumnReorder": 0,
+       "ShowAllOutcomes": false
+      },
+      {
+       "MarketId": 2341795621,
+       "EventId": 13733180,
+       "Order": 1,
+       "MarketName": "Vainqueur",
+       "BetType": "P1XP2",
+       "UnifiedMarketTypeId": "60452bac-475a-46d1-b40d-6819a6494076",
+       "Outcomes": [
+        {
+         "OutcomeId": 3083343237,
+         "MarketId": 2341795621,
+         "EventId": 13733180,
+         "Odd": 1.39,
+         "Name": "PPJ/Lauttasaari",
+         "GroupOrder": 1,
+         "Order": 1,
+         "ProviderProbabilities": 0.6718
+        },
+        {
+         "OutcomeId": 376160039,
+         "MarketId": 2341795621,
+         "EventId": 13733180,
+         "Odd": 5.1,
+         "Name": "X",
+         "GroupOrder": 2,
+         "Order": 2,
+         "ProviderProbabilities": 0.159
+        },
+        {
+         "OutcomeId": 649219044,
+         "MarketId": 2341795621,
+         "EventId": 13733180,
+         "Odd": 4.85,
+         "Name": "LPS",
+         "GroupOrder": 3,
+         "Order": 3,
+         "ProviderProbabilities": 0.1691
+        }
+       ],
+       "ColCount": 3,
+       "MarketGroupKey": "Main",
+       "ShowcaseMarketId": "659d369d-fbb3-4cb8-8fdb-1630bcb03283",
+       "IsReversible": false,
+       "IsCashable": true,
+       "HasOptiOdds": true,
+       "State": 0,
+       "Provider": 10,
+       "ColumnReorder": 2,
+       "ShowAllOutcomes": false
+      },
+      {
+       "MarketId": 3864558182,
+       "EventId": 13733180,
+       "Order": 8,
+       "MarketName": "Double chance",
+       "BetType": "1X12X2",
+       "UnifiedMarketTypeId": "59efc174-d2e0-42af-906a-f70fe7e7b102",
+       "Outcomes": [
+        {
+         "OutcomeId": 4280211551,
+         "MarketId": 3864558182,
+         "EventId": 13733180,
+         "Odd": 1.14,
+         "Name": "1X",
+         "GroupOrder": 1,
+         "Order": 1,
+         "ProviderProbabilities": 0.8309
+        },
+        {
+         "OutcomeId": 523043068,
+         "MarketId": 3864558182,
+         "EventId": 13733180,
+         "Odd": 1.13,
+         "Name": "12",
+         "GroupOrder": 2,
+         "Order": 2,
+         "ProviderProbabilities": 0.841
+        },
+        {
+         "OutcomeId": 623799617,
+         "MarketId": 3864558182,
+         "EventId": 13733180,
+         "Odd": 2.6,
+         "Name": "X2",
+         "GroupOrder": 3,
+         "Order": 3,
+         "ProviderProbabilities": 0.3282
+        }
+       ],
+       "ColCount": 3,
+       "MarketGroupKey": "Main",
+       "ShowcaseMarketId": "9903950f-75db-4487-ba26-06b156fae39b",
+       "IsReversible": false,
+       "IsCashable": true,
+       "HasOptiOdds": true,
+       "State": 0,
+       "Provider": 10,
+       "ColumnReorder": 0,
+       "ShowAllOutcomes": false
+      },
+      {
+       "MarketId": 2257681033,
+       "EventId": 13733180,
+       "Order": 4,
+       "MarketName": "Total de buts",
+       "BetType": "total-goals-OverUnder",
+       "UnifiedMarketTypeId": "fcd5c70e-55ca-4743-8589-c332e9573f62",
+       "Outcomes": [
+        {
+         "OutcomeId": 3453303414,
+         "MarketId": 2257681033,
+         "EventId": 13733180,
+         "Base": 4.5,
+         "Odd": 1.59,
+         "Name": "Plus de",
+         "GroupOrder": 1,
+         "Order": 1,
+         "ProviderProbabilities": 0.5659
+        },
+        {
+         "OutcomeId": 3453303383,
+         "MarketId": 2257681033,
+         "EventId": 13733180,
+         "Base": 4.5,
+         "Odd": 2.04,
+         "Name": "Moins de",
+         "GroupOrder": 2,
+         "Order": 2,
+         "ProviderProbabilities": 0.4341
+        }
+       ],
+       "ColCount": 2,
+       "MarketGroupKey": "Main",
+       "ShowcaseMarketId": "cc81d29d-31c8-4abf-bbee-e6de31b9d708",
+       "Base": 4.5,
+       "IsReversible": false,
+       "IsCashable": true,
+       "HasOptiOdds": true,
+       "State": 0,
+       "Provider": 10,
+       "ColumnReorder": 2,
+       "ShowAllOutcomes": false
+      },
+      {
+       "MarketId": 1241779890,
+       "EventId": 13733180,
+       "Order": 3,
+       "MarketName": "Handicap asiatique",
+       "BetType": "Handicap",
+       "UnifiedMarketTypeId": "26530d80-2662-44a3-b8b8-0e778ba02247",
+       "Outcomes": [
+        {
+         "OutcomeId": 2077377874,
+         "MarketId": 1241779890,
+         "EventId": 13733180,
+         "Base": -1.5,
+         "Odd": 1.91,
+         "Name": "PPJ/Lauttasaari",
+         "GroupOrder": 1,
+         "Order": 1,
+         "ProviderProbabilities": 0.464
+        },
+        {
+         "OutcomeId": 2094312203,
+         "MarketId": 1241779890,
+         "EventId": 13733180,
+         "Base": 1.5,
+         "Odd": 1.68,
+         "Name": "LPS",
+         "GroupOrder": 2,
+         "Order": 2,
+         "ProviderProbabilities": 0.536
+        }
+       ],
+       "ColCount": 2,
+       "MarketGroupKey": "Handicaps",
+       "ShowcaseMarketId": "40fd5efc-bffe-482d-a036-e5ef7c77ac34",
+       "Base": 1.5,
+       "IsReversible": false,
+       "IsCashable": true,
+       "HasOptiOdds": true,
+       "State": 0,
+       "Provider": 10,
+       "ColumnReorder": 2,
+       "ShowAllOutcomes": false
+      },
+      {
+       "MarketId": 1135674898,
+       "EventId": 13733180,
+       "Order": 2,
+       "MarketName": "Les 2 équipes marquent",
+       "BetType": "both-teams-to-score",
+       "UnifiedMarketTypeId": "a3ee68b0-e0e4-4d46-a32c-a94a6838856f",
+       "Outcomes": [
+        {
+         "OutcomeId": 3092658080,
+         "MarketId": 1135674898,
+         "EventId": 13733180,
+         "Odd": 1.15,
+         "Name": "Oui",
+         "GroupOrder": 1,
+         "Order": 1,
+         "ProviderProbabilities": 0.8151
+        },
+        {
+         "OutcomeId": 1150140892,
+         "MarketId": 1135674898,
+         "EventId": 13733180,
+         "Odd": 3.99,
+         "Name": "Non",
+         "GroupOrder": 2,
+         "Order": 2,
+         "ProviderProbabilities": 0.1849
+        }
+       ],
+       "ColCount": 2,
+       "MarketGroupKey": "Main",
+       "ShowcaseMarketId": "0d9dbeee-8345-4f88-9812-66fcbe318937",
+       "IsReversible": false,
+       "IsCashable": true,
+       "HasOptiOdds": true,
+       "State": 0,
+       "Provider": 10,
+       "ColumnReorder": 0,
+       "ShowAllOutcomes": false
+      }
+     ],
+     "PlayerProps": [],
+     "NbTotalMarkets": 15,
+     "HomeName": "PPJ/Lauttasaari",
+     "AwayName": "LPS",
+     "EventType": 1,
+     "IsCashable": true,
+     "Order": 0,
+     "IsWinner": false,
+     "StreamingDescriptor": [
+      {
+       "StreamId": "70684276",
+       "StreamingState": 2,
+       "Type": 1,
+       "ProviderName": "BetRadar"
+      }
+     ],
+     "UrlStats": "https://s5.sir.sportradar.com/circus/fr/match/70684276",
+     "IsTopEvent": false
+    }
+   ]
+  }
+ ],
+ "Status": 0
+}

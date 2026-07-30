@@ -32,6 +32,7 @@ from .scrapers.betcenter import BetCenterScraper
 from .scrapers.betfirst import BetFirstScraper, parse_events_table as betfirst_parse_events_table
 from .scrapers.goldenpalace import GoldenPalaceScraper, parse_get_events as goldenpalace_parse_get_events
 from .scrapers.ladbrokes import LadbrokesScraper, parse_prematch as ladbrokes_parse_prematch
+from .scrapers.circus import load_pushed_quotes as circus_load_pushed
 from .scrapers.pinnacle import PinnacleScraper
 from .scrapers.sevenelevenbe import SevenElevenScraper, parse_listview as sevenelevenbe_parse_listview
 from .scrapers.bingoal import BingoalScraper, parse_listview as bingoal_parse_listview
@@ -600,6 +601,20 @@ def fetch_starcasinosport_quotes(sport: str) -> list[OddQuote]:
         return []
 
 
+def fetch_circus_quotes() -> list[OddQuote]:
+    """Lit le prématch Circus poussé par le navigateur.
+
+    Renvoie une liste vide tant que rien n'a été poussé : tant que le pont
+    n'est pas installé, Circus est simplement absent, sans bruit dans les logs.
+    La garde de fraîcheur, elle, parle — un onglet fermé doit se voir."""
+    path = os.getenv("CIRCUS_INGEST_FILE", "data/circus.json")
+    max_age = float(os.getenv("CIRCUS_MAX_AGE_MIN", "30"))
+    return circus_load_pushed(
+        path, max_age,
+        print_fn=lambda s: console.print(f"[yellow]{s}[/yellow]"),
+    )
+
+
 def fetch_betcenter_quotes(sport: str) -> list[OddQuote]:
     """Fetch + parse the Betcenter prematch offer (Cashpoint/Merkur platform,
     own odds API on oddsservice.betcenter.be -- independent odds)."""
@@ -649,6 +664,12 @@ def _fetch_all_parallel(
     tasks["Betano"] = lambda: fetch_betano_quotes(
         betano_file=betano_file, sport=sport, include_live=include_file_books,
     )
+    # Circus (Gaming1) : poussé par le navigateur comme Betano, l'ASN datacenter
+    # étant refusé sur tout le domaine. Football uniquement pour l'instant — le
+    # userscript ne balaie que SportId 844. Silencieux tant qu'aucun dump n'a
+    # été poussé, pour qu'installer le pont soit sans effet de bord.
+    if sport == "soccer":
+        tasks["Circus"] = lambda: fetch_circus_quotes()
 
     all_quotes: list[OddQuote] = []
     with ThreadPoolExecutor(max_workers=len(tasks)) as executor:

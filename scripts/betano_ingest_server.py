@@ -72,6 +72,12 @@ SAMPLE_DIR = Path(os.getenv("BETANO_SAMPLE_DIR", str(_project_dir() / "data" / "
 PREMATCH_DIR = Path(
     os.getenv("BETANO_PREMATCH_DIR", str(_project_dir() / "data" / "prematch"))
 )
+# Prématch Circus (plateforme Gaming1). Un seul fichier : le userscript pousse
+# un cycle complet — un bloc par jour — en un envoi. Lu par
+# src/scrapers/circus.load_pushed_quotes().
+CIRCUS_FILE = Path(
+    os.getenv("CIRCUS_INGEST_FILE", str(_project_dir() / "data" / "circus.json"))
+)
 HOST = os.getenv("BETANO_INGEST_HOST", "0.0.0.0")
 PORT = int(os.getenv("BETANO_INGEST_PORT", "8787"))
 MAX_BYTES = int(float(os.getenv("BETANO_INGEST_MAX_MB", "32")) * 1024 * 1024)
@@ -232,6 +238,47 @@ class Handler(BaseHTTPRequestHandler):
         _log(f"200 sample '{name}' stored ({len(raw)} B) -> {path}")
         self._send(200, {"ok": True, "name": name, "bytes": len(raw)})
 
+    def _handle_circus(self, raw: bytes) -> None:
+        """Stocke le prématch Circus poussé par le navigateur.
+
+        Gaming1 refuse l'IP de la VM sur tout le domaine — pas seulement sur
+        l'API — donc contrairement à Betano il n'y a pas de cookie à repousser :
+        le navigateur doit livrer les données elles-mêmes.
+
+        Le userscript envoie un cycle complet ({"blocks": [...]}, un bloc par
+        jour). Un cycle vide est refusé plutôt qu'écrit : écraser un bon fichier
+        par du vide couperait Circus en silence, et la garde de fraîcheur côté
+        daemon ne verrait rien puisque l'horodatage, lui, serait frais."""
+        try:
+            data = json.loads(raw)
+        except ValueError as e:
+            self._send(400, {"error": f"invalid JSON: {e}"})
+            return
+        blocks = data.get("blocks") if isinstance(data, dict) else None
+        if not blocks:
+            _log("422 circus push has no blocks — not overwriting")
+            self._send(422, {"error": "no blocks in payload"})
+            return
+        n_events = sum(
+            len(lg.get("Events") or [])
+            for b in blocks if isinstance(b, dict)
+            for lg in (b.get("Leagues") or [])
+        )
+        if not n_events:
+            _log("422 circus push has no events — not overwriting")
+            self._send(422, {"error": "no events in payload"})
+            return
+        try:
+            _atomic_write(CIRCUS_FILE, raw)
+        except OSError as e:
+            _log(f"500 circus write failed: {e}")
+            self._send(500, {"error": f"write failed: {e}"})
+            return
+        _log(f"200 wrote {len(raw)} B -> {CIRCUS_FILE.name} "
+             f"(blocks={len(blocks)} events={n_events})")
+        self._send(200, {"ok": True, "bytes": len(raw),
+                         "blocks": len(blocks), "events": n_events})
+
     def _handle_prematch(self, raw: bytes) -> None:
         """Store the prematch offer for one sport.
 
@@ -273,7 +320,8 @@ class Handler(BaseHTTPRequestHandler):
 
     def do_POST(self) -> None:  # noqa: N802
         route = self.path.split("?", 1)[0]
-        if route not in ("/ingest", "/ingest-cookie", "/discover", "/sample", "/ingest-prematch"):
+        if route not in ("/ingest", "/ingest-cookie", "/discover", "/sample",
+                         "/ingest-prematch", "/ingest-circus"):
             self._send(404, {"error": "not found"})
             return
         if not self._authorized():
@@ -301,6 +349,9 @@ class Handler(BaseHTTPRequestHandler):
             return
         if route == "/ingest-prematch":
             self._handle_prematch(raw)
+            return
+        if route == "/ingest-circus":
+            self._handle_circus(raw)
             return
         try:
             data = json.loads(raw)
