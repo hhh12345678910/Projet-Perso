@@ -104,14 +104,19 @@ async function check(name, fn) {
 const owners = () => {
   const m = {};
   for (const p of pushes) {
-    m[p.sport] = p.blocks.map((b) => (b.Leagues[0] || {}).LeagueName.split("-")[0]);
+    // Un bloc de journée vide n'a pas de ligue, donc pas de sport lisible :
+    // il ne prouve rien sur le rangement, on le note "?" sans faire échouer.
+    m[p.sport] = p.blocks.map((b) => {
+      const n = ((b.Leagues || [])[0] || {}).LeagueName;
+      return n ? n.split("-")[0] : "?";
+    });
   }
   return m;
 };
 const assertClean = () => {
   const m = owners();
   for (const sport of Object.keys(m)) {
-    if (m[sport].some((s) => s !== sport)) {
+    if (m[sport].some((s) => s !== "?" && s !== sport)) {
       throw new Error(sport + ".json a reçu " + JSON.stringify(m[sport]));
     }
     if (m[sport].length !== 4) throw new Error(sport + " a " + m[sport].length + " blocs");
@@ -150,15 +155,34 @@ const assertClean = () => {
     reqs.forEach((r, i) => reply(r, { echoId: false, empty: i === 3 }));
     const m = owners();
     for (const sport of Object.keys(m)) {
-      if (m[sport].some((s) => s !== sport)) {
+      if (m[sport].some((s) => s !== "?" && s !== sport)) {
         throw new Error(sport + ".json a reçu " + JSON.stringify(m[sport]));
       }
     }
   });
 
-  await check("un cycle incomplet ne pousse rien", (reqs) => {
+  await check("un cycle incomplet pousse quand même ce qu'il a", async (reqs) => {
+    // Refuser de pousser laissait le fichier vieillir jusqu'au rejet par la
+    // garde de fraîcheur : le sport disparaissait au lieu de perdre un jour.
     reqs.slice(0, 5).forEach((r) => reply(r));
-    if (pushes.length) throw new Error("a poussé " + JSON.stringify(owners()));
+    await sleep(350);          // laisse le délai de cycle clore le tour
+    const m = owners();
+    if (!Object.keys(m).length) throw new Error("n'a rien poussé");
+    for (const sport of Object.keys(m)) {
+      if (m[sport].some((s) => s !== "?" && s !== sport)) {
+        throw new Error(sport + ".json a reçu " + JSON.stringify(m[sport]));
+      }
+    }
+  });
+
+  await check("une journée vide ne bloque pas le sport", (reqs) => {
+    // Nuit de faible programme : une journée lointaine sans aucun match rend
+    // le bloc inattribuable. Il ne doit pas empêcher le sport d'être poussé.
+    // La dernière journée tennis ne contient aucun match.
+    const last = reqs.filter((r) => r.sportId === 848).pop();
+    reqs.forEach((r) => reply(r, { echoId: false, empty: r === last }));
+    const m = owners();
+    if (Object.keys(m).length !== 2) throw new Error("sports poussés : " + Object.keys(m));
   });
 
   const ok = results.filter((r) => r[0]).length;

@@ -263,8 +263,15 @@
     if (owner) delete sent[reqId];
     if (!owner) owner = sportOf(block);
     if (!owner) {
-      const missing = SPORTS.filter((s) => (bucket[s.key] || []).length < DAYS);
-      if (missing.length === 1) owner = missing[0].key;
+      // Journée sans aucun match : le bloc ne porte pas de SportId et
+      // n'apporte aucune cote. On le crédite au sport le plus en retard, pour
+      // que le décompte du cycle reste juste — sans quoi ce sport resterait
+      // éternellement incomplet et cesserait d'être poussé. C'est ce qui a
+      // fait disparaître le tennis une nuit de faible programme.
+      const late = SPORTS.map((s) => s.key)
+        .filter((k) => (bucket[k] || []).length < DAYS)
+        .sort((a, b) => bucket[a].length - bucket[b].length)[0];
+      if (late) owner = late;
     }
 
     if (owner && bucket[owner]) bucket[owner].push(block);
@@ -277,14 +284,17 @@
     sent = {};
     for (const sp of SPORTS) {
       const blocks = bucket[sp.key] || [];
-      // Cycle incomplet : on garde le fichier précédent plutôt que de
-      // l'écraser par moins de jours. La garde de fraîcheur côté VM rendra la
-      // panne visible si ça dure, là où un fichier tronqué passerait inaperçu.
-      if (blocks.length < DAYS) {
-        state[sp.key] = blocks.length + "/" + DAYS + "j";
-        paint("#f57c00");
+      // Un cycle incomplet est poussé quand même. Refuser de pousser laissait
+      // le fichier vieillir jusqu'à ce que la garde de fraîcheur le rejette :
+      // le sport disparaissait entièrement, alors qu'une journée manquante ne
+      // coûte que les matchs les plus lointains — les moins jouables. La
+      // bannière signale le manque en orange.
+      if (!blocks.length) {
+        state[sp.key] = "0/" + DAYS + "j";
+        paint("#b71c1c");
         continue;
       }
+      if (blocks.length < DAYS) paint("#f57c00");
       push(sp.key, blocks);
     }
     bucket = {};
