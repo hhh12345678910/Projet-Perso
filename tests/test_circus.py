@@ -106,6 +106,71 @@ def test_overlapping_days_are_deduplicated(payload):
     assert len(twice) == len(once)
 
 
+def _tennis(bet_type: str, base: float | None = 21.5) -> dict:
+    """Un événement tennis minimal portant un seul marché de totaux."""
+    return {
+        "Leagues": [{
+            "SportId": 848, "LeagueName": "ATP Test",
+            "Events": [{
+                "EventId": 1, "HomeName": "Alcaraz", "AwayName": "Sinner",
+                "StartDate": "2026-08-01T12:00:00Z",
+                "Markets": [{
+                    "BetType": bet_type, "Base": base,
+                    "Outcomes": [
+                        {"Name": "Plus de", "Odd": 1.9, "Base": base},
+                        {"Name": "Moins de", "Odd": 1.9, "Base": base},
+                    ],
+                }],
+            }],
+        }],
+    }
+
+
+@pytest.mark.parametrize("code", ["total-games-OverUnder", "total-games-over-under"])
+def test_both_spellings_of_total_games_are_read(code):
+    """Circus écrit le même marché de deux façons dans le même dump. N'en
+    reconnaître qu'une faisait perdre 64 % des totaux tennis."""
+    quotes = list(parse_prematch(_tennis(code)))
+    assert {q.outcome.label for q in quotes} == {"over", "under"}
+    assert all(q.market is MarketType.TOTALS for q in quotes)
+    assert all(q.outcome.line == 21.5 for q in quotes)
+
+
+def test_first_set_totals_stay_out_despite_the_shared_prefix():
+    """`first-set-total-games-over-under-OverUnder` contient le code du match
+    complet en sous-chaîne. Le confondre reviendrait à comparer un set au
+    match entier chez Pinnacle."""
+    unknown: set[str] = set()
+    code = "first-set-total-games-over-under-OverUnder"
+    assert list(parse_prematch(_tennis(code, base=9.5), unknown_types=unknown)) == []
+    assert code in unknown
+
+
+def test_tennis_winner_is_read_and_derivatives_are_not():
+    quotes = list(parse_prematch({
+        "Leagues": [{
+            "SportId": 848, "LeagueName": "ATP Test",
+            "Events": [{
+                "EventId": 2, "HomeName": "Alcaraz", "AwayName": "Sinner",
+                "StartDate": "2026-08-01T12:00:00Z",
+                "Markets": [
+                    {"BetType": "P1P2", "Outcomes": [
+                        {"Name": "Alcaraz", "Odd": 1.7},
+                        {"Name": "Sinner", "Odd": 2.2}]},
+                    # Même structure exactement : deux issues aux noms des
+                    # joueurs. Seul le BetType les distingue.
+                    {"BetType": "first-set-winner-TeamNumber", "Outcomes": [
+                        {"Name": "Alcaraz", "Odd": 1.8},
+                        {"Name": "Sinner", "Odd": 2.0}]},
+                ],
+            }],
+        }],
+    }))
+    assert {(q.outcome.label, q.decimal_odd) for q in quotes} == {
+        ("home", 1.7), ("away", 2.2),
+    }
+
+
 def test_leagues_of_another_sport_are_refused(payload):
     """Le pont a déjà croisé deux réponses et écrit le tennis dans
     soccer.json. Le nom du fichier ne prouve rien ; le SportId de la ligue,

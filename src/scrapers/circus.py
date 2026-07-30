@@ -44,17 +44,21 @@ _MARKETS: dict[str, MarketType] = {
     "P1XP2": MarketType.H2H,
     "total-OverUnder": MarketType.TOTALS,
     "total-goals-OverUnder": MarketType.TOTALS,
-    # Tennis — vainqueur à deux issues. Ces codes sont plausibles mais n'ont
-    # pas encore été vus sur capture : le premier cycle tennis fera remonter le
-    # vrai code dans les BetType inconnus du log, à ajouter ici.
-    # Surtout ne PAS reconnaître un marché sur sa seule structure : draw-no-bet
-    # porte lui aussi exactement les deux noms d'équipe, et serait pris pour un
-    # vainqueur.
+    # Tennis — codes confirmés sur capture réelle.
+    #
+    # Circus écrit le total de jeux de DEUX façons, et les deux coexistent dans
+    # le même dump : 43 marchés en `over-under`, 24 en `OverUnder`. Ne
+    # reconnaître que la seconde faisait perdre 64 % des totaux tennis. Les
+    # lignes (18,5 à 24,5) confirment qu'il s'agit bien de jeux du match
+    # complet, pas de sets — comparer un total de sets au total de jeux de
+    # Pinnacle n'aurait rien donné de bon.
+    #
+    # Ne PAS ajouter de variante par ressemblance : le comparatif se fait par
+    # égalité exacte, et first-set-total-games-over-under-OverUnder contient
+    # `total-games-over-under` en sous-chaîne tout en ne mesurant qu'un set.
     "P1P2": MarketType.H2H,
-    "match-winner": MarketType.H2H,
-    "winner": MarketType.H2H,
     "total-games-OverUnder": MarketType.TOTALS,
-    "total-sets-OverUnder": MarketType.TOTALS,
+    "total-games-over-under": MarketType.TOTALS,
 }
 
 _OVER = {"plus de", "over", "meer dan"}
