@@ -52,7 +52,10 @@ from .clv import (
     pnl as clv_pnl,
     settle as clv_settle,
 )
-from .alerter import TelegramConfig, send_alerts, send_surebet_alerts, send_clv_alerts, send_middle_alerts
+from .alerter import (
+    TelegramConfig, send_alerts, send_surebet_alerts, send_clv_alerts,
+    send_middle_alerts, send_system_alert,
+)
 from . import teams, track
 
 
@@ -136,6 +139,52 @@ def build_fair_lines(
             computed_at=now,
         )
     return fair
+
+
+# Cycles consécutifs sans cotes Pinnacle, par sport. Pinnacle est le point de
+# défaillance unique : sans lui, pas de ligne juste, donc ni value bet, ni
+# surebet évalué, ni — le plus coûteux — de ligne de clôture. Ces dernières ne
+# se rattrapent pas : la purge tourne à deux jours et le prix de clôture
+# n'existe que dans notre propre capture. Une panne silencieuse d'une heure et
+# demie a coûté exactement ça.
+_PINNACLE_FAILS: dict[str, int] = {}
+_PINNACLE_ALERTED: set[str] = set()
+_PINNACLE_ALERT_AFTER = int(os.getenv("PINNACLE_ALERT_AFTER_CYCLES", "5"))
+
+
+def _pinnacle_health(sport: str, *, ok: bool, tg_cfg) -> None:
+    """Compte les échecs consécutifs et prévient une seule fois par panne.
+
+    Le seuil évite d'alerter sur les 403 passagers, fréquents et sans gravité.
+    Le message de rétablissement compte autant que l'alarme : sans lui, on ne
+    sait pas si le problème dure encore."""
+    if ok:
+        if sport in _PINNACLE_ALERTED:
+            cycles = _PINNACLE_FAILS.get(sport, 0)
+            send_system_alert(
+                tg_cfg,
+                f"✅ <b>Pinnacle rétabli</b> — {sport}\n"
+                f"Après {cycles} cycles sans cotes. Les lignes de clôture des "
+                f"matchs partis pendant la panne sont perdues.",
+                print_fn=lambda s: console.print(f"[yellow]{s}[/yellow]"),
+            )
+            _PINNACLE_ALERTED.discard(sport)
+        _PINNACLE_FAILS[sport] = 0
+        return
+
+    _PINNACLE_FAILS[sport] = _PINNACLE_FAILS.get(sport, 0) + 1
+    n = _PINNACLE_FAILS[sport]
+    if n >= _PINNACLE_ALERT_AFTER and sport not in _PINNACLE_ALERTED:
+        _PINNACLE_ALERTED.add(sport)
+        send_system_alert(
+            tg_cfg,
+            f"🚨 <b>Pinnacle muet</b> — {sport}\n"
+            f"{n} cycles consécutifs sans cotes. Plus aucun value bet n'est "
+            f"détecté, et les lignes de clôture ne sont plus capturées — ce "
+            f"CLV-là sera définitivement perdu.\n"
+            f"À vérifier : <code>./doctor.sh</code>",
+            print_fn=lambda s: console.print(f"[yellow]{s}[/yellow]"),
+        )
 
 
 def find_value_bets(
@@ -897,7 +946,9 @@ def _daemon_scan_sport(
 
         if not pinnacle_q:
             console.print(f"[yellow]\\[{current_sport}]   No Pinnacle quotes — skipping[/yellow]")
+            _pinnacle_health(current_sport, ok=False, tg_cfg=tg_cfg)
             return
+        _pinnacle_health(current_sport, ok=True, tg_cfg=tg_cfg)
 
         cfg = ScanConfig(sport=current_sport, min_ev_pct=min_ev, bankroll=bankroll)
         fair = build_fair_lines(pinnacle_q, cfg.devig_method)

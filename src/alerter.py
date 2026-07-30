@@ -978,3 +978,21 @@ def send_clv_alerts(
             if alerter.send_clv_alert(bet, clv_pct, pin_odd, mins, sport=sport):
                 sent.append(item)
     return sent
+
+
+def send_system_alert(config: TelegramConfig | None, text: str,
+                      *, print_fn=print) -> bool:
+    """Alerte d'exploitation — panne d'un composant, pas une opportunité.
+
+    Part sur le canal critique quand il existe, sinon le chat principal : une
+    panne de la référence sharp mérite d'interrompre, pas de se noyer dans le
+    flux des value bets. Le seul incident de ce type observé a duré 1 h 30 sans
+    que rien ne le signale, et chaque heure sans Pinnacle est une heure de
+    lignes de clôture perdues pour de bon — donc de CLV non mesurable."""
+    if config is None:
+        return False
+    chat = config.effective_critical_chat_id or config.chat_id
+    if not chat:
+        return False
+    with TelegramAlerter(config, print_fn=print_fn) as alerter:
+        return alerter._send(text, chat_id=chat)
