@@ -21,30 +21,41 @@ proposent une cote supérieure à cette probabilité.
 la ligne de clôture prouve l'edge ; gagner sur 50 paris peut n'être que de la
 chance.
 
-### Résultats réels (au moment de la rédaction)
+### Résultats réels, mesurés
 
-| | |
-|---|---|
-| Durée | ~5 semaines d'exploitation |
-| Bénéfice | **+1 700 €** |
-| Volume | ~45 paris/jour, mises 17-25 € |
-| ROI estimé | ~4 % sur ~41 000 € de volume |
-| CLV moyen déclaré | **+10 %** (mesuré à la main dans un tableur) |
+P&L reconstitué depuis les historiques de paris exportés des books (HAR), sur
+la période de ~5 semaines :
 
-⚠️ **Le CLV était surestimé, et l'écart avec le ROI est expliqué.** Il était
-mesuré contre la cote de clôture *affichée* par Pinnacle, commission comprise,
-alors que l'EV est mesurée contre la ligne dévigée. Sur ce portefeuille la
-commission médiane de Pinnacle vaut 6,6 % (mesurée sur 111 078 marchés 1X2
-complets), ce qui gonflait chaque pari d'autant : un pari sans le moindre
-avantage affichait +6,6 % de CLV.
+| Book | Paris réglés | Misé | P&L | ROI |
+|---|---|---|---|---|
+| 711 | 40 | 777 € | +546 € | +70,2 % |
+| Scooore | 135 | 2 834 € | +1 035 € | +36,5 % |
+| Unibet | 328 | 5 997 € | +270 € | +4,5 % |
+| StarCasino (hors basket) | 264 | 4 408 € | +3 € | +0,1 % |
+| **Total** | **767** | **14 016 €** | **+1 854 €** | **+13,2 %** |
 
-Vérification sur 14 238 paris clôturés : EV moyenne 14,26 % + 6,6 % de
-commission = 21,80 % attendu, contre 21,71 % affiché. Idem en médiane (15,31 %
-attendu, 15,36 % affiché). Le CLV ne faisait donc que répéter l'EV de départ.
+Le basket, retiré depuis, avait coûté **−384 € sur 1 341 € misés** (−28,6 %).
 
-Corrigé : `close-lines` dévige désormais la ligne de clôture. **Le CLV réel est
-de l'ordre de +5 à +7 %**, cohérent avec le ROI de ~4 %. L'edge est réel, il
-vaut la moitié de ce qu'on croyait.
+**Le CLV réel est d'environ +8 %**, et non les +10 % du tableur ni les +21,7 %
+qu'affichait `clv-report`. Deux mesures indépendantes concordent : +8,26 % par
+appariement des HAR aux lignes de clôture, +8,34 % mesuré nativement par le
+système sur les paris joués.
+
+⚠️ **Pourquoi le CLV était faux.** Il était mesuré contre la cote de clôture
+*affichée* par Pinnacle, commission comprise, alors que l'EV est mesurée contre
+la ligne dévigée — deux règles différentes pour les deux bouts du même pari. La
+commission médiane de Pinnacle vaut 6,6 % ici (mesurée sur 111 078 marchés 1X2
+complets), donc un pari sans le moindre avantage affichait +6,6 % de CLV, et un
+pari que le marché a démenti restait confortablement positif. Vérification sur
+14 238 paris : EV moyenne 14,26 % + 6,6 % = 21,80 % attendu contre 21,71 %
+affiché ; en médiane 15,31 % attendu contre 15,36 %. Le CLV ne faisait que
+répéter l'EV de départ. Corrigé : `close-lines` dévige la clôture.
+
+⚠️ **Le ROI par book ne mesure rien à cette échelle.** 711, Scooore et Unibet
+sont les mêmes prix Kambi et affichent des CLV indiscernables (+5,9 / +9,5 /
++8,0 %) pour des ROI de +137 %, +26 % et +0,7 %. Même edge, 136 points d'écart.
+Sur 767 paris, l'espérance était de +794 € : **environ 1 050 € des gains sont
+de la chance**, pas de l'edge. Ne dimensionne rien sur le ROI observé.
 
 ---
 
@@ -172,6 +183,11 @@ ingérer des books protégés par anti-bot sans proxy résidentiel.
 ```bash
 ./doctor.sh                                  # état complet + cause de tout zéro
 python -m src.main clv-report                # LA mesure de rentabilité
+python -m src.main track-update              # suivi des paris joués -> CSV
+python -m src.main settle --from <csv>       # injecte les scores, calcule le P&L
+python -m src.main backfill-fair-lines       # rattrape les clôtures d'avant le correctif
+python -m src.main backfill-played-bets      # rattache les anciens clics à leur détection
+python -m src.main export-history --out <csv>   # détections + délai + overround + CLV
 python -m src.main books-coverage --sport soccer
 python -m src.main betano-value-test --min-ev 0.5   # dry-run, sans alerte
 python -m src.main betano-coverage           # ce que contient le dump Betano
@@ -255,16 +271,17 @@ référence dans les cotes au lieu de nommer un book. Une future source
    scores se saisissent à la main dans le fichier de suivi, ou s'importent
    depuis l'historique de paris du book. Piste la plus propre : capturer le
    score depuis le flux live de Pinnacle, qui couvre exactement notre univers.
-4. **Segmenter** : ROI et CLV par tranche d'EV, par book, par marché, par cote,
-   sur les paris joués. C'est ce qui dira quoi arrêter de jouer sans perdre un
-   euro. Attendre ~2 semaines de données mesurées correctement.
+4. ✅ **Segmentation** — faite, résultats en §9. Reste à refaire sur ~2 semaines
+   de mesures propres, et sur les paris **joués** plutôt que les détections.
 
 ### Priorité 2 — bookmakers
-- **Bet777** (groupe Ardent, comme Circus) et **Magic Betting** : lancer
-  `./tools/detect-platform.sh`. Si Kambi ou Altenar → ajouter un identifiant
-  d'opérateur suffit (~30 min). Sinon → espion + scraper.
-- **BetFirst** : fonctionnel, désactivé faute de compte. Renvoie 403 depuis la
-  VM mais marche dans le navigateur → candidat idéal pour le pont navigateur.
+- **Gaming1 (Circus, Bet777, Magic Betting)** : protocole entièrement
+  rétro-conçu, voir §10. Ni Kambi ni Altenar — le raccourci « identifiant
+  d'opérateur, 30 min » ne s'applique pas. Une seule source de prix
+  **indépendante** des quatre books Kambi actuels, donc le meilleur candidat.
+- **BetFirst** : fonctionnel, désactivé faute de compte. Mesuré depuis :
+  c'est le book qui offre les **pires prix** (−3,20 points de CLV à sélection
+  identique, voir §9). Sa perte n'en est pas une.
 - Chaque book ajouté = **500-600 € de capacité neuve** (voir §7).
 
 ### Priorité 3 — gestion de mise et de capital
@@ -349,3 +366,145 @@ Trois causes cumulées, toutes issues de demandes explicites :
 
 Le troisième est mesurable et réversible (on peut rendre la granularité
 configurable). Les deux premiers sont voulus.
+
+---
+
+## 9. Ce que mesure le CLV corrigé
+
+Mesuré sur les détections **prématch**, cote 1,5-6, **dédupliquées par
+opportunité** — 822 opportunités, une semaine de captures dévigées.
+
+⚠️ **Méthode : toujours dédupliquer avant de conclure.** Une même sélection est
+détectée sur plusieurs books ; ce sont des observations corrélées, pas
+indépendantes, et tu n'en joues qu'une (la suppression au niveau du marché
+silence les autres). Ne pas dédupliquer double artificiellement les effectifs et
+gonfle toutes les significativités. 1 283 lignes = 822 opportunités = 644 matchs.
+
+### Le délai avant le coup d'envoi — le facteur n°1
+
+| Délai | n | CLV | Positifs |
+|---|---|---|---|
+| < 6 h | 558 | +6,35 % | 79 % |
+| 6-12 h | 383 | +7,56 % | 77 % |
+| 12-24 h | 148 | +5,81 % | 72 % |
+| **> 24 h** | **194** | **+0,41 à +2,74 %** | **53-58 %** |
+
+**Couper à 24 h, pas à 12 h.** La tranche 12-24 h est indiscernable des plus
+courtes (0,8 σ) ; seul l'au-delà de 24 h s'effondre (3,2 σ après déduplication,
+p = 0,00003) — pour seulement 15-16 % du volume sacrifié.
+
+Le mécanisme : loin du match, la ligne de **référence** est elle-même bruitée.
+On ne détecte alors pas une erreur du book soft mais une erreur temporaire de
+Pinnacle, qui se corrige d'ici la clôture — et contre nous. La décomposition le
+confirme : le côté gagnant est stable (+12 à +13 % partout), **seule la
+fréquence des perdants change** (20 % à moins de 12 h, 42 % au-delà de 24 h).
+
+### L'EV — le filtre le plus rentable, déjà en place
+
+| EV | n | CLV | Positifs |
+|---|---|---|---|
+| 5-8 % | 409 | +3,69 % | 73 % |
+| 8-10 % | 146 | +5,65 % | 74 % |
+| 10-12 % | 71 | +8,89 % | 80 % |
+| 12-15 % | 76 | +8,42 % | 76 % |
+| 15-20 % | 63 | +11,79 % | 84 % |
+| 20-30 % | 44 | +20,60 % | 93 % |
+
+Croissance monotone, sans exception : **l'estimation d'EV est informative**.
+Le seuil premium à 8 % fait passer le CLV de +7,7 % à +10,2 %. Monter à 10 %
+gagnerait encore ~3 points, au prix de la moitié du volume.
+
+### La cote — n'est pas un critère
+
++5,8 / +6,7 / +5,4 / +7,2 % sur les tranches 1-2, 2-2,5, 2,5-3, 3-4. Plat.
+À edge égal, préférer les cotes basses **pour la variance**, pas pour l'edge.
+
+### Les books — comparaison appariée
+
+Sur 269 sélections proposées par 2+ books (même clôture, seul le prix diffère) :
+
+| Book | Écart vs concurrents | Meilleur prix |
+|---|---|---|
+| **StarCasino** | **+1,01 % ± 0,34** | 49 % |
+| Ladbrokes | +0,35 % | 27 % |
+| Unibet | +0,06 % | 42 % |
+| Betano | −0,57 % | 27 % |
+| Napoleon | −0,58 % | 33 % |
+| **BetFirst** | **−3,20 % ± 0,91** | 15 % |
+
+StarCasino paraît médiocre en vue brute (CLV +5,54 %) mais donne le meilleur
+prix une fois sur deux : son portefeuille de détections est moins bon, pas ses
+prix. À sélection identique, le prendre en priorité.
+
+### Ce qui NE marche pas — pistes fermées
+
+- **L'overround de la référence ne prédit rien.** Corrélation +0,009 avec le
+  CLV, aucun ordre entre les tranches. Hypothèse abandonnée.
+- **Filtrer par championnat est hors de portée.** 141 ligues pour 375 paris,
+  soit 2,7 chacune. Test de permutation : la meilleure ligue observée
+  (+34,7 %) tombe dans ce que le pur hasard produit (p = 0,13). Il faudrait
+  100 à 400 paris **par ligue**, soit des années. Règle générale : une
+  hypothèse posée à l'avance sur beaucoup de données vaut quelque chose, cent
+  hypothèses cherchées après coup ne valent rien.
+
+### Le live — un tiers des détections, structurellement invalide
+
+750 détections sur 2 274 ont un délai négatif : elles comparent une cote live à
+une ligne Pinnacle **prématch**, périmée depuis le coup d'envoi. Elles affichent
++20,5 % de CLV, ce qui est absurde. Le scraper Pinnacle ignore délibérément les
+matchs en cours (`isLive`), donc il n'existe aucune référence live.
+
+Elles n'atteignent aucun canal (premium et critique sont prématch, le canal
+principal est plafonné à 8 % d'EV) — donc elles ne sont pas jouées, mais elles
+polluent toute statistique globale. **Nettoyage le plus rentable qui reste.**
+
+---
+
+## 10. Gaming1 / Ardent — protocole rétro-conçu
+
+Circus, Bet777 et Magic Betting tournent sur la plateforme maison d'Ardent. Ni
+Kambi ni Altenar. Un seul scraper ouvrirait les trois, et ce serait la première
+source de prix **indépendante** des quatre books Kambi actuels.
+
+### Accès
+
+L'IP de la VM est refusée sur **tout le domaine**, pas seulement l'API — HTTPS
+403 y compris sur la page d'accueil. Ce n'est pas un géoblocage : une IP Google
+Cloud **belge** (`europe-west1`) est refusée aussi. C'est l'ASN datacenter.
+Migrer la VM n'y changerait rien → **pont navigateur obligatoire**, comme Betano.
+
+### Protocole
+
+Tout passe par WebSocket, rien en HTTP — d'où des exports HAR vides de cotes
+(Chrome n'y écrit pas les trames ; utiliser `tools/websocket-spy.user.js`).
+
+| | Bet777 | Circus |
+|---|---|---|
+| Serveur | `wss://wss02.777.be` | `wss://wss02.circus-sport.be` |
+| `RoomDomainName` | `777BE` | `CIRCUS` |
+| `SportId` football | 844 | 844 |
+
+Enveloppe : `{"Id":uuid, "Message":"<json sérialisé EN CHAÎNE>", "MessageType":N,
+"TTL":10}`. MessageType 1 = handshake, 7 = accusé, 8 = métadonnées, 1000 =
+requête/réponse. **Le handshake n'exige ni compte, ni token, ni captcha.**
+
+Commandes utiles (Type 201) : `GetSports`, `GetSportNav`, `GetPrematchSport`,
+`GetEventsForLeague`, `GetEvent`. Les réponses portent `Odd`, `Name` et
+`ProviderProbabilities` (la probabilité déjà dévigée par le book).
+
+### Compression
+
+Circus compresse, Bet777 non. Préfixe `--##LZS2##--` suivi de lz-string en
+UTF-16 (`decompressFromUTF16`). Piège : la compression s'applique à **deux
+niveaux** — soit la trame entière, soit seulement le champ `Message` ou
+`Content` d'une enveloppe JSON par ailleurs normale. Traiter les deux cas.
+
+À vérifier : déclarer `SupportedCompressions: ""` dans le handshake pourrait
+suffire à obtenir du clair, le client annonçant ses capacités.
+
+### Reste à faire
+
+`tools/circus-ingest.user.js` (WebSocket propre, boucle sur le prématch, push
+vers la VM), un endpoint `/ingest-circus`, et `src/scrapers/circus.py`.
+Filtrer les cotes ≤ 0 : elles signalent un marché fermé. La forme exacte de
+`GetPrematchSport` n'a pas été capturée sur Circus, à déduire de Bet777.
