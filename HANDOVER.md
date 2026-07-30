@@ -1,9 +1,14 @@
 # Valuebet — état du projet
 
 Document de reprise. À lire en premier pour reprendre le travail sans
-redécouvrir le contexte.
+redécouvrir le contexte. Dernière mise à jour : 30/07/2026.
 
-Dépôt : `hhh12345678910/Projet-Perso` — branche `claude/stoic-babbage-q16wi3`
+**Si tu ne lis que trois choses :** §1 pour la mesure qui fait autorité
+(+8,86 % de CLV, 10,1 σ), §11 pour les cinq pannes silencieuses du 30/07 et le
+mode de défaillance qu'elles révèlent, §6 pour la seconde référence sharp —
+le plus gros levier restant.
+
+Dépôt : `hhh12345678910/Projet-Perso` — branche `claude/handover-md-review-r54ezj`
 VM : Google Cloud, `us-central1`, IP `34.59.193.111`, utilisateur `hubindylan98`
 
 ---
@@ -36,10 +41,24 @@ la période de ~5 semaines :
 
 Le basket, retiré depuis, avait coûté **−384 € sur 1 341 € misés** (−28,6 %).
 
-**Le CLV réel est d'environ +8 %**, et non les +10 % du tableur ni les +21,7 %
-qu'affichait `clv-report`. Deux mesures indépendantes concordent : +8,26 % par
-appariement des HAR aux lignes de clôture, +8,34 % mesuré nativement par le
-système sur les paris joués.
+**Le CLV réel est de +8,9 %**, et non les +10 % du tableur ni les +21,7 %
+qu'affichait `clv-report`. Quatre mesures indépendantes concordent :
+
+| Mesure | Population | n | CLV | Significativité |
+|---|---|---|---|---|
+| Appariement HAR ↔ clôtures | paris réglés | — | +8,26 % | — |
+| Natif, paris joués | opportunités dédupliquées | 186 | +9,29 % | 5,1 σ |
+| **Natif, canal Premium complet** | **opportunités dédupliquées** | **423** | **+8,86 %** | **10,1 σ** |
+
+La troisième ligne fait autorité : elle porte sur **toutes** les détections
+éligibles au Premium, jouées ou non, ce qui supprime le biais de sélection
+manuelle. IC 95 % : [+7,14 % ; +10,59 %]. 78,3 % d'opportunités positives.
+
+⚠️ **La sélection manuelle n'apporte rien de mesurable.** Opportunités jouées
++8,23 % (n=132) contre non jouées +9,15 % (n=291). Trier à la main parmi les
+alertes ne fait pas mieux que le filtre automatique — donc jouer plus
+systématiquement ne dégraderait rien, et le temps d'arbitrage est mieux investi
+ailleurs.
 
 ⚠️ **Pourquoi le CLV était faux.** Il était mesuré contre la cote de clôture
 *affichée* par Pinnacle, commission comprise, alors que l'EV est mesurée contre
@@ -98,8 +117,9 @@ scrapers, pas réécrire le moteur.
 | Unibet | ✅ | plateforme Kambi |
 | Ladbrokes | ✅ | plateforme Eurobet |
 | StarCasino | ✅ | plateforme Altenar |
-| Napoleon | ✅ | plateforme Superbet |
+| Napoleon | ✅ | plateforme Superbet — 1X2 en football, vainqueur en tennis |
 | **Betano** | ✅ via navigateur | voir §3 |
+| **Circus** | ✅ via navigateur | plateforme Gaming1, voir §10 — football + tennis |
 | BetFirst | ❌ désactivé | plus de compte ; fonctionnait en tennis |
 | Betcenter | ❌ | cotes erronées |
 | 711 / Bingoal / Scooore | ❌ | jumeaux Kambi d'Unibet, prix identiques |
@@ -110,6 +130,22 @@ scrapers, pas réécrire le moteur.
 **Sports scannés : soccer, tennis, hockey.** Basket retiré (pas d'alertes
 souhaitées), volley retiré (Pinnacle ne price que 2 événements → aucune ligne de
 référence possible).
+
+### Couverture mesurée (30/07, fenêtre 24 h, après rapprochement flou)
+
+| | Pinnacle price | couvert par ≥ 1 book |
+|---|---|---|
+| Football | 126 matchs | **112 (89 %)** |
+| Tennis | 67 matchs | **60 (90 %)** |
+
+Sur les 14 matchs de football non couverts, 9 n'ont aucun candidat proche —
+sélections d'Amérique centrale et championnats équatoriens qu'aucun book belge
+n'offre. Rien à corriger là.
+
+⚠️ **Le facteur limitant en tennis est Pinnacle, pas les books.** Pinnacle ne
+price que ~71 matchs de tennis prématch quand les books en offrent 107 à 201.
+Ajouter un bookmaker de tennis n'élargit pas le gisement ; seule une seconde
+référence sharp le ferait (voir §6, Smarkets).
 
 ---
 
@@ -188,13 +224,26 @@ python -m src.main settle --from <csv>       # injecte les scores, calcule le P&
 python -m src.main backfill-fair-lines       # rattrape les clôtures d'avant le correctif
 python -m src.main backfill-played-bets      # rattache les anciens clics à leur détection
 python -m src.main export-history --out <csv>   # détections + délai + overround + CLV
-python -m src.main books-coverage --sport soccer
+python -m src.main books-coverage --sport soccer,tennis   # events, horizon, ∩ Pinnacle
 python -m src.main betano-value-test --min-ev 0.5   # dry-run, sans alerte
 python -m src.main betano-coverage           # ce que contient le dump Betano
 python -m src.main betano-prematch-shape data/prematch/soccer.json
 python -m src.main inspect-json <fichier> --path a.b.0.c
 python -m src.main prune --days 2            # purge (VACUUM refusé si disque insuffisant)
 ./tools/detect-platform.sh https://www.bet777.be/fr
+
+# Ponts navigateur — fraîcheur et cadence (les deux doivent être < 60 s)
+ls -l data/circus/ data/prematch/ data/betano.json && date -u
+sudo journalctl -u betano-ingest --since "5 min ago" --no-pager \
+  | grep -oP "(?<=-> )\S+|(?<=prematch ')[a-z]+" | sort | uniq -c
+sudo journalctl -u betano-ingest --since "30 min ago" --no-pager | grep -P "\] [45]\d\d "
+
+# Détections par book sur une fenêtre donnée — pour juger un book récent, il
+# FAUT restreindre la fenêtre : comparer 3 h à 7 jours donne 13 contre 1813.
+sqlite3 data/valuebet.db "SELECT book, COUNT(*) FROM value_bets \
+  WHERE detected_at > '2026-07-30T16:30:00' GROUP BY book ORDER BY 2 DESC;"
+
+node tools/circus-ingest.selftest.js tools/circus-ingest.user.js  # 7 scénarios
 
 grep "done in" valuebet.log | tail -5        # durée des cycles (~17 s normal)
 tac valuebet.log | awk '/══ CYCLE/{c++} c<5' | tac | grep -oiP '\b\w[\w ]*(?= skipped:)' | sort | uniq -c
@@ -209,6 +258,11 @@ tac valuebet.log | awk '/══ CYCLE/{c++} c<5' | tac | grep -oiP '\b\w[\w ]*(?
 | `valuebet-prune.timer` | Purge nocturne (rétention 2 jours) |
 | `valuebet-close-lines.timer` | **Capture horaire des lignes de clôture** |
 
+Les services s'appellent `valuebet-daemon` et `betano-ingest`, **pas**
+`valuebet` ni `valuebet-ingest`. `betano-ingest` sert aussi Circus, malgré son
+nom. Ses logs vont au journal systemd, il n'y a pas de fichier
+`betano-ingest.log`.
+
 ⚠️ `close-lines` doit tourner **plus souvent que la rétention**. Le prix de
 clôture n'existe que dans notre propre capture (Pinnacle retire les marchés
 prématch au coup d'envoi) — une fois les lignes purgées, le CLV de ces paris
@@ -216,7 +270,7 @@ est **définitivement perdu**.
 
 ---
 
-## 5. Changements de la session (43 commits)
+## 5. Changements de la session Betano (43 commits)
 
 ### Betano — de zéro à couverture complète
 - Push navigateur (live 15 s + prématch complet)
@@ -255,6 +309,15 @@ repli strict** (jamais de mélange — Pinnacle seul quand il price), et lit la
 référence dans les cotes au lieu de nommer un book. Une future source
 (Matchbook répond 200 depuis la VM) ne demandera aucune modification ici.
 
+⚠️ **À reconsidérer — c'est devenu la priorité n°1 (voir §6).** Le retrait
+était motivé par la lenteur, pas par la juridiction : l'API Smarkets est
+**publique et sans authentification**, donc utilisable depuis la Belgique comme
+source de données (on ne parie pas dessus). Les 26 minutes viennent d'une
+requête **par marché** pour les contrats, avec 0,5 s d'attente. Trois leviers
+non tentés : grouper les identifiants par virgule comme le code le fait déjà
+pour les cotes, se limiter aux 24-48 prochaines heures, et sortir le
+rafraîchissement du cycle de scan comme pour Circus et Betano.
+
 ---
 
 ## 6. Ce qui reste à faire
@@ -274,15 +337,51 @@ référence dans les cotes au lieu de nommer un book. Une future source
 4. ✅ **Segmentation** — faite, résultats en §9. Reste à refaire sur ~2 semaines
    de mesures propres, et sur les paris **joués** plutôt que les détections.
 
+### Priorité 1 bis — une seconde référence sharp (le plus gros levier)
+
+Tout le système dépend de **Pinnacle seul**. Trois conséquences, toutes
+observées :
+
+1. **Point de défaillance unique.** Le 30/07, Pinnacle a cessé de répondre et
+   tout s'est arrêté. L'alerte de panne existe depuis (voir §11) mais ne
+   remplace pas la mesure perdue.
+2. **Le tennis est plafonné.** 71 matchs pricés par Pinnacle contre 107 à 201
+   chez les books. Aucun bookmaker supplémentaire ne débloquera ça.
+3. **La fair line est bruitée.** Une moyenne de sources sharp est plus juste
+   qu'une source unique, et réduire ce bruit accélère mécaniquement toute
+   segmentation future.
+
+**Smarkets est le bon candidat** : exchange londonien, API REST **publique et
+sans authentification** — pas de compte, pas de déclaration de résidence, c'est
+une source de données et non un lieu de pari. Ses prix sont structurellement
+sans marge (appariement pair-à-pair), donc directement utilisables comme
+probabilité juste, sans devig. Le scraper existe déjà dans
+`src/scrapers/smarkets.py`. Voir §5 pour les trois leviers de performance.
+
+⚠️ **Betfair est à écarter.** Non licencié en Belgique ; y ouvrir un compte
+depuis une VM étrangère suppose de déclarer une fausse résidence, ce qui expose
+les fonds à un gel. Si les prix Betfair deviennent nécessaires, la voie propre
+est un fournisseur de données commercial qui les revend sous licence.
+
 ### Priorité 2 — bookmakers
-- **Gaming1 (Circus, Bet777, Magic Betting)** : protocole entièrement
-  rétro-conçu, voir §10. Ni Kambi ni Altenar — le raccourci « identifiant
-  d'opérateur, 30 min » ne s'applique pas. Une seule source de prix
-  **indépendante** des quatre books Kambi actuels, donc le meilleur candidat.
+- ✅ **Circus** : en production depuis le 30/07, football et tennis, cycle de
+  30 s. Voir §10 et §11.
+- **Bet777 et Magic Betting** : même plateforme Gaming1, seul `ROOM` change dans
+  le userscript. ⚠️ **Mesurer avant de construire** : ce sont des books du même
+  opérateur (Ardent), donc probablement le même flux de prix — exactement la
+  situation d'Unibet / 711 / Bingoal / Scooore, dont les CLV sont indiscernables.
+  Trois books jumeaux ne valent pas mieux qu'un.
 - **BetFirst** : fonctionnel, désactivé faute de compte. Mesuré depuis :
   c'est le book qui offre les **pires prix** (−3,20 points de CLV à sélection
   identique, voir §9). Sa perte n'en est pas une.
 - Chaque book ajouté = **500-600 € de capacité neuve** (voir §7).
+
+⚠️ **Ce qu'un book supplémentaire apporte vraiment.** Mesuré le 30/07 : les six
+books tiennent dans une fourchette de 2,7 points de CLV (Betano +10,8 % à Unibet
++8,1 %). L'edge vient de la détection, pas du choix du bookmaker. Un book de
+plus n'apporte donc pas un meilleur prix mais **du volume** — des paires
+book × match supplémentaires sur des matchs déjà couverts. C'est ce nombre de
+paires qu'il faut suivre, pas le nombre de books.
 
 ### Priorité 3 — gestion de mise et de capital
 
@@ -339,33 +438,45 @@ de résultat). L'équivalent accessible existe déjà dans le système : les
 
 ## 7. Contraintes permanentes à ne pas oublier
 
-1. **L'onglet Betano doit rester ouvert en permanence** sur une machine allumée.
-   DataDome bloque l'IP de la VM ; il n'existe aucun contournement côté serveur.
-   La garde de fraîcheur signale le gel dans les logs mais ne peut pas le
-   relancer.
+1. **Deux onglets doivent rester ouverts en permanence** sur une machine
+   allumée : Betano et Circus. DataDome bloque l'IP de la VM pour le premier,
+   l'ASN datacenter pour le second ; il n'existe aucun contournement côté
+   serveur. La garde de fraîcheur signale le gel dans les logs mais ne peut pas
+   relancer les onglets. **Un seul onglet par book** — deux versions d'un même
+   userscript qui tournent en parallèle écrivent des fichiers incohérents
+   (constaté le 30/07).
+   Après toute modification d'un userscript, **recharger l'onglet** :
+   Tampermonkey n'applique rien avant.
 2. **Les comptes sont limités après ~500-600 € de gain.** C'est structurel, pas
    évitable — seulement retardable.
 3. **`close-lines` doit tourner** plus souvent que la rétention, sinon le CLV
    est perdu définitivement.
 4. **La base grossit d'environ 80 M de lignes par jour.** Purge à 2 jours.
+5. **Le mode de panne dominant est silencieux, pas bruyant.** Voir §11 : cinq
+   pannes trouvées le 30/07, toutes avec un book interrogé, répondant
+   correctement, dont on jetait les données sans la moindre erreur dans les
+   logs. Ne jamais conclure « ça marche » d'une absence d'erreur ; toujours
+   compter ce qui sort.
 
 ---
 
-## 8. Point ouvert au moment de la rédaction
+## 8. Points ouverts au moment de la rédaction
 
-Baisse ressentie du nombre de value bets premium (4-5 au lieu de 10-15).
-**Le cœur de détection est inchangé** (vérifié par diff : `find_value_bets` n'a
-reçu que deux champs d'information, le routage premium est identique).
-
-Trois causes cumulées, toutes issues de demandes explicites :
-- basket + volley retirés → 5 sports devenus 3
-- BetFirst désactivé → 5 books devenus 4 (il produisait 38 value bets / 15
-  alertes par 24 h)
-- suppression au niveau du marché → chaque pari joué silence 2-3 sélections au
-  lieu d'une
-
-Le troisième est mesurable et réversible (on peut rendre la granularité
-configurable). Les deux premiers sont voulus.
+1. **Vérifier au matin du 31/07 que le tennis Circus n'a pas décroché la
+   nuit.** `ls -l data/circus/ && date -u` — les deux fichiers doivent avoir
+   moins d'une minute. La nuit est le moment où une journée lointaine revient
+   sans aucun match, ce qui avait figé le pont (corrigé, mais non encore
+   éprouvé sur un programme creux).
+2. **Le `clv-report` de dimanche 02/08** sera le premier à porter sur des paris
+   détectés avec toutes les corrections du 30/07 en place. C'est lui qui dira
+   si le tennis tient sa promesse : +13,5 % de CLV mesurés **avant** les
+   corrections, sur 92 opportunités.
+3. **Deux paris à EV aberrante ont été joués** (311 % et 65 %). À ce niveau une
+   cote n'est pas bonne, elle est fausse — erreur d'appariement. Un plafond de
+   sécurité vers 40-50 % d'EV reste à poser.
+4. **Les résultats de matchs ne sont toujours pas automatisés**, donc aucun P&L
+   réel dans `data/paris_track.csv`. Ce n'est pas bloquant : sur cette durée le
+   P&L mesure la chance, le CLV mesure l'edge.
 
 ---
 
@@ -389,11 +500,30 @@ gonfle toutes les significativités. 1 283 lignes = 822 opportunités = 644 matc
 | 12-24 h | 148 | +5,81 % | 72 % |
 | **> 24 h** | **194** | **+0,41 à +2,74 %** | **53-58 %** |
 
-**Couper à 24 h, pas à 12 h.** La tranche 12-24 h est indiscernable des plus
-courtes (0,8 σ) ; seul l'au-delà de 24 h s'effondre (3,2 σ après déduplication,
-p = 0,00003) — pour seulement 15-16 % du volume sacrifié.
+⚠️ **Révisé le 30/07 — ne pas poser de filtre.** Mesure plus récente sur le
+canal Premium, 423 opportunités dévigées :
 
-Le mécanisme : loin du match, la ligne de **référence** est elle-même bruitée.
+| Délai | n | CLV | σ |
+|---|---|---|---|
+| < 2 h | 100 | +10,98 % | 7,6 |
+| 2-6 h | 59 | +10,56 % | 4,1 |
+| 6-12 h | 130 | +10,35 % | 5,3 |
+| 12-24 h | 52 | +9,18 % | 5,2 |
+| **24-48 h** | 35 | **−2,70 %** | −1,1 |
+| **> 48 h** | 47 | **+6,38 %** | **+3,0** |
+
+L'agrégat ≤24 h contre >24 h est bien significatif (4,0 σ, p < 0,0001), mais le
+détail **ne décrit pas un effondrement** : c'est un creux dans la fenêtre
+24-48 h, entouré de valeurs positives des deux côtés, et le >48 h est
+significativement **positif**. Un couperet à 24 h supprimerait donc aussi une
+zone rentable. Le creux n'est pas significativement différent de zéro (n=35).
+
+**Conclusion : laisser Kelly réduire la mise quand l'edge est plus faible,
+plutôt que couper.** Un filtre ne se justifierait que si la contrainte était le
+capital ou le temps, pas l'espérance.
+
+Mécanisme proposé pour l'ancienne lecture, à reprendre avec prudence : loin du
+match, la ligne de **référence** est elle-même bruitée.
 On ne détecte alors pas une erreur du book soft mais une erreur temporaire de
 Pinnacle, qui se corrige d'ici la clôture — et contre nous. La décomposition le
 confirme : le côté gagnant est stable (+12 à +13 % partout), **seule la
@@ -419,6 +549,21 @@ gagnerait encore ~3 points, au prix de la moitié du volume.
 +5,8 / +6,7 / +5,4 / +7,2 % sur les tranches 1-2, 2-2,5, 2,5-3, 3-4. Plat.
 À edge égal, préférer les cotes basses **pour la variance**, pas pour l'edge.
 
+⚠️ **Sauf au-delà de 4.** Mesure du 30/07 sur le canal Premium :
+
+| Cote | n | CLV |
+|---|---|---|
+| 1,5-2 | 67 | +9,35 % |
+| 2-2,5 | 85 | +7,60 % |
+| 2,5-3 | 64 | +6,01 % |
+| 3-4 | 166 | +7,45 % |
+| **4-6** | **39** | **+21,22 %** |
+
+La voie « cotes hautes » du Premium — cote 4 à 6 avec EV ≥ 20 % — est de loin le
+meilleur segment du système. Même chose par EV : la tranche 30 %+ donne +52 %
+sur 9 opportunités. Ces deux filtres se recouvrent largement ; c'est
+probablement le **même** effet vu deux fois, pas deux effets indépendants.
+
 ### Les books — comparaison appariée
 
 Sur 269 sélections proposées par 2+ books (même clôture, seul le prix diffère) :
@@ -435,6 +580,24 @@ Sur 269 sélections proposées par 2+ books (même clôture, seul le prix diffè
 StarCasino paraît médiocre en vue brute (CLV +5,54 %) mais donne le meilleur
 prix une fois sur deux : son portefeuille de détections est moins bon, pas ses
 prix. À sélection identique, le prendre en priorité.
+
+Vue non appariée du 30/07, canal Premium (423 opportunités) : Betano +10,77 %,
+Napoleon +8,93 %, StarCasino +8,58 %, Ladbrokes +8,29 %, Unibet +8,05 %. **Une
+fourchette de 2,7 points sur cinq books** — l'edge est dans la détection, pas
+dans le book.
+
+### Le sport
+
+| Sport | n | CLV |
+|---|---|---|
+| **Tennis** | 92 | **+13,50 %** |
+| Football | 331 | +7,57 % |
+
+Le tennis rapporte près du double, et ces données sont **antérieures** aux
+corrections du 30/07 qui ont porté sa couverture de 72 % à 90 %. À reconfirmer
+au rapport du 02/08 — si l'écart tient, c'est l'argument le plus fort pour la
+seconde référence sharp, seule capable de lever le plafond des 71 matchs
+Pinnacle.
 
 ### Ce qui NE marche pas — pistes fermées
 
@@ -502,9 +665,149 @@ niveaux** — soit la trame entière, soit seulement le champ `Message` ou
 À vérifier : déclarer `SupportedCompressions: ""` dans le handshake pourrait
 suffire à obtenir du clair, le client annonçant ses capacités.
 
-### Reste à faire
+### ✅ Implémenté le 30/07
 
-`tools/circus-ingest.user.js` (WebSocket propre, boucle sur le prématch, push
-vers la VM), un endpoint `/ingest-circus`, et `src/scrapers/circus.py`.
-Filtrer les cotes ≤ 0 : elles signalent un marché fermé. La forme exacte de
-`GetPrematchSport` n'a pas été capturée sur Circus, à déduire de Bet777.
+`tools/circus-ingest.user.js`, l'endpoint `/ingest-circus?sport=`, et
+`src/scrapers/circus.py`. Football (SportId 844) et tennis (848), 4 jours de
+prématch, cycle de 30 s.
+
+**Codes de marché retenus** — égalité exacte, jamais de correspondance par
+ressemblance :
+
+| Sport | Code | Marché |
+|---|---|---|
+| Football | `P1XP2` | 1X2 |
+| Football | `total-goals-OverUnder`, `total-OverUnder` | totaux buts |
+| Tennis | `P1P2` | vainqueur |
+| Tennis | `total-games-OverUnder`, `total-games-over-under` | totaux jeux |
+
+⚠️ **Circus écrit le même marché de deux façons.** Au tennis : 43 marchés en
+`over-under` contre 24 en `OverUnder`, dans le **même** dump. N'en reconnaître
+qu'une faisait perdre 64 % des totaux. Le football a la même duplication
+(`total-OverUnder` / `total-goals-OverUnder`), déjà couverte. **Toujours
+vérifier les BetType réellement présents** avant de conclure qu'un marché est
+complet — le daemon liste les codes inconnus une fois par (sport, code) dans son
+log.
+
+⚠️ **Ne jamais reconnaître un marché à sa structure.** `draw-no-bet` porte
+exactement les deux mêmes noms d'équipe qu'un vainqueur ;
+`first-set-total-games-over-under-OverUnder` contient le code du match complet
+en sous-chaîne tout en ne mesurant qu'un set.
+
+Exclusions volontaires : mi-temps, set numéroté, premier set, double chance,
+both-teams-to-score, draw-no-bet, handicaps, qualification, vainqueur du
+trophée. Aucun n'a de contrepartie exploitable chez Pinnacle.
+
+### Attribution des réponses — trois fois cassée, à ne pas refaire
+
+Une réponse `GetPrematchSport` **ne rappelle pas quel sport a été demandé**.
+C'est le piège central du pont, qui a produit trois pannes successives :
+
+1. Attribuer « au premier sport encore en attente » → fichiers **croisés** (le
+   tennis écrit dans `soccer.json`), parce qu'une réponse tennis de 500 Ko
+   double une réponse football de 3 Mo.
+2. Sérialiser strictement pour corriger → 8 requêtes à la file dépassent 30 s,
+   donc **un cycle sur deux sauté**.
+3. Exiger les 4 journées avant de pousser → une journée sans aucun match renvoie
+   un bloc sans `SportId`, inattribuable ; le sport restait incomplet **pour
+   toujours** et son fichier vieillissait jusqu'au rejet par la garde de
+   fraîcheur.
+
+**Solution en place :** requêtes parallèles, attribution par (1) l'Id de requête
+si le serveur le renvoie, (2) le `SportId` porté par chaque `League`, (3) le
+sport le plus en retard. Un cycle incomplet est poussé quand même — une journée
+manquante ne coûte que les matchs les plus lointains, refuser de pousser coûtait
+le sport entier.
+
+`node tools/circus-ingest.selftest.js tools/circus-ingest.user.js` rejoue le
+userscript dans un faux navigateur et vérifie ces sept scénarios. **À lancer
+après toute modification du userscript** — le reste du projet est en Python,
+rien d'autre ne couvre ce fichier.
+
+Défense en profondeur : le serveur d'ingestion refuse (422) un push dont les
+`SportId` démentent le `?sport=`, sans toucher au fichier ; et le parseur écarte
+puis signale les ligues d'un autre sport.
+
+---
+
+## 11. Session du 30/07 — ce qui a changé
+
+### Les trois demandes initiales
+
+1. ✅ **Pause du live, réversible et sans effet de bord.** `VALUEBET_SCAN_LIVE=0`
+   par défaut (`src/config.py`). Le filtre agit **uniquement** là où une
+   détection devient une alerte : les cotes live continuent d'être collectées et
+   stockées, donc les clôtures Pinnacle, le CLV et les surebets ne perdent rien.
+   Rallumer : `VALUEBET_SCAN_LIVE=1` puis redémarrer le daemon.
+   Les **surebets live continuent** — c'est voulu. Un value bet compare à une
+   ligne de référence prématch, figée au coup d'envoi ; un surebet compare deux
+   cotes vivantes entre elles et reste valide.
+2. ✅ **Alerte panne Pinnacle.** Après 5 cycles consécutifs sans cotes sur un
+   sport, un message part sur le canal critique, plus un message de
+   rétablissement. Une seule alerte par panne. Seuil :
+   `PINNACLE_ALERT_AFTER_CYCLES`.
+3. ✅ **Circus.** Voir §10.
+
+### Les cinq pannes silencieuses trouvées
+
+Toutes du même type : **un book interrogé, qui répond correctement, et dont on
+jetait les données — sans la moindre erreur dans les logs.**
+
+| Panne | Effet | Cause |
+|---|---|---|
+| Circus tennis, totaux | 64 % des marchés perdus | deux orthographes du même `BetType` |
+| Napoleon tennis | book entièrement absent | seul le marché 547 (1X2) était lu ; le tennis utilise 521 |
+| Circus, fichiers croisés | football lisant du tennis | réponses attribuées par ordre d'arrivée |
+| Tennis, rapprochement | 28 % des matchs non appariés | tolérance d'horaire de 10 min |
+| Circus tennis, journée vide | book disparu 40 min | cycle jugé incomplet pour toujours |
+
+**C'est le mode de défaillance dominant de ce système.** Un scraper qui plante
+se voit ; un scraper qui filtre trop ne se voit pas. Le réflexe à garder :
+compter ce qui **sort** de chaque book, pas vérifier qu'il n'y a pas d'erreur.
+`books-coverage` est l'outil pour ça.
+
+### Le rapprochement d'événements
+
+**Tolérance d'horaire par sport** (`src/matcher.py`, `TIME_TOLERANCE_BY_SPORT`) :
+tennis 180 min, football 10 min (inchangé).
+
+Motif : au tennis un match commence quand le précédent libère le court, et
+chaque book publie sa propre estimation. Mesuré — 10 des 19 matchs Pinnacle non
+couverts avaient un candidat aux noms **identiques à 100 %**, écarté pour un
+décalage de 20 à 130 minutes. Ce ne sont pas les traductions qui posaient
+problème, ce sont les horaires.
+
+Résultat : couverture tennis 72 % → **90 %**, et surtout **169 → 247 paires
+book × match (+46 %)** — c'est ce nombre qui détermine le volume de détections,
+pas la couverture.
+
+Sûr parce que le nom reste le juge : deux joueurs ne se rencontrent qu'une fois
+par tournoi, aucun autre match ne peut porter les deux mêmes noms le même jour.
+La garde d'ambiguïté devient même plus stricte, voyant plus de références
+concurrentes.
+
+⚠️ **Effet de bord corrigé le soir même.** Une cote rapprochée adopte la clé de
+la référence, donc **l'heure de Pinnacle**. Quand celle-ci est postérieure à
+celle du book, un match déjà commencé passait pour à venir et la pause live ne
+le filtrait pas — des alertes tennis en direct sont sorties. `OddQuote` et
+`ValueBet` conservent désormais `book_event_key`, et les deux gardes retiennent
+la **plus précoce** des heures connues.
+
+### Cadences
+
+| Flux | Avant | Après |
+|---|---|---|
+| Circus football + tennis | — | 30 s |
+| Betano, liste 24 h | 2 min | 30 s |
+| Betano, balayage compétitions | 30 min | 30 min (inchangé) |
+| Betano live | 15 s | 15 s |
+
+Le balayage des compétitions reste à 30 min : ce sont ses ~110 requêtes qui se
+remarqueraient, et il ne sert qu'à atteindre des matchs à plusieurs jours dont
+les prix ne dérivent presque pas. Il occupe 2-3 minutes pendant lesquelles les
+fichiers prématch vieillissent — normal, sans conséquence (garde à 30 min).
+
+### Tests
+
+312 tests Python + 7 scénarios JavaScript. Nouveaux fichiers :
+`tests/test_circus_ingest.py`, et l'ajout de `tools/circus-ingest.selftest.js`.
