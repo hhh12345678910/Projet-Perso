@@ -216,7 +216,13 @@
   // is ~110 requests and only exists to reach fixtures weeks out, whose prices
   // barely drift — running it every few minutes would be ~1300 requests/hour
   // at Betano for almost no new information, and would look like a bot.
-  const PREMATCH_INTERVAL_MS = 2 * 60 * 1000;
+  //
+  // 30 s on the fast list, to match the Circus bridge. That is 2 requests per
+  // cycle (one per sport), so ~240/hour — the same order as the live overview
+  // already running at 15 s. The walk stays at 30 min: it is what would draw
+  // attention, and its fixtures are days out, where the measured CLV is poor
+  // anyway. Raise this first if Betano ever starts challenging the session.
+  const PREMATCH_INTERVAL_MS = 30 * 1000;
   const FULL_SWEEP_INTERVAL_MS = 30 * 60 * 1000;
   // matchs-a-venir only returns roughly the next 24 h — measured: Betano's
   // horizon was J+0 while every other book reached J+35 to J+84. Each of its
