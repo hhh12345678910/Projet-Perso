@@ -682,6 +682,96 @@ def fetch_betcenter_quotes(sport: str) -> list[OddQuote]:
         return []
 
 
+# Régulation des appels à Pinnacle
+# -------------------------------
+# L'API invitée limite au débit, pas à l'IP : le 403 saute d'un sport à l'autre
+# selon celui qui consomme le quota — le football, avec ses 23 000 cotes, le
+# vide presque à lui seul. Deux garde-fous, parce qu'un cycle de 20 s
+# redemandait immédiatement après un refus, ce qui prolonge la limitation au
+# lieu de la laisser retomber.
+#
+# 1. Espacement minimum entre deux appels réussis pour un même sport. La ligne
+#    de référence ne bouge pas assez en 30 s pour justifier de la redemander à
+#    chaque cycle ; les books soft, eux, restent à 30 s. Le prix de clôture
+#    reste capturé à moins d'une minute du coup d'envoi, ce qui suffit.
+# 2. Recul exponentiel après un 403 ou un 429, remis à zéro au premier succès.
+#
+# Entre deux appels, les dernières cotes obtenues sont réutilisées tant
+# qu'elles n'ont pas dépassé PINNACLE_MAX_REUSE_SEC. Au-delà, mieux vaut aucune
+# détection qu'une détection contre une référence périmée : c'est exactement
+# ainsi qu'on fabrique des value bets fantômes.
+_PINNACLE_MIN_INTERVAL = float(os.getenv("PINNACLE_MIN_INTERVAL_SEC", "60"))
+_PINNACLE_MAX_REUSE = float(os.getenv("PINNACLE_MAX_REUSE_SEC", "150"))
+_PINNACLE_BACKOFF_START = 60.0
+_PINNACLE_BACKOFF_MAX = 600.0
+_PINNACLE_CACHE: dict[str, tuple[float, list[OddQuote]]] = {}
+# Vrai quand le dernier appel a été servi par le cache. Ces cotes sont DÉJÀ en
+# base avec leur horodatage d'origine : les réinsérer les dupliquerait, et
+# pinnacle_closing_group — qui prend toutes les issues du dernier instantané —
+# déviguerait alors sur six cotes au lieu de trois. L'overround doublerait et
+# la ligne de clôture serait fausse, sans le moindre signe extérieur.
+_PINNACLE_SERVED_FROM_CACHE: dict[str, bool] = {}
+_PINNACLE_BLOCKED_UNTIL: dict[str, float] = {}
+_PINNACLE_BACKOFF: dict[str, float] = {}
+_PINNACLE_LOCK = threading.Lock()
+
+
+def _pinnacle_cached(sport: str) -> list[OddQuote]:
+    """Dernières cotes Pinnacle si elles sont encore utilisables, sinon []."""
+    hit = _PINNACLE_CACHE.get(sport)
+    if not hit:
+        return []
+    age = time.monotonic() - hit[0]
+    if age > _PINNACLE_MAX_REUSE:
+        return []
+    return hit[1]
+
+
+def fetch_pinnacle_quotes(sport: str) -> list[OddQuote]:
+    """Cotes Pinnacle, en respectant l'espacement et le recul après refus."""
+    now = time.monotonic()
+    with _PINNACLE_LOCK:
+        blocked_until = _PINNACLE_BLOCKED_UNTIL.get(sport, 0.0)
+        cached = _PINNACLE_CACHE.get(sport)
+        fresh_enough = cached and (now - cached[0]) < _PINNACLE_MIN_INTERVAL
+        if now < blocked_until or fresh_enough:
+            _PINNACLE_SERVED_FROM_CACHE[sport] = True
+            return _pinnacle_cached(sport)
+
+    try:
+        with PinnacleScraper() as pin:
+            quotes = list(pin.fetch_market_quotes(sport))
+    except httpx.HTTPStatusError as e:
+        if e.response.status_code in (403, 429):
+            with _PINNACLE_LOCK:
+                back = min(_PINNACLE_BACKOFF.get(sport, 0.0) * 2 or _PINNACLE_BACKOFF_START,
+                           _PINNACLE_BACKOFF_MAX)
+                _PINNACLE_BACKOFF[sport] = back
+                _PINNACLE_BLOCKED_UNTIL[sport] = time.monotonic() + back
+            console.print(
+                f"[yellow]Pinnacle {sport} : HTTP {e.response.status_code}, "
+                f"pause de {back:.0f}s avant nouvelle tentative[/yellow]"
+            )
+            _PINNACLE_SERVED_FROM_CACHE[sport] = True
+            return _pinnacle_cached(sport)
+        raise
+
+    _PINNACLE_SERVED_FROM_CACHE[sport] = False
+    if quotes:
+        with _PINNACLE_LOCK:
+            _PINNACLE_CACHE[sport] = (time.monotonic(), quotes)
+            _PINNACLE_BACKOFF.pop(sport, None)
+            _PINNACLE_BLOCKED_UNTIL.pop(sport, None)
+    return quotes
+
+
+def pinnacle_was_cached(sport: str) -> bool:
+    """Les cotes Pinnacle du dernier appel viennent-elles du cache ?
+
+    À consulter avant de les persister : elles sont déjà en base."""
+    return _PINNACLE_SERVED_FROM_CACHE.get(sport, False)
+
+
 def _fetch_all_parallel(
     sport: str,
     betano_file: str | None = None,
@@ -690,12 +780,8 @@ def _fetch_all_parallel(
 ) -> list[OddQuote]:
     """Fetch Pinnacle + all soft books concurrently. Returns the merged list;
     callers split by book to route the sharp reference separately."""
-    def _pinnacle() -> list[OddQuote]:
-        with PinnacleScraper() as pin:
-            return list(pin.fetch_market_quotes(sport))
-
     tasks: dict[str, Callable[[], list[OddQuote]]] = {
-        "Pinnacle":      _pinnacle,
+        "Pinnacle":      lambda: fetch_pinnacle_quotes(sport),
         "Unibet":        lambda: fetch_unibet_quotes(sport),
         # "711":           lambda: fetch_sevenelevenbe_quotes(sport),  # Kambi jumeau d'Unibet -> desactive (anti rate-limit)
         # "Bingoal":       lambda: fetch_bingoal_quotes(sport),  # Kambi jumeau d'Unibet -> desactive (anti rate-limit)
@@ -783,7 +869,10 @@ def scan(
         fair = build_fair_lines(quotes, cfg.devig_method)
         console.print(f"  → {len(fair)} fair lines (devig={cfg.devig_method}, sharp=Pinnacle)")
 
-        storage.insert_quotes(quotes)
+        # Ne pas réenregistrer un instantané servi par le cache : il est déjà
+        # en base, et le dupliquer fausserait le groupe de clôture.
+        if not pinnacle_was_cached(current_sport):
+            storage.insert_quotes(quotes)
 
         sport = current_sport  # keep local var name for downstream prints
 
@@ -1038,7 +1127,8 @@ def _daemon_scan_sport(
                 start, home_norm, away_norm = parsed
                 event_rows.append((ek, current_sport, "", home_norm, away_norm, start.isoformat()))
         storage.upsert_events(event_rows)
-        storage.insert_quotes(pinnacle_q)
+        if not pinnacle_was_cached(current_sport):
+            storage.insert_quotes(pinnacle_q)
 
         ref_keys = {fl.event_key for fl in fair.values()}
         soft_q = remap_to_reference(soft_raw, ref_keys, current_sport)
