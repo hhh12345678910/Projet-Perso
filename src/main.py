@@ -690,17 +690,20 @@ def fetch_betcenter_quotes(sport: str) -> list[OddQuote]:
 # redemandait immédiatement après un refus, ce qui prolonge la limitation au
 # lieu de la laisser retomber.
 #
-# 1. Espacement minimum entre deux appels réussis pour un même sport. La ligne
-#    de référence ne bouge pas assez en 30 s pour justifier de la redemander à
-#    chaque cycle ; les books soft, eux, restent à 30 s. Le prix de clôture
-#    reste capturé à moins d'une minute du coup d'envoi, ce qui suffit.
-# 2. Recul exponentiel après un 403 ou un 429, remis à zéro au premier succès.
+# 1. Recul exponentiel après un 403 ou un 429, remis à zéro au premier succès.
+#    C'est le garde-fou principal : redemander toutes les 20 s pendant une
+#    limitation la prolonge au lieu de la laisser retomber.
+# 2. Espacement minimum entre deux appels réussis, **désactivé par défaut**
+#    (PINNACLE_MIN_INTERVAL_SEC=0) : la référence est réinterrogée à chaque
+#    cycle, comme les books soft. Le mettre à 60 diviserait par deux la charge
+#    sur Pinnacle au prix d'une ligne de référence vieille d'un cycle — levier
+#    à activer si les 403 persistent malgré le recul.
 #
 # Entre deux appels, les dernières cotes obtenues sont réutilisées tant
 # qu'elles n'ont pas dépassé PINNACLE_MAX_REUSE_SEC. Au-delà, mieux vaut aucune
 # détection qu'une détection contre une référence périmée : c'est exactement
 # ainsi qu'on fabrique des value bets fantômes.
-_PINNACLE_MIN_INTERVAL = float(os.getenv("PINNACLE_MIN_INTERVAL_SEC", "60"))
+_PINNACLE_MIN_INTERVAL = float(os.getenv("PINNACLE_MIN_INTERVAL_SEC", "0"))
 _PINNACLE_MAX_REUSE = float(os.getenv("PINNACLE_MAX_REUSE_SEC", "150"))
 _PINNACLE_BACKOFF_START = 60.0
 _PINNACLE_BACKOFF_MAX = 600.0
@@ -733,7 +736,8 @@ def fetch_pinnacle_quotes(sport: str) -> list[OddQuote]:
     with _PINNACLE_LOCK:
         blocked_until = _PINNACLE_BLOCKED_UNTIL.get(sport, 0.0)
         cached = _PINNACLE_CACHE.get(sport)
-        fresh_enough = cached and (now - cached[0]) < _PINNACLE_MIN_INTERVAL
+        fresh_enough = (_PINNACLE_MIN_INTERVAL > 0 and cached
+                        and (now - cached[0]) < _PINNACLE_MIN_INTERVAL)
         if now < blocked_until or fresh_enough:
             _PINNACLE_SERVED_FROM_CACHE[sport] = True
             return _pinnacle_cached(sport)

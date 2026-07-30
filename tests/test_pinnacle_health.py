@@ -80,12 +80,14 @@ def test_no_telegram_config_is_not_an_error(monkeypatch):
     assert send_system_alert(None, "test") is False
 
 
-def test_cached_quotes_are_never_restored(monkeypatch):
-    """Un instantané réutilisé est DÉJÀ en base. Le réinsérer dupliquerait
-    chaque issue, et le groupe de clôture — qui prend toutes les issues du
-    dernier instantané — déviguerait sur six cotes au lieu de trois :
-    overround doublé, ligne juste fausse, aucun signe extérieur."""
+def test_quotes_reused_during_a_backoff_are_never_restored(monkeypatch):
+    """Pendant une pause après 403, les dernières cotes servent encore à
+    détecter — mais elles sont DÉJÀ en base. Les réinsérer dupliquerait chaque
+    issue, et pinnacle_closing_group, qui devigue toutes les issues du dernier
+    instantané, travaillerait sur six cotes au lieu de trois : overround
+    doublé, ligne de clôture fausse, aucun signe extérieur."""
     from datetime import datetime, timezone
+    import httpx
     import src.main as m
     from src.models import Book, MarketType, OddQuote, Outcome
 
@@ -93,7 +95,44 @@ def test_cached_quotes_are_never_restored(monkeypatch):
                   market=MarketType.H2H, outcome=Outcome(label="home"),
                   decimal_odd=2.0, fetched_at=datetime.now(timezone.utc),
                   source_event_id="1")]
+    state = {"fail": False}
+
+    class _Pin:
+        def __enter__(self): return self
+        def __exit__(self, *a): return False
+        def fetch_market_quotes(self, sport):
+            if state["fail"]:
+                raise httpx.HTTPStatusError(
+                    "403", request=httpx.Request("GET", "https://x"),
+                    response=httpx.Response(403))
+            return iter(q)
+
+    monkeypatch.setattr(m, "PinnacleScraper", _Pin)
+    for d in (m._PINNACLE_CACHE, m._PINNACLE_BLOCKED_UNTIL,
+              m._PINNACLE_BACKOFF, m._PINNACLE_SERVED_FROM_CACHE):
+        d.clear()
+
+    # Succès : les cotes sont neuves, donc à enregistrer.
+    assert m.fetch_pinnacle_quotes("soccer") == q
+    assert m.pinnacle_was_cached("soccer") is False
+
+    # 403 : on retombe sur le cache, et il ne faut surtout pas le réenregistrer.
+    state["fail"] = True
+    assert m.fetch_pinnacle_quotes("soccer") == q
+    assert m.pinnacle_was_cached("soccer") is True
+
+
+def test_pinnacle_is_queried_every_cycle_by_default(monkeypatch):
+    """Pas d'espacement imposé : seule une limitation avérée met en pause."""
+    from datetime import datetime, timezone
+    import src.main as m
+    from src.models import Book, MarketType, OddQuote, Outcome
+
     calls = {"n": 0}
+    q = [OddQuote(event_key="202608011200::a__vs__b", book=Book.PINNACLE,
+                  market=MarketType.H2H, outcome=Outcome(label="home"),
+                  decimal_odd=2.0, fetched_at=datetime.now(timezone.utc),
+                  source_event_id="1")]
 
     class _Pin:
         def __enter__(self): return self
@@ -103,18 +142,15 @@ def test_cached_quotes_are_never_restored(monkeypatch):
             return iter(q)
 
     monkeypatch.setattr(m, "PinnacleScraper", _Pin)
-    m._PINNACLE_CACHE.clear(); m._PINNACLE_BLOCKED_UNTIL.clear()
-    m._PINNACLE_SERVED_FROM_CACHE.clear()
+    monkeypatch.setattr(m, "_PINNACLE_MIN_INTERVAL", 0.0)
+    for d in (m._PINNACLE_CACHE, m._PINNACLE_BLOCKED_UNTIL,
+              m._PINNACLE_BACKOFF, m._PINNACLE_SERVED_FROM_CACHE):
+        d.clear()
 
-    assert m.fetch_pinnacle_quotes("soccer") == q
-    assert calls["n"] == 1
+    for _ in range(3):
+        m.fetch_pinnacle_quotes("soccer")
+    assert calls["n"] == 3
     assert m.pinnacle_was_cached("soccer") is False
-
-    # Deuxième appel dans la fenêtre d'espacement : servi par le cache, donc
-    # aucune requête réseau et surtout aucun réenregistrement.
-    assert m.fetch_pinnacle_quotes("soccer") == q
-    assert calls["n"] == 1
-    assert m.pinnacle_was_cached("soccer") is True
 
 
 def test_a_403_backs_off_instead_of_retrying_every_cycle():
