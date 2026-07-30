@@ -27,10 +27,23 @@ SPORT_IDS = {
     "volleyball": 1,
 }
 
-# Only the 1X2 / match-result market (marketId 547) is carried in the by-date
-# feed. Outcome codes are locale-independent: 1 = home, 0 = draw, 2 = away.
-_MATCH_RESULT_MARKET_ID = 547
-_OUTCOME_LABELS = {"1": "home", "0": "draw", "2": "away"}
+# Only the match-winner market is carried in the by-date feed, and its id
+# depends on the sport: 547 for a three-way 1X2, 521 for a two-way winner.
+# Outcome codes are locale-independent: 1 = home, 0 = draw, 2 = away.
+#
+# Deliberately keyed by sport rather than accepting both ids everywhere. A
+# two-way market on a sport that has a draw is not a winner market — it is
+# draw-no-bet or something like it, carrying the very same 1/2 codes. Taking
+# it for a winner would price a different bet against Pinnacle's 1X2 and
+# invent value that does not exist.
+_MARKET_BY_SPORT: dict[str, tuple[int, dict[str, str]]] = {
+    "soccer": (547, {"1": "home", "0": "draw", "2": "away"}),
+    "hockey": (547, {"1": "home", "0": "draw", "2": "away"}),
+    "tennis": (521, {"1": "home", "2": "away"}),
+    "basketball": (521, {"1": "home", "2": "away"}),
+    "volleyball": (521, {"1": "home", "2": "away"}),
+}
+_DEFAULT_MARKET = _MARKET_BY_SPORT["soccer"]
 
 
 def _is_retryable(exc: BaseException) -> bool:
@@ -101,10 +114,15 @@ class NapoleonScraper:
         return r.json()
 
 
-def parse_by_date(payload: dict) -> Iterator[OddQuote]:
-    """Walk a Superbet by-date payload and yield 1X2 OddQuote objects tagged as
-    Napoleon. Shape: payload["data"] is a list of events; each has matchName
-    ('home·away'), matchDate (UTC), and an `odds` list."""
+def parse_by_date(payload: dict, sport: str = "soccer") -> Iterator[OddQuote]:
+    """Walk a Superbet by-date payload and yield match-winner OddQuote objects
+    tagged as Napoleon. Shape: payload["data"] is a list of events; each has
+    matchName ('home·away'), matchDate (UTC), and an `odds` list.
+
+    `sport` selects which market id counts as the winner — see
+    _MARKET_BY_SPORT. An unknown sport falls back to the three-way market
+    rather than guessing, so it yields nothing instead of yielding wrong."""
+    market_id, labels = _MARKET_BY_SPORT.get(sport, _DEFAULT_MARKET)
     now = datetime.now(timezone.utc)
     for ev in payload.get("data") or []:
         name = ev.get("matchName") or ""
@@ -126,11 +144,11 @@ def parse_by_date(payload: dict) -> Iterator[OddQuote]:
         source_id = str(ev.get("eventId", ""))
 
         for o in ev.get("odds") or []:
-            if o.get("marketId") != _MATCH_RESULT_MARKET_ID:
+            if o.get("marketId") != market_id:
                 continue
             if o.get("status") not in (None, "active"):
                 continue
-            label = _OUTCOME_LABELS.get(str(o.get("code")))
+            label = labels.get(str(o.get("code")))
             if label is None:
                 continue
             decimal_odd = _odd(o.get("price"))

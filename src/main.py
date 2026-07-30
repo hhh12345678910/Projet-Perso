@@ -545,12 +545,15 @@ def fetch_scooore_quotes(sport: str) -> list[OddQuote]:
 
 
 def fetch_napoleon_quotes(sport: str) -> list[OddQuote]:
-    """Fetch + parse Napoleon's prematch 1X2 offer (Superbet platform, public
-    REST, independent odds — genuinely widens value/surebet coverage)."""
+    """Fetch + parse Napoleon's prematch match-winner offer (Superbet platform,
+    public REST, independent odds — genuinely widens value/surebet coverage).
+
+    Le sport doit être transmis au parseur : l'identifiant du marché vainqueur
+    en dépend, et sans lui le tennis était intégralement jeté."""
     try:
         with NapoleonScraper() as nap:
             data = nap.fetch_by_date(sport)
-        return list(napoleon_parse_by_date(data))
+        return list(napoleon_parse_by_date(data, sport))
     except httpx.HTTPError as e:
         console.print(f"[yellow]Napoleon skipped:[/yellow] {e}")
         return []
