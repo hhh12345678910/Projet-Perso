@@ -717,6 +717,16 @@ _PINNACLE_SERVED_FROM_CACHE: dict[str, bool] = {}
 _PINNACLE_BLOCKED_UNTIL: dict[str, float] = {}
 _PINNACLE_BACKOFF: dict[str, float] = {}
 _PINNACLE_LOCK = threading.Lock()
+# Les sports sont scannés en parallèle : sans sérialisation, chaque cycle part
+# en rafale de six requêtes Pinnacle simultanées (deux par sport, trois sports).
+# Le délai interne au scraper ne sépare que les deux requêtes d'un même sport.
+# Un limiteur de débit sanctionne bien plus durement une rafale que le même
+# volume étalé — c'est probablement ce qui déclenchait les blocages prolongés
+# du football, le plus gros des trois. Sérialiser ne change pas la fréquence
+# d'interrogation, seulement sa répartition dans le cycle.
+_PINNACLE_CALL_LOCK = threading.Lock()
+_PINNACLE_LAST_CALL = 0.0
+_PINNACLE_GAP = float(os.getenv("PINNACLE_GAP_SEC", "1.5"))
 
 
 def _pinnacle_cached(sport: str) -> list[OddQuote]:
@@ -742,10 +752,17 @@ def fetch_pinnacle_quotes(sport: str) -> list[OddQuote]:
             _PINNACLE_SERVED_FROM_CACHE[sport] = True
             return _pinnacle_cached(sport)
 
+    global _PINNACLE_LAST_CALL
     try:
-        with PinnacleScraper() as pin:
-            quotes = list(pin.fetch_market_quotes(sport))
+        with _PINNACLE_CALL_LOCK:
+            gap = _PINNACLE_GAP - (time.monotonic() - _PINNACLE_LAST_CALL)
+            if gap > 0:
+                time.sleep(gap)
+            with PinnacleScraper() as pin:
+                quotes = list(pin.fetch_market_quotes(sport))
+            _PINNACLE_LAST_CALL = time.monotonic()
     except httpx.HTTPStatusError as e:
+        _PINNACLE_LAST_CALL = time.monotonic()
         if e.response.status_code in (403, 429):
             with _PINNACLE_LOCK:
                 back = min(_PINNACLE_BACKOFF.get(sport, 0.0) * 2 or _PINNACLE_BACKOFF_START,

@@ -108,6 +108,7 @@ def test_quotes_reused_during_a_backoff_are_never_restored(monkeypatch):
             return iter(q)
 
     monkeypatch.setattr(m, "PinnacleScraper", _Pin)
+    monkeypatch.setattr(m, "_PINNACLE_GAP", 0.0)   # l'écartement n'est pas l'objet ici
     for d in (m._PINNACLE_CACHE, m._PINNACLE_BLOCKED_UNTIL,
               m._PINNACLE_BACKOFF, m._PINNACLE_SERVED_FROM_CACHE):
         d.clear()
@@ -143,6 +144,7 @@ def test_pinnacle_is_queried_every_cycle_by_default(monkeypatch):
 
     monkeypatch.setattr(m, "PinnacleScraper", _Pin)
     monkeypatch.setattr(m, "_PINNACLE_MIN_INTERVAL", 0.0)
+    monkeypatch.setattr(m, "_PINNACLE_GAP", 0.0)
     for d in (m._PINNACLE_CACHE, m._PINNACLE_BLOCKED_UNTIL,
               m._PINNACLE_BACKOFF, m._PINNACLE_SERVED_FROM_CACHE):
         d.clear()
@@ -169,6 +171,7 @@ def test_a_403_backs_off_instead_of_retrying_every_cycle():
 
     m._PINNACLE_CACHE.clear(); m._PINNACLE_BLOCKED_UNTIL.clear()
     m._PINNACLE_BACKOFF.clear(); m._PINNACLE_SERVED_FROM_CACHE.clear()
+    old_gap, m._PINNACLE_GAP = m._PINNACLE_GAP, 0.0
     old = m.PinnacleScraper
     m.PinnacleScraper = _Pin
     try:
@@ -177,3 +180,50 @@ def test_a_403_backs_off_instead_of_retrying_every_cycle():
         assert m._PINNACLE_BLOCKED_UNTIL["soccer"] > time.monotonic()
     finally:
         m.PinnacleScraper = old
+        m._PINNACLE_GAP = old_gap
+
+
+def test_pinnacle_calls_are_serialised_across_sports(monkeypatch):
+    """Les sports sont scannés en parallèle. Sans sérialisation, chaque cycle
+    part en rafale de six requêtes simultanées — ce qu'un limiteur de débit
+    sanctionne bien plus durement que le même volume étalé."""
+    import threading
+    from datetime import datetime, timezone
+    import src.main as m
+    from src.models import Book, MarketType, OddQuote, Outcome
+
+    import time
+
+    overlap = {"max": 0, "cur": 0}
+    guard = threading.Lock()
+
+    class _Pin:
+        def __enter__(self): return self
+        def __exit__(self, *a): return False
+        def fetch_market_quotes(self, sport):
+            with guard:
+                overlap["cur"] += 1
+                overlap["max"] = max(overlap["max"], overlap["cur"])
+            time.sleep(0.05)
+            with guard:
+                overlap["cur"] -= 1
+            return iter([OddQuote(
+                event_key="202608011200::a__vs__b", book=Book.PINNACLE,
+                market=MarketType.H2H, outcome=Outcome(label="home"),
+                decimal_odd=2.0, fetched_at=datetime.now(timezone.utc),
+                source_event_id="1")])
+
+    monkeypatch.setattr(m, "PinnacleScraper", _Pin)
+    monkeypatch.setattr(m, "_PINNACLE_GAP", 0.0)
+    for d in (m._PINNACLE_CACHE, m._PINNACLE_BLOCKED_UNTIL,
+              m._PINNACLE_BACKOFF, m._PINNACLE_SERVED_FROM_CACHE):
+        d.clear()
+
+    threads = [threading.Thread(target=m.fetch_pinnacle_quotes, args=(s,))
+               for s in ("soccer", "tennis", "hockey")]
+    for t in threads:
+        t.start()
+    for t in threads:
+        t.join()
+
+    assert overlap["max"] == 1, "deux appels Pinnacle simultanés"
