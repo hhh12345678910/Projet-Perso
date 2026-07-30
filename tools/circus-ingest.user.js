@@ -42,6 +42,7 @@
   ];
   const DAYS = 4;                 // jours de prématch à balayer
   const EVERY_SEC = 30;           // fréquence d'un cycle complet
+  const REQ_TIMEOUT_MS = 8000;    // au-delà, la réponse est considérée perdue
   const LZS = "--##LZS2##--";
 
   const uuid = () =>
@@ -177,7 +178,30 @@
   // se faire remarquer. Une reconnexion n'a lieu que si la connexion tombe.
   let ws = null;
   let ready = false;
-  let pending = {};       // sport -> blocs reçus en cours de cycle
+
+  // Attribution des réponses
+  // ------------------------
+  // Une réponse GetPrematchSport ne rappelle pas quel sport a été demandé. La
+  // première version attribuait donc chaque réponse « au premier sport encore
+  // en attente », en supposant l'ordre d'arrivée identique à l'ordre d'envoi.
+  // C'est faux : une réponse tennis de 500 Ko double une réponse football de
+  // 3 Mo, et les deux fichiers finissent croisés — vu en production.
+  //
+  // Deux garde-fous plutôt qu'un :
+  //   1. une seule requête en vol à la fois, donc plus d'ambiguïté possible ;
+  //   2. chaque League porte son SportId — quand il est là, il fait foi, même
+  //      si la sérialisation venait à être contournée.
+  let queue = [];         // requêtes restantes du cycle
+  let inflight = null;    // requête en vol : { key, id, day, timer }
+  let bucket = {};        // sport -> blocs reçus pendant ce cycle
+
+  const sportOf = (block) => {
+    for (const lg of (block && block.Leagues) || []) {
+      const m = SPORTS.find((s) => s.id === lg.SportId);
+      if (m) return m.key;
+    }
+    return null;          // journée vide : aucune ligue, donc aucun SportId
+  };
 
   function connect() {
     if (ws && (ws.readyState === 0 || ws.readyState === 1)) return;
@@ -204,45 +228,70 @@
         if (r.Identifier !== "GetPrematchSport" || !r.Content) continue;
         let block;
         try { block = JSON.parse(r.Content); } catch (err) { continue; }
-        // La réponse ne rappelle pas le sport demandé : on l'attribue au
-        // premier sport encore en attente, les requêtes étant sérialisées.
-        const sport = Object.keys(pending).find((k) => pending[k].left > 0);
-        if (!sport) continue;
-        pending[sport].blocks.push(block);
-        if (--pending[sport].left <= 0) {
-          push(sport, pending[sport].blocks);
-          delete pending[sport];
-        }
+        if (!inflight) continue;          // réponse en retard, cycle abandonné
+        clearTimeout(inflight.timer);
+        // Le SportId de la réponse prime sur le sport demandé : c'est la seule
+        // information qui vienne des données elles-mêmes.
+        const owner = sportOf(block) || inflight.key;
+        if (bucket[owner]) bucket[owner].push(block);
+        inflight = null;
+        pump();
       }
     };
 
-    ws.onclose = () => { ready = false; setTimeout(connect, 5000); };
+    ws.onclose = () => {
+      ready = false;
+      if (inflight) { clearTimeout(inflight.timer); inflight = null; }
+      queue = [];
+      setTimeout(connect, 5000);
+    };
     ws.onerror = () => { try { ws.close(); } catch (e) {} };
+  }
+
+  function pump() {
+    if (inflight) return;
+    const next = queue.shift();
+    if (!next) { flush(); return; }
+    if (!ws || ws.readyState !== 1) { queue = []; return; }
+
+    inflight = next;
+    // Une réponse perdue ne doit pas figer le cycle : on passe à la suivante.
+    inflight.timer = setTimeout(() => { inflight = null; pump(); }, REQ_TIMEOUT_MS);
+    ws.send(request("GetPrematchSport", 201, {
+      locale: "fr", isUserLoggedIn: false, SportId: next.id,
+      DiffMinUtc: -new Date().getTimezoneOffset(),
+      Filter: { Type: 2, LocalDate: localDate(next.day) },
+    }));
+  }
+
+  function flush() {
+    for (const sp of SPORTS) {
+      const blocks = bucket[sp.key] || [];
+      // Cycle incomplet : on garde le fichier précédent plutôt que de
+      // l'écraser par moins de jours. La garde de fraîcheur côté VM rendra la
+      // panne visible si ça dure, là où un fichier tronqué passerait inaperçu.
+      if (blocks.length < DAYS) {
+        state[sp.key] = blocks.length + "/" + DAYS + "j";
+        paint("#f57c00");
+        continue;
+      }
+      push(sp.key, blocks);
+    }
+    bucket = {};
   }
 
   function cycle() {
     if (!ready || !ws || ws.readyState !== 1) { connect(); return; }
-    // Un cycle précédent encore en vol : on saute plutôt que d'empiler des
-    // requêtes dont les réponses seraient attribuées au mauvais sport.
-    if (Object.keys(pending).length) return;
+    // Un cycle précédent encore en cours : on saute ce tour plutôt que
+    // d'empiler des requêtes.
+    if (inflight || queue.length) return;
 
-    let delay = 0;
+    bucket = {};
     for (const sp of SPORTS) {
-      pending[sp.key] = { left: DAYS, blocks: [] };
-      for (let d = 0; d < DAYS; d++) {
-        setTimeout(() => {
-          if (!ws || ws.readyState !== 1) return;
-          ws.send(request("GetPrematchSport", 201, {
-            locale: "fr", isUserLoggedIn: false, SportId: sp.id,
-            DiffMinUtc: -new Date().getTimezoneOffset(),
-            Filter: { Type: 2, LocalDate: localDate(d) },
-          }));
-        }, delay);
-        delay += 250;
-      }
+      bucket[sp.key] = [];
+      for (let d = 0; d < DAYS; d++) queue.push({ key: sp.key, id: sp.id, day: d });
     }
-    // Filet : une réponse perdue ne doit pas figer les cycles suivants.
-    setTimeout(() => { pending = {}; }, EVERY_SEC * 1000 - 2000);
+    pump();
   }
 
   if (TOKEN.indexOf("PASTE_TOKEN") !== -1) {

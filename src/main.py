@@ -604,7 +604,9 @@ def fetch_starcasinosport_quotes(sport: str) -> list[OddQuote]:
 # Sports poussés par le userscript Circus. Le daemon scanne sport par sport et
 # lit un fichier par sport ; ajouter un sport ici suppose de l'ajouter aussi
 # dans tools/circus-ingest.user.js, sinon le fichier n'existera jamais.
-CIRCUS_SPORTS = {"soccer", "tennis"}
+# SportId Gaming1, lus dans la réponse GetSports. Ils servent à vérifier que le
+# fichier poussé contient bien le sport annoncé par son nom.
+CIRCUS_SPORTS = {"soccer": 844, "tennis": 848}
 # Clé (sport, BetType) et non le seul BetType : un code déjà vu en football
 # rendrait muet le même code en tennis, alors que c'est précisément le signal
 # attendu — les deux sports ne nomment pas leurs marchés pareil.
@@ -628,6 +630,7 @@ def fetch_circus_quotes(sport: str) -> list[OddQuote]:
         f"{directory}/{sport}.json", max_age,
         print_fn=lambda s: console.print(f"[yellow]{s}[/yellow]"),
         unknown_types=unknown,
+        expect_sport_id=CIRCUS_SPORTS.get(sport),
     )
     new_types = {t for t in unknown if (sport, t) not in _CIRCUS_SEEN_TYPES}
     if new_types:

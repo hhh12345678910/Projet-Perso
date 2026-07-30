@@ -94,16 +94,31 @@ def _totals_label(name: str) -> str | None:
 def parse_prematch(
     data: dict, *, fetched_at: datetime | None = None,
     unknown_types: set[str] | None = None,
+    expect_sport_id: int | None = None,
+    foreign: list[int] | None = None,
 ) -> Iterator[OddQuote]:
     """Transforme une réponse GetPrematchSport en OddQuote.
 
     `unknown_types` recueille les BetType non reconnus. Les signaler plutôt que
     les jeter en silence est ce qui avait permis de rattraper un marché oublié
-    sur Betano ; un book qui renomme un code passerait autrement inaperçu."""
+    sur Betano ; un book qui renomme un code passerait autrement inaperçu.
+
+    `expect_sport_id` refuse les ligues d'un autre sport. Le pont pousse un
+    fichier par sport, mais rien dans le fichier ne garantit qu'il est arrivé
+    au bon endroit — c'est déjà arrivé, deux réponses de tailles très
+    différentes s'étant croisées. Chaque ligue porte son SportId : on s'en sert
+    plutôt que de faire confiance au nom du fichier. Les intrus sont collectés
+    dans `foreign` pour être signalés, jamais jetés en silence."""
     now = fetched_at or datetime.now(timezone.utc)
 
     for league in data.get("Leagues") or []:
         league_name = (league or {}).get("LeagueName") or ""
+        if expect_sport_id is not None:
+            sid = (league or {}).get("SportId")
+            if sid is not None and sid != expect_sport_id:
+                if foreign is not None:
+                    foreign.append(sid)
+                continue
         for event in (league or {}).get("Events") or []:
             home = (event.get("HomeName") or "").strip()
             away = (event.get("AwayName") or "").strip()
@@ -188,7 +203,8 @@ def parse_push(payload: dict | list, **kwargs) -> list[OddQuote]:
 
 def load_pushed_quotes(path: str, max_age_minutes: float = 30.0,
                        *, print_fn=print,
-                       unknown_types: set[str] | None = None) -> list[OddQuote]:
+                       unknown_types: set[str] | None = None,
+                       expect_sport_id: int | None = None) -> list[OddQuote]:
     """Lit le dump sur disque, en refusant ce qui est périmé.
 
     Sans cette garde, un onglet fermé donne des cotes mortes traitées comme
@@ -214,4 +230,13 @@ def load_pushed_quotes(path: str, max_age_minutes: float = 30.0,
     except (ValueError, OSError) as e:
         print_fn(f"Circus : dump illisible ({e})")
         return []
-    return parse_push(payload, unknown_types=unknown_types)
+    foreign: list[int] = []
+    quotes = parse_push(payload, unknown_types=unknown_types,
+                        expect_sport_id=expect_sport_id, foreign=foreign)
+    if foreign:
+        print_fn(
+            f"Circus : {p.name} contient des ligues d'un autre sport "
+            f"(SportId {sorted(set(foreign))}) — écartées. Le pont a mal "
+            f"routé une réponse, mets à jour tools/circus-ingest.user.js."
+        )
+    return quotes

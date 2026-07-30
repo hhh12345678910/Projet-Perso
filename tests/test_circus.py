@@ -106,6 +106,42 @@ def test_overlapping_days_are_deduplicated(payload):
     assert len(twice) == len(once)
 
 
+def test_leagues_of_another_sport_are_refused(payload):
+    """Le pont a déjà croisé deux réponses et écrit le tennis dans
+    soccer.json. Le nom du fichier ne prouve rien ; le SportId de la ligue,
+    si."""
+    sid = payload["Leagues"][0]["SportId"]
+    foreign: list[int] = []
+    quotes = parse_push([payload], expect_sport_id=sid + 1, foreign=foreign)
+    assert quotes == []
+    assert set(foreign) == {sid}
+
+    assert parse_push([payload], expect_sport_id=sid)
+
+
+def test_a_mixed_dump_keeps_only_the_expected_sport(payload):
+    intruder = json.loads(json.dumps(payload["Leagues"][0]))
+    intruder["SportId"] = 999
+    for ev in intruder["Events"]:
+        ev["EventId"] = str(ev["EventId"]) + "-x"
+    payload["Leagues"].append(intruder)
+
+    sid = payload["Leagues"][0]["SportId"]
+    quotes = parse_push([payload], expect_sport_id=sid)
+    assert quotes
+    assert all(not q.source_event_id.endswith("-x") for q in quotes)
+
+
+def test_a_misrouted_dump_is_reported(tmp_path, payload):
+    p = tmp_path / "soccer.json"
+    p.write_text(json.dumps(payload), encoding="utf-8")
+    msgs: list[str] = []
+    sid = payload["Leagues"][0]["SportId"]
+    assert load_pushed_quotes(str(p), expect_sport_id=sid + 1,
+                              print_fn=msgs.append) == []
+    assert msgs and "autre sport" in msgs[0]
+
+
 def test_a_stale_dump_is_refused(tmp_path, payload):
     """Un onglet fermé ne doit pas produire des cotes mortes traitées comme
     fraîches — en silence. C'est la garde apprise sur Betano."""
