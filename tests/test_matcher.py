@@ -9,6 +9,7 @@ from src.matcher import (
     parse_event_key,
     reconcile_event_keys,
     team_similarity,
+    tolerance_for,
 )
 from src.models import Book, Event
 
@@ -156,3 +157,37 @@ def test_single_clear_match_still_maps():
     cand = event_key("RSC Anderlecht", "Club Brugge", NOW)
     mapping = reconcile_event_keys({ref}, [cand])
     assert cand in mapping and mapping[cand][0] == ref
+
+
+def _key(hhmm: str, home: str, away: str) -> str:
+    return f"202608011{hhmm}::{home}__vs__{away}"
+
+
+def test_tennis_tolerates_a_shifted_start_time():
+    """Un match de tennis commence quand le précédent sur le court finit :
+    chaque book publie sa propre estimation. Mesuré, dix des dix-neuf matchs
+    Pinnacle non couverts avaient des noms identiques à 100 % et n'étaient
+    écartés que par un décalage de 20 à 130 minutes."""
+    ref = ["202608011400::norbertgombos__vs__kilianfeldbausch"]
+    cand = {"202608011610::norbertgombos__vs__kilianfeldbausch"}
+
+    assert reconcile_event_keys(ref, cand, time_tolerance_minutes=tolerance_for("tennis"))
+    assert not reconcile_event_keys(ref, cand, time_tolerance_minutes=tolerance_for("soccer"))
+
+
+def test_soccer_keeps_a_short_window():
+    """Les horaires de football sont fixes et annoncés : un écart de deux
+    heures y est un signal, pas du bruit."""
+    assert tolerance_for("soccer") == 10
+    assert tolerance_for("tennis") >= 120
+    # Le football n'a pas d'entrée dédiée : il doit rester sur le défaut, pour
+    # qu'élargir le tennis ne déplace rien ailleurs.
+    assert tolerance_for(None) == tolerance_for("soccer")
+
+
+def test_a_wider_window_does_not_defeat_the_name_check():
+    """Élargir la fenêtre ne doit pas rendre le nom facultatif : c'est lui qui
+    reste le juge."""
+    ref = ["202608011400::norbertgombos__vs__kilianfeldbausch"]
+    cand = {"202608011610::rogerfederer__vs__rafaelnadal"}
+    assert not reconcile_event_keys(ref, cand, time_tolerance_minutes=tolerance_for("tennis"))

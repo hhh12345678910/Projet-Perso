@@ -113,11 +113,40 @@ def parse_event_key(key: str) -> Optional[tuple[datetime, str, str]]:
     return start, home, away
 
 
+# Tolérance d'horaire admise entre deux books pour un même événement.
+#
+# Le tennis n'a pas d'heure de début : un match commence quand le précédent sur
+# le court se termine, et chaque book publie sa propre estimation. Mesuré sur
+# une fenêtre de 24 h, dix des dix-neuf matchs Pinnacle non couverts avaient un
+# candidat aux noms identiques à 100 %, écarté uniquement par un décalage de 20
+# à 130 minutes. Trois heures les récupèrent tous.
+#
+# Élargir n'est sûr que parce que le nom reste le juge : deux joueurs ne se
+# rencontrent qu'une fois par tournoi, donc aucun autre match ne peut porter
+# les deux mêmes noms dans la journée. La garde d'ambiguïté, elle, devient plus
+# stricte à mesure que la fenêtre grandit, puisqu'elle voit plus de références
+# concurrentes.
+#
+# Le football garde sa fenêtre d'origine : ses horaires sont fixes et annoncés,
+# un écart y est un signal, pas du bruit. La même mesure y montrait bien deux
+# matchs à 100 % de similarité écartés pour 30 minutes d'écart, mais deux sur
+# 126 ne justifient pas de tripler la fenêtre de tout le sport — à rouvrir avec
+# des chiffres si le cas se répète.
+TIME_TOLERANCE_BY_SPORT: dict[str, int] = {
+    "tennis": 180,
+}
+DEFAULT_TIME_TOLERANCE_MIN = 10
+
+
+def tolerance_for(sport: str | None) -> int:
+    return TIME_TOLERANCE_BY_SPORT.get(sport or "", DEFAULT_TIME_TOLERANCE_MIN)
+
+
 def reconcile_event_keys(
     reference_keys: Iterable[str],
     candidate_keys: Iterable[str],
     *,
-    time_tolerance_minutes: int = 10,
+    time_tolerance_minutes: int = DEFAULT_TIME_TOLERANCE_MIN,
     min_score: float = 85.0,
     ambiguity_margin: float = 4.0,
 ) -> dict[str, tuple[str, bool]]:

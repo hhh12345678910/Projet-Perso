@@ -19,7 +19,7 @@ from rich.table import Table
 from .config import ScanConfig
 from .devig import devig
 from .ev import ev_pct, fair_odd, kelly_fraction, kelly_stake
-from .matcher import parse_event_key, reconcile_event_keys
+from .matcher import parse_event_key, reconcile_event_keys, tolerance_for
 from .models import Book, FairLine, MarketType, OddQuote, Outcome, ValueBet
 from .scrapers.betano import (
     BetanoAuthError,
@@ -311,6 +311,7 @@ def _flip_outcome_for_swap(outcome: Outcome, market: MarketType) -> Outcome:
 def remap_to_reference(
     soft_quotes: list[OddQuote],
     reference_keys: Iterable[str],
+    sport: str | None = None,
 ) -> list[OddQuote]:
     """Re-key soft-book quotes onto the matching Pinnacle event_key via fuzzy
     matching, so they line up with the fair lines. When the matcher detects
@@ -321,6 +322,7 @@ def remap_to_reference(
     soft_to_ref = reconcile_event_keys(
         reference_keys=list(reference_keys),
         candidate_keys={q.event_key for q in soft_quotes},
+        time_tolerance_minutes=tolerance_for(sport),
     )
     out: list[OddQuote] = []
     for q in soft_quotes:
@@ -348,6 +350,7 @@ SHARP_BOOKS = frozenset({Book.PINNACLE, Book.SMARKETS})
 def canonicalize_for_surebets(
     pinnacle_q: list[OddQuote],
     soft_raw: list[OddQuote],
+    sport: str | None = None,
 ) -> list[OddQuote]:
     """Re-key every quote (Pinnacle + soft books) onto a unified canonical key
     set so surebets can be found across books even on events Pinnacle does NOT
@@ -376,6 +379,7 @@ def canonicalize_for_surebets(
         mapping = reconcile_event_keys(
             reference_keys=list(ref_keys),
             candidate_keys={q.event_key for q in quotes},
+            time_tolerance_minutes=tolerance_for(sport),
         )
         new_anchor_keys: set[str] = set()
         for q in quotes:
@@ -762,7 +766,7 @@ def scan(
         sport = current_sport  # keep local var name for downstream prints
 
         ref_keys = {fl.event_key for fl in fair.values()}
-        soft_quotes = remap_to_reference(raw_soft, ref_keys)
+        soft_quotes = remap_to_reference(raw_soft, ref_keys, current_sport)
         console.print(f"  → {len(soft_quotes)} matched to a Pinnacle event")
         storage.insert_quotes(soft_quotes)
 
@@ -824,7 +828,7 @@ def scan(
         # rule, so Pinnacle-vs-Pinnacle "arbs" can't slip through.
         # Canonicalize across all books so events Pinnacle doesn't price still
         # yield surebets when two soft books cover both sides.
-        surebets = find_surebets(canonicalize_for_surebets(quotes, raw_soft))
+        surebets = find_surebets(canonicalize_for_surebets(quotes, raw_soft, current_sport))
         plausible = [s for s in surebets if not s.suspicious]
         flagged = [s for s in surebets if s.suspicious]
         console.print(
@@ -923,7 +927,7 @@ def scan_surebets(
         # Canonicalize across ALL books so surebets surface even on events
         # Pinnacle doesn't price — soft books anchor each other when Pinnacle is
         # absent. Pinnacle stays in the pool so Pinnacle-leg arbs are detected.
-        normalised_quotes = canonicalize_for_surebets(pinnacle_quotes, soft_quotes)
+        normalised_quotes = canonicalize_for_surebets(pinnacle_quotes, soft_quotes, current_sport)
         console.print(f"  → {len(normalised_quotes)} quotes matched to a common event")
 
         surebets = find_surebets(normalised_quotes)
@@ -1015,7 +1019,7 @@ def _daemon_scan_sport(
         storage.insert_quotes(pinnacle_q)
 
         ref_keys = {fl.event_key for fl in fair.values()}
-        soft_q = remap_to_reference(soft_raw, ref_keys)
+        soft_q = remap_to_reference(soft_raw, ref_keys, current_sport)
         storage.insert_quotes(soft_q)
 
         # ── CLV pre-kickoff alerts ────────────────────────────────────
@@ -1116,7 +1120,7 @@ def _daemon_scan_sport(
         # ── Surebets ─────────────────────────────────────────────────
         # Surebets use a wider pool than value bets: events Pinnacle doesn't
         # price still count, as long as two distinct books cover both sides.
-        surebet_pool = canonicalize_for_surebets(pinnacle_q, soft_raw)
+        surebet_pool = canonicalize_for_surebets(pinnacle_q, soft_raw, current_sport)
         surebets = find_surebets(surebet_pool)
         plausible = [s for s in surebets if not s.suspicious]
         console.print(f"\\[{current_sport}]   surebets: {len(plausible)} plausible")
@@ -2456,7 +2460,7 @@ def books_coverage(
             # on a book's usable events is simply wrong.
             if ref_events and book != Book.PINNACLE:
                 overlap = len({
-                    q.event_key for q in remap_to_reference(quotes, ref_events)
+                    q.event_key for q in remap_to_reference(quotes, ref_events, current_sport)
                 })
             else:
                 overlap = None
@@ -2509,7 +2513,7 @@ def betano_value_test(
 
         fair = build_fair_lines(pinnacle_q, cfg.devig_method)
         ref_keys = {fl.event_key for fl in fair.values()}
-        betano_matched = remap_to_reference(betano_raw, ref_keys)
+        betano_matched = remap_to_reference(betano_raw, ref_keys, current_sport)
         bets = [
             b for b in find_value_bets(betano_matched, fair, cfg)
             if b.book == Book.BETANO_BE
