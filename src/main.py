@@ -215,8 +215,8 @@ def find_value_bets(
         # mieux vaut un pari de trop qu'un rejet silencieux sur un défaut de
         # format.
         if not cfg.scan_live_value_bets:
-            parsed = parse_event_key(q.event_key)
-            if parsed is not None and parsed[0] <= now:
+            start = _kickoff(q)
+            if start is not None and start <= now:
                 continue
         # Handicap markets are excluded for now: line semantics vary across
         # books (Pinnacle signs each side, e.g. home -1.0 / away +1.0, while
@@ -254,6 +254,7 @@ def find_value_bets(
             detected_at=now,
             league=q.league,
             reference_book=fl.reference_book,
+            book_event_key=q.book_event_key,
         ))
     return out
 
@@ -334,8 +335,29 @@ def remap_to_reference(
         if ref_key == q.event_key and not swap:
             out.append(q)
         else:
-            out.append(replace(q, event_key=ref_key, outcome=flipped_outcome))
+            # book_event_key retient l'heure annoncée par le book : après
+            # réalignement, event_key porte celle de la référence, qui peut
+            # être postérieure de plusieurs heures au tennis.
+            out.append(replace(q, event_key=ref_key, outcome=flipped_outcome,
+                               book_event_key=q.book_event_key or q.event_key))
     return out
+
+
+def _kickoff(q: OddQuote) -> datetime | None:
+    """Heure de coup d'envoi la plus précoce parmi celles connues.
+
+    Deux sources peuvent diverger de plusieurs heures au tennis. Retenir la
+    plus précoce fait qu'un match déjà commencé selon l'une des deux est
+    traité comme commencé : c'est le sens sûr de l'erreur, puisque la ligne de
+    référence est prématch et cesse d'avoir un sens au coup d'envoi."""
+    starts = []
+    for key in (q.event_key, q.book_event_key):
+        if not key:
+            continue
+        parsed = parse_event_key(key)
+        if parsed is not None:
+            starts.append(parsed[0])
+    return min(starts) if starts else None
 
 
 # Books used as sharp references, never as something to bet on: they price the

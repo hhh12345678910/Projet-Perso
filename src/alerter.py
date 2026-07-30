@@ -698,14 +698,23 @@ class TelegramAlerter:
         # already passed is "live" and must not reach the premium chat (mirrors
         # the prematch-only rule on premium surebets).
         now = datetime.now(timezone.utc)
-        parsed = parse_event_key(bet.event_key)
-        is_live = parsed is not None and parsed[0] <= now
+        # La plus précoce des heures connues. Au tennis, le rapprochement
+        # tolère 3 h d'écart entre l'heure de la référence et celle du book —
+        # un match déjà commencé selon le book paraîtrait à venir si on ne
+        # regardait que la clé réalignée.
+        starts = []
+        for _k in (bet.event_key, getattr(bet, "book_event_key", None)):
+            _p = parse_event_key(_k) if _k else None
+            if _p is not None:
+                starts.append(_p[0])
+        start = min(starts) if starts else None
+        is_live = start is not None and start <= now
 
         # Drop prematch alerts firing in the final minutes before kickoff —
         # those last-minute value bets are disproportionately stale-line/data
         # errors. (Live bets, kickoff already passed, are unaffected.)
-        if parsed is not None and not is_live:
-            mins_to_kickoff = (parsed[0] - now).total_seconds() / 60
+        if start is not None and not is_live:
+            mins_to_kickoff = (start - now).total_seconds() / 60
             if mins_to_kickoff < cfg.min_minutes_to_kickoff:
                 return False
 

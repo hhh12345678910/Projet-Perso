@@ -65,6 +65,13 @@ class OddQuote:
     # provides one. The event_key only carries normalised team names, so this
     # is the only way an alert can name the competition.
     league: Optional[str] = None
+    # Clé d'origine, avant réalignement sur la référence. Le tennis tolère
+    # jusqu'à 3 h d'écart entre l'heure annoncée par Pinnacle et celle du book,
+    # parce qu'un match commence quand le précédent libère le court. Après
+    # réalignement, la cote porte l'heure de Pinnacle : si celle-ci est la plus
+    # tardive, le match paraît à venir alors qu'il est déjà en cours. Garder
+    # l'heure du book permet de retenir la plus précoce des deux.
+    book_event_key: Optional[str] = None
 
 
 @dataclass
@@ -95,6 +102,10 @@ class ValueBet:
     # bet valued against a thinner reference deserves less confidence, and
     # without this the two are indistinguishable after the fact.
     reference_book: Optional[Book] = None
+    # Voir OddQuote.book_event_key : l'heure annoncée par le book, quand elle
+    # diffère de celle de la référence. Sert à ne pas alerter sur un match déjà
+    # commencé selon le book mais pas encore selon Pinnacle.
+    book_event_key: Optional[str] = None
     # Twin books offering the exact same price for this bet (e.g. Unibet & 711
     # share the Kambi feed). Listed alongside `book` in the alert so the same
     # opportunity fires once, naming every book where you can take it.

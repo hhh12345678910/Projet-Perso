@@ -99,3 +99,35 @@ def test_the_flag_reads_the_environment(monkeypatch):
     monkeypatch.delenv("VALUEBET_SCAN_LIVE", raising=False)
     # Par défaut le live est en pause.
     assert ScanConfig().scan_live_value_bets is False
+
+
+def test_a_match_started_per_the_book_is_treated_as_live():
+    """Le rapprochement tennis tolère 3 h d'écart : la cote adopte la clé de
+    la référence, donc son heure. Si celle-ci est postérieure à l'heure du
+    book, le match paraît à venir alors qu'il est en cours — c'est ce qui a
+    fait passer des alertes live pendant la pause."""
+    from datetime import datetime, timedelta, timezone
+    from src.main import _kickoff
+    from src.models import Book, MarketType, OddQuote, Outcome
+
+    now = datetime.now(timezone.utc)
+    started = (now - timedelta(minutes=40)).strftime("%Y%m%d%H%M")
+    later = (now + timedelta(minutes=80)).strftime("%Y%m%d%H%M")
+
+    q = OddQuote(
+        event_key=f"{later}::alcaraz__vs__sinner",       # heure de la référence
+        book=Book.CIRCUS_BE, market=MarketType.H2H,
+        outcome=Outcome(label="home"), decimal_odd=2.0,
+        fetched_at=now, source_event_id="1",
+        book_event_key=f"{started}::alcaraz__vs__sinner",  # heure du book
+    )
+    assert _kickoff(q) <= now, "la plus précoce des deux heures doit l'emporter"
+
+    # Sans clé d'origine, le comportement d'avant est conservé.
+    q2 = OddQuote(
+        event_key=f"{later}::alcaraz__vs__sinner",
+        book=Book.CIRCUS_BE, market=MarketType.H2H,
+        outcome=Outcome(label="home"), decimal_odd=2.0,
+        fetched_at=now, source_event_id="1",
+    )
+    assert _kickoff(q2) > now
