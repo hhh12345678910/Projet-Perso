@@ -24,6 +24,17 @@ def _q(book: Book, market: MarketType, label: str, odd: float,
     )
 
 
+def _cfg(**kw) -> ScanConfig:
+    """Config de test avec le live activé.
+
+    Ces tests portent sur la mécanique de détection (calcul d'EV, structure de
+    marché), pas sur la règle du live, et leur coup d'envoi est une date fixe
+    désormais passée. Le drapeau est donc posé explicitement plutôt que de
+    rendre les tests dépendants de la date du jour."""
+    kw.setdefault("scan_live_value_bets", True)
+    return ScanConfig(**kw)
+
+
 def _fair(market: MarketType, outcomes: dict[str, float],
           line: float | None = None) -> dict:
     key = (EK, market, line)
@@ -38,7 +49,7 @@ def test_h2h_value_bet_is_detected():
         _q(Book.BETFIRST, MarketType.H2H, "away", 2.50),
     ]
     fair = _fair(MarketType.H2H, {"home": 0.50, "away": 0.50})
-    bets = find_value_bets(quotes, fair, ScanConfig())
+    bets = find_value_bets(quotes, fair, _cfg())
     assert [b.outcome.label for b in bets] == ["away"]
     assert bets[0].market == MarketType.H2H
 
@@ -52,7 +63,7 @@ def test_handicap_value_bet_is_excluded():
         _q(Book.BETFIRST, MarketType.HANDICAP, "away", 3.75, line=-1.0),
     ]
     fair = _fair(MarketType.HANDICAP, {"home": 0.55, "away": 0.45}, line=-1.0)
-    bets = find_value_bets(quotes, fair, ScanConfig())
+    bets = find_value_bets(quotes, fair, _cfg())
     assert bets == []
 
 
@@ -148,7 +159,7 @@ def test_value_bet_records_which_reference_valued_it():
             for lbl in ("home", "away")
         ]
 
-    cfg = ScanConfig(sport="soccer", min_ev_pct=1.0)
+    cfg = _cfg(sport="soccer", min_ev_pct=1.0)
     by_ref = {
         b.event_key: b.reference_book
         for b in find_value_bets(soft("202607261800::alpha__vs__beta") + soft(other), fair, cfg)

@@ -159,6 +159,15 @@ def find_value_bets(
     for q in candidate_quotes:
         if q.book == Book.PINNACLE:
             continue
+        # Événements déjà commencés : voir ScanConfig.scan_live_value_bets. La
+        # ligne de référence est prématch, donc figée au coup d'envoi ; l'écart
+        # mesuré ensuite ne dit rien. Un event_key illisible passe quand même —
+        # mieux vaut un pari de trop qu'un rejet silencieux sur un défaut de
+        # format.
+        if not cfg.scan_live_value_bets:
+            parsed = parse_event_key(q.event_key)
+            if parsed is not None and parsed[0] <= now:
+                continue
         # Handicap markets are excluded for now: line semantics vary across
         # books (Pinnacle signs each side, e.g. home -1.0 / away +1.0, while
         # soft books carry both sides at the same |line|). That mismatch pairs
