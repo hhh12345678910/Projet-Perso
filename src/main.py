@@ -1525,14 +1525,21 @@ def _closing_prices(storage: Storage, cfg: ScanConfig, bet) -> tuple | None:
 
 @app.command(name="close-lines")
 def close_lines(sport: str = "soccer"):
-    """For every detected value bet whose event has kicked off, snapshot the
+    """Capture la ligne de clôture de tout value bet dont le match a commencé.
+
+    `--sport` ne sert qu'à choisir la méthode de dévig : la sélection des paris
+    ignore le sport et traite toute la file en un passage. Une liste séparée
+    par des virgules est donc acceptée mais inutile — contrairement à `scan`,
+    il n'y a rien à répéter par sport.
+
+    For every detected value bet whose event has kicked off, snapshot the
     last Pinnacle price as the closing line. The closing price comes from our
     own historical capture in the quotes table — Pinnacle removes prematch
     markets from the live API at kickoff, so by the time this command runs
     the only place the real closing line still exists is in the rows scan
     persisted before kickoff. Run after kickoff (e.g. cron a few minutes
     past every hour); the closing snapshot feeds `clv-report`."""
-    cfg = ScanConfig(sport=sport)
+    cfg = ScanConfig(sport=sport.split(",")[0].strip() or "soccer")
     storage = Storage(cfg.db_path)
     teams.init(storage)
     open_bets = storage.open_value_bets()
@@ -1542,6 +1549,28 @@ def close_lines(sport: str = "soccer"):
 
     now = datetime.now(timezone.utc)
     due = [b for b in open_bets if event_started(b["event_key"], now=now)]
+
+    # Un pari dont le coup d'envoi précède la plus ancienne cote en base n'a
+    # plus aucune trace à déviger : la purge est passée avant la capture. Le
+    # retirer de la file est ce qui rend le compte-rendu lisible — sinon le
+    # même échec se répète à chaque heure, et une vraie panne lui ressemble
+    # trait pour trait.
+    oldest = storage.oldest_quote_at()
+    if oldest:
+        cutoff = datetime.fromisoformat(oldest)
+        if cutoff.tzinfo is None:
+            cutoff = cutoff.replace(tzinfo=timezone.utc)
+        lost = [int(b["id"]) for b in due
+                if (parse_event_key(b["event_key"]) or (now,))[0] < cutoff]
+        if lost:
+            storage.mark_closing_lost(lost)
+            due = [b for b in due if int(b["id"]) not in set(lost)]
+            console.print(
+                f"[yellow]{len(lost)} paris retirés de la file : coup d'envoi "
+                f"antérieur à la plus ancienne cote en base ({str(oldest)[:16]}), "
+                f"clôture définitivement perdue.[/yellow]"
+            )
+
     console.print(f"[bold]{len(open_bets)} open bets, {len(due)} past kickoff.[/bold]")
     if not due:
         return

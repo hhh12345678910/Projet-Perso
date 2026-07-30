@@ -158,6 +158,7 @@ CREATE TABLE IF NOT EXISTS results (
 # error swallowed — that keeps an existing production database upgradable
 # without a dump/restore.
 MIGRATIONS = [
+    ("value_bets", "closing_lost", "INTEGER"),
     ("clv_snapshots", "fair_odd", "REAL"),
     ("clv_snapshots", "fair_prob", "REAL"),
     ("clv_snapshots", "overround", "REAL"),
@@ -395,13 +396,33 @@ class Storage:
             )
 
     def open_value_bets(self) -> list[sqlite3.Row]:
-        """Bets that don't have a closing snapshot yet."""
+        """Bets that still might get a closing snapshot.
+
+        `closing_lost` excludes the ones whose quotes were purged before the
+        closing could be captured. Without it they pile up forever and every
+        run reports the same failure — 146 of them at the time this was added,
+        105 older than a week. A real outage would then look exactly like the
+        permanent residue, which is how a broken capture stays unnoticed."""
         with self._conn() as c:
             return list(c.execute(
                 "SELECT vb.* FROM value_bets vb "
                 "LEFT JOIN clv_snapshots cs ON cs.value_bet_id = vb.id AND cs.closing = 1 "
-                "WHERE cs.id IS NULL ORDER BY vb.detected_at"
+                "WHERE cs.id IS NULL AND COALESCE(vb.closing_lost, 0) = 0 "
+                "ORDER BY vb.detected_at"
             ))
+
+    def mark_closing_lost(self, value_bet_ids: Iterable[int]) -> int:
+        """Retire définitivement des paris de la file de clôture.
+
+        À n'appeler que sur des paris dont le coup d'envoi est passé depuis
+        plus longtemps que la rétention : leurs cotes n'existent plus nulle
+        part, la clôture ne peut plus être reconstituée."""
+        ids = [(int(i),) for i in value_bet_ids]
+        if not ids:
+            return 0
+        with self._conn() as c:
+            c.executemany("UPDATE value_bets SET closing_lost = 1 WHERE id = ?", ids)
+        return len(ids)
 
     def closing_snapshot(self, value_bet_id: int) -> Optional[sqlite3.Row]:
         with self._conn() as c:

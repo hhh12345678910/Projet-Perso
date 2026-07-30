@@ -146,3 +146,32 @@ def test_pnl_pays_profit_only_on_a_win():
 def test_pnl_is_none_while_the_result_is_unknown():
     # None, never 0.0 — an unsettled bet must not read as a break-even one.
     assert pnl(None, 3.0, 25.0) is None
+
+
+def test_bets_older_than_retention_leave_the_closing_queue(storage: Storage):
+    """146 paris échouaient à chaque passage horaire, dont 105 vieux de plus
+    d'une semaine : leurs cotes étaient purgées depuis longtemps. Le bruit
+    permanent rendait une vraie panne indiscernable — c'est ce que ce retrait
+    corrige."""
+    from src.models import ValueBet
+
+    def _vb(event_key: str) -> int:
+        return storage.insert_value_bet(ValueBet(
+            event_key=event_key, book=Book.UNIBET_BE, market=MarketType.H2H,
+            outcome=Outcome(label="home"), odd_taken=2.10, fair_prob=0.5,
+            fair_odd=2.0, ev_pct=5.0, kelly_stake_pct=1.0,
+            detected_at=KICKOFF,
+        ))
+
+    old_id = _vb("202605200000::vieux__vs__match")
+    keep_id = _vb(EVENT)
+
+    assert {r["id"] for r in storage.open_value_bets()} == {old_id, keep_id}
+
+    assert storage.mark_closing_lost([old_id]) == 1
+    assert [r["id"] for r in storage.open_value_bets()] == [keep_id]
+
+    # Idempotent, et un appel vide ne fait rien.
+    storage.mark_closing_lost([old_id])
+    assert [r["id"] for r in storage.open_value_bets()] == [keep_id]
+    assert storage.mark_closing_lost([]) == 0
