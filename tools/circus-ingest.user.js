@@ -2,7 +2,7 @@
 // @name         Circus ingest (Gaming1)
 // @namespace    valuebet.local
 // @version      1.0.0
-// @description  Ouvre sa propre WebSocket vers Circus, réclame le prématch football et le pousse vers la VM.
+// @description  Ouvre sa propre WebSocket vers Circus, réclame le prématch football et tennis et le pousse vers la VM.
 // @match        *://*.circus-sport.be/*
 // @grant        GM_xmlhttpRequest
 // @connect      34.59.193.111
@@ -33,9 +33,15 @@
   const WSS = "wss://wss02.circus-sport.be";
   const ROOM = "CIRCUS";          // Bet777 : "777BE" — seule chose à changer
   const VERSION = "0.209.0";
-  const FOOTBALL = 844;
+  // SportId lus dans la réponse GetSports de Circus. Ajouter un sport ici
+  // suppose de l'ajouter aussi dans CIRCUS_SPORTS côté src/main.py, sinon le
+  // daemon ne lira jamais le fichier poussé.
+  const SPORTS = [
+    { key: "soccer", id: 844 },
+    { key: "tennis", id: 848 },
+  ];
   const DAYS = 4;                 // jours de prématch à balayer
-  const EVERY_MIN = 5;            // fréquence d'un cycle complet
+  const EVERY_SEC = 30;           // fréquence d'un cycle complet
   const LZS = "--##LZS2##--";
 
   const uuid = () =>
@@ -132,8 +138,25 @@
     return d.toISOString().slice(0, 10) + "T00:00:00Z";
   };
 
+  function push(sport, blocks) {
+    GM_xmlhttpRequest({
+      method: "POST",
+      url: INGEST + "?sport=" + encodeURIComponent(sport),
+      headers: { "Content-Type": "application/json", "X-Ingest-Token": TOKEN },
+      data: JSON.stringify({ blocks: blocks }),
+      timeout: 30000,
+      onload: (r) => {
+        state[sport] = (r.status === 200) ? blocks.length + "j" : "HTTP " + r.status;
+        paint();
+      },
+      onerror: () => { state[sport] = "envoi KO"; paint("#b71c1c"); },
+      ontimeout: () => { state[sport] = "délai VM"; paint("#b71c1c"); },
+    });
+  }
+
+  const state = {};
   let banner;
-  function paint(text, colour) {
+  function paint(colour) {
     if (!document.body) return;
     if (!banner) {
       banner = document.createElement("div");
@@ -145,35 +168,21 @@
       document.body.appendChild(banner);
     }
     banner.style.background = colour || "#1b5e20";
-    banner.textContent = text;
+    banner.textContent = "🎰 Circus  " +
+      SPORTS.map((sp) => sp.key + " " + (state[sp.key] || "…")).join("  |  ");
   }
 
-  function push(blocks) {
-    GM_xmlhttpRequest({
-      method: "POST",
-      url: INGEST,
-      headers: { "Content-Type": "application/json", "X-Ingest-Token": TOKEN },
-      data: JSON.stringify({ blocks: blocks }),
-      timeout: 30000,
-      onload: (r) => paint("🎰 Circus : " + blocks.length + " jours poussés (" + r.status + ")"),
-      onerror: () => paint("🎰 Circus : échec d'envoi vers la VM", "#b71c1c"),
-      ontimeout: () => paint("🎰 Circus : délai dépassé vers la VM", "#b71c1c"),
-    });
-  }
+  // Une seule WebSocket, gardée ouverte. Rouvrir toutes les 30 s referait le
+  // handshake à chaque cycle — plus lourd pour le serveur, et un bon moyen de
+  // se faire remarquer. Une reconnexion n'a lieu que si la connexion tombe.
+  let ws = null;
+  let ready = false;
+  let pending = {};       // sport -> blocs reçus en cours de cycle
 
-  function cycle() {
-    paint("🎰 Circus : connexion…", "#f57c00");
-    let ws;
-    try { ws = new WebSocket(WSS); } catch (e) { paint("🎰 Circus : WebSocket refusée", "#b71c1c"); return; }
-
-    const blocks = [];
-    let pending = DAYS;
-    const done = () => {
-      try { ws.close(); } catch (e) {}
-      if (blocks.length) push(blocks);
-      else paint("🎰 Circus : aucune donnée reçue", "#b71c1c");
-    };
-    const guard = setTimeout(done, 45000);   // ne jamais laisser un cycle pendre
+  function connect() {
+    if (ws && (ws.readyState === 0 || ws.readyState === 1)) return;
+    ready = false;
+    try { ws = new WebSocket(WSS); } catch (e) { paint("#b71c1c"); return; }
 
     ws.onopen = () => {
       ws.send(envelope({
@@ -184,13 +193,8 @@
           LanguageCode: "fr", RoomDomainName: ROOM,
         },
       }, 1));
-      for (let d = 0; d < DAYS; d++) {
-        setTimeout(() => ws.send(request("GetPrematchSport", 201, {
-          locale: "fr", isUserLoggedIn: false, SportId: FOOTBALL,
-          DiffMinUtc: -new Date().getTimezoneOffset(),
-          Filter: { Type: 2, LocalDate: localDate(d) },
-        })), 500 + d * 400);
-      }
+      ready = true;
+      setTimeout(cycle, 500);
     };
 
     ws.onmessage = (e) => {
@@ -198,19 +202,54 @@
       if (!inner) return;
       for (const r of (inner.Requests || [])) {
         if (r.Identifier !== "GetPrematchSport" || !r.Content) continue;
-        try { blocks.push(JSON.parse(r.Content)); } catch (err) { continue; }
-        paint("🎰 Circus : " + blocks.length + "/" + DAYS + " jours reçus", "#f57c00");
-        if (--pending <= 0) { clearTimeout(guard); done(); }
+        let block;
+        try { block = JSON.parse(r.Content); } catch (err) { continue; }
+        // La réponse ne rappelle pas le sport demandé : on l'attribue au
+        // premier sport encore en attente, les requêtes étant sérialisées.
+        const sport = Object.keys(pending).find((k) => pending[k].left > 0);
+        if (!sport) continue;
+        pending[sport].blocks.push(block);
+        if (--pending[sport].left <= 0) {
+          push(sport, pending[sport].blocks);
+          delete pending[sport];
+        }
       }
     };
 
-    ws.onerror = () => paint("🎰 Circus : erreur WebSocket", "#b71c1c");
+    ws.onclose = () => { ready = false; setTimeout(connect, 5000); };
+    ws.onerror = () => { try { ws.close(); } catch (e) {} };
+  }
+
+  function cycle() {
+    if (!ready || !ws || ws.readyState !== 1) { connect(); return; }
+    // Un cycle précédent encore en vol : on saute plutôt que d'empiler des
+    // requêtes dont les réponses seraient attribuées au mauvais sport.
+    if (Object.keys(pending).length) return;
+
+    let delay = 0;
+    for (const sp of SPORTS) {
+      pending[sp.key] = { left: DAYS, blocks: [] };
+      for (let d = 0; d < DAYS; d++) {
+        setTimeout(() => {
+          if (!ws || ws.readyState !== 1) return;
+          ws.send(request("GetPrematchSport", 201, {
+            locale: "fr", isUserLoggedIn: false, SportId: sp.id,
+            DiffMinUtc: -new Date().getTimezoneOffset(),
+            Filter: { Type: 2, LocalDate: localDate(d) },
+          }));
+        }, delay);
+        delay += 250;
+      }
+    }
+    // Filet : une réponse perdue ne doit pas figer les cycles suivants.
+    setTimeout(() => { pending = {}; }, EVERY_SEC * 1000 - 2000);
   }
 
   if (TOKEN.indexOf("PASTE_TOKEN") !== -1) {
-    paint("🎰 Circus : jeton non configuré", "#b71c1c");
+    document.addEventListener("DOMContentLoaded", () => paint("#b71c1c"));
     return;
   }
-  setTimeout(cycle, 3000);
-  setInterval(cycle, EVERY_MIN * 60 * 1000);
+  paint("#f57c00");
+  connect();
+  setInterval(cycle, EVERY_SEC * 1000);
 })();

@@ -40,9 +40,21 @@ from ..teams import record_pair
 #   handicap-*            les conventions de signe diffèrent d'un book à
 #                         l'autre ; find_value_bets écarte déjà les handicaps
 _MARKETS: dict[str, MarketType] = {
+    # Football — codes confirmés sur capture réelle.
     "P1XP2": MarketType.H2H,
     "total-OverUnder": MarketType.TOTALS,
     "total-goals-OverUnder": MarketType.TOTALS,
+    # Tennis — vainqueur à deux issues. Ces codes sont plausibles mais n'ont
+    # pas encore été vus sur capture : le premier cycle tennis fera remonter le
+    # vrai code dans les BetType inconnus du log, à ajouter ici.
+    # Surtout ne PAS reconnaître un marché sur sa seule structure : draw-no-bet
+    # porte lui aussi exactement les deux noms d'équipe, et serait pris pour un
+    # vainqueur.
+    "P1P2": MarketType.H2H,
+    "match-winner": MarketType.H2H,
+    "winner": MarketType.H2H,
+    "total-games-OverUnder": MarketType.TOTALS,
+    "total-sets-OverUnder": MarketType.TOTALS,
 }
 
 _OVER = {"plus de", "over", "meer dan"}
@@ -175,11 +187,16 @@ def parse_push(payload: dict | list, **kwargs) -> list[OddQuote]:
 
 
 def load_pushed_quotes(path: str, max_age_minutes: float = 30.0,
-                       *, print_fn=print) -> list[OddQuote]:
+                       *, print_fn=print,
+                       unknown_types: set[str] | None = None) -> list[OddQuote]:
     """Lit le dump sur disque, en refusant ce qui est périmé.
 
     Sans cette garde, un onglet fermé donne des cotes mortes traitées comme
-    fraîches — en silence. C'est la leçon de Betano, transposée ici."""
+    fraîches — en silence. C'est la leçon de Betano, transposée ici.
+
+    Un fichier par sport : le daemon boucle sport par sport, et mélanger les
+    deux ferait porter les cotes tennis au scan football, où elles ne
+    correspondent à rien."""
     from pathlib import Path
 
     p = Path(path)
@@ -197,4 +214,4 @@ def load_pushed_quotes(path: str, max_age_minutes: float = 30.0,
     except (ValueError, OSError) as e:
         print_fn(f"Circus : dump illisible ({e})")
         return []
-    return parse_push(payload)
+    return parse_push(payload, unknown_types=unknown_types)

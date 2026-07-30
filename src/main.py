@@ -601,18 +601,42 @@ def fetch_starcasinosport_quotes(sport: str) -> list[OddQuote]:
         return []
 
 
-def fetch_circus_quotes() -> list[OddQuote]:
-    """Lit le prématch Circus poussé par le navigateur.
+# Sports poussés par le userscript Circus. Le daemon scanne sport par sport et
+# lit un fichier par sport ; ajouter un sport ici suppose de l'ajouter aussi
+# dans tools/circus-ingest.user.js, sinon le fichier n'existera jamais.
+CIRCUS_SPORTS = {"soccer", "tennis"}
+# Clé (sport, BetType) et non le seul BetType : un code déjà vu en football
+# rendrait muet le même code en tennis, alors que c'est précisément le signal
+# attendu — les deux sports ne nomment pas leurs marchés pareil.
+_CIRCUS_SEEN_TYPES: set[tuple[str, str]] = set()
+
+
+def fetch_circus_quotes(sport: str) -> list[OddQuote]:
+    """Lit le prématch Circus poussé par le navigateur, pour un sport.
 
     Renvoie une liste vide tant que rien n'a été poussé : tant que le pont
     n'est pas installé, Circus est simplement absent, sans bruit dans les logs.
-    La garde de fraîcheur, elle, parle — un onglet fermé doit se voir."""
-    path = os.getenv("CIRCUS_INGEST_FILE", "data/circus.json")
+    La garde de fraîcheur, elle, parle — un onglet fermé doit se voir.
+
+    Les BetType non reconnus sont signalés une fois par sport. Le tennis n'a pas
+    encore été capturé, donc son code de marché « vainqueur » sortira ici au
+    premier cycle : c'est ce qui permettra de l'ajouter sans deviner."""
+    directory = os.getenv("CIRCUS_INGEST_DIR", "data/circus")
     max_age = float(os.getenv("CIRCUS_MAX_AGE_MIN", "30"))
-    return circus_load_pushed(
-        path, max_age,
+    unknown: set[str] = set()
+    quotes = circus_load_pushed(
+        f"{directory}/{sport}.json", max_age,
         print_fn=lambda s: console.print(f"[yellow]{s}[/yellow]"),
+        unknown_types=unknown,
     )
+    new_types = {t for t in unknown if (sport, t) not in _CIRCUS_SEEN_TYPES}
+    if new_types:
+        _CIRCUS_SEEN_TYPES.update((sport, t) for t in new_types)
+        console.print(
+            f"[yellow]Circus {sport} — BetType non exploités : "
+            f"{', '.join(sorted(new_types))}[/yellow]"
+        )
+    return quotes
 
 
 def fetch_betcenter_quotes(sport: str) -> list[OddQuote]:
@@ -665,11 +689,10 @@ def _fetch_all_parallel(
         betano_file=betano_file, sport=sport, include_live=include_file_books,
     )
     # Circus (Gaming1) : poussé par le navigateur comme Betano, l'ASN datacenter
-    # étant refusé sur tout le domaine. Football uniquement pour l'instant — le
-    # userscript ne balaie que SportId 844. Silencieux tant qu'aucun dump n'a
-    # été poussé, pour qu'installer le pont soit sans effet de bord.
-    if sport == "soccer":
-        tasks["Circus"] = lambda: fetch_circus_quotes()
+    # étant refusé sur tout le domaine. Silencieux tant qu'aucun dump n'a été
+    # poussé, pour qu'installer le pont soit sans effet de bord.
+    if sport in CIRCUS_SPORTS:
+        tasks["Circus"] = lambda: fetch_circus_quotes(sport)
 
     all_quotes: list[OddQuote] = []
     with ThreadPoolExecutor(max_workers=len(tasks)) as executor:

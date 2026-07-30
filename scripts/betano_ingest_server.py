@@ -75,8 +75,8 @@ PREMATCH_DIR = Path(
 # Prématch Circus (plateforme Gaming1). Un seul fichier : le userscript pousse
 # un cycle complet — un bloc par jour — en un envoi. Lu par
 # src/scrapers/circus.load_pushed_quotes().
-CIRCUS_FILE = Path(
-    os.getenv("CIRCUS_INGEST_FILE", str(_project_dir() / "data" / "circus.json"))
+CIRCUS_DIR = Path(
+    os.getenv("CIRCUS_INGEST_DIR", str(_project_dir() / "data" / "circus"))
 )
 HOST = os.getenv("BETANO_INGEST_HOST", "0.0.0.0")
 PORT = int(os.getenv("BETANO_INGEST_PORT", "8787"))
@@ -248,7 +248,18 @@ class Handler(BaseHTTPRequestHandler):
         Le userscript envoie un cycle complet ({"blocks": [...]}, un bloc par
         jour). Un cycle vide est refusé plutôt qu'écrit : écraser un bon fichier
         par du vide couperait Circus en silence, et la garde de fraîcheur côté
-        daemon ne verrait rien puisque l'horodatage, lui, serait frais."""
+        daemon ne verrait rien puisque l'horodatage, lui, serait frais.
+
+        Un fichier par sport : le daemon scanne sport par sport, et un fichier
+        commun ferait porter les cotes tennis au scan football."""
+        from urllib.parse import parse_qs, urlparse
+
+        qs = parse_qs(urlparse(self.path).query)
+        raw_sport = (qs.get("sport") or [""])[0]
+        sport = "".join(c for c in raw_sport if c.isalnum() or c in "-_")[:32]
+        if not sport:
+            self._send(400, {"error": "missing 'sport' query parameter"})
+            return
         try:
             data = json.loads(raw)
         except ValueError as e:
@@ -269,14 +280,15 @@ class Handler(BaseHTTPRequestHandler):
             self._send(422, {"error": "no events in payload"})
             return
         try:
-            _atomic_write(CIRCUS_FILE, raw)
+            CIRCUS_DIR.mkdir(parents=True, exist_ok=True)
+            _atomic_write(CIRCUS_DIR / f"{sport}.json", raw)
         except OSError as e:
             _log(f"500 circus write failed: {e}")
             self._send(500, {"error": f"write failed: {e}"})
             return
-        _log(f"200 wrote {len(raw)} B -> {CIRCUS_FILE.name} "
+        _log(f"200 wrote {len(raw)} B -> circus/{sport}.json "
              f"(blocks={len(blocks)} events={n_events})")
-        self._send(200, {"ok": True, "bytes": len(raw),
+        self._send(200, {"ok": True, "bytes": len(raw), "sport": sport,
                          "blocks": len(blocks), "events": n_events})
 
     def _handle_prematch(self, raw: bytes) -> None:
