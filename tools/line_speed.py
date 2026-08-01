@@ -27,8 +27,14 @@ from __future__ import annotations
 import argparse
 import sqlite3
 import statistics
+import sys
 from collections import defaultdict
 from datetime import datetime, timedelta, timezone
+from pathlib import Path
+
+# Lancé en script depuis tools/, la racine du projet n'est pas sur sys.path :
+# `from src.config import ...` échoue alors avec ModuleNotFoundError.
+sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
 # Écarts de temps étudiés, en secondes, avec la tolérance autour de chaque
 # cible. Le cycle n'est pas parfaitement régulier, donc une paire de captures
@@ -120,8 +126,15 @@ def main() -> None:
 
     db = args.db
     if db is None:
-        from src.config import ScanConfig
-        db = ScanConfig().db_path
+        try:
+            from src.config import ScanConfig
+            db = ScanConfig().db_path
+        except ImportError:
+            # Repli sur le chemin par défaut : l'outil doit rester utilisable
+            # même détaché de son dépôt.
+            db = str(Path(__file__).resolve().parent.parent / "data" / "valuebet.db")
+    if not Path(db).exists():
+        raise SystemExit(f"Base introuvable : {db} (utilise --db)")
     since = (datetime.now(timezone.utc)
              - timedelta(hours=args.hours)).isoformat()
 
