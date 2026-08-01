@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import sqlite3
+import time
 from contextlib import contextmanager
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
@@ -263,16 +264,42 @@ class Storage:
                 rows,
             )
 
-    def prune_quotes(self, retention_days: int = 7, *, batch_size: int = 200_000) -> int:
+    def prune_quotes(
+        self, retention_days: int = 7, *,
+        batch_size: int = 50_000, pause_sec: float = 0.05,
+    ) -> int:
         """Delete raw quote rows older than retention_days and return how many
-        were removed. Deletes in batches with a WAL checkpoint(TRUNCATE) after
-        each one, so the WAL never balloons no matter how much is being purged:
-        a single bulk DELETE on a multi-GB quotes table grows the -wal file by
-        gigabytes before it can commit and has filled the disk in practice. The
-        chunked loop keeps the WAL bounded to one batch. The quotes table grows
-        ~unbounded (every quote, every cycle); only recent rows matter — closing
-        lines are captured into clv_snapshots within hours of kickoff, after
-        which the raw history is dead weight. Run periodically (cron)."""
+        were removed. The quotes table grows ~unbounded (every quote, every
+        cycle); only recent rows matter — closing lines are captured into
+        clv_snapshots within hours of kickoff, after which the raw history is
+        dead weight.
+
+        Supprime par lots, pour deux raisons distinctes qu'il ne faut pas
+        confondre :
+
+        1. **Borner le WAL.** Un seul DELETE massif sur une table de plusieurs
+           gigaoctets fait gonfler le fichier -wal de plusieurs gigaoctets
+           avant de pouvoir valider, et a rempli le disque en pratique. Une
+           boucle par lots le maintient à la taille d'un lot.
+
+        2. **Ne pas assommer le daemon.** C'est le point ajouté le 01/08 après
+           l'avoir constaté en production : lancer cette purge pendant que le
+           daemon tourne remplissait le log de « database is locked » sur
+           TOUS les books, sports entiers compris, pendant toute sa durée.
+
+        La cause n'était pas les DELETE mais le `wal_checkpoint(TRUNCATE)`
+        exécuté après CHAQUE lot : TRUNCATE prend un verrou exclusif et attend
+        la fin de tous les lecteurs. Des centaines de lots, donc des centaines
+        de blocages, largement au-delà des 10 s de patience du daemon.
+
+        PASSIVE fait le même travail de recyclage sans jamais bloquer : le
+        fichier -wal n'est pas tronqué mais réutilisé, ce qui suffit puisque
+        c'est le découpage en lots — et non TRUNCATE — qui borne sa taille. Le
+        TRUNCATE ne sert plus qu'une fois, à la fin, pour rendre l'espace.
+
+        Une courte pause entre les lots laisse en plus une fenêtre d'écriture
+        au daemon : sans elle, la purge enchaîne les transactions sans jamais
+        lui rendre la main."""
         cutoff = (datetime.now(timezone.utc) - timedelta(days=retention_days)).isoformat()
         removed = 0
         conn = sqlite3.connect(str(self.path), timeout=60)
@@ -288,9 +315,14 @@ class Storage:
                 conn.commit()
                 n = cur.rowcount
                 removed += n
-                conn.execute("PRAGMA wal_checkpoint(TRUNCATE)")
                 if n == 0:
                     break
+                conn.execute("PRAGMA wal_checkpoint(PASSIVE)")
+                if pause_sec:
+                    time.sleep(pause_sec)
+            # Une seule fois, la purge terminée : plus rien n'est en attente,
+            # donc le verrou exclusif ne coûte qu'un instant.
+            conn.execute("PRAGMA wal_checkpoint(TRUNCATE)")
         finally:
             conn.close()
         return removed
