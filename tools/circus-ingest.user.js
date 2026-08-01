@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Circus ingest (Gaming1)
 // @namespace    valuebet.local
-// @version      1.0.0
+// @version      1.1.0
 // @description  Ouvre sa propre WebSocket vers Circus, réclame le prématch football et tennis et le pousse vers la VM.
 // @match        *://*.circus-sport.be/*
 // @grant        GM_xmlhttpRequest
