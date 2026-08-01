@@ -3454,7 +3454,7 @@ def doctor(hours: int = typer.Option(24, "--hours", help="Lookback window.")):
             console.print(f"Base : [bold]{size_mb:,.0f} Mo[/bold] ({db})")
             if size_mb > 2000:
                 problems.append(
-                    f"Base à {size_mb/1024:.1f} Go — lance `python -m src.main prune` "
+                    f"Base à {size_mb/1024:.1f} Go — lance `./runscan.sh prune` "
                     f"(et vérifie que valuebet-prune.timer est actif)."
                 )
 
