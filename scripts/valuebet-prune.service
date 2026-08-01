@@ -1,8 +1,0 @@
-[Unit]
-Description=Prune old valuebet quote rows and stale dedup marks
-
-[Service]
-Type=oneshot
-User=ubuntu
-WorkingDirectory=/home/ubuntu/Projet-Perso
-ExecStart=/home/ubuntu/Projet-Perso/runscan.sh prune --days 2

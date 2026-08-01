@@ -1480,7 +1480,7 @@ def daemon(
 ):
     """Continuous scan: fetch all books in parallel, detect value bets + surebets,
     alert on Telegram only when something new or changed. Loops forever — run
-    under systemd (scripts/valuebet-daemon.service) or screen/tmux.
+    under systemd (`bash scripts/setup.sh`) or screen/tmux.
 
     All sports are scanned concurrently (one thread per sport) so the cycle time
     equals the slowest single-sport fetch, not their sum."""

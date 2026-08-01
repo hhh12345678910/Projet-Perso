@@ -1,0 +1,14 @@
+### Gabarit — __USER__ et __PROJECT_DIR__ sont remplacés par scripts/setup.sh.
+### Ne pas copier ce fichier tel quel dans /etc/systemd/system.
+[Unit]
+# L'unité la plus coûteuse à oublier de tout le projet : le prix de clôture
+# n'existe que dans notre propre capture — Pinnacle retire les marchés
+# prématch au coup d'envoi. Ce qui n'est pas capturé ici avant la purge est
+# perdu définitivement, et avec lui la seule mesure d'edge du système.
+Description=Snapshot Pinnacle closing lines for value bets past kickoff
+
+[Service]
+Type=oneshot
+User=__USER__
+WorkingDirectory=__PROJECT_DIR__
+ExecStart=__PROJECT_DIR__/runscan.sh close-lines

@@ -1,0 +1,28 @@
+### Gabarit — __USER__ et __PROJECT_DIR__ sont remplacés par scripts/setup.sh.
+### Ne pas copier ce fichier tel quel dans /etc/systemd/system.
+[Unit]
+# Sert AUSSI Circus, malgré son nom : /ingest-circus vit dans le même serveur.
+# Couper cette unité coupe les deux ponts navigateur d'un coup.
+Description=Ingest endpoint for browser-pushed odds (Betano + Circus)
+Documentation=https://github.com/hhh12345678910/Projet-Perso
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=__USER__
+Group=__USER__
+WorkingDirectory=__PROJECT_DIR__
+# Loads BETANO_INGEST_TOKEN (and optional BETANO_INGEST_FILE/PORT/HOST) from
+# .env. The leading `-` makes it non-fatal if .env is missing, but the server
+# refuses to start without a token, so make sure BETANO_INGEST_TOKEN is set.
+EnvironmentFile=-__PROJECT_DIR__/.env
+ExecStart=__PROJECT_DIR__/.venv/bin/python __PROJECT_DIR__/scripts/betano_ingest_server.py
+Restart=always
+RestartSec=10
+
+StandardOutput=journal
+StandardError=journal
+
+[Install]
+WantedBy=multi-user.target

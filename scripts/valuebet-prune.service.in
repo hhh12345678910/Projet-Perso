@@ -1,0 +1,10 @@
+### Gabarit — __USER__ et __PROJECT_DIR__ sont remplacés par scripts/setup.sh.
+### Ne pas copier ce fichier tel quel dans /etc/systemd/system.
+[Unit]
+Description=Prune old valuebet quote rows and stale dedup marks
+
+[Service]
+Type=oneshot
+User=__USER__
+WorkingDirectory=__PROJECT_DIR__
+ExecStart=__PROJECT_DIR__/runscan.sh prune --days 2

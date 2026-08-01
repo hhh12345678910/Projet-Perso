@@ -77,8 +77,12 @@ ignore a feed past that age and log why. Set either to 0 to replay an old dump
 offline.
 
 Setup: generate a token (`openssl rand -hex 32`) into `BETANO_INGEST_TOKEN`,
-run the ingest server (`scripts/betano-ingest.service`), open the port in the
-firewall, then paste the same token into the userscript's `TOKEN`.
+install the systemd units with `bash scripts/setup.sh` (it renders
+`scripts/*.service.in` for the current user and path — the ingest server
+serves Circus too), open the port in the firewall, then paste the same token
+into the userscript's `TOKEN`. `bash scripts/setup.sh --check` compares the
+installed units against what the repo would produce, without changing
+anything.
 
 Betano freshness equals the push interval, bounded below by the daemon's own
 cycle. The upload is ~430 KB measured (163 events / 1239 selections), so 15 s

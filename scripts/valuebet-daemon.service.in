@@ -1,3 +1,5 @@
+### Gabarit — __USER__ et __PROJECT_DIR__ sont remplacés par scripts/setup.sh.
+### Ne pas copier ce fichier tel quel dans /etc/systemd/system.
 [Unit]
 Description=Valuebet continuous scan daemon
 Documentation=https://github.com/hhh12345678910/Projet-Perso
@@ -6,10 +8,11 @@ Wants=network-online.target
 
 [Service]
 Type=simple
-User=ubuntu
-Group=ubuntu
-WorkingDirectory=/home/ubuntu/Projet-Perso
-ExecStart=/home/ubuntu/Projet-Perso/scripts/scan-daemon.sh
+User=__USER__
+Group=__USER__
+WorkingDirectory=__PROJECT_DIR__
+Environment=PROJECT_DIR=__PROJECT_DIR__
+ExecStart=__PROJECT_DIR__/scripts/scan-daemon.sh
 # If the wrapper script ever crashes (network bug, OOM, ...), let systemd
 # wait 30 s and restart it. The wrapper itself already handles individual
 # scan failures inside the loop, so this only triggers on hard process
