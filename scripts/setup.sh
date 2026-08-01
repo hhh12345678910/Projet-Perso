@@ -72,7 +72,11 @@ if [ "$MODE" = check ]; then
             echo "   ✓ $unit"
         else
             echo "   ⚠ $unit — diffère de ce que le dépôt produirait :"
-            diff -u "$UNIT_DIR/$unit" "$tmp" | tail -n +3 | sed 's/^/       /'
+            # `|| true` obligatoire : diff sort en 1 quand les fichiers
+            # diffèrent, ce qui est précisément le cas ici, et `set -e` +
+            # `pipefail` tuaient le script juste après avoir affiché le
+            # premier diff — on ne voyait qu'une unité sur six, sans erreur.
+            { diff -u "$UNIT_DIR/$unit" "$tmp" | tail -n +3 | sed 's/^/       /'; } || true
             drift=1
         fi
         rm -f "$tmp"
