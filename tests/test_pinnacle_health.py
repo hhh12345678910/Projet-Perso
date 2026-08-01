@@ -293,3 +293,68 @@ def test_a_403_is_an_outage(monkeypatch):
 
     assert m.fetch_pinnacle_quotes("soccer") == []
     assert m.pinnacle_fetch_failed("soccer") is True
+
+
+def test_an_out_of_season_sport_stops_burning_the_quota(monkeypatch):
+    """Quatre sports scannés font huit requêtes Pinnacle par cycle, dont
+    quatre pour des calendriers vides en août. C'est ce quota qui manque au
+    football, bloqué 20 à 70 cycles par heure."""
+    import src.main as m
+
+    calls = {"n": 0}
+
+    class _Empty:
+        def __enter__(self): return self
+        def __exit__(self, *a): return False
+        def fetch_market_quotes(self, sport):
+            calls["n"] += 1
+            return iter([])
+
+    monkeypatch.setattr(m, "PinnacleScraper", _Empty)
+    monkeypatch.setattr(m, "_PINNACLE_GAP", 0.0)
+    monkeypatch.setattr(m, "_PINNACLE_IDLE_AFTER", 3)
+    for d in (m._PINNACLE_CACHE, m._PINNACLE_BLOCKED_UNTIL, m._PINNACLE_BACKOFF,
+              m._PINNACLE_SERVED_FROM_CACHE, m._PINNACLE_FAILED,
+              m._PINNACLE_EMPTY_STREAK, m._PINNACLE_LAST_PROBE):
+        d.clear()
+
+    for _ in range(12):
+        assert m.fetch_pinnacle_quotes("hockey") == []
+    # Trois tentatives, puis le sport passe en sondage espacé.
+    assert calls["n"] == 3
+    # Et surtout : jamais compté comme une panne.
+    assert m.pinnacle_fetch_failed("hockey") is False
+
+
+def test_the_sport_comes_back_on_its_own_when_the_season_starts(monkeypatch):
+    """Sans ça il faudrait penser à rééditer SPORT_LIST en octobre."""
+    from datetime import datetime, timezone
+    import src.main as m
+    from src.models import Book, MarketType, OddQuote, Outcome
+
+    state = {"events": False}
+    q = [OddQuote(event_key="202610011200::a__vs__b", book=Book.PINNACLE,
+                  market=MarketType.H2H, outcome=Outcome(label="home"),
+                  decimal_odd=2.0, fetched_at=datetime.now(timezone.utc),
+                  source_event_id="1")]
+
+    class _Seasonal:
+        def __enter__(self): return self
+        def __exit__(self, *a): return False
+        def fetch_market_quotes(self, sport):
+            return iter(q if state["events"] else [])
+
+    monkeypatch.setattr(m, "PinnacleScraper", _Seasonal)
+    monkeypatch.setattr(m, "_PINNACLE_GAP", 0.0)
+    monkeypatch.setattr(m, "_PINNACLE_IDLE_AFTER", 2)
+    monkeypatch.setattr(m, "_PINNACLE_IDLE_INTERVAL", 0.0)   # sondage dû
+    for d in (m._PINNACLE_CACHE, m._PINNACLE_BLOCKED_UNTIL, m._PINNACLE_BACKOFF,
+              m._PINNACLE_SERVED_FROM_CACHE, m._PINNACLE_FAILED,
+              m._PINNACLE_EMPTY_STREAK, m._PINNACLE_LAST_PROBE):
+        d.clear()
+
+    for _ in range(5):
+        m.fetch_pinnacle_quotes("hockey")
+    state["events"] = True
+    assert m.fetch_pinnacle_quotes("hockey") == q
+    assert m._PINNACLE_EMPTY_STREAK["hockey"] == 0

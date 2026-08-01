@@ -739,6 +739,17 @@ _PINNACLE_SERVED_FROM_CACHE: dict[str, bool] = {}
 # les sports sans calendrier, ce qui remplissait le canal critique nuit après
 # nuit pour une situation parfaitement normale.
 _PINNACLE_FAILED: dict[str, bool] = {}
+# Sports que Pinnacle ne price pas du tout — hors-saison. Les réinterroger à
+# chaque cycle dépense le quota qui manque au football : quatre sports scannés
+# font huit requêtes par cycle, dont quatre pour des calendriers vides.
+#
+# Après quelques réponses vides d'affilée, le sport n'est plus sondé que toutes
+# les dix minutes. Il revient donc de lui-même dès la reprise de sa saison,
+# sans qu'il faille se souvenir d'éditer SPORT_LIST en octobre.
+_PINNACLE_EMPTY_STREAK: dict[str, int] = {}
+_PINNACLE_IDLE_AFTER = int(os.getenv("PINNACLE_IDLE_AFTER_EMPTY", "10"))
+_PINNACLE_IDLE_INTERVAL = float(os.getenv("PINNACLE_IDLE_INTERVAL_SEC", "600"))
+_PINNACLE_LAST_PROBE: dict[str, float] = {}
 _PINNACLE_BLOCKED_UNTIL: dict[str, float] = {}
 _PINNACLE_BACKOFF: dict[str, float] = {}
 _PINNACLE_LOCK = threading.Lock()
@@ -780,6 +791,13 @@ def fetch_pinnacle_quotes(sport: str) -> list[OddQuote]:
         if fresh_enough:
             _PINNACLE_SERVED_FROM_CACHE[sport] = True
             return _pinnacle_cached(sport)
+        # Sport sans calendrier : sondage espacé plutôt qu'à chaque cycle.
+        if _PINNACLE_EMPTY_STREAK.get(sport, 0) >= _PINNACLE_IDLE_AFTER:
+            last = _PINNACLE_LAST_PROBE.get(sport, 0.0)
+            if now - last < _PINNACLE_IDLE_INTERVAL:
+                _PINNACLE_SERVED_FROM_CACHE[sport] = True
+                return []
+            _PINNACLE_LAST_PROBE[sport] = now
 
     global _PINNACLE_LAST_CALL
     try:
@@ -810,11 +828,22 @@ def fetch_pinnacle_quotes(sport: str) -> list[OddQuote]:
 
     _PINNACLE_SERVED_FROM_CACHE[sport] = False
     _PINNACLE_FAILED[sport] = False
-    if quotes:
-        with _PINNACLE_LOCK:
+    with _PINNACLE_LOCK:
+        if quotes:
             _PINNACLE_CACHE[sport] = (time.monotonic(), quotes)
             _PINNACLE_BACKOFF.pop(sport, None)
             _PINNACLE_BLOCKED_UNTIL.pop(sport, None)
+            _PINNACLE_EMPTY_STREAK[sport] = 0
+        else:
+            n = _PINNACLE_EMPTY_STREAK.get(sport, 0) + 1
+            _PINNACLE_EMPTY_STREAK[sport] = n
+            if n == _PINNACLE_IDLE_AFTER:
+                _PINNACLE_LAST_PROBE[sport] = time.monotonic()
+                console.print(
+                    f"[dim]Pinnacle {sport} : aucun événement depuis {n} cycles, "
+                    f"sondage réduit à toutes les "
+                    f"{_PINNACLE_IDLE_INTERVAL / 60:.0f} min[/dim]"
+                )
     return quotes
 
 
