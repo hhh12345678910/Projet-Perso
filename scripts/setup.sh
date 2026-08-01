@@ -81,9 +81,31 @@ if [ "$MODE" = check ]; then
         fi
         rm -f "$tmp"
     done
+    # Comparer les fichiers ne suffit pas. Une unité peut être parfaitement
+    # rédigée et simplement désactivée — et c'est le mode de défaillance
+    # dominant du projet : rien en erreur, seulement quelque chose qui ne
+    # tourne pas. close-lines désactivée détruit le CLV en silence.
     echo ""
-    [ "$drift" -eq 0 ] && echo "✅ Aucune dérive." \
-        || echo "⚠️  Dérive détectée. Pour aligner : bash scripts/setup.sh --units"
+    echo "==> État réel (un fichier correct ne suffit pas : il doit tourner)"
+    for unit in "${ENABLE[@]}"; do
+        en="$(systemctl is-enabled "$unit" 2>/dev/null || true)"; en="${en:-inconnue}"
+        ac="$(systemctl is-active  "$unit" 2>/dev/null || true)"; ac="${ac:-inconnu}"
+        mark="✓"
+        [ "$en" = enabled ] || { mark="⚠"; drift=1; }
+        [ "$ac" = active ]  || { mark="⚠"; drift=1; }
+        extra=""
+        case "$unit" in
+            *.timer)
+                last="$(systemctl show -p LastTriggerUSec --value "$unit" 2>/dev/null || true)"
+                [ -n "$last" ] && [ "$last" != "n/a" ] && extra="  dernier: $last"
+                ;;
+        esac
+        printf "   %s %-30s %-9s %-8s%s\n" "$mark" "$unit" "$en" "$ac" "$extra"
+    done
+
+    echo ""
+    [ "$drift" -eq 0 ] && echo "✅ Rien à signaler." \
+        || echo "⚠️  À regarder ci-dessus. Pour aligner les FICHIERS : bash scripts/setup.sh --units"
     exit 0
 fi
 
