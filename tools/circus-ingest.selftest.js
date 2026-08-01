@@ -84,9 +84,22 @@ const results = [];
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 
 // Attend qu'un nouveau cycle ait émis ses 8 requêtes.
+//
+// Se synchronise d'abord sur un silence : sans ça, un scénario ramassait les
+// dernières requêtes du cycle précédent — déjà clos — puis les premières du
+// sien, répondait à ce mélange, et échouait au hasard sur un point qu'il ne
+// teste pas. La version d'origine du userscript tombait elle aussi à 5/7 une
+// fois sur trois. Un filet de sécurité qui accuse à tort est pire qu'aucun
+// filet : on finit par ignorer ce qu'il dit.
 async function nextCycle() {
+  let quiet = 0;
+  for (let i = 0; i < 800 && quiet < 3; i++) {
+    if (sock.outbox.length === 0) { quiet++; }
+    else { sock.outbox.length = 0; quiet = 0; }
+    await sleep(5);
+  }
   const got = [];
-  for (let i = 0; i < 400; i++) {
+  for (let i = 0; i < 800; i++) {
     got.push(...drain());
     if (got.length >= 8) return got;
     await sleep(5);

@@ -43,6 +43,11 @@
   const DAYS = 4;                 // jours de prématch à balayer
   const EVERY_SEC = 30;           // fréquence d'un cycle complet
   const CYCLE_TIMEOUT_MS = 20000; // au-delà, le cycle est clos sans ses retards
+  // Battement de contrôle — PAS la cadence. On vérifie dix fois par période
+  // s'il est temps de lancer un cycle, au lieu de lancer aveuglément toutes
+  // les EVERY_SEC. Voir startTicker : un tour manqué coûtait sinon une
+  // période entière.
+  const TICK_MS = Math.max(100, Math.min(5000, (EVERY_SEC * 1000) / 10));
   const LZS = "--##LZS2##--";
 
   const uuid = () =>
@@ -200,6 +205,8 @@
   let sent = {};          // Id de requête -> sport attendu
   let outstanding = 0;    // réponses encore attendues sur ce cycle
   let cycleTimer = null;
+  let cycleOpen = false;  // un cycle est-il en vol ? (finish idempotent)
+  let lastCycleStart = 0;
   let idEcho = null;      // le serveur renvoie-t-il l'Id ? (diagnostic)
   let bucket = {};        // sport -> blocs reçus pendant ce cycle
 
@@ -279,6 +286,11 @@
   }
 
   function finish() {
+    // Idempotent : le délai de garde et le battement peuvent tous deux vouloir
+    // clore le même cycle. Sans ce garde-fou, le second passage repeindrait la
+    // bannière en rouge sur un cycle pourtant poussé correctement.
+    if (!cycleOpen) return;
+    cycleOpen = false;
     clearTimeout(cycleTimer);
     outstanding = 0;
     sent = {};
@@ -306,6 +318,8 @@
     // d'empiler des requêtes dont les réponses se mêleraient aux siennes.
     if (outstanding > 0) return;
 
+    lastCycleStart = Date.now();
+    cycleOpen = true;
     sent = {}; bucket = {}; outstanding = 0;
     let delay = 0;
     for (const sp of SPORTS) {
@@ -331,11 +345,65 @@
     cycleTimer = setTimeout(finish, CYCLE_TIMEOUT_MS);
   }
 
+  // Cadence : un minuteur de page ne tient pas en arrière-plan
+  // ----------------------------------------------------------
+  // Mesuré en production le 01/08 : les fichiers Circus avaient 180 s d'âge
+  // quand ceux de Betano en avaient 20, dans le même navigateur, pour une
+  // cadence annoncée de 30 s. Deux causes qui se cumulent, et dont aucune
+  // n'apparaît dans les logs — la garde de fraîcheur est à 30 minutes, elle
+  // ne voit donc rien d'un retard de trois.
+  //
+  // 1. Chrome ralentit setInterval et setTimeout dans un onglet caché, jusqu'à
+  //    une fois par minute passées quelques minutes d'inactivité. Le pont
+  //    Betano encaisse ce ralentissement parce qu'il ne fait que pousser ;
+  //    ici il frappe AUSSI le délai de garde du cycle, si bien que tout glisse
+  //    ensemble et qu'un cycle en retard bloque les suivants. Les minuteurs
+  //    d'un Worker, eux, ne sont pas ralentis : c'est lui qui bat la mesure.
+  //
+  // 2. Un cycle encore en vol faisait sauter le tour entier — trente secondes
+  //    d'attente de plus pour une réponse en retard d'une seconde. Le
+  //    battement est donc découplé de la période : on vérifie dix fois par
+  //    période, on ne lance que lorsqu'elle est écoulée, et un cycle qui a
+  //    dépassé son délai de garde est clos de force plutôt que de bloquer.
+  function maybeCycle() {
+    const now = Date.now();
+    if (outstanding > 0) {
+      // Filet de sécurité, pas le chemin normal : la clôture reste le
+      // setTimeout de CYCLE_TIMEOUT_MS. On ne double celui-ci qu'au-delà du
+      // double de son délai, c'est-à-dire quand il a lui-même été ralenti —
+      // sinon on couperait des cycles parfaitement sains une fraction de
+      // seconde avant l'arrivée de leurs dernières réponses.
+      if (now - lastCycleStart >= CYCLE_TIMEOUT_MS * 2) finish();
+      else return;
+    }
+    if (now - lastCycleStart < EVERY_SEC * 1000) return;
+    cycle();
+  }
+
+  function startTicker(fn, ms) {
+    // Worker quand c'est possible ; repli sur setInterval sinon (harness de
+    // test, navigateur sans Blob URL). Le repli reste correct, seulement
+    // soumis au ralentissement décrit plus haut.
+    try {
+      const blob = new Blob(
+        ["setInterval(function(){postMessage(0)}," + ms + ")"],
+        { type: "text/javascript" },
+      );
+      const w = new Worker(URL.createObjectURL(blob));
+      w.onmessage = fn;
+      console.log("[Circus] cadence pilotée par Worker, battement " + ms + " ms");
+      return;
+    } catch (e) {
+      console.log("[Circus] Worker indisponible (" + e.message + ") — repli setInterval");
+    }
+    setInterval(fn, ms);
+  }
+
   if (TOKEN.indexOf("PASTE_TOKEN") !== -1) {
     document.addEventListener("DOMContentLoaded", () => paint("#b71c1c"));
     return;
   }
   paint("#f57c00");
   connect();
-  setInterval(cycle, EVERY_SEC * 1000);
+  startTicker(maybeCycle, TICK_MS);
 })();
