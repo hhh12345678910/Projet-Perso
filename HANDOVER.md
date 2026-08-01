@@ -822,3 +822,64 @@ fichiers prématch vieillissent — normal, sans conséquence (garde à 30 min).
 
 312 tests Python + 7 scénarios JavaScript. Nouveaux fichiers :
 `tests/test_circus_ingest.py`, et l'ajout de `tools/circus-ingest.selftest.js`.
+
+---
+
+## 12. Pinnacle — le plafond du système (soirée du 30/07)
+
+### Le symptôme
+
+Le football est bloqué **20 à 70 cycles par heure**, soit 12 à 40 minutes sur
+60. Pendant une coupure : aucune détection, et aucune capture de clôture — ce
+CLV-là est perdu définitivement.
+
+Le 403 **saute d'un sport à l'autre** (football muet pendant que le tennis
+répond, puis l'inverse), donc ce n'est pas un blocage d'IP permanent.
+
+### Ce qui a été corrigé
+
+| Correctif | Effet |
+|---|---|
+| Recul exponentiel après 403 (60 s → 10 min) | ne plus prolonger la limitation en redemandant toutes les 20 s |
+| Sérialisation des appels entre sports | supprime la rafale de 6-8 requêtes simultanées par cycle |
+| Réponse vide ≠ panne | le hockey hors-saison alertait 24 h/24 |
+| Sondage espacé des sports sans calendrier | après 10 réponses vides, une tentative toutes les 10 min |
+| Hockey et volley retirés de `SPORT_LIST` | 8 requêtes Pinnacle par cycle → 4 |
+| Alerte au bout de 20 min, plus 5 cycles | le canal critique redevient lisible |
+
+**Un 403 persiste malgré tout ça** (alerte de 20 min reçue après la coupe des
+sports hors-saison).
+
+### Le levier restant, et l'arbitrage
+
+`PINNACLE_MIN_INTERVAL_SEC=60` dans `.env` — espacement des appels, désactivé
+par défaut à la demande de l'utilisateur.
+
+⚠️ **L'espacement ne retarde aucune détection.** Les books soft restent
+interrogés à chaque cycle ; seule la ligne de référence vieillit. Le coût n'est
+donc pas une occasion manquée mais une EV légèrement fausse, égale à la dérive
+de la ligne Pinnacle sur la durée d'espacement.
+
+`tools/line_speed.py --hours 6` mesure cette dérive à partir de la table
+`quotes`. **Mesure à faire avant de trancher** : si la colonne « inchangé »
+montre 90 %+ de cotes identiques d'un cycle à l'autre, l'espacement est quasi
+gratuit face à 20 minutes de coupure totale.
+
+### L'hypothèse non testée
+
+Un `403` n'est pas le code d'une limitation de débit (`429` l'est). Un 403
+répété sur une IP de datacenter peut signaler un filtrage d'ASN, comme pour
+Gaming1 et Betano. **Test décisif** : la même requête depuis une IP
+résidentielle pendant que la VM reçoit un 403.
+
+- Maison 200 / VM 403 → filtrage d'IP, aucun espacement n'y changera rien. Le
+  code prévoit déjà `PINNACLE_PROXY` et `PINNACLE_LOCAL_IP` pour ça.
+- Les deux en 403 → quota lié à la clé d'API publique, l'espacement est le bon
+  levier.
+
+### Ce que tout cela démontre
+
+Le système entier est plafonné par le quota d'une source unique. C'est le
+troisième argument, et le plus concret, en faveur de la seconde référence
+sharp (§6) : **Smarkets**, API publique sans authentification, prix sans marge
+par construction, scraper déjà écrit.
