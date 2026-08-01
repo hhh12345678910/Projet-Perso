@@ -178,3 +178,91 @@ def test_backoff_resets_when_the_call_succeeds_even_if_empty():
         m._PINNACLE_GAP = old_gap
         m._PINNACLE_BACKOFF.clear()
         m._PINNACLE_EMPTY_STREAK.clear()
+
+
+def test_idle_probing_does_not_report_a_phantom_outage():
+    """Un sport en sondage espacé ne demande rien : ce n'est ni un succès ni un
+    échec. Laisser traîner le drapeau d'échec de sa dernière sonde faisait
+    compter les minutes suivantes comme autant de cycles en panne, sans
+    qu'aucune requête ne parte — « coupure de 33 min (52 cycles) » sur un sport
+    qui n'avait aucun match à clôturer.
+
+    Le test fixe LAST_PROBE explicitement : s'appuyer sur la valeur absolue de
+    time.monotonic() rendait le résultat dépendant de l'ancienneté de la
+    machine."""
+    import time as _t
+    import httpx
+    import src.main as m
+
+    for d in (m._PINNACLE_CACHE, m._PINNACLE_BLOCKED_UNTIL, m._PINNACLE_BACKOFF,
+              m._PINNACLE_SERVED_FROM_CACHE, m._PINNACLE_FAILED,
+              m._PINNACLE_EMPTY_STREAK, m._PINNACLE_LAST_PROBE):
+        d.clear()
+
+    class _Pin:
+        def __enter__(self): return self
+        def __exit__(self, *a): return False
+        def fetch_market_quotes(self, sport):
+            raise httpx.HTTPStatusError(
+                "403", request=httpx.Request("GET", "https://x"),
+                response=httpx.Response(403))
+
+    old_gap, m._PINNACLE_GAP = m._PINNACLE_GAP, 0.0
+    old_cls, m.PinnacleScraper = m.PinnacleScraper, _Pin
+    try:
+        # Dix réponses vides : le tennis est en sondage espacé, et sa sonde
+        # est due maintenant.
+        m._PINNACLE_EMPTY_STREAK["tennis"] = m._PINNACLE_IDLE_AFTER
+        m._PINNACLE_LAST_PROBE["tennis"] = _t.monotonic() - m._PINNACLE_IDLE_INTERVAL - 1
+
+        assert m.fetch_pinnacle_quotes("tennis") == []
+        assert m.pinnacle_fetch_failed("tennis") is True, "la sonde a bien échoué"
+
+        # Les cycles suivants tombent entre deux sondages : aucune requête
+        # n'est émise, donc aucune panne ne peut être constatée. C'est vrai dès
+        # le cycle suivant — avant le correctif, la garde de recul s'exécutait
+        # d'abord et remettait le drapeau à vrai.
+        for _ in range(5):
+            assert m.fetch_pinnacle_quotes("tennis") == []
+            assert not m.pinnacle_fetch_failed("tennis"), (
+                "un cycle qui ne demande rien ne doit pas compter comme une panne"
+            )
+    finally:
+        m.PinnacleScraper = old_cls
+        m._PINNACLE_GAP = old_gap
+        for d in (m._PINNACLE_FAILED, m._PINNACLE_EMPTY_STREAK,
+                  m._PINNACLE_LAST_PROBE, m._PINNACLE_BLOCKED_UNTIL,
+                  m._PINNACLE_BACKOFF):
+            d.clear()
+
+
+def test_a_real_outage_on_a_sport_with_fixtures_still_alerts():
+    """Le garde-fou du test précédent ne doit pas masquer une vraie panne : un
+    sport qui a des matchs n'entre jamais en sondage espacé, puisqu'il faut dix
+    réponses vides ET réussies pour y arriver."""
+    import httpx
+    import src.main as m
+
+    for d in (m._PINNACLE_CACHE, m._PINNACLE_BLOCKED_UNTIL, m._PINNACLE_BACKOFF,
+              m._PINNACLE_SERVED_FROM_CACHE, m._PINNACLE_FAILED,
+              m._PINNACLE_EMPTY_STREAK, m._PINNACLE_LAST_PROBE):
+        d.clear()
+
+    class _Pin:
+        def __enter__(self): return self
+        def __exit__(self, *a): return False
+        def fetch_market_quotes(self, sport):
+            raise httpx.HTTPStatusError(
+                "403", request=httpx.Request("GET", "https://x"),
+                response=httpx.Response(403))
+
+    old_gap, m._PINNACLE_GAP = m._PINNACLE_GAP, 0.0
+    old_cls, m.PinnacleScraper = m.PinnacleScraper, _Pin
+    try:
+        assert m.fetch_pinnacle_quotes("soccer") == []
+        assert m.pinnacle_fetch_failed("soccer") is True
+    finally:
+        m.PinnacleScraper = old_cls
+        m._PINNACLE_GAP = old_gap
+        for d in (m._PINNACLE_FAILED, m._PINNACLE_BLOCKED_UNTIL, m._PINNACLE_BACKOFF):
+            d.clear()

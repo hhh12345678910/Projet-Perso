@@ -950,6 +950,27 @@ def fetch_pinnacle_quotes(sport: str) -> list[OddQuote]:
         cached = _PINNACLE_CACHE.get(sport)
         fresh_enough = (_PINNACLE_MIN_INTERVAL > 0 and cached
                         and (now - cached[0]) < _PINNACLE_MIN_INTERVAL)
+
+        # Sport sans calendrier, entre deux sondages — AVANT tout le reste.
+        #
+        # On ne demande rien dans ce cas : ni succès, ni échec, un saut
+        # délibéré. Il a fallu dix réponses vides ET RÉUSSIES pour en arriver
+        # là, donc ce sport n'a aucun match à clôturer et rien à perdre.
+        #
+        # Placé après la garde de blocage, ce test ne servait à rien : la
+        # branche « encore limité » s'exécutait d'abord et remettait le drapeau
+        # d'échec à vrai à chaque cycle. Une seule sonde refusée faisait alors
+        # compter les minutes suivantes comme autant de cycles en panne, sans
+        # qu'aucune requête ne parte — « coupure de 33 min (52 cycles) » sur un
+        # sport qui n'avait rien à capturer. Observé au tennis le 01/08 à 21 h :
+        # les matchs du jour sont finis ou en cours, ceux du lendemain pas
+        # encore publiés, donc zéro événement prématch.
+        idle = _PINNACLE_EMPTY_STREAK.get(sport, 0) >= _PINNACLE_IDLE_AFTER
+        if idle and (now - _PINNACLE_LAST_PROBE.get(sport, 0.0)) < _PINNACLE_IDLE_INTERVAL:
+            _PINNACLE_SERVED_FROM_CACHE[sport] = True
+            _PINNACLE_FAILED[sport] = False
+            return []
+
         if now < blocked_until:
             _PINNACLE_SERVED_FROM_CACHE[sport] = True
             _PINNACLE_FAILED[sport] = True     # toujours limité
@@ -964,12 +985,8 @@ def fetch_pinnacle_quotes(sport: str) -> list[OddQuote]:
             if reuse:
                 _PINNACLE_SERVED_FROM_CACHE[sport] = True
                 return reuse
-        # Sport sans calendrier : sondage espacé plutôt qu'à chaque cycle.
-        if _PINNACLE_EMPTY_STREAK.get(sport, 0) >= _PINNACLE_IDLE_AFTER:
-            last = _PINNACLE_LAST_PROBE.get(sport, 0.0)
-            if now - last < _PINNACLE_IDLE_INTERVAL:
-                _PINNACLE_SERVED_FROM_CACHE[sport] = True
-                return []
+        # L'intervalle de sondage est écoulé : on va vraiment demander.
+        if idle:
             _PINNACLE_LAST_PROBE[sport] = now
 
     global _PINNACLE_LAST_CALL
