@@ -248,3 +248,48 @@ def test_pinnacle_calls_are_serialised_across_sports(monkeypatch):
         t.join()
 
     assert overlap["max"] == 1, "deux appels Pinnacle simultanés"
+
+
+def test_an_empty_response_is_not_an_outage(monkeypatch):
+    """Hors-saison, Pinnacle répond correctement avec zéro événement : en août
+    il n'y a pas un seul match de hockey. Confondre ça avec une panne faisait
+    alerter en permanence sur les sports sans calendrier — l'essentiel du bruit
+    relevé une nuit entière sur le canal critique."""
+    import src.main as m
+
+    class _Empty:
+        def __enter__(self): return self
+        def __exit__(self, *a): return False
+        def fetch_market_quotes(self, sport):
+            return iter([])
+
+    monkeypatch.setattr(m, "PinnacleScraper", _Empty)
+    monkeypatch.setattr(m, "_PINNACLE_GAP", 0.0)
+    for d in (m._PINNACLE_CACHE, m._PINNACLE_BLOCKED_UNTIL, m._PINNACLE_BACKOFF,
+              m._PINNACLE_SERVED_FROM_CACHE, m._PINNACLE_FAILED):
+        d.clear()
+
+    assert m.fetch_pinnacle_quotes("hockey") == []
+    assert m.pinnacle_fetch_failed("hockey") is False
+
+
+def test_a_403_is_an_outage(monkeypatch):
+    import httpx
+    import src.main as m
+
+    class _Blocked:
+        def __enter__(self): return self
+        def __exit__(self, *a): return False
+        def fetch_market_quotes(self, sport):
+            raise httpx.HTTPStatusError(
+                "403", request=httpx.Request("GET", "https://x"),
+                response=httpx.Response(403))
+
+    monkeypatch.setattr(m, "PinnacleScraper", _Blocked)
+    monkeypatch.setattr(m, "_PINNACLE_GAP", 0.0)
+    for d in (m._PINNACLE_CACHE, m._PINNACLE_BLOCKED_UNTIL, m._PINNACLE_BACKOFF,
+              m._PINNACLE_SERVED_FROM_CACHE, m._PINNACLE_FAILED):
+        d.clear()
+
+    assert m.fetch_pinnacle_quotes("soccer") == []
+    assert m.pinnacle_fetch_failed("soccer") is True

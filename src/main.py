@@ -733,6 +733,12 @@ _PINNACLE_CACHE: dict[str, tuple[float, list[OddQuote]]] = {}
 # déviguerait alors sur six cotes au lieu de trois. L'overround doublerait et
 # la ligne de clôture serait fausse, sans le moindre signe extérieur.
 _PINNACLE_SERVED_FROM_CACHE: dict[str, bool] = {}
+# Le dernier appel a-t-il ÉCHOUÉ ? Distinct d'une réponse vide : hors-saison,
+# Pinnacle répond correctement avec zéro événement — en août il n'y a pas un
+# seul match de hockey. Confondre les deux faisait alerter en permanence sur
+# les sports sans calendrier, ce qui remplissait le canal critique nuit après
+# nuit pour une situation parfaitement normale.
+_PINNACLE_FAILED: dict[str, bool] = {}
 _PINNACLE_BLOCKED_UNTIL: dict[str, float] = {}
 _PINNACLE_BACKOFF: dict[str, float] = {}
 _PINNACLE_LOCK = threading.Lock()
@@ -767,7 +773,11 @@ def fetch_pinnacle_quotes(sport: str) -> list[OddQuote]:
         cached = _PINNACLE_CACHE.get(sport)
         fresh_enough = (_PINNACLE_MIN_INTERVAL > 0 and cached
                         and (now - cached[0]) < _PINNACLE_MIN_INTERVAL)
-        if now < blocked_until or fresh_enough:
+        if now < blocked_until:
+            _PINNACLE_SERVED_FROM_CACHE[sport] = True
+            _PINNACLE_FAILED[sport] = True     # toujours limité
+            return _pinnacle_cached(sport)
+        if fresh_enough:
             _PINNACLE_SERVED_FROM_CACHE[sport] = True
             return _pinnacle_cached(sport)
 
@@ -793,16 +803,27 @@ def fetch_pinnacle_quotes(sport: str) -> list[OddQuote]:
                 f"pause de {back:.0f}s avant nouvelle tentative[/yellow]"
             )
             _PINNACLE_SERVED_FROM_CACHE[sport] = True
+            _PINNACLE_FAILED[sport] = True
             return _pinnacle_cached(sport)
+        _PINNACLE_FAILED[sport] = True
         raise
 
     _PINNACLE_SERVED_FROM_CACHE[sport] = False
+    _PINNACLE_FAILED[sport] = False
     if quotes:
         with _PINNACLE_LOCK:
             _PINNACLE_CACHE[sport] = (time.monotonic(), quotes)
             _PINNACLE_BACKOFF.pop(sport, None)
             _PINNACLE_BLOCKED_UNTIL.pop(sport, None)
     return quotes
+
+
+def pinnacle_fetch_failed(sport: str) -> bool:
+    """Le dernier appel a-t-il échoué, par opposition à n'avoir rien renvoyé ?
+
+    Une réponse vide est normale hors-saison. Seul un échec réel justifie une
+    alerte : sinon un sport sans calendrier alerte toutes les nuits."""
+    return _PINNACLE_FAILED.get(sport, False)
 
 
 def pinnacle_was_cached(sport: str) -> bool:
@@ -1150,8 +1171,17 @@ def _daemon_scan_sport(
         soft_raw   = [q for q in all_q if q.book not in SHARP_BOOKS]
 
         if not pinnacle_q:
-            console.print(f"[yellow]\\[{current_sport}]   No Pinnacle quotes — skipping[/yellow]")
-            _pinnacle_health(current_sport, ok=False, tg_cfg=tg_cfg)
+            failed = pinnacle_fetch_failed(current_sport)
+            console.print(
+                f"[yellow]\\[{current_sport}]   "
+                + ("Pinnacle en échec — skipping" if failed
+                   else "Pinnacle sans événement (hors-saison ?) — skipping")
+                + "[/yellow]"
+            )
+            # Zéro événement n'est pas une panne : en août Pinnacle ne price
+            # aucun match de hockey, et alerter dessus rendrait le canal
+            # critique inutilisable.
+            _pinnacle_health(current_sport, ok=not failed, tg_cfg=tg_cfg)
             return
         _pinnacle_health(current_sport, ok=True, tg_cfg=tg_cfg)
 
