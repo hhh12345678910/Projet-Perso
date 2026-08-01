@@ -2319,14 +2319,14 @@ def features_report(
     # Taux de remplissage : c'est le contrôle qui compte. Une colonne vide ne
     # produit aucune erreur, seulement une analyse impossible six semaines plus
     # tard, quand il est trop tard pour recollecter.
-    t = Table(title="Remplissage des variables", show_lines=False)
+    t = Table(title="Variables écrites à la détection", show_lines=False)
     t.add_column("variable"); t.add_column("rempli", justify="right")
     t.add_column("", justify="left")
     for col, label in (
         ("league", "ligue"), ("league_category", "catégorie"),
         ("ref_overround", "overround référence"), ("ref_age_sec", "âge de la ligne"),
         ("n_books_market", "books sur le marché"), ("match_score", "score d'appariement"),
-        ("delay_h", "délai"), ("closing_fair_odd", "clôture dévigée"),
+        ("delay_h", "délai"),
     ):
         # None ou chaîne vide seulement : zéro est une valeur légitime pour un
         # âge de ligne ou un overround, le compter comme manquant ferait crier
@@ -2336,6 +2336,34 @@ def features_report(
         flag = "✅" if pct >= 90 else ("⚠️ à vérifier" if pct >= 1 else "❌ rien ne remonte")
         t.add_row(label, f"{pct:5.1f} %", flag)
     console.print(t)
+
+    # La clôture ne se juge pas comme les autres : elle est écrite des heures
+    # plus tard, par close-lines, une fois le match commencé. La compter parmi
+    # les variables de détection affichait « ❌ rien ne remonte » sur une
+    # collecte parfaitement saine dont aucun match n'avait encore débuté — le
+    # seul dénominateur qui a un sens est le nombre de matchs déjà joués.
+    now_utc = datetime.now(timezone.utc)
+    started, started_closed = 0, 0
+    for r in rows:
+        parsed = parse_event_key(r["event_key"])
+        if parsed is None or parsed[0] > now_utc:
+            continue
+        started += 1
+        if r.get("closing_fair_odd"):
+            started_closed += 1
+    if started == 0:
+        console.print(
+            "[dim]Clôture dévigée : aucun de ces matchs n'a encore commencé — "
+            "rien à capturer pour l'instant, c'est attendu.[/dim]"
+        )
+    else:
+        pct = 100 * started_closed / started
+        mark = "✅" if pct >= 80 else "⚠️"
+        console.print(
+            f"{mark} Clôture dévigée : {started_closed}/{started} des matchs déjà "
+            f"joués ont leur ligne ({pct:.0f} %)."
+            + ("" if pct >= 80 else "  [yellow]Vérifie valuebet-close-lines.timer.[/yellow]")
+        )
 
     scored = [r for r in rows if r.get("closing_fair_odd")]
     if not scored:
@@ -2449,27 +2477,39 @@ def corrections_report():
         v = [float(r["seconds_to_corr"]) for r in rs if r.get("seconds_to_corr") is not None]
         return _stats.median(v) if v else None
 
+    # Effectif minimum sous lequel un pourcentage ne veut rien dire. Sans ce
+    # garde-fou, un seul pari corrigé affichait « 100 % » à côté d'une colonne
+    # « suivis » qui en annonçait trente — deux dénominateurs différents sur la
+    # même ligne, et la lecture naturelle était fausse.
+    MIN_N = 5
     for book in sorted(by_book, key=lambda b: -(len(by_book[b]))):
         rs = by_book[book]
         cells = []
         for secs, _ in THRESHOLDS:
             # Censure : ne comptent que les paris corrigés avant le seuil, ou
-            # observés au moins jusqu'au seuil sans l'être.
+            # observés au moins jusqu'au seuil sans l'être. Un pari détecté il
+            # y a deux minutes n'apprend rien sur le seuil « 15 min ».
             elig = [r for r in rs
                     if (r.get("seconds_to_corr") is not None
                         and float(r["seconds_to_corr"]) <= secs)
                     or ((_elapsed(r) or 0) >= secs)]
             hit = [r for r in elig if r.get("seconds_to_corr") is not None
                    and float(r["seconds_to_corr"]) <= secs]
-            cells.append(f"{100 * len(hit) / len(elig):.0f} %" if elig else "—")
+            # Le nombre d'éligibles est affiché : c'est LUI le dénominateur.
+            cells.append(f"{100 * len(hit) / len(elig):.0f} % ({len(elig)})"
+                         if len(elig) >= MIN_N else f"— ({len(elig)})")
+        done_n = sum(1 for r in rs if r.get("seconds_to_corr") is not None)
         med = _median_secs(rs)
         t.add_row(book, str(len(rs)), *cells,
-                  f"{med / 60:.0f} min" if med else "—")
+                  f"{med / 60:.0f} min" if med and done_n >= MIN_N else "—")
     console.print(t)
     console.print(
-        "[dim]Lecture : un book qui corrige vite laisse une fenêtre courte — il "
-        "faut le jouer tout de suite ou pas du tout. Un book lent tolère d'être "
-        "joué plus tard, ce qui compte quand les alertes arrivent en rafale.[/dim]"
+        "[dim]Entre parenthèses : le nombre de paris qui renseignent vraiment la\n"
+        "colonne. Un pari détecté il y a deux minutes ne dit rien du seuil « 15 min »,\n"
+        f"il en est donc exclu. En dessous de {MIN_N}, aucun pourcentage n'est affiché.\n"
+        "Lecture : un book qui corrige vite laisse une fenêtre courte — il faut le\n"
+        "jouer tout de suite ou pas du tout. Un book lent tolère d'être joué plus\n"
+        "tard, ce qui compte quand les alertes arrivent en rafale.[/dim]"
     )
 
 
