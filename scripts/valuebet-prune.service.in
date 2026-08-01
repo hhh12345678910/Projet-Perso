@@ -7,4 +7,7 @@ Description=Prune old valuebet quote rows and stale dedup marks
 Type=oneshot
 User=__USER__
 WorkingDirectory=__PROJECT_DIR__
-ExecStart=__PROJECT_DIR__/runscan.sh prune --days 2
+# Pas de --days ici : la rétention se règle par PRUNE_DAYS dans .env, que
+# runscan.sh charge avant de lancer Python. Un drapeau en dur ici l'emporterait
+# sur .env, et il faudrait éditer une unité systemd pour changer un chiffre.
+ExecStart=__PROJECT_DIR__/runscan.sh prune

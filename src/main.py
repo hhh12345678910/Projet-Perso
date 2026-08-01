@@ -1922,11 +1922,16 @@ def _ev_bucket(ev: float) -> str:
 @app.command()
 def prune(
     retention_days: int = typer.Option(
-        2, "--days",
-        help="Delete raw quote rows older than this many days. 2 is ample: "
-        "closing lines are captured within hours of kickoff, and the table "
-        "grows by tens of millions of rows a day, so a longer window costs "
-        "gigabytes for data nothing reads.",
+        # Lu dans .env comme SPORT_LIST ou MIN_EV : la rétention est le seul
+        # levier sur la taille de la base, et elle n'était réglable qu'en
+        # éditant l'unité systemd — donc en pratique jamais. Mesuré le 01/08 :
+        # deux jours pèsent 23 Go de données utiles, sur un disque de 48.
+        int(os.getenv("PRUNE_DAYS", "2")), "--days",
+        help="Delete raw quote rows older than this many days. Défaut 2, "
+        "réglable par PRUNE_DAYS dans .env. Une journée suffit dès lors que "
+        "close-lines tourne toutes les heures : la ligne de clôture est "
+        "capturée dans l'heure suivant le coup d'envoi, et la table grossit "
+        "de dizaines de millions de lignes par jour.",
     ),
     vacuum: bool = typer.Option(True, "--vacuum/--no-vacuum",
                                 help="Run VACUUM to actually shrink the file on disk."),
