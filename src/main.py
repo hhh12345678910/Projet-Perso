@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 import os
-from collections import defaultdict
+from collections import Counter, defaultdict
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from dataclasses import replace
 from datetime import datetime, timedelta, timezone
@@ -17,8 +17,9 @@ from rich.console import Console
 from rich.table import Table
 
 from .config import ScanConfig
-from .devig import devig
+from .devig import devig, overround as _overround
 from .ev import ev_pct, fair_odd, kelly_fraction, kelly_stake
+from .leagues import categorize as _league_category
 from .matcher import parse_event_key, reconcile_event_keys, tolerance_for
 from .models import Book, FairLine, MarketType, OddQuote, Outcome, ValueBet
 from .scrapers.betano import (
@@ -274,8 +275,85 @@ def find_value_bets(
             league=q.league,
             reference_book=fl.reference_book,
             book_event_key=q.book_event_key,
+            match_score=q.match_score,
         ))
     return out
+
+
+def build_bet_features(
+    bets: list[ValueBet],
+    bet_ids: list[int],
+    pinnacle_quotes: list[OddQuote],
+    soft_quotes: list[OddQuote],
+    fair_lines: dict[tuple[str, MarketType, float | None], FairLine],
+    sport: str,
+    now: datetime,
+) -> list[tuple]:
+    """Assembler une ligne de features par détection, prête pour bet_features.
+
+    Toutes ces variables existent déjà en mémoire à cet instant précis du
+    cycle, et étaient jetées ensuite. Aucune ne se reconstitue après coup :
+    l'overround de la référence et l'âge de sa ligne disparaissent avec la
+    purge des cotes, la ligue n'était nulle part, et le score d'appariement
+    n'était même pas conservé jusqu'ici.
+
+    Chacune répond à une hypothèse précise sur les faux positifs :
+      - match_score     : mauvais rapprochement d'événements
+      - n_books_market  : marché mince, personne d'autre ne le price
+      - ref_overround   : Pinnacle lui-même hésite sur ce marché
+      - ref_age_sec     : ligne de référence vieille, donc EV calculée contre
+                          un prix qui a pu bouger
+      - league_category : certains championnats sont structurellement pires
+      - time_shift_min  : les deux sources ne parlent pas du même match
+    """
+    # Ligue et fraîcheur, par événement de la référence.
+    league_by_ev: dict[str, str | None] = {}
+    ref_fetched: dict[str, datetime] = {}
+    for q in pinnacle_quotes:
+        if q.league and not league_by_ev.get(q.event_key):
+            league_by_ev[q.event_key] = q.league
+        prev = ref_fetched.get(q.event_key)
+        if prev is None or q.fetched_at > prev:
+            ref_fetched[q.event_key] = q.fetched_at
+
+    # Overround de la référence sur le marché exact du pari.
+    pin_group: dict[tuple, list[float]] = defaultdict(list)
+    for q in pinnacle_quotes:
+        pin_group[(q.event_key, q.market, q.outcome.line)].append(q.decimal_odd)
+
+    # Combien de books proposent ce marché — un marché que personne d'autre ne
+    # price est le premier suspect quand une cote paraît trop belle.
+    books_market: dict[tuple, set] = defaultdict(set)
+    for q in soft_quotes:
+        books_market[(q.event_key, q.market, q.outcome.line)].add(q.book)
+
+    rows: list[tuple] = []
+    for vb, vb_id in zip(bets, bet_ids):
+        key = (vb.event_key, vb.market, vb.outcome.line)
+        odds = pin_group.get(key) or []
+        ovr = _overround(odds) if len(odds) >= 2 else None
+        fl = fair_lines.get(key)
+        parsed = parse_event_key(vb.event_key)
+        delay_h = ((parsed[0] - vb.detected_at).total_seconds() / 3600.0
+                   if parsed else None)
+        fetched = ref_fetched.get(vb.event_key)
+        age = (now - fetched).total_seconds() if fetched else None
+        shift = None
+        if vb.book_event_key:
+            bp = parse_event_key(vb.book_event_key)
+            if bp and parsed:
+                shift = (parsed[0] - bp[0]).total_seconds() / 60.0
+        league = vb.league or league_by_ev.get(vb.event_key)
+        rows.append((
+            vb_id, vb.detected_at.isoformat(), vb.event_key, sport,
+            league, _league_category(league),
+            vb.book.value, vb.market.value, vb.outcome.label, vb.outcome.line,
+            vb.odd_taken, vb.fair_odd, vb.ev_pct, vb.kelly_stake_pct, delay_h,
+            vb.reference_book.value if vb.reference_book else None,
+            ovr, len(fl.outcomes) if fl else None, age,
+            len(books_market.get(key) or ()), vb.match_score, shift,
+        ))
+    return rows
 
 
 # Books that share a single odds feed (Kambi): Unibet and 711 price identically,
@@ -339,10 +417,12 @@ def remap_to_reference(
     'Senegal vs Nigeria' while Pinnacle has 'Nigeria vs Senegal'), the home
     /away outcome labels are flipped on the way out so the rest of the
     pipeline compares apples to apples. Unmatched quotes are dropped."""
+    scores: dict[str, float] = {}
     soft_to_ref = reconcile_event_keys(
         reference_keys=list(reference_keys),
         candidate_keys={q.event_key for q in soft_quotes},
         time_tolerance_minutes=tolerance_for(sport),
+        scores=scores,
     )
     out: list[OddQuote] = []
     for q in soft_quotes:
@@ -350,15 +430,17 @@ def remap_to_reference(
         if match is None:
             continue
         ref_key, swap = match
+        score = scores.get(q.event_key)
         flipped_outcome = _flip_outcome_for_swap(q.outcome, q.market) if swap else q.outcome
         if ref_key == q.event_key and not swap:
-            out.append(q)
+            out.append(replace(q, match_score=score))
         else:
             # book_event_key retient l'heure annoncée par le book : après
             # réalignement, event_key porte celle de la référence, qui peut
             # être postérieure de plusieurs heures au tennis.
             out.append(replace(q, event_key=ref_key, outcome=flipped_outcome,
-                               book_event_key=q.book_event_key or q.event_key))
+                               book_event_key=q.book_event_key or q.event_key,
+                               match_score=score))
     return out
 
 
@@ -1255,12 +1337,20 @@ def _daemon_scan_sport(
         # Persist the event (with its sport) for every Pinnacle event in the
         # reference frame. Value bets are keyed onto these same event_keys, so
         # this lets clv-report break CLV down per sport instead of "unknown".
+        # La ligue vient de Pinnacle : c'est la seule source qui la nomme pour
+        # TOUS les événements de la référence. Elle était écrite vide ici, donc
+        # aucune analyse par championnat n'était possible, même a posteriori.
+        league_by_event: dict[str, str] = {}
+        for q in pinnacle_q:
+            if q.league and q.event_key not in league_by_event:
+                league_by_event[q.event_key] = q.league
         event_rows = []
         for ek in {q.event_key for q in pinnacle_q}:
             parsed = parse_event_key(ek)
             if parsed is not None:
                 start, home_norm, away_norm = parsed
-                event_rows.append((ek, current_sport, "", home_norm, away_norm, start.isoformat()))
+                event_rows.append((ek, current_sport, league_by_event.get(ek, ""),
+                                   home_norm, away_norm, start.isoformat()))
         storage.upsert_events(event_rows)
         if not pinnacle_was_cached(current_sport):
             storage.insert_quotes(pinnacle_q)
@@ -1332,9 +1422,18 @@ def _daemon_scan_sport(
         # ── Value bets ───────────────────────────────────────────────
         bets = merge_twin_book_value_bets(find_value_bets(soft_q, fair, cfg))
         bets.sort(key=lambda b: b.ev_pct, reverse=True)
-        for b in bets:
-            storage.insert_value_bet(b)
+        bet_ids = [storage.insert_value_bet(b) for b in bets]
         console.print(f"\\[{current_sport}]   value bets: {len(bets)} total")
+
+        # Features permanentes. Enveloppé : c'est de la collecte annexe, le
+        # pari est déjà en base et un scan ne doit jamais tomber pour ça.
+        try:
+            storage.insert_bet_features(build_bet_features(
+                bets, bet_ids, pinnacle_q, soft_q, fair,
+                current_sport, datetime.now(timezone.utc),
+            ))
+        except Exception as e:                                  # noqa: BLE001
+            console.print(f"[yellow]\\[{current_sport}]   features skipped: {e}[/yellow]")
         if tg_cfg is not None:
             # The hard alert cap ALWAYS applies (even with the EV-delta dedup
             # turned off); the EV-delta dedup is an extra filter on top.
@@ -2118,6 +2217,111 @@ def clv_report(
         console.print("\n[bold]— Population complète des détections —[/bold]")
         _clv_breakdown(rows, "ev_bucket", "CLV par tranche d'EV (tout)",
                        order=_EV_BUCKET_ORDER)
+
+
+@app.command(name="features")
+def features_report(
+    min_ev: float = typer.Option(0.0, "--min-ev", help="Ne garder que les EV ≥ ce seuil."),
+    premium: bool = typer.Option(
+        False, "--premium",
+        help="Restreindre au canal premium (EV≥8 & cote 1.5-4, ou EV≥20 & cote 4-6).",
+    ),
+    max_ev: float = typer.Option(
+        40.0, "--max-ev",
+        help="Plafond d'EV. Au-delà, une cote n'est pas bonne mais fausse.",
+    ),
+):
+    """État de la collecte permanente, et CLV par championnat.
+
+    Sert d'abord à vérifier que la collecte tourne : une variable à 0 % de
+    remplissage est une panne silencieuse, elle ne se voit nulle part ailleurs.
+    Les ventilations n'ont de sens qu'une fois assez de clôtures capturées."""
+    storage = Storage(ScanConfig().db_path)
+    rows = [dict(r) for r in storage.features_with_clv()]
+    if not rows:
+        console.print(
+            "[bold]Aucune feature collectée.[/bold]\n"
+            "[dim]Normal si le daemon n'a pas encore tourné depuis la mise à jour. "
+            "Sinon, cherche « features skipped » dans valuebet.log.[/dim]"
+        )
+        return
+
+    days = len({r["detected_at"][:10] for r in rows})
+    console.print(
+        f"[bold]{len(rows):,} détections collectées[/bold] sur {days} jour(s) — "
+        f"{rows[0]['detected_at'][:10]} → {rows[-1]['detected_at'][:10]}"
+    )
+
+    # Taux de remplissage : c'est le contrôle qui compte. Une colonne vide ne
+    # produit aucune erreur, seulement une analyse impossible six semaines plus
+    # tard, quand il est trop tard pour recollecter.
+    t = Table(title="Remplissage des variables", show_lines=False)
+    t.add_column("variable"); t.add_column("rempli", justify="right")
+    t.add_column("", justify="left")
+    for col, label in (
+        ("league", "ligue"), ("league_category", "catégorie"),
+        ("ref_overround", "overround référence"), ("ref_age_sec", "âge de la ligne"),
+        ("n_books_market", "books sur le marché"), ("match_score", "score d'appariement"),
+        ("delay_h", "délai"), ("closing_fair_odd", "clôture dévigée"),
+    ):
+        # None ou chaîne vide seulement : zéro est une valeur légitime pour un
+        # âge de ligne ou un overround, le compter comme manquant ferait crier
+        # à la panne sur une collecte parfaitement saine.
+        n = sum(1 for r in rows if r.get(col) is not None and r.get(col) != "")
+        pct = 100 * n / len(rows)
+        flag = "✅" if pct >= 90 else ("⚠️ à vérifier" if pct >= 1 else "❌ rien ne remonte")
+        t.add_row(label, f"{pct:5.1f} %", flag)
+    console.print(t)
+
+    scored = [r for r in rows if r.get("closing_fair_odd")]
+    if not scored:
+        console.print(
+            "\n[yellow]Aucune clôture capturée pour ces détections.[/yellow]\n"
+            "[dim]  Les ventilations arriveront d'elles-mêmes : close-lines tourne "
+            "toutes les heures et remplit au fur et à mesure des coups d'envoi.[/dim]"
+        )
+        return
+
+    for r in scored:
+        r["clv"] = (float(r["odd_taken"]) / float(r["closing_fair_odd"]) - 1) * 100
+    pool = [r for r in scored if float(r["ev_pct"]) <= max_ev
+            and float(r["ev_pct"]) >= min_ev]
+    if premium:
+        pool = [r for r in pool if
+                (float(r["ev_pct"]) >= 8 and 1.5 <= float(r["odd_taken"]) <= 4.0)
+                or (float(r["ev_pct"]) >= 20 and 4.0 < float(r["odd_taken"]) <= 6.0)]
+
+    # Dédoublonnage par opportunité : une même sélection est détectée sur
+    # plusieurs books, ce sont des observations corrélées et on n'en joue
+    # qu'une. Sans ça les effectifs gonflent d'un tiers, et toutes les
+    # significativités avec.
+    groups: dict[tuple, list[dict]] = defaultdict(list)
+    for r in pool:
+        groups[(r["event_key"], r["market"], r["outcome_label"], r["line"])].append(r)
+    dedup = []
+    for g in groups.values():
+        base = dict(g[0])
+        base["clv"] = sum(x["clv"] for x in g) / len(g)
+        base["odd_taken"] = float(base["odd_taken"])
+        # _clv_breakdown repart des couples (cote prise, clôture). On lui donne
+        # la clôture qui redonne exactement le CLV moyenné de la grappe, plutôt
+        # que celle d'un book pris au hasard parmi les books de la grappe.
+        base["closing_odd"] = base["odd_taken"] / (1 + base["clv"] / 100)
+        base["league_category"] = base.get("league_category") or "autre"
+        dedup.append(base)
+
+    console.print(f"\n[bold]{len(pool)} lignes → {len(dedup)} opportunités[/bold] "
+                  f"(avec clôture{', premium' if premium else ''})")
+    _clv_breakdown(dedup, "league_category", "CLV par catégorie de championnat")
+    top = Counter(r["league"] for r in dedup if r.get("league")).most_common(12)
+    if top:
+        t2 = Table(title="Ligues les plus fréquentes", show_lines=False)
+        t2.add_column("ligue"); t2.add_column("n", justify="right")
+        t2.add_column("CLV moy%", justify="right")
+        for lg, n in top:
+            v = [r["clv"] for r in dedup if r.get("league") == lg]
+            t2.add_row(lg, str(n), f"{sum(v)/len(v):+.2f}")
+        console.print(t2)
 
 
 @app.command(name="export-history")

@@ -149,6 +149,7 @@ def reconcile_event_keys(
     time_tolerance_minutes: int = DEFAULT_TIME_TOLERANCE_MIN,
     min_score: float = 85.0,
     ambiguity_margin: float = 4.0,
+    scores: Optional[dict[str, float]] = None,
 ) -> dict[str, tuple[str, bool]]:
     """Map each candidate (soft-book) event_key onto the best reference
     (Pinnacle) event_key via fuzzy team matching within a time window.
@@ -159,6 +160,14 @@ def reconcile_event_keys(
     by quotes from that candidate need to be flipped before they line up
     with the reference frame. Exact string matches are kept as-is and never
     require a swap.
+
+    `scores` est un paramètre de SORTIE facultatif : s'il est fourni, il
+    reçoit {candidate_key: score de similarité retenu}. Le score était calculé
+    puis jeté, alors qu'un appariement à 86 et un appariement à 100 n'inspirent
+    pas la même confiance — « mauvais matching » est l'une des causes
+    soupçonnées de faux positifs, et sans ce chiffre elle est intestable.
+    Passé en sortie plutôt qu'en valeur de retour pour ne rien casser chez les
+    appelants qui n'en ont pas besoin.
     """
     refs: list[tuple[str, datetime, str, str]] = []
     for k in reference_keys:
@@ -173,6 +182,8 @@ def reconcile_event_keys(
     for ck in candidate_keys:
         if ck in ref_keys:
             mapping[ck] = (ck, False)
+            if scores is not None:
+                scores[ck] = 100.0     # égalité exacte de clé
             continue
         parsed = parse_event_key(ck)
         if parsed is None:
@@ -207,6 +218,8 @@ def reconcile_event_keys(
             continue
         if best_key is not None and best_score >= min_score:
             mapping[ck] = (best_key, best_swap)
+            if scores is not None:
+                scores[ck] = best_score
     return mapping
 
 

@@ -72,6 +72,11 @@ class OddQuote:
     # tardive, le match paraît à venir alors qu'il est déjà en cours. Garder
     # l'heure du book permet de retenir la plus précoce des deux.
     book_event_key: Optional[str] = None
+    # Score de similarité retenu par le rapprochement flou (0-100), ou 100 pour
+    # une égalité exacte de clé. Il était calculé puis jeté : un appariement à
+    # 86 et un appariement à 100 n'inspirent pourtant pas la même confiance, et
+    # « mauvais matching » est l'une des causes soupçonnées de faux positifs.
+    match_score: Optional[float] = None
 
 
 @dataclass
@@ -110,3 +115,5 @@ class ValueBet:
     # share the Kambi feed). Listed alongside `book` in the alert so the same
     # opportunity fires once, naming every book where you can take it.
     also_books: tuple[Book, ...] = ()
+    # Voir OddQuote.match_score.
+    match_score: Optional[float] = None

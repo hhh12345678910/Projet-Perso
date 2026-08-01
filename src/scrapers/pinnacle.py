@@ -286,6 +286,12 @@ class PinnacleScraper:
                     decimal_odd=decimal_odd,
                     fetched_at=now,
                     source_event_id=str(market.get("matchupId")),
+                    # La ligue était lue puis jetée : elle servait au filtre de
+                    # bruit et n'allait pas plus loin. Pinnacle est la seule
+                    # source qui la nomme pour TOUS les événements de la
+                    # référence, donc c'est ici, et nulle part ailleurs, qu'on
+                    # peut la rattacher à chaque event_key.
+                    league=league_name or None,
                 )
 
     @staticmethod

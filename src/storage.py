@@ -158,6 +158,48 @@ CREATE TABLE IF NOT EXISTS results (
 # "ADD COLUMN IF NOT EXISTS", so each is attempted and its duplicate-column
 # error swallowed — that keeps an existing production database upgradable
 # without a dump/restore.
+# Table permanente, JAMAIS purgée — c'est tout son intérêt.
+#
+# `quotes` pèse 20 Go pour deux jours et se purge chaque nuit : chaque cote de
+# chaque book à chaque cycle, une information très diluée. Ici c'est l'inverse :
+# une ligne par détection, ~300 octets, soit environ 200 Mo par an. Ce sont les
+# variables calculées à la volée puis jetées à chaque cycle — ligue, overround
+# de la référence, âge de la ligne, nombre de books offrant le marché, qualité
+# de l'appariement — sans lesquelles aucune analyse par championnat, aucun
+# diagnostic de faux positif et aucun modèle n'est possible, même rétroactivement.
+#
+# Le CLV et le résultat sont remplis plus tard, quand ils existent.
+FEATURES_SCHEMA = """
+CREATE TABLE IF NOT EXISTS bet_features (
+    value_bet_id    INTEGER PRIMARY KEY,
+    detected_at     TEXT NOT NULL,
+    event_key       TEXT NOT NULL,
+    sport           TEXT,
+    league          TEXT,
+    league_category TEXT,
+    book            TEXT NOT NULL,
+    market          TEXT NOT NULL,
+    outcome_label   TEXT NOT NULL,
+    line            REAL,
+    odd_taken       REAL NOT NULL,
+    fair_odd        REAL NOT NULL,
+    ev_pct          REAL NOT NULL,
+    kelly_pct       REAL,
+    delay_h         REAL,
+    reference_book  TEXT,
+    ref_overround   REAL,
+    ref_n_outcomes  INTEGER,
+    ref_age_sec     REAL,
+    n_books_market  INTEGER,
+    match_score     REAL,
+    time_shift_min  REAL
+);
+CREATE INDEX IF NOT EXISTS idx_bf_detected ON bet_features(detected_at);
+CREATE INDEX IF NOT EXISTS idx_bf_league ON bet_features(league_category);
+CREATE INDEX IF NOT EXISTS idx_bf_event ON bet_features(event_key);
+"""
+
+
 MIGRATIONS = [
     ("value_bets", "closing_lost", "INTEGER"),
     ("clv_snapshots", "fair_odd", "REAL"),
@@ -183,6 +225,7 @@ class Storage:
         self.path.parent.mkdir(parents=True, exist_ok=True)
         with self._conn() as c:
             c.executescript(SCHEMA)
+            c.executescript(FEATURES_SCHEMA)
             for table, column, coltype in MIGRATIONS:
                 try:
                     c.execute(f"ALTER TABLE {table} ADD COLUMN {column} {coltype}")
@@ -253,7 +296,13 @@ class Storage:
 
     def upsert_events(self, rows: "Iterable[tuple]") -> None:
         """Batch INSERT OR IGNORE events in one transaction.
-        Each row = (event_key, sport, league, home, away, start_time_iso)."""
+        Each row = (event_key, sport, league, home, away, start_time_iso).
+
+        La ligue est complétée après coup lorsqu'elle manque : un simple
+        INSERT OR IGNORE laissait vide à jamais tout événement vu une première
+        fois sans ligue — au premier cycle qui suit un redémarrage, ou quand
+        Pinnacle ne la renvoie pas encore. Une ligue jamais remplie ne se
+        rattrape pas, alors qu'une ligue déjà connue n'est jamais écrasée."""
         rows = list(rows)
         if not rows:
             return
@@ -262,6 +311,11 @@ class Storage:
                 "INSERT OR IGNORE INTO events(event_key, sport, league, home, away, start_time) "
                 "VALUES (?, ?, ?, ?, ?, ?)",
                 rows,
+            )
+            c.executemany(
+                "UPDATE events SET league = ? "
+                "WHERE event_key = ? AND (league IS NULL OR league = '')",
+                [(r[2], r[0]) for r in rows if r[2]],
             )
 
     def prune_quotes(
@@ -346,6 +400,44 @@ class Storage:
         finally:
             conn.close()
         return removed
+
+    def insert_bet_features(self, rows: Iterable[tuple]) -> int:
+        """Écrire les features d'un lot de détections. Voir FEATURES_SCHEMA.
+
+        `INSERT OR REPLACE` sur value_bet_id : rejouer un cycle ne duplique
+        rien. Un échec ici ne doit jamais faire tomber le scan — c'est de la
+        collecte annexe, le pari lui-même est déjà en base."""
+        rows = list(rows)
+        if not rows:
+            return 0
+        with self._conn() as c:
+            c.executemany(
+                "INSERT OR REPLACE INTO bet_features("
+                "value_bet_id, detected_at, event_key, sport, league, league_category,"
+                "book, market, outcome_label, line, odd_taken, fair_odd, ev_pct,"
+                "kelly_pct, delay_h, reference_book, ref_overround, ref_n_outcomes,"
+                "ref_age_sec, n_books_market, match_score, time_shift_min) "
+                "VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)",
+                rows,
+            )
+        return len(rows)
+
+    def features_with_clv(self) -> list[sqlite3.Row]:
+        """Features jointes à leur ligne de clôture dévigée, quand elle existe.
+
+        LEFT JOIN volontaire : une détection sans clôture reste visible, ce qui
+        permet de distinguer « pas encore mesurable » de « rien collecté » —
+        deux situations que le même tableau vide confondrait."""
+        with self._conn() as c:
+            return list(c.execute(
+                "SELECT bf.*, cs.fair_odd AS closing_fair_odd, "
+                "pb.dedup_key IS NOT NULL AS played "
+                "FROM bet_features bf "
+                "LEFT JOIN clv_snapshots cs "
+                "  ON cs.value_bet_id = bf.value_bet_id AND cs.closing = 1 "
+                "LEFT JOIN played_bets pb ON pb.value_bet_id = bf.value_bet_id "
+                "ORDER BY bf.detected_at"
+            ))
 
     def count_quotes_older_than(self, retention_days: int) -> int:
         """Combien de lignes la purge a encore à supprimer. Sert à dire si un
