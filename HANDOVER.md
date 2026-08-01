@@ -127,9 +127,20 @@ scrapers, pas réécrire le moteur.
 | Golden Palace | ❌ | compte limité |
 | Smarkets | ❌ retiré | voir §5 |
 
-**Sports scannés : soccer, tennis, hockey.** Basket retiré (pas d'alertes
-souhaitées), volley retiré (Pinnacle ne price que 2 événements → aucune ligne de
-référence possible).
+**Sports scannés : soccer, tennis** (`SPORT_LIST` dans `.env`). Basket retiré
+(pas d'alertes souhaitées), volley retiré (Pinnacle ne price que 2 événements →
+aucune ligne de référence possible).
+
+⚠️ **Le hockey a été coupé le 30/07 et ne reviendra pas tout seul.** Motif :
+hors-saison en août, Pinnacle n'en price aucun match, et les huit requêtes par
+cycle que hockey et volley consommaient — dont quatre vers Pinnacle — faisaient
+partie du quota qui manquait au football, bloqué 20 à 70 cycles par heure.
+**À remettre dans `SPORT_LIST` à la reprise de la saison NHL, en octobre.**
+
+Un repli automatique existe par ailleurs pour un sport encore scanné mais sans
+calendrier : après dix réponses vides, Pinnacle ne le sonde plus que toutes les
+dix minutes, et il revient de lui-même. Il ne s'applique pas à un sport retiré
+de `SPORT_LIST`.
 
 ### Couverture mesurée (30/07, fenêtre 24 h, après rapprochement flou)
 
