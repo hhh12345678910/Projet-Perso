@@ -150,39 +150,58 @@ def build_fair_lines(
 # demie a coûté exactement ça.
 _PINNACLE_FAILS: dict[str, int] = {}
 _PINNACLE_ALERTED: set[str] = set()
-_PINNACLE_ALERT_AFTER = int(os.getenv("PINNACLE_ALERT_AFTER_CYCLES", "5"))
+_PINNACLE_DOWN_SINCE: dict[str, float] = {}
+# Seuil en MINUTES, pas en cycles. Les coupures courtes sont désormais
+# attendues : le recul après 403 les absorbe seul, et alerter dessus produisait
+# deux messages — alarme puis rétablissement — pour une situation que rien
+# n'exige de traiter. Une nuit entière de brèves limitations remplissait le
+# canal critique, ce qui apprend à l'ignorer et ruine sa raison d'être.
+#
+# Ce qui mérite vraiment un réveil, c'est une coupure assez longue pour faire
+# perdre des lignes de clôture — irrécupérables, contrairement aux détections.
+_PINNACLE_ALERT_AFTER_MIN = float(os.getenv("PINNACLE_ALERT_AFTER_MIN", "20"))
+
+
+def _fmt_minutes(seconds: float) -> str:
+    m = int(seconds // 60)
+    return f"{m // 60} h {m % 60:02d}" if m >= 60 else f"{m} min"
 
 
 def _pinnacle_health(sport: str, *, ok: bool, tg_cfg) -> None:
-    """Compte les échecs consécutifs et prévient une seule fois par panne.
+    """Prévient une fois par panne, et seulement si elle dure.
 
-    Le seuil évite d'alerter sur les 403 passagers, fréquents et sans gravité.
     Le message de rétablissement compte autant que l'alarme : sans lui, on ne
-    sait pas si le problème dure encore."""
+    sait pas si le problème dure encore. Il porte la durée réelle, seule
+    information qui permette de juger si des clôtures ont été perdues."""
+    now = time.monotonic()
+
     if ok:
         if sport in _PINNACLE_ALERTED:
-            cycles = _PINNACLE_FAILS.get(sport, 0)
+            down = now - _PINNACLE_DOWN_SINCE.get(sport, now)
             send_system_alert(
                 tg_cfg,
                 f"✅ <b>Pinnacle rétabli</b> — {sport}\n"
-                f"Après {cycles} cycles sans cotes. Les lignes de clôture des "
-                f"matchs partis pendant la panne sont perdues.",
+                f"Coupure de {_fmt_minutes(down)} "
+                f"({_PINNACLE_FAILS.get(sport, 0)} cycles). Les lignes de "
+                f"clôture des matchs partis pendant ce temps sont perdues.",
                 print_fn=lambda s: console.print(f"[yellow]{s}[/yellow]"),
             )
             _PINNACLE_ALERTED.discard(sport)
         _PINNACLE_FAILS[sport] = 0
+        _PINNACLE_DOWN_SINCE.pop(sport, None)
         return
 
     _PINNACLE_FAILS[sport] = _PINNACLE_FAILS.get(sport, 0) + 1
-    n = _PINNACLE_FAILS[sport]
-    if n >= _PINNACLE_ALERT_AFTER and sport not in _PINNACLE_ALERTED:
+    _PINNACLE_DOWN_SINCE.setdefault(sport, now)
+    down = now - _PINNACLE_DOWN_SINCE[sport]
+    if down >= _PINNACLE_ALERT_AFTER_MIN * 60 and sport not in _PINNACLE_ALERTED:
         _PINNACLE_ALERTED.add(sport)
         send_system_alert(
             tg_cfg,
             f"🚨 <b>Pinnacle muet</b> — {sport}\n"
-            f"{n} cycles consécutifs sans cotes. Plus aucun value bet n'est "
-            f"détecté, et les lignes de clôture ne sont plus capturées — ce "
-            f"CLV-là sera définitivement perdu.\n"
+            f"{_fmt_minutes(down)} sans cotes ({_PINNACLE_FAILS[sport]} cycles). "
+            f"Plus aucun value bet n'est détecté, et les lignes de clôture ne "
+            f"sont plus capturées — ce CLV-là sera définitivement perdu.\n"
             f"À vérifier : <code>./doctor.sh</code>",
             print_fn=lambda s: console.print(f"[yellow]{s}[/yellow]"),
         )

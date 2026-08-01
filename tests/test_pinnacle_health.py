@@ -29,47 +29,68 @@ def sent(monkeypatch) -> list[str]:
     return out
 
 
-def test_a_passing_failure_stays_quiet(sent):
-    """Les 403 passagers de Pinnacle sont fréquents et sans gravité — alerter
-    dessus rendrait l'alarme inutile."""
-    for _ in range(main._PINNACLE_ALERT_AFTER - 1):
-        main._pinnacle_health("soccer", ok=False, tg_cfg=object())
+@pytest.fixture
+def clock(monkeypatch):
+    """Horloge pilotée : le seuil est une durée, pas un nombre de cycles."""
+    state = {"t": 1000.0}
+    monkeypatch.setattr(main.time, "monotonic", lambda: state["t"])
+    main._PINNACLE_DOWN_SINCE.clear()
+    return state
+
+
+def _down(minutes: float, clock, sport="soccer", step=0.5):
+    """Simule `minutes` de panne, un cycle toutes les `step` minutes."""
+    elapsed = 0.0
+    while elapsed <= minutes:
+        main._pinnacle_health(sport, ok=False, tg_cfg=object())
+        clock["t"] += step * 60
+        elapsed += step
+
+
+def test_a_passing_failure_stays_quiet(sent, clock):
+    """Les coupures courtes sont désormais attendues : le recul après 403 les
+    absorbe seul. Alerter dessus remplissait le canal critique toute la nuit,
+    ce qui apprend à l'ignorer et lui retire toute valeur."""
+    _down(main._PINNACLE_ALERT_AFTER_MIN - 2, clock)
     assert sent == []
 
 
-def test_a_lasting_outage_alerts_once(sent):
-    for _ in range(main._PINNACLE_ALERT_AFTER + 4):
-        main._pinnacle_health("soccer", ok=False, tg_cfg=object())
+def test_a_lasting_outage_alerts_once(sent, clock):
+    _down(main._PINNACLE_ALERT_AFTER_MIN + 10, clock)
     assert len(sent) == 1, "une seule alarme par panne, pas une par cycle"
     assert "Pinnacle muet" in sent[0]
 
 
-def test_recovery_is_announced(sent):
-    for _ in range(main._PINNACLE_ALERT_AFTER):
-        main._pinnacle_health("soccer", ok=False, tg_cfg=object())
+def test_recovery_carries_the_real_duration(sent, clock):
+    _down(main._PINNACLE_ALERT_AFTER_MIN + 5, clock)
     main._pinnacle_health("soccer", ok=True, tg_cfg=object())
 
     assert len(sent) == 2
     assert "rétabli" in sent[1]
-    # Le compteur repart de zéro : la panne suivante réalerte.
-    for _ in range(main._PINNACLE_ALERT_AFTER):
-        main._pinnacle_health("soccer", ok=False, tg_cfg=object())
+    # La durée permet de juger si des clôtures ont été perdues.
+    assert "min" in sent[1] or " h " in sent[1]
+
+    # L'état repart de zéro : la panne suivante réalerte.
+    _down(main._PINNACLE_ALERT_AFTER_MIN + 1, clock)
     assert len(sent) == 3
 
 
-def test_a_recovery_without_an_outage_says_nothing(sent):
+def test_a_recovery_without_an_outage_says_nothing(sent, clock):
     """Un cycle sain après un échec isolé ne doit pas produire de message."""
     main._pinnacle_health("soccer", ok=False, tg_cfg=object())
     main._pinnacle_health("soccer", ok=True, tg_cfg=object())
     assert sent == []
 
 
-def test_sports_are_tracked_separately(sent):
+def test_sports_are_tracked_separately(sent, clock):
     """Le daemon boucle par sport ; une panne tennis ne doit pas être masquée
     par un cycle soccer réussi."""
-    for _ in range(main._PINNACLE_ALERT_AFTER):
+    elapsed = 0.0
+    while elapsed <= main._PINNACLE_ALERT_AFTER_MIN + 1:
         main._pinnacle_health("tennis", ok=False, tg_cfg=object())
         main._pinnacle_health("soccer", ok=True, tg_cfg=object())
+        clock["t"] += 30
+        elapsed += 0.5
     assert len(sent) == 1
     assert "tennis" in sent[0]
 
