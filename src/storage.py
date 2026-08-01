@@ -220,12 +220,20 @@ CREATE TABLE IF NOT EXISTS bet_corrections (
     outcome_label     TEXT NOT NULL,
     line              REAL,
     odd_taken         REAL NOT NULL,
+    fair_odd          REAL,
     observed_until    TEXT,
     observations      INTEGER DEFAULT 0,
     min_odd_seen      REAL,
+    -- Jalon 1 : le prix qu'on avait n'existe plus. Fin de la fenêtre jouable.
     corrected_at      TEXT,
     seconds_to_corr   REAL,
-    odd_at_corr       REAL
+    odd_at_corr       REAL,
+    -- Jalon 2 : le book a rejoint la ligne juste. La valeur a entièrement
+    -- disparu. Distinct du premier : descendre d'un centime sous la cote prise
+    -- ferme la fenêtre sans rien dire de la convergence.
+    aligned_at        TEXT,
+    seconds_to_align  REAL,
+    odd_at_align      REAL
 );
 CREATE INDEX IF NOT EXISTS idx_bc_open
     ON bet_corrections(corrected_at, detected_at);
@@ -233,6 +241,10 @@ CREATE INDEX IF NOT EXISTS idx_bc_open
 
 
 MIGRATIONS = [
+    ("bet_corrections", "fair_odd", "REAL"),
+    ("bet_corrections", "aligned_at", "TEXT"),
+    ("bet_corrections", "seconds_to_align", "REAL"),
+    ("bet_corrections", "odd_at_align", "REAL"),
     ("value_bets", "closing_lost", "INTEGER"),
     ("clv_snapshots", "fair_odd", "REAL"),
     ("clv_snapshots", "fair_prob", "REAL"),
@@ -467,13 +479,17 @@ class Storage:
             c.executemany(
                 "INSERT OR IGNORE INTO bet_corrections("
                 "value_bet_id, detected_at, kickoff, book, event_key, market,"
-                "outcome_label, line, odd_taken) VALUES (?,?,?,?,?,?,?,?,?)",
+                "outcome_label, line, odd_taken, fair_odd) VALUES (?,?,?,?,?,?,?,?,?,?)",
                 rows,
             )
         return len(rows)
 
     def open_corrections(self, *, max_age_hours: float = 48.0) -> list[sqlite3.Row]:
-        """Suivis encore ouverts : pas encore corrigés, et pas trop vieux.
+        """Suivis encore ouverts : au moins un des deux jalons reste à franchir.
+
+        La condition porte sur `aligned_at` et non sur `corrected_at` seul : un
+        book peut avoir fermé la fenêtre sans avoir rejoint la ligne juste, et
+        c'est justement ce trajet-là qu'on veut continuer à observer.
 
         Borné en âge pour que la requête reste petite à chaque cycle — au-delà,
         un book qui n'a pas bougé ne bougera plus, et son observation censurée
@@ -482,14 +498,19 @@ class Storage:
         with self._conn() as c:
             return list(c.execute(
                 "SELECT * FROM bet_corrections "
-                "WHERE corrected_at IS NULL AND detected_at > ?", (cutoff,)
+                "WHERE (corrected_at IS NULL OR aligned_at IS NULL) "
+                "AND detected_at > ?", (cutoff,)
             ))
 
-    def update_corrections(self, observed: Iterable[tuple], corrected: Iterable[tuple]) -> None:
+    def update_corrections(
+        self, observed: Iterable[tuple], corrected: Iterable[tuple],
+        aligned: Iterable[tuple] = (),
+    ) -> None:
         """`observed` = (instant, cote vue, id) pour les suivis encore ouverts ;
-        `corrected` = (instant, secondes, cote, id) pour ceux qui viennent de
-        basculer."""
-        observed, corrected = list(observed), list(corrected)
+        `corrected` = (instant, secondes, cote, id) pour ceux dont la fenêtre
+        jouable vient de se fermer ; `aligned` = idem pour ceux qui viennent de
+        rejoindre la ligne juste."""
+        observed, corrected, aligned = list(observed), list(corrected), list(aligned)
         with self._conn() as c:
             if observed:
                 c.executemany(
@@ -500,10 +521,21 @@ class Storage:
                     [(ts, odd, odd, vid) for ts, odd, vid in observed],
                 )
             if corrected:
+                # Ne jamais réécrire un jalon déjà franchi : le premier passage
+                # est le bon, les cycles suivants voient toujours la condition
+                # vraie et repousseraient l'instant indéfiniment.
                 c.executemany(
                     "UPDATE bet_corrections SET corrected_at = ?, "
-                    "seconds_to_corr = ?, odd_at_corr = ? WHERE value_bet_id = ?",
+                    "seconds_to_corr = ?, odd_at_corr = ? "
+                    "WHERE value_bet_id = ? AND corrected_at IS NULL",
                     corrected,
+                )
+            if aligned:
+                c.executemany(
+                    "UPDATE bet_corrections SET aligned_at = ?, "
+                    "seconds_to_align = ?, odd_at_align = ? "
+                    "WHERE value_bet_id = ? AND aligned_at IS NULL",
+                    aligned,
                 )
 
     def corrections_report(self) -> list[sqlite3.Row]:

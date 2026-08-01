@@ -360,13 +360,22 @@ def track_corrections(
     open_rows: list[dict],
     soft_quotes: list[OddQuote],
     now: datetime,
-) -> tuple[list[tuple], list[tuple]]:
+) -> tuple[list[tuple], list[tuple], list[tuple]]:
     """Confronter les suivis ouverts aux cotes du cycle.
 
-    Renvoie (observations, corrections). Une correction est enregistrée dès que
-    le book descend STRICTEMENT sous la cote détectée : c'est le moment où le
-    prix qu'on avait n'existe plus, donc la fin de la fenêtre jouable. C'est la
-    définition opérationnelle, pas une notion théorique de convergence.
+    Renvoie (observations, corrections, alignements) — deux jalons distincts
+    qu'il ne faut surtout pas confondre :
+
+    1. **Correction** : le book descend STRICTEMENT sous la cote détectée. Le
+       prix qu'on avait n'existe plus, la fenêtre jouable est fermée. Détecter
+       à 2,30 et voir 2,29 suffit — alors qu'on est encore très loin du compte.
+    2. **Alignement** : le book atteint la ligne juste. La valeur a entièrement
+       disparu. C'est la vraie convergence, et elle arrive bien plus tard, quand
+       elle arrive.
+
+    Le premier dit combien de temps tu as pour cliquer ; le second, à quelle
+    vitesse le book apprend. Un book peut fermer la fenêtre en trente secondes
+    et mettre six heures à s'aligner.
 
     Les suivis dont le marché n'apparaît pas dans ce cycle ne sont pas touchés :
     ne rien voir ne prouve rien — le book peut avoir retiré le marché, ou le
@@ -384,6 +393,7 @@ def track_corrections(
     ts = now.isoformat()
     observed: list[tuple] = []
     corrected: list[tuple] = []
+    aligned: list[tuple] = []
     for r in open_rows:
         key = (r["event_key"], r["book"], r["market"], r["outcome_label"], r["line"])
         odd = current.get(key)
@@ -391,16 +401,19 @@ def track_corrections(
             continue
         vid = int(r["value_bet_id"])
         observed.append((ts, odd, vid))
-        if odd < float(r["odd_taken"]):
-            try:
-                det = datetime.fromisoformat(r["detected_at"])
-                if det.tzinfo is None:
-                    det = det.replace(tzinfo=timezone.utc)
-                secs = (now - det).total_seconds()
-            except ValueError:
-                secs = None
+        try:
+            det = datetime.fromisoformat(r["detected_at"])
+            if det.tzinfo is None:
+                det = det.replace(tzinfo=timezone.utc)
+            secs = (now - det).total_seconds()
+        except ValueError:
+            secs = None
+        if r.get("corrected_at") is None and odd < float(r["odd_taken"]):
             corrected.append((ts, secs, odd, vid))
-    return observed, corrected
+        fair = r.get("fair_odd")
+        if r.get("aligned_at") is None and fair and odd <= float(fair):
+            aligned.append((ts, secs, odd, vid))
+    return observed, corrected, aligned
 
 
 # Books that share a single odds feed (Kambi): Unibet and 711 price identically,
@@ -1487,15 +1500,16 @@ def _daemon_scan_sport(
                  (parse_event_key(b.event_key) or (None,))[0].isoformat()
                  if parse_event_key(b.event_key) else None,
                  b.book.value, b.event_key, b.market.value,
-                 b.outcome.label, b.outcome.line, b.odd_taken)
+                 b.outcome.label, b.outcome.line, b.odd_taken, b.fair_odd)
                 for b, vid in zip(bets, bet_ids)
             ])
-            obs, corr = track_corrections(
+            obs, corr, algn = track_corrections(
                 [dict(r) for r in storage.open_corrections()], soft_q, _now,
             )
-            storage.update_corrections(obs, corr)
-            if corr:
-                console.print(f"\\[{current_sport}]   corrections observées : {len(corr)}")
+            storage.update_corrections(obs, corr, algn)
+            if corr or algn:
+                console.print(f"\\[{current_sport}]   fenêtres fermées : {len(corr)}, "
+                              f"alignements : {len(algn)}")
         except Exception as e:                                  # noqa: BLE001
             console.print(f"[yellow]\\[{current_sport}]   features skipped: {e}[/yellow]")
         if tg_cfg is not None:
@@ -2437,11 +2451,11 @@ def corrections_report():
         )
         return
 
-    def _elapsed(r) -> float | None:
-        """Durée d'observation : jusqu'à la correction, sinon jusqu'à la
-        dernière fois qu'on a vu le marché."""
-        if r.get("seconds_to_corr") is not None:
-            return float(r["seconds_to_corr"])
+    def _elapsed(r, field: str) -> float | None:
+        """Durée d'observation utile pour un jalon : jusqu'à son franchissement,
+        sinon jusqu'à la dernière fois qu'on a vu le marché."""
+        if r.get(field) is not None:
+            return float(r[field])
         if not r.get("observed_until"):
             return None
         try:
@@ -2452,10 +2466,13 @@ def corrections_report():
         return (b - a).total_seconds()
 
     watched = [r for r in rows if (r.get("observations") or 0) > 0]
-    done = [r for r in watched if r.get("seconds_to_corr") is not None]
     console.print(
         f"[bold]{len(rows):,} suivis ouverts[/bold], {len(watched):,} réellement "
-        f"observés, {len(done):,} corrigés"
+        f"observés — "
+        f"{sum(1 for r in watched if r.get('seconds_to_corr') is not None):,} "
+        f"fenêtres fermées, "
+        f"{sum(1 for r in watched if r.get('seconds_to_align') is not None):,} "
+        f"alignements"
     )
     if not watched:
         console.print("[dim]Aucun marché revu depuis la détection — attends "
@@ -2463,53 +2480,56 @@ def corrections_report():
         return
 
     THRESHOLDS = ((300, "5 min"), (900, "15 min"), (3600, "1 h"), (10800, "3 h"))
-    t = Table(title="Vitesse de correction par book", show_lines=False)
-    t.add_column("book"); t.add_column("suivis", justify="right")
-    for _, lab in THRESHOLDS:
-        t.add_column(f"< {lab}", justify="right")
-    t.add_column("médiane", justify="right")
-
-    by_book: dict[str, list[dict]] = defaultdict(list)
-    for r in watched:
-        by_book[r["book"]].append(r)
-
-    def _median_secs(rs) -> float | None:
-        v = [float(r["seconds_to_corr"]) for r in rs if r.get("seconds_to_corr") is not None]
-        return _stats.median(v) if v else None
-
     # Effectif minimum sous lequel un pourcentage ne veut rien dire. Sans ce
     # garde-fou, un seul pari corrigé affichait « 100 % » à côté d'une colonne
     # « suivis » qui en annonçait trente — deux dénominateurs différents sur la
     # même ligne, et la lecture naturelle était fausse.
     MIN_N = 5
-    for book in sorted(by_book, key=lambda b: -(len(by_book[b]))):
-        rs = by_book[book]
-        cells = []
-        for secs, _ in THRESHOLDS:
-            # Censure : ne comptent que les paris corrigés avant le seuil, ou
-            # observés au moins jusqu'au seuil sans l'être. Un pari détecté il
-            # y a deux minutes n'apprend rien sur le seuil « 15 min ».
-            elig = [r for r in rs
-                    if (r.get("seconds_to_corr") is not None
-                        and float(r["seconds_to_corr"]) <= secs)
-                    or ((_elapsed(r) or 0) >= secs)]
-            hit = [r for r in elig if r.get("seconds_to_corr") is not None
-                   and float(r["seconds_to_corr"]) <= secs]
-            # Le nombre d'éligibles est affiché : c'est LUI le dénominateur.
-            cells.append(f"{100 * len(hit) / len(elig):.0f} % ({len(elig)})"
-                         if len(elig) >= MIN_N else f"— ({len(elig)})")
-        done_n = sum(1 for r in rs if r.get("seconds_to_corr") is not None)
-        med = _median_secs(rs)
-        t.add_row(book, str(len(rs)), *cells,
-                  f"{med / 60:.0f} min" if med and done_n >= MIN_N else "—")
-    console.print(t)
+
+    by_book: dict[str, list[dict]] = defaultdict(list)
+    for r in watched:
+        by_book[r["book"]].append(r)
+
+    def _render(field: str, title: str) -> None:
+        t = Table(title=title, show_lines=False)
+        t.add_column("book"); t.add_column("suivis", justify="right")
+        for _, lab in THRESHOLDS:
+            t.add_column(f"< {lab}", justify="right")
+        t.add_column("médiane", justify="right")
+        for book in sorted(by_book, key=lambda b: -(len(by_book[b]))):
+            rs = by_book[book]
+            cells = []
+            for secs, _ in THRESHOLDS:
+                # Censure : ne comptent que les paris ayant franchi le jalon
+                # avant le seuil, ou observés au moins jusqu'au seuil sans
+                # l'avoir franchi. Un pari détecté il y a deux minutes
+                # n'apprend rien sur le seuil « 15 min ».
+                elig = [r for r in rs
+                        if (r.get(field) is not None and float(r[field]) <= secs)
+                        or ((_elapsed(r, field) or 0) >= secs)]
+                hit = [r for r in elig
+                       if r.get(field) is not None and float(r[field]) <= secs]
+                # Le nombre d'éligibles est affiché : c'est LUI le dénominateur.
+                cells.append(f"{100 * len(hit) / len(elig):.0f} % ({len(elig)})"
+                             if len(elig) >= MIN_N else f"— ({len(elig)})")
+            v = [float(r[field]) for r in rs if r.get(field) is not None]
+            med = _stats.median(v) if len(v) >= MIN_N else None
+            t.add_row(book, str(len(rs)), *cells,
+                      f"{med / 60:.0f} min" if med else "—")
+        console.print(t)
+
+    _render("seconds_to_corr",
+            "1. Fenêtre jouable — le book passe sous la cote que tu as vue")
+    _render("seconds_to_align",
+            "2. Alignement — le book rejoint la ligne juste, la valeur a disparu")
     console.print(
-        "[dim]Entre parenthèses : le nombre de paris qui renseignent vraiment la\n"
-        "colonne. Un pari détecté il y a deux minutes ne dit rien du seuil « 15 min »,\n"
-        f"il en est donc exclu. En dessous de {MIN_N}, aucun pourcentage n'est affiché.\n"
-        "Lecture : un book qui corrige vite laisse une fenêtre courte — il faut le\n"
-        "jouer tout de suite ou pas du tout. Un book lent tolère d'être joué plus\n"
-        "tard, ce qui compte quand les alertes arrivent en rafale.[/dim]"
+        "[dim]Les deux tableaux ne disent pas la même chose. Le premier mesure le\n"
+        "temps dont tu disposes pour cliquer : passer de 2,30 à 2,29 suffit à le\n"
+        "déclencher, alors que la valeur est presque intacte. Le second mesure la\n"
+        "vitesse à laquelle le book apprend vraiment — il arrive bien plus tard,\n"
+        "quand il arrive.\n"
+        f"Entre parenthèses : le nombre de paris qui renseignent la colonne ; en\n"
+        f"dessous de {MIN_N}, aucun pourcentage n'est affiché.[/dim]"
     )
 
 
