@@ -197,7 +197,7 @@ def test_a_403_backs_off_instead_of_retrying_every_cycle():
     m.PinnacleScraper = _Pin
     try:
         assert m.fetch_pinnacle_quotes("soccer") == []
-        assert m._PINNACLE_BACKOFF["soccer"] >= 60
+        assert m._PINNACLE_BACKOFF["soccer"] >= m._PINNACLE_BACKOFF_START
         assert m._PINNACLE_BLOCKED_UNTIL["soccer"] > time.monotonic()
     finally:
         m.PinnacleScraper = old

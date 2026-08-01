@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import os
+import threading
 import time
 from datetime import datetime, timezone
 from typing import Iterable, Iterator
@@ -30,6 +31,44 @@ SPORT_IDS = {
     "esports": 12,
     "volleyball": 34,
 }
+
+
+# Le calendrier coûte deux fois le prix des cotes, et ne change presque jamais
+# ----------------------------------------------------------------------------
+# Mesuré contre l'API le 01/08, football :
+#
+#   /sports/29/matchups          3,35 Mo gzip  (34,0 Mo décompressés)
+#   /sports/29/markets/straight  1,70 Mo gzip  (23,3 Mo décompressés)
+#
+# Les deux étaient rechargés à chaque cycle, soit ~5 Mo compressés toutes les
+# 35 s — 12 Go par jour pour le seul football. C'est ce volume, et non le
+# nombre de requêtes, qui déclenche les 403 : quatre requêtes par cycle ne
+# saturent aucun limiteur, cinquante mégaoctets par minute si.
+#
+# Or `matchups` ne porte AUCUN prix. Il porte les participants, l'heure de
+# coup d'envoi, la ligue et le drapeau isLive — un calendrier, qui bouge à
+# l'échelle de l'heure, pas de la demi-minute. Le recharger à chaque cycle
+# achetait deux tiers du trafic pour une information identique.
+#
+# Le garder en cache quelques minutes ne périme donc aucune cote : seul
+# `markets/straight` est réinterrogé à chaque cycle, et c'est lui qui porte
+# l'intégralité des prix.
+#
+# Deux effets de bord, tous deux bornés :
+#   - un match qui vient de commencer garde isLive=False jusqu'à l'expiration.
+#     Sans conséquence : find_value_bets rejette déjà tout événement dont
+#     l'heure de coup d'envoi est passée (ScanConfig.scan_live_value_bets).
+#   - un match ajouté au calendrier n'apparaît qu'au rafraîchissement suivant.
+#     Sans conséquence non plus : on parie sur du prématch à plusieurs heures.
+_MATCHUPS_TTL = float(os.getenv("PINNACLE_MATCHUPS_TTL_SEC", "300"))
+_MATCHUPS_CACHE: dict[int, tuple[float, dict]] = {}
+_MATCHUPS_LOCK = threading.Lock()
+
+
+def matchups_cache_clear() -> None:
+    """Vide le cache calendrier. Pour les tests, et pour un rechargement forcé."""
+    with _MATCHUPS_LOCK:
+        _MATCHUPS_CACHE.clear()
 
 
 def _is_retryable(exc: BaseException) -> bool:
@@ -159,23 +198,47 @@ class PinnacleScraper:
         # See orchestrator for the batch path.
         return []
 
-    def fetch_market_quotes(self, sport: str) -> Iterator[OddQuote]:
-        """Pull an entire sport in TWO bulk calls (all matchups + all straight
-        markets) instead of fanning out one request per league. This cuts
-        Pinnacle traffic ~100x — the old per-league fan-out (≈200 requests per
-        sport per cycle) is what got the guest API to rate-limit/ban the IP."""
-        now = datetime.now(timezone.utc)
-        sport_id = SPORT_IDS[sport]
-        matchups = self._get(f"/sports/{sport_id}/matchups")
-        markets = self._get(f"/sports/{sport_id}/markets/straight")
-        if not isinstance(matchups, list) or not isinstance(markets, list):
-            return
+    def _matchups_by_id(self, sport_id: int) -> dict:
+        """Calendrier indexé par matchupId, rechargé au plus toutes les
+        _MATCHUPS_TTL secondes. Voir le commentaire près de _MATCHUPS_CACHE :
+        c'est la plus grosse réponse de l'API et celle qui bouge le moins.
 
+        Le cache retient le dictionnaire déjà indexé, pas le JSON brut : sur le
+        football, réindexer 34 Mo à chaque cycle coûtait aussi du CPU sur une
+        petite VM."""
+        now = time.monotonic()
+        with _MATCHUPS_LOCK:
+            hit = _MATCHUPS_CACHE.get(sport_id)
+            if hit is not None and (now - hit[0]) < _MATCHUPS_TTL:
+                return hit[1]
+
+        matchups = self._get(f"/sports/{sport_id}/matchups")
+        if not isinstance(matchups, list):
+            return {}
         # Index prematch matchups by id (skip derivative "parent" entries).
-        matchups_by_id = {
+        indexed = {
             m["id"]: m for m in matchups
             if isinstance(m, dict) and m.get("id") is not None and not m.get("parent")
         }
+        with _MATCHUPS_LOCK:
+            _MATCHUPS_CACHE[sport_id] = (time.monotonic(), indexed)
+        return indexed
+
+    def fetch_market_quotes(self, sport: str) -> Iterator[OddQuote]:
+        """Pull an entire sport in bulk instead of fanning out one request per
+        league. This cuts Pinnacle traffic ~100x — the old per-league fan-out
+        (≈200 requests per sport per cycle) is what got the guest API to
+        rate-limit/ban the IP.
+
+        Deux points d'appel, de coûts très différents : le calendrier
+        (`matchups`) est mis en cache quelques minutes, seuls les prix
+        (`markets/straight`) sont rechargés à chaque cycle."""
+        now = datetime.now(timezone.utc)
+        sport_id = SPORT_IDS[sport]
+        matchups_by_id = self._matchups_by_id(sport_id)
+        markets = self._get(f"/sports/{sport_id}/markets/straight")
+        if not matchups_by_id or not isinstance(markets, list):
+            return
 
         for market in markets:
             if not isinstance(market, dict):

@@ -724,8 +724,32 @@ def fetch_betcenter_quotes(sport: str) -> list[OddQuote]:
 # ainsi qu'on fabrique des value bets fantômes.
 _PINNACLE_MIN_INTERVAL = float(os.getenv("PINNACLE_MIN_INTERVAL_SEC", "0"))
 _PINNACLE_MAX_REUSE = float(os.getenv("PINNACLE_MAX_REUSE_SEC", "150"))
-_PINNACLE_BACKOFF_START = 60.0
-_PINNACLE_BACKOFF_MAX = 600.0
+# Recul après refus — plafonné SOUS la durée de réutilisation du cache.
+#
+# L'ancienne échelle (60 s de départ, doublement, plafond 600 s) fabriquait
+# elle-même les coupures qu'elle était censée amortir. Sur 403 répétés :
+#
+#   60 + 120 + 240 + 480 + 600 + 600 = 2100 s = 35 min
+#
+# soit exactement les deux pannes observées le 01/08 (« Coupure de 35 min,
+# 60 cycles », puis 34 min). Dès le troisième refus le recul dépassait
+# _PINNACLE_MAX_REUSE : le cache mourait, et plus rien n'était détecté ni
+# capturé pendant une demi-heure — pour six tentatives en tout. La limitation
+# de Pinnacle était retombée depuis longtemps.
+#
+# Le raisonnement d'origine — « redemander prolonge la limitation » — vaut
+# pour un limiteur qui compte les requêtes. Celui-ci compte visiblement les
+# octets : le football pèse 5 Mo compressés par cycle contre 0,15 Mo au
+# tennis, et c'est lui seul qui se fait refuser. Or une réponse 403 pèse
+# quelques centaines d'octets. Réessayer ne coûte donc presque rien, tandis
+# que ne pas réessayer coûte des lignes de clôture, qui ne se rattrapent pas.
+#
+# Règle de dimensionnement à garder : PLAFOND < MAX_REUSE. Tant qu'elle
+# tient, une limitation isolée est entièrement absorbée par le cache et ne
+# produit aucun trou de détection — seulement une référence un peu plus
+# vieille. C'est ce qui rend le recul indolore au lieu d'aveuglant.
+_PINNACLE_BACKOFF_START = float(os.getenv("PINNACLE_BACKOFF_START_SEC", "30"))
+_PINNACLE_BACKOFF_MAX = float(os.getenv("PINNACLE_BACKOFF_MAX_SEC", "120"))
 _PINNACLE_CACHE: dict[str, tuple[float, list[OddQuote]]] = {}
 # Vrai quand le dernier appel a été servi par le cache. Ces cotes sont DÉJÀ en
 # base avec leur horodatage d'origine : les réinsérer les dupliquerait, et
@@ -789,8 +813,15 @@ def fetch_pinnacle_quotes(sport: str) -> list[OddQuote]:
             _PINNACLE_FAILED[sport] = True     # toujours limité
             return _pinnacle_cached(sport)
         if fresh_enough:
-            _PINNACLE_SERVED_FROM_CACHE[sport] = True
-            return _pinnacle_cached(sport)
+            reuse = _pinnacle_cached(sport)
+            # Ne servir le cache que s'il a effectivement quelque chose. Réglé
+            # au-delà de PINNACLE_MAX_REUSE_SEC, l'espacement produisait sinon
+            # un vide silencieux : lu plus haut comme « Pinnacle sans événement
+            # (hors-saison ?) », il ne déclenchait aucune alerte et n'était
+            # visible nulle part. Cache vide = on retourne chercher.
+            if reuse:
+                _PINNACLE_SERVED_FROM_CACHE[sport] = True
+                return reuse
         # Sport sans calendrier : sondage espacé plutôt qu'à chaque cycle.
         if _PINNACLE_EMPTY_STREAK.get(sport, 0) >= _PINNACLE_IDLE_AFTER:
             last = _PINNACLE_LAST_PROBE.get(sport, 0.0)
@@ -829,10 +860,15 @@ def fetch_pinnacle_quotes(sport: str) -> list[OddQuote]:
     _PINNACLE_SERVED_FROM_CACHE[sport] = False
     _PINNACLE_FAILED[sport] = False
     with _PINNACLE_LOCK:
+        # L'appel a abouti : la limitation est retombée, quel que soit le
+        # contenu de la réponse. Remettre le recul à zéro ici et non dans la
+        # seule branche « quotes non vide » — sinon un sport hors-saison, qui
+        # répond correctement avec zéro événement, gardait indéfiniment le
+        # recul hérité de son dernier 403 et repartait du plafond au suivant.
+        _PINNACLE_BACKOFF.pop(sport, None)
+        _PINNACLE_BLOCKED_UNTIL.pop(sport, None)
         if quotes:
             _PINNACLE_CACHE[sport] = (time.monotonic(), quotes)
-            _PINNACLE_BACKOFF.pop(sport, None)
-            _PINNACLE_BLOCKED_UNTIL.pop(sport, None)
             _PINNACLE_EMPTY_STREAK[sport] = 0
         else:
             n = _PINNACLE_EMPTY_STREAK.get(sport, 0) + 1
