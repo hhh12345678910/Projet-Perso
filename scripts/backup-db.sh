@@ -3,9 +3,11 @@
 # value-bet + CLV history we're collecting. Run via cron once a day.
 set -euo pipefail
 
-PROJECT_DIR="${PROJECT_DIR:-/home/ubuntu/Projet-Perso}"
+# Chemin déduit de l'emplacement du script, comme scan-daemon.sh : les défauts
+# en dur sur /home/ubuntu ne valaient que pour la toute première machine.
+PROJECT_DIR="${PROJECT_DIR:-$(cd "$(dirname "$0")/.." && pwd)}"
 DB_FILE="$PROJECT_DIR/data/valuebet.db"
-BACKUP_DIR="${BACKUP_DIR:-/home/ubuntu/backups}"
+BACKUP_DIR="${BACKUP_DIR:-$HOME/backups}"
 KEEP_DAYS=14
 
 if [[ ! -f "$DB_FILE" ]]; then

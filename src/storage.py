@@ -197,6 +197,38 @@ CREATE TABLE IF NOT EXISTS bet_features (
 CREATE INDEX IF NOT EXISTS idx_bf_detected ON bet_features(detected_at);
 CREATE INDEX IF NOT EXISTS idx_bf_league ON bet_features(league_category);
 CREATE INDEX IF NOT EXISTS idx_bf_event ON bet_features(event_key);
+
+-- Combien de temps le book met-il à corriger sa cote ?
+--
+-- Mesure la fenêtre pendant laquelle une alerte reste réellement jouable, et
+-- classe les books du plus lent au plus réactif. Elle ne se reconstitue pas
+-- après coup : elle demande de suivre une cote de cycle en cycle, et les cotes
+-- sont purgées à deux jours.
+--
+-- `corrected_at` NULL avec un `observed_until` tardif n'est PAS une absence de
+-- donnée : c'est l'information « ce book n'avait toujours pas bougé après N
+-- minutes », et c'est même la plus intéressante. Sans `observed_until` on ne
+-- saurait pas distinguer un book lent d'un marché qu'on a cessé d'observer —
+-- les deux donneraient une ligne vide.
+CREATE TABLE IF NOT EXISTS bet_corrections (
+    value_bet_id      INTEGER PRIMARY KEY,
+    detected_at       TEXT NOT NULL,
+    kickoff           TEXT,
+    book              TEXT NOT NULL,
+    event_key         TEXT NOT NULL,
+    market            TEXT NOT NULL,
+    outcome_label     TEXT NOT NULL,
+    line              REAL,
+    odd_taken         REAL NOT NULL,
+    observed_until    TEXT,
+    observations      INTEGER DEFAULT 0,
+    min_odd_seen      REAL,
+    corrected_at      TEXT,
+    seconds_to_corr   REAL,
+    odd_at_corr       REAL
+);
+CREATE INDEX IF NOT EXISTS idx_bc_open
+    ON bet_corrections(corrected_at, detected_at);
 """
 
 
@@ -421,6 +453,62 @@ class Storage:
                 rows,
             )
         return len(rows)
+
+    def seed_corrections(self, rows: Iterable[tuple]) -> int:
+        """Ouvrir le suivi de correction pour un lot de détections.
+
+        `INSERT OR IGNORE` : une détection re-signalée au cycle suivant ne doit
+        pas remettre son chronomètre à zéro, sinon un book qui ne corrige
+        jamais afficherait un délai toujours nul."""
+        rows = list(rows)
+        if not rows:
+            return 0
+        with self._conn() as c:
+            c.executemany(
+                "INSERT OR IGNORE INTO bet_corrections("
+                "value_bet_id, detected_at, kickoff, book, event_key, market,"
+                "outcome_label, line, odd_taken) VALUES (?,?,?,?,?,?,?,?,?)",
+                rows,
+            )
+        return len(rows)
+
+    def open_corrections(self, *, max_age_hours: float = 48.0) -> list[sqlite3.Row]:
+        """Suivis encore ouverts : pas encore corrigés, et pas trop vieux.
+
+        Borné en âge pour que la requête reste petite à chaque cycle — au-delà,
+        un book qui n'a pas bougé ne bougera plus, et son observation censurée
+        est déjà enregistrée."""
+        cutoff = (datetime.now(timezone.utc) - timedelta(hours=max_age_hours)).isoformat()
+        with self._conn() as c:
+            return list(c.execute(
+                "SELECT * FROM bet_corrections "
+                "WHERE corrected_at IS NULL AND detected_at > ?", (cutoff,)
+            ))
+
+    def update_corrections(self, observed: Iterable[tuple], corrected: Iterable[tuple]) -> None:
+        """`observed` = (instant, cote vue, id) pour les suivis encore ouverts ;
+        `corrected` = (instant, secondes, cote, id) pour ceux qui viennent de
+        basculer."""
+        observed, corrected = list(observed), list(corrected)
+        with self._conn() as c:
+            if observed:
+                c.executemany(
+                    "UPDATE bet_corrections SET observed_until = ?, "
+                    "observations = COALESCE(observations, 0) + 1, "
+                    "min_odd_seen = MIN(COALESCE(min_odd_seen, ?), ?) "
+                    "WHERE value_bet_id = ?",
+                    [(ts, odd, odd, vid) for ts, odd, vid in observed],
+                )
+            if corrected:
+                c.executemany(
+                    "UPDATE bet_corrections SET corrected_at = ?, "
+                    "seconds_to_corr = ?, odd_at_corr = ? WHERE value_bet_id = ?",
+                    corrected,
+                )
+
+    def corrections_report(self) -> list[sqlite3.Row]:
+        with self._conn() as c:
+            return list(c.execute("SELECT * FROM bet_corrections"))
 
     def features_with_clv(self) -> list[sqlite3.Row]:
         """Features jointes à leur ligne de clôture dévigée, quand elle existe.

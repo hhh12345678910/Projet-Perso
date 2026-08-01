@@ -356,6 +356,53 @@ def build_bet_features(
     return rows
 
 
+def track_corrections(
+    open_rows: list[dict],
+    soft_quotes: list[OddQuote],
+    now: datetime,
+) -> tuple[list[tuple], list[tuple]]:
+    """Confronter les suivis ouverts aux cotes du cycle.
+
+    Renvoie (observations, corrections). Une correction est enregistrée dès que
+    le book descend STRICTEMENT sous la cote détectée : c'est le moment où le
+    prix qu'on avait n'existe plus, donc la fin de la fenêtre jouable. C'est la
+    définition opérationnelle, pas une notion théorique de convergence.
+
+    Les suivis dont le marché n'apparaît pas dans ce cycle ne sont pas touchés :
+    ne rien voir ne prouve rien — le book peut avoir retiré le marché, ou le
+    scraper avoir échoué. Les compter comme « toujours pas corrigé » ferait
+    passer une panne de scraper pour de la lenteur de bookmaker."""
+    current: dict[tuple, float] = {}
+    for q in soft_quotes:
+        key = (q.event_key, q.book.value, q.market.value, q.outcome.label, q.outcome.line)
+        prev = current.get(key)
+        # Plusieurs cotes pour la même clé dans un cycle : garder la plus basse,
+        # la plus défavorable — c'est celle qui décide si le prix a disparu.
+        if prev is None or q.decimal_odd < prev:
+            current[key] = q.decimal_odd
+
+    ts = now.isoformat()
+    observed: list[tuple] = []
+    corrected: list[tuple] = []
+    for r in open_rows:
+        key = (r["event_key"], r["book"], r["market"], r["outcome_label"], r["line"])
+        odd = current.get(key)
+        if odd is None:
+            continue
+        vid = int(r["value_bet_id"])
+        observed.append((ts, odd, vid))
+        if odd < float(r["odd_taken"]):
+            try:
+                det = datetime.fromisoformat(r["detected_at"])
+                if det.tzinfo is None:
+                    det = det.replace(tzinfo=timezone.utc)
+                secs = (now - det).total_seconds()
+            except ValueError:
+                secs = None
+            corrected.append((ts, secs, odd, vid))
+    return observed, corrected
+
+
 # Books that share a single odds feed (Kambi): Unibet and 711 price identically,
 # so the same value bet on both is one opportunity, not two. UNIBET is the
 # canonical book kept for storage/dedup; 711 rides along in `also_books`.
@@ -1427,11 +1474,28 @@ def _daemon_scan_sport(
 
         # Features permanentes. Enveloppé : c'est de la collecte annexe, le
         # pari est déjà en base et un scan ne doit jamais tomber pour ça.
+        _now = datetime.now(timezone.utc)
         try:
             storage.insert_bet_features(build_bet_features(
-                bets, bet_ids, pinnacle_q, soft_q, fair,
-                current_sport, datetime.now(timezone.utc),
+                bets, bet_ids, pinnacle_q, soft_q, fair, current_sport, _now,
             ))
+            # Ouvrir le suivi de correction, puis confronter les suivis déjà
+            # ouverts aux cotes de ce cycle. Les deux dans le même try : c'est
+            # de la collecte, elle ne doit jamais faire tomber un scan.
+            storage.seed_corrections([
+                (vid, b.detected_at.isoformat(),
+                 (parse_event_key(b.event_key) or (None,))[0].isoformat()
+                 if parse_event_key(b.event_key) else None,
+                 b.book.value, b.event_key, b.market.value,
+                 b.outcome.label, b.outcome.line, b.odd_taken)
+                for b, vid in zip(bets, bet_ids)
+            ])
+            obs, corr = track_corrections(
+                [dict(r) for r in storage.open_corrections()], soft_q, _now,
+            )
+            storage.update_corrections(obs, corr)
+            if corr:
+                console.print(f"\\[{current_sport}]   corrections observées : {len(corr)}")
         except Exception as e:                                  # noqa: BLE001
             console.print(f"[yellow]\\[{current_sport}]   features skipped: {e}[/yellow]")
         if tg_cfg is not None:
@@ -2322,6 +2386,169 @@ def features_report(
             v = [r["clv"] for r in dedup if r.get("league") == lg]
             t2.add_row(lg, str(n), f"{sum(v)/len(v):+.2f}")
         console.print(t2)
+
+
+@app.command(name="corrections")
+def corrections_report():
+    """Combien de temps chaque book met-il à corriger sa cote ?
+
+    Mesure la fenêtre pendant laquelle une alerte reste jouable, et classe les
+    books du plus lent au plus réactif.
+
+    Les pourcentages tiennent compte de la censure : un pari observé seulement
+    trois minutes ne compte pas dans la colonne « 15 min », ni au numérateur ni
+    au dénominateur. Sans ça, tout suivi encore jeune serait compté comme « pas
+    corrigé » et ferait paraître tous les books plus lents qu'ils ne sont."""
+    import statistics as _stats
+    storage = Storage(ScanConfig().db_path)
+    rows = [dict(r) for r in storage.corrections_report()]
+    if not rows:
+        console.print(
+            "[bold]Aucun suivi de correction.[/bold]\n"
+            "[dim]Normal tant que le daemon n'a pas tourné depuis la mise à jour.[/dim]"
+        )
+        return
+
+    def _elapsed(r) -> float | None:
+        """Durée d'observation : jusqu'à la correction, sinon jusqu'à la
+        dernière fois qu'on a vu le marché."""
+        if r.get("seconds_to_corr") is not None:
+            return float(r["seconds_to_corr"])
+        if not r.get("observed_until"):
+            return None
+        try:
+            a = datetime.fromisoformat(r["detected_at"])
+            b = datetime.fromisoformat(r["observed_until"])
+        except ValueError:
+            return None
+        return (b - a).total_seconds()
+
+    watched = [r for r in rows if (r.get("observations") or 0) > 0]
+    done = [r for r in watched if r.get("seconds_to_corr") is not None]
+    console.print(
+        f"[bold]{len(rows):,} suivis ouverts[/bold], {len(watched):,} réellement "
+        f"observés, {len(done):,} corrigés"
+    )
+    if not watched:
+        console.print("[dim]Aucun marché revu depuis la détection — attends "
+                      "quelques cycles.[/dim]")
+        return
+
+    THRESHOLDS = ((300, "5 min"), (900, "15 min"), (3600, "1 h"), (10800, "3 h"))
+    t = Table(title="Vitesse de correction par book", show_lines=False)
+    t.add_column("book"); t.add_column("suivis", justify="right")
+    for _, lab in THRESHOLDS:
+        t.add_column(f"< {lab}", justify="right")
+    t.add_column("médiane", justify="right")
+
+    by_book: dict[str, list[dict]] = defaultdict(list)
+    for r in watched:
+        by_book[r["book"]].append(r)
+
+    def _median_secs(rs) -> float | None:
+        v = [float(r["seconds_to_corr"]) for r in rs if r.get("seconds_to_corr") is not None]
+        return _stats.median(v) if v else None
+
+    for book in sorted(by_book, key=lambda b: -(len(by_book[b]))):
+        rs = by_book[book]
+        cells = []
+        for secs, _ in THRESHOLDS:
+            # Censure : ne comptent que les paris corrigés avant le seuil, ou
+            # observés au moins jusqu'au seuil sans l'être.
+            elig = [r for r in rs
+                    if (r.get("seconds_to_corr") is not None
+                        and float(r["seconds_to_corr"]) <= secs)
+                    or ((_elapsed(r) or 0) >= secs)]
+            hit = [r for r in elig if r.get("seconds_to_corr") is not None
+                   and float(r["seconds_to_corr"]) <= secs]
+            cells.append(f"{100 * len(hit) / len(elig):.0f} %" if elig else "—")
+        med = _median_secs(rs)
+        t.add_row(book, str(len(rs)), *cells,
+                  f"{med / 60:.0f} min" if med else "—")
+    console.print(t)
+    console.print(
+        "[dim]Lecture : un book qui corrige vite laisse une fenêtre courte — il "
+        "faut le jouer tout de suite ou pas du tout. Un book lent tolère d'être "
+        "joué plus tard, ce qui compte quand les alertes arrivent en rafale.[/dim]"
+    )
+
+
+@app.command(name="export-tracking")
+def export_tracking(
+    out: str = typer.Option("data/tracking.db", "--out",
+                            help="Fichier SQLite compact à produire."),
+    gzip_it: bool = typer.Option(True, "--gzip/--no-gzip"),
+):
+    """Extraire l'historique durable dans un fichier léger, transportable.
+
+    Pourquoi cette commande plutôt qu'une sauvegarde de la base
+    ------------------------------------------------------------
+    `scripts/backup-db.sh` copie la base ENTIÈRE, dont `quotes` — 20 Go de
+    cotes brutes purgées tous les deux jours, qui ne servent à rien une fois
+    les clôtures capturées. Compressées, cela reste plusieurs gigaoctets, et
+    `push-backups.sh` les envoie vers GitHub, qui refuse tout fichier de plus
+    de 100 Mo. La sauvegarde ne pouvait donc plus aboutir.
+
+    Ici on n'exporte que ce qui ne se recalcule pas : les détections, les
+    lignes de clôture, les features, les suivis de correction, les paris joués
+    et les résultats. Quelques mégaoctets — transportable, versionnable, et
+    analysable hors de la VM."""
+    import gzip as _gzip
+    import shutil as _shutil
+    import sqlite3 as _sq
+
+    # `quotes` est délibérément absente : c'est la seule table volumineuse, et
+    # la seule dont le contenu soit reconstituable par un simple scan.
+    TABLES = ("events", "value_bets", "clv_snapshots", "played_bets",
+              "results", "bet_features", "bet_corrections", "teams")
+
+    src = ScanConfig().db_path
+    if not os.path.exists(src):
+        console.print(f"[red]Base introuvable : {src}[/red]")
+        raise typer.Exit(1)
+    Path(out).parent.mkdir(parents=True, exist_ok=True)
+    for stale in (out, out + ".gz"):
+        if os.path.exists(stale):
+            os.remove(stale)
+
+    conn = _sq.connect(src)
+    try:
+        conn.execute("ATTACH DATABASE ? AS ex", (out,))
+        copied = []
+        for tbl in TABLES:
+            exists = conn.execute(
+                "SELECT 1 FROM sqlite_master WHERE type='table' AND name=?", (tbl,)
+            ).fetchone()
+            if not exists:
+                continue
+            conn.execute(f"CREATE TABLE ex.{tbl} AS SELECT * FROM main.{tbl}")
+            n = conn.execute(f"SELECT COUNT(*) FROM ex.{tbl}").fetchone()[0]
+            copied.append((tbl, n))
+        conn.commit()
+        conn.execute("DETACH DATABASE ex")
+    finally:
+        conn.close()
+
+    t = Table(title="Exporté", show_lines=False)
+    t.add_column("table"); t.add_column("lignes", justify="right")
+    for tbl, n in copied:
+        t.add_row(tbl, f"{n:,}")
+    console.print(t)
+
+    size = os.path.getsize(out)
+    final = out
+    if gzip_it:
+        with open(out, "rb") as fi, _gzip.open(out + ".gz", "wb", compresslevel=9) as fo:
+            _shutil.copyfileobj(fi, fo)
+        os.remove(out)
+        final = out + ".gz"
+        size = os.path.getsize(final)
+    console.print(f"[green]✓[/green] {final} — {size / 1e6:.1f} Mo")
+    if size > 90_000_000:
+        console.print(
+            "[yellow]⚠️  Au-delà de 90 Mo : GitHub refuse les fichiers de plus "
+            "de 100 Mo. Exporte vers un autre support.[/yellow]"
+        )
 
 
 @app.command(name="export-history")
