@@ -1935,6 +1935,14 @@ def prune(
     ),
     vacuum: bool = typer.Option(True, "--vacuum/--no-vacuum",
                                 help="Run VACUUM to actually shrink the file on disk."),
+    max_seconds: float = typer.Option(
+        1800, "--max-seconds",
+        help="Budget de temps. Supprimer des dizaines de millions de lignes "
+        "coûte surtout la mise à jour des index, et sur un gros retard cela "
+        "dure des heures. Une purge nocturne qui déborde sur la journée est "
+        "pire que le retard qu'elle rattrape : elle s'arrête au budget et "
+        "reprend la nuit suivante. 0 pour ne pas borner.",
+    ),
 ):
     """Trim the unbounded quotes history and reclaim disk space."""
     storage = Storage(ScanConfig().db_path)
@@ -1947,9 +1955,43 @@ def prune(
             return 0.0
 
     before = _size_mb(db_path)
-    q = storage.prune_quotes(retention_days)
+
+    # Sans retour visible, la commande reste muette plusieurs minutes et donne
+    # toutes les raisons de croire qu'elle est bloquée — c'est ce qui a conduit
+    # à l'interrompre en production. Un point toutes les cinq secondes suffit,
+    # et vaut aussi pour la purge nocturne, dont le log était un trou noir.
+    _last = [0.0]
+
+    def _tick(rows: int, elapsed: float) -> None:
+        if elapsed - _last[0] < 5.0:
+            return
+        _last[0] = elapsed
+        rate = rows / elapsed if elapsed else 0.0
+        console.print(
+            f"[dim]  {rows:,} lignes supprimées en {elapsed:.0f}s "
+            f"({rate:,.0f}/s)…[/dim]"
+        )
+
+    q = storage.prune_quotes(
+        retention_days,
+        max_seconds=max_seconds if max_seconds > 0 else None,
+        progress=_tick,
+    )
     n = storage.prune_notifications()
     console.print(f"Deleted {q} quote rows (> {retention_days}d) and {n} stale dedup rows.")
+
+    # Un arrêt sur budget doit se voir : sans ça, une purge qui n'arrive jamais
+    # au bout ressemble trait pour trait à une purge qui a réussi, et la base
+    # grossit pendant qu'on la croit maîtrisée.
+    left = storage.count_quotes_older_than(retention_days)
+    if left:
+        console.print(
+            f"[yellow]Budget de {max_seconds:.0f}s atteint : il reste "
+            f"{left:,} lignes à supprimer.[/yellow]\n"
+            "[dim]  La purge suivante reprendra là où celle-ci s'arrête. "
+            "Si ce nombre ne baisse pas d'une nuit à l'autre, le budget est "
+            "trop court pour le rythme d'écriture.[/dim]"
+        )
     if vacuum:
         # VACUUM rebuilds the database into a temporary copy alongside it, so
         # it needs free space of roughly the file's own size. On a DB that has

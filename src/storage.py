@@ -5,7 +5,7 @@ import time
 from contextlib import contextmanager
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
-from typing import Iterable, Iterator, Optional
+from typing import Callable, Iterable, Iterator, Optional
 
 from .models import Book, MarketType, OddQuote, Outcome, ValueBet
 
@@ -266,7 +266,9 @@ class Storage:
 
     def prune_quotes(
         self, retention_days: int = 7, *,
-        batch_size: int = 50_000, pause_sec: float = 0.05,
+        batch_size: int = 200_000, pause_sec: float = 0.05,
+        max_seconds: float | None = None,
+        progress: "Callable[[int, float], None] | None" = None,
     ) -> int:
         """Delete raw quote rows older than retention_days and return how many
         were removed. The quotes table grows ~unbounded (every quote, every
@@ -299,9 +301,22 @@ class Storage:
 
         Une courte pause entre les lots laisse en plus une fenêtre d'écriture
         au daemon : sans elle, la purge enchaîne les transactions sans jamais
-        lui rendre la main."""
+        lui rendre la main.
+
+        `max_seconds` borne la durée. Supprimer des dizaines de millions de
+        lignes coûte surtout la mise à jour des deux index de `quotes`, et sur
+        un gros retard cela peut durer des heures. Une purge nocturne qui
+        déborde sur la journée est pire que le retard qu'elle rattrape : elle
+        s'arrête donc au budget, et la nuit suivante reprend là où elle en
+        était. Le retard se résorbe en quelques nuits au lieu d'une.
+
+        `progress` est appelé après chaque lot avec (lignes supprimées,
+        secondes écoulées). Sans lui, la commande reste muette pendant des
+        minutes et donne toutes les raisons de croire qu'elle est bloquée —
+        c'est ce qui a conduit à l'interrompre en production."""
         cutoff = (datetime.now(timezone.utc) - timedelta(days=retention_days)).isoformat()
         removed = 0
+        started = time.monotonic()
         conn = sqlite3.connect(str(self.path), timeout=60)
         try:
             conn.execute("PRAGMA journal_mode=WAL")
@@ -318,6 +333,11 @@ class Storage:
                 if n == 0:
                     break
                 conn.execute("PRAGMA wal_checkpoint(PASSIVE)")
+                elapsed = time.monotonic() - started
+                if progress is not None:
+                    progress(removed, elapsed)
+                if max_seconds is not None and elapsed >= max_seconds:
+                    break
                 if pause_sec:
                     time.sleep(pause_sec)
             # Une seule fois, la purge terminée : plus rien n'est en attente,
@@ -326,6 +346,16 @@ class Storage:
         finally:
             conn.close()
         return removed
+
+    def count_quotes_older_than(self, retention_days: int) -> int:
+        """Combien de lignes la purge a encore à supprimer. Sert à dire si un
+        arrêt sur budget de temps a laissé du retard — sans quoi une purge qui
+        n'arrive jamais au bout ressemble à une purge qui a réussi."""
+        cutoff = (datetime.now(timezone.utc) - timedelta(days=retention_days)).isoformat()
+        with self._conn() as c:
+            return c.execute(
+                "SELECT COUNT(*) FROM quotes WHERE fetched_at < ?", (cutoff,)
+            ).fetchone()[0]
 
     def prune_notifications(self, retention_days: int = 30) -> int:
         """Trim old dedup bookkeeping rows (notified_*). Tiny vs quotes, but
