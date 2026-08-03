@@ -68,3 +68,53 @@ def test_init_with_none_keeps_in_memory_only():
     teams.init(None)
     teams.record("Liverpool")
     assert teams.display("liverpool") == "Liverpool"
+
+
+def test_a_locked_database_never_breaks_a_scrape(tmp_path):
+    """Le registre de noms sert à l'affichage, rien de plus. Il est pourtant
+    appelé depuis l'intérieur des scrapers, en plein parsing : une base
+    verrouillée y levait une exception et faisait tomber le fetch entier.
+
+    Mesuré sur onze heures de journal : 695 récupérations perdues pour cette
+    seule raison, dont 92 sur Pinnacle — 34 Mo téléchargés puis jetés à chaque
+    fois, avec en prime un « Pinnacle skipped: database is locked » qui
+    ressemble à un blocage réseau."""
+    import sqlite3
+    from src import teams
+
+    class _LockedStorage:
+        def all_teams(self):
+            return []
+        def record_team(self, key, name):
+            raise sqlite3.OperationalError("database is locked")
+
+    teams.init(_LockedStorage())
+    try:
+        teams.record("Manchester City")       # ne doit pas lever
+        # Le nom reste utilisable immédiatement : le cache mémoire a été
+        # renseigné avant la tentative d'écriture.
+        assert teams.display("manchestercity") == "Manchester City"
+    finally:
+        teams.init(None)
+
+
+def test_a_working_database_still_gets_written(tmp_path):
+    """Le garde-fou précédent ne doit pas avaler les écritures normales."""
+    from src import teams
+
+    written = []
+
+    class _Storage:
+        def all_teams(self):
+            return []
+        def record_team(self, key, name):
+            written.append((key, name))
+
+    teams.init(_Storage())
+    try:
+        teams.record("Real Madrid")
+        assert written == [("realmadrid", "Real Madrid")]
+        teams.record("Real Madrid")           # idempotent
+        assert len(written) == 1
+    finally:
+        teams.init(None)

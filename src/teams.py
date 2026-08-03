@@ -51,7 +51,23 @@ def init(storage: "Storage | None") -> None:
 
 def record(name: str) -> None:
     """Remember an original team name so display() can recover it later.
-    Idempotent — only writes to disk on a new or changed entry."""
+    Idempotent — only writes to disk on a new or changed entry.
+
+    L'écriture ne doit JAMAIS faire échouer l'appelant. Ce registre sert
+    uniquement à réafficher « Manchester City » au lieu de
+    « manchestercity » : c'est du confort de lecture, rien de plus.
+
+    Or il est appelé depuis l'intérieur des scrapers, en plein parsing. Une
+    base verrouillée — par la purge nocturne ou par close-lines, qui tourne
+    toutes les heures — levait donc une exception au milieu du parsing et
+    faisait tomber le fetch entier. Mesuré sur onze heures de journal :
+    695 récupérations perdues pour cette seule raison, dont 92 sur Pinnacle,
+    soit 34 Mo téléchargés et jetés à chaque fois. Le message
+    « Pinnacle skipped: database is locked » n'a rien d'un blocage réseau,
+    et cherchait un problème là où il n'y en avait pas.
+
+    Le nom reste dans le cache mémoire : la prochaine occasion le réécrira,
+    et en attendant l'affichage est déjà correct."""
     if not name:
         return
     key = _normalised_key(name)
@@ -62,7 +78,13 @@ def record(name: str) -> None:
         return
     _DISPLAY[key] = name
     if _STORAGE is not None:
-        _STORAGE.record_team(key, name)
+        try:
+            _STORAGE.record_team(key, name)
+        except Exception:                                       # noqa: BLE001
+            # Volontairement muet : la base est momentanément prise, le nom
+            # est déjà en mémoire, et signaler chaque nom manqué remplirait
+            # le journal pendant les purges sans rien apprendre.
+            pass
 
 
 def record_pair(home: str | None, away: str | None) -> None:
