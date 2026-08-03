@@ -47,6 +47,8 @@ MUTE_RE = re.compile(r"Pinnacle muet")
 BACK_RE = re.compile(r"Pinnacle rétabli")
 IDLE_RE = re.compile(r"aucun événement depuis (\d+) cycles")
 QUOTES_RE = re.compile(r"→\s+(\d+)\s+quotes\s+(\w+)")
+VBETS_RE = re.compile(r"value bets: (\d+) total")
+STALE_RE = re.compile(r"(périmé|stale|limite \d+)")
 
 
 class Run:
@@ -65,6 +67,10 @@ class Run:
         self.recoveries = 0
         self.idle: Counter = Counter()
         self.events: list[tuple[str, str]] = []   # (horodatage, description)
+        self.vbets_by_hour: Counter = Counter()   # heure -> détections
+        self.cycles_by_hour: Counter = Counter()
+        self.stale = 0
+        self.sports: set[str] = set()      # sports réellement scannés dans ce run
 
 
 def parse(path: str) -> list[Run]:
@@ -84,12 +90,14 @@ def parse(path: str) -> list[Run]:
                     runs.append(cur)
                 cur.cycles += 1
                 cur.last_ts = ts
+                cur.cycles_by_hour[ts[:2]] += 1
                 continue
             if cur is None:
                 continue
             sm = SPORT_RE.search(line)
             if sm:
                 sport = sm.group(1)
+                cur.sports.add(sport)
             d = DONE_RE.search(line)
             if d:
                 cur.durations.append(int(d.group(1)))
@@ -109,6 +117,11 @@ def parse(path: str) -> list[Run]:
             q = QUOTES_RE.search(line)
             if q:
                 cur.quotes[q.group(2)] += 1
+            v = VBETS_RE.search(line)
+            if v:
+                cur.vbets_by_hour[ts[:2]] += int(v.group(1))
+            if STALE_RE.search(line):
+                cur.stale += 1
             if MUTE_RE.search(line):
                 cur.mutes += 1
                 cur.events.append((ts, "🚨 alerte « Pinnacle muet »"))
@@ -162,9 +175,30 @@ def report(run: Run, idx: int, total: int, sport_filter: str) -> None:
             print(f"  {book:<14} ×{n:<4} {msg}")
 
     if run.quotes:
-        print("\n— Books ayant sorti des cotes (cycles × sports) —")
+        # Chaque cycle interroge chaque book une fois par sport : le
+        # dénominateur est cycles × sports RÉELLEMENT scannés, lu dans le
+        # journal et non supposé — SPORT_LIST change, et un dénominateur
+        # deviné donnerait des couvertures fausses sans que rien ne le dise.
+        slots = run.cycles * max(1, len(run.sports))
+        print("\n— Couverture par book —")
+        print("  Un book sous 95 % est absent d'une partie des cycles : autant")
+        print("  d'occasions jamais comparées, sans la moindre erreur au journal.")
+        print(f"  {'book':<16} {'cycles':>8} {'couverture':>12}")
         for book, n in run.quotes.most_common():
-            print(f"  {book:<16} {n:>6}")
+            pct = 100 * n / slots if slots else 0
+            flag = "" if pct >= 95 else ("  ⚠️" if pct >= 80 else "  ❌")
+            print(f"  {book:<16} {n:>8} {pct:>11.1f} %{flag}")
+        if run.stale:
+            print(f"  ⚠️  {run.stale} rejets pour flux périmé — un onglet navigateur"
+                  f" ne pousse plus (Betano/Circus)")
+
+    if run.vbets_by_hour:
+        print("\n— Détections par heure —")
+        for h in sorted(run.cycles_by_hour):
+            n = run.vbets_by_hour.get(h, 0)
+            c = run.cycles_by_hour[h]
+            bar = "█" * min(40, int(n / max(1, max(run.vbets_by_hour.values())) * 40))
+            print(f"  {h}h  {n:>6} détections  ({c:>4} cycles)  {bar}")
 
     print(f"\n— Alertes — muet ×{run.mutes}, rétabli ×{run.recoveries}")
     if run.events:
