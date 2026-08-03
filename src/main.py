@@ -527,11 +527,18 @@ def find_late_markets(
     return dict(out)
 
 
-# (event_key, book) déjà signalés, avec l'instant de l'alerte. Un marché
-# oublié le reste plusieurs cycles : sans mémoire, la même erreur partirait
-# toutes les quinze secondes et rendrait le canal critique inutilisable.
+# (event_key, book) déjà signalés, avec l'instant de la dernière alerte. Un
+# marché oublié le reste plusieurs cycles : sans mémoire, la même erreur
+# partirait toutes les quinze secondes et rendrait le canal critique
+# inutilisable.
+#
+# Cinq minutes, et non trente : tant que le marché reste ouvert, l'occasion
+# vit encore, et le message porte le temps écoulé depuis le coup d'envoi —
+# donc chaque rappel apprend quelque chose de neuf. C'est aussi la cadence à
+# laquelle le score peut avoir changé, ce qui change tout sur un marché de
+# type « les deux équipes marquent ».
 _LATE_ALERTED: dict[tuple, float] = {}
-_LATE_ALERT_COOLDOWN = float(os.getenv("LATE_MARKET_COOLDOWN_SEC", "1800"))
+_LATE_ALERT_COOLDOWN = float(os.getenv("LATE_MARKET_COOLDOWN_SEC", "300"))
 
 
 def _report_late_markets(late: dict, sport: str, tg_cfg) -> None:
