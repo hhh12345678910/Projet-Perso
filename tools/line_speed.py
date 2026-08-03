@@ -52,29 +52,58 @@ def _parse(ts: str) -> float | None:
     return d.timestamp()
 
 
-def series(conn: sqlite3.Connection, book: str, market: str, since: str,
-           max_events: int) -> dict[tuple, list[tuple[float, float]]]:
-    """{(event, issue, ligne): [(instant, cote), ...]} trié par instant."""
-    events = [r[0] for r in conn.execute(
-        "SELECT DISTINCT event_key FROM quotes "
-        "WHERE book=? AND market=? AND fetched_at > ? LIMIT ?",
-        (book, market, since, max_events),
-    )]
-    if not events:
-        return {}
-    marks = ",".join("?" * len(events))
-    rows = conn.execute(
-        f"SELECT event_key, outcome_label, line, decimal_odd, fetched_at "
-        f"FROM quotes WHERE book=? AND market=? AND fetched_at > ? "
-        f"AND event_key IN ({marks}) ORDER BY fetched_at",
-        (book, market, since, *events),
-    )
-    out: dict[tuple, list[tuple[float, float]]] = defaultdict(list)
-    for ek, label, line, odd, ts in rows:
+def load_all(conn: sqlite3.Connection, market: str, since: str,
+             max_events: int, max_rows: int,
+             progress=None) -> dict[str, dict[tuple, list[tuple[float, float]]]]:
+    """Tout charger en UNE passe bornée : {book: {(event, issue, ligne): série}}.
+
+    La version d'origine faisait, par book, un `SELECT DISTINCT event_key
+    WHERE book=? AND market=?` puis un second passage avec un `IN (…)`. Or
+    `quotes` n'est indexée que sur `event_key` et `fetched_at` : il n'existe
+    aucun index sur `book` ni sur `market`. Le planificateur partait donc en
+    balayage complet — cent millions de lignes — et recommençait pour chaque
+    book. La commande paraissait figée.
+
+    Ici, une seule requête suit explicitement l'index sur `fetched_at`
+    (`INDEXED BY`), s'arrête à `max_rows`, et la répartition par book se fait
+    en mémoire. Le tri par book n'a jamais eu besoin d'être fait par SQLite.
+
+    Prendre les lignes les PLUS ANCIENNES de la fenêtre est volontaire : il
+    faut une tranche continue plus longue que le plus grand écart mesuré
+    (300 s), pas un échantillon dispersé sur deux heures."""
+    sql = ("SELECT book, event_key, outcome_label, line, decimal_odd, fetched_at "
+           "FROM quotes INDEXED BY idx_quotes_fetched "
+           "WHERE fetched_at > ? AND market = ? "
+           "ORDER BY fetched_at LIMIT ?")
+    try:
+        cur = conn.execute(sql, (since, market, max_rows))
+    except sqlite3.OperationalError:
+        # Index absent (base ancienne) : on laisse le planificateur choisir.
+        cur = conn.execute(sql.replace("INDEXED BY idx_quotes_fetched", ""),
+                           (since, market, max_rows))
+
+    out: dict[str, dict[tuple, list[tuple[float, float]]]] = defaultdict(
+        lambda: defaultdict(list))
+    seen_events: dict[str, set] = defaultdict(set)
+    n = 0
+    for book, ek, label, line, odd, ts in cur:
+        n += 1
+        if progress and n % 50_000 == 0:
+            progress(n)
         t = _parse(ts)
         if t is None or not odd or odd <= 1.0:
             continue
-        out[(ek, label, line)].append((t, float(odd)))
+        # Échantillon d'événements par book : une fois le quota atteint, on
+        # continue de suivre CEUX-LÀ, sinon les séries seraient tronquées et
+        # aucune paire ne se formerait.
+        ev = seen_events[book]
+        if ek not in ev:
+            if len(ev) >= max_events:
+                continue
+            ev.add(ek)
+        out[book][(ek, label, line)].append((t, float(odd)))
+    if progress:
+        progress(n, final=True)
     return out
 
 
@@ -120,8 +149,12 @@ def main() -> None:
     ap.add_argument("--hours", type=float, default=6.0)
     ap.add_argument("--market", default="h2h")
     ap.add_argument("--max-events", type=int, default=150,
-                    help="Échantillon d'événements — la table fait des dizaines "
-                         "de millions de lignes, tout lire est inutile.")
+                    help="Échantillon d'événements par book — la table fait des "
+                         "dizaines de millions de lignes, tout lire est inutile.")
+    ap.add_argument("--max-rows", type=int, default=400_000,
+                    help="Plafond DUR de lignes lues. C'est lui qui borne la "
+                         "durée : `quotes` n'a aucun index sur book ni market, "
+                         "donc sans plafond la requête balaie la table entière.")
     args = ap.parse_args()
 
     db = args.db
@@ -139,22 +172,38 @@ def main() -> None:
              - timedelta(hours=args.hours)).isoformat()
 
     conn = sqlite3.connect(f"file:{db}?mode=ro", uri=True)
-    books = [r[0] for r in conn.execute(
-        "SELECT DISTINCT book FROM quotes WHERE fetched_at > ?", (since,))]
-
     print(f"Base {db} — {args.hours:g} h, marché {args.market}, "
-          f"échantillon de {args.max_events} événements par book")
+          f"échantillon de {args.max_events} événements par book, "
+          f"{args.max_rows:,} lignes max")
 
-    if "pinnacle" in books:
-        show("PINNACLE — coût d'une référence périmée",
-             drift(series(conn, "pinnacle", args.market, since, args.max_events)))
+    # Retour visible : sans lui, une lecture de plusieurs centaines de milliers
+    # de lignes est indiscernable d'un blocage, et on la tue à tort.
+    def _tick(n: int, final: bool = False) -> None:
+        end = "\n" if final else "\r"
+        print(f"  lecture : {n:>9,} lignes…", end=end, flush=True)
+
+    data = load_all(conn, args.market, since, args.max_events,
+                    args.max_rows, progress=_tick)
+    if not data:
+        print("Aucune cote sur cette fenêtre — élargis --hours.")
+        return
+    span = max((t for d in data.values() for s in d.values() for t, _ in s),
+               default=0) - min((t for d in data.values() for s in d.values()
+                                 for t, _ in s), default=0)
+    print(f"  couvre {span / 60:.0f} min de captures\n")
+    if span < max(l for l, _ in LAGS):
+        print(f"  ⚠️  tranche plus courte que le plus grand écart mesuré "
+              f"({max(l for l, _ in LAGS)}s) : augmente --max-rows.\n")
+
+    if "pinnacle" in data:
+        show("PINNACLE — coût d'une référence périmée", drift(data["pinnacle"]))
         print("\n  Une médiane de X % à 60 s signifie qu'espacer les appels")
         print("  d'une minute fausse l'EV de X point en médiane.")
 
     print("\n\n########  VITESSE DES BOOKS BELGES  ########")
     print("Autre question : pendant combien de temps une occasion reste jouable.")
-    for book in sorted(b for b in books if b != "pinnacle"):
-        per_lag = drift(series(conn, book, args.market, since, args.max_events))
+    for book in sorted(b for b in data if b != "pinnacle"):
+        per_lag = drift(data[book])
         if any(per_lag.values()):
             show(book, per_lag)
 
