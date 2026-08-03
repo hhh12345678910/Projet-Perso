@@ -898,6 +898,57 @@ class TelegramAlerter:
             return False
 
 
+def format_late_market(event_key: str, book: Book, quotes: list,
+                       minutes_late: float, sport: str | None = None) -> str:
+    """Message d'un marché prématch resté ouvert sur un match commencé."""
+    parsed = parse_event_key(event_key)
+    if parsed is not None:
+        _, home_norm, away_norm = parsed
+        matchup = f"{_prettify_team_name(home_norm)} vs {_prettify_team_name(away_norm)}"
+    else:
+        matchup = event_key
+    markets = sorted({
+        f"{q.market.value}"
+        + (f" {q.outcome.line}" if q.outcome.line is not None else "")
+        for q in quotes
+    })
+    return (
+        f"⏱️ <b>MARCHÉ EN RETARD</b> — {_BOOK_NAMES.get(book, book.value)}\n"
+        f"{_sport_prefix(sport)}{matchup}\n"
+        f"Commencé depuis <b>{minutes_late:.0f} min</b> selon Pinnacle, "
+        f"encore proposé en prématch.\n"
+        f"Marchés ouverts : {', '.join(markets)}\n"
+        f"⚠️ Vérifie le score avant de jouer — et sache que le book peut "
+        f"annuler un pari pris sur un marché qu'il aurait dû suspendre."
+    )
+
+
+def send_late_market_alerts(
+    items: list[tuple], config: TelegramConfig | None,
+    *, print_fn=print, sport: str | None = None,
+) -> list[tuple]:
+    """Router les marchés en retard vers le canal critique.
+
+    Canal critique et non premium : ce n'est pas un value bet mesuré contre une
+    ligne juste, c'est une erreur d'exploitation du book. Le mélanger aux
+    alertes de value fausserait le CLV, qui est la mesure d'edge du système.
+
+    Chaque élément : (event_key, book, quotes, minutes_late). Renvoie ceux
+    réellement envoyés, pour que l'appelant ne marque que ceux-là."""
+    if config is None or not items:
+        return []
+    chat = config.effective_critical_chat_id
+    if not chat:
+        return []
+    sent: list[tuple] = []
+    with TelegramAlerter(config, print_fn=print_fn) as alerter:
+        for ek, book, quotes, late in items:
+            text = format_late_market(ek, book, quotes, late, sport=sport)
+            if alerter._send(text, chat_id=chat):
+                sent.append((ek, book, quotes, late))
+    return sent
+
+
 def send_alerts(bets: list[ValueBet], config: TelegramConfig | None,
                 *, print_fn=print, sport: str | None = None) -> list[ValueBet]:
     """Fire a Telegram message for each bet that clears the EV threshold.

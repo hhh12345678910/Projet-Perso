@@ -56,7 +56,7 @@ from .clv import (
 )
 from .alerter import (
     TelegramConfig, send_alerts, send_surebet_alerts, send_clv_alerts,
-    send_middle_alerts, send_system_alert,
+    send_late_market_alerts, send_middle_alerts, send_system_alert,
 )
 from . import teams, track
 
@@ -416,6 +416,158 @@ def track_corrections(
     return observed, corrected, aligned
 
 
+# Événements que Pinnacle a pricés en prématch, et quand. Sert uniquement au
+# détecteur de marché en retard : c'est la DISPARITION d'un événement de ce
+# flux, alors que son coup d'envoi est passé, qui prouve qu'il a commencé.
+# Purgé au-delà de six heures — passé ce délai un match est terminé, et le
+# dictionnaire n'a pas vocation à grossir.
+_PINNACLE_RECENT: dict[str, float] = {}
+_PINNACLE_RECENT_TTL = 6 * 3600.0
+
+# Minutes après le coup d'envoi au-delà desquelles un marché encore ouvert
+# devient suspect. Dix minutes laissent passer les décalages d'horaire
+# habituels (coup d'envoi retardé, arrondi de programmation) sans noyer le
+# canal : en dessous, on signalerait surtout des matchs qui n'ont pas encore
+# vraiment commencé.
+_LATE_MARKET_MIN_MIN = float(os.getenv("LATE_MARKET_MIN_MINUTES", "10"))
+_LATE_MARKET_MAX_MIN = float(os.getenv("LATE_MARKET_MAX_MINUTES", "75"))
+
+
+def remember_pinnacle_events(pinnacle_quotes: list[OddQuote], now: float) -> None:
+    """Mémoriser les événements pricés en prématch, et oublier les vieux."""
+    for q in pinnacle_quotes:
+        _PINNACLE_RECENT[q.event_key] = now
+    for k in [k for k, t in _PINNACLE_RECENT.items() if now - t > _PINNACLE_RECENT_TTL]:
+        del _PINNACLE_RECENT[k]
+
+
+def find_late_markets(
+    pinnacle_quotes: list[OddQuote],
+    soft_raw: list[OddQuote],
+    sport: str,
+    now: datetime,
+    recent: dict[str, float] | None = None,
+) -> dict[tuple[str, Book], list[OddQuote]]:
+    """Books qui proposent encore un marché PRÉMATCH sur un match commencé.
+
+    Le scénario : un match a débuté il y a vingt minutes, il est 1-1, et le
+    book n'a pas suspendu son marché « les deux équipes marquent ». Le pari est
+    déjà gagné au moment où on le prend. Ce n'est pas un value bet — c'est une
+    erreur d'exploitation du book.
+
+    Comment on sait qu'un match a commencé
+    --------------------------------------
+    Le scraper Pinnacle ignore délibérément les matchs en cours (`isLive`) : un
+    événement DISPARAÎT donc de son flux au coup d'envoi. C'est cette
+    disparition, et non l'heure affichée, qui fait foi — une heure de coup
+    d'envoi seule ne distingue pas un match commencé d'un match reporté.
+
+    D'où les trois conditions cumulées :
+      1. Pinnacle a pricé cet événement récemment (il existe, et il le connaît) ;
+      2. il ne le price plus maintenant (il est passé en direct) ;
+      3. son coup d'envoi est dépassé d'au moins _LATE_MARKET_MIN_MIN.
+
+    Deux garde-fous supplémentaires, chacun contre un faux positif précis :
+
+    - Les cotes issues d'un flux LIVE sont ignorées. Betano en expose un :
+      sans ce filtre, tout match en cours qu'il price passerait pour une
+      erreur. Tous les autres books n'interrogent que du prématch — Napoleon
+      (`offerState=prematch`), Ladbrokes (`prematch:1, live:0`), Circus
+      (`GetPrematchSport`), Unibet (listView Kambi).
+
+    - On retient l'heure la PLUS TARDIVE parmi celles connues, à l'inverse de
+      _kickoff qui prend la plus précoce. Les deux vont dans le sens sûr, mais
+      pas pour la même raison : là-bas il s'agit de ne pas alerter sur un match
+      peut-être commencé, ici d'être certain qu'il l'est.
+
+    Au-delà de _LATE_MARKET_MAX_MIN on cesse d'alerter : un marché encore
+    ouvert deux heures après le coup d'envoi ne relève plus de l'oubli mais
+    d'un horaire faux, et le pari ne serait pas payé."""
+    recent = _PINNACLE_RECENT if recent is None else recent
+    live_now = {q.event_key for q in pinnacle_quotes}
+
+    # Événements que Pinnacle connaissait, qu'il ne price plus, et dont le coup
+    # d'envoi est dépassé de la bonne quantité.
+    started: set[str] = set()
+    for ek in recent:
+        if ek in live_now:
+            continue
+        parsed = parse_event_key(ek)
+        if parsed is None:
+            continue
+        mins = (now - parsed[0]).total_seconds() / 60.0
+        if _LATE_MARKET_MIN_MIN <= mins <= _LATE_MARKET_MAX_MIN:
+            started.add(ek)
+    if not started:
+        return {}
+
+    candidates = [q for q in soft_raw if not q.from_live_feed]
+    if not candidates:
+        return {}
+    mapping = reconcile_event_keys(
+        reference_keys=list(started),
+        candidate_keys={q.event_key for q in candidates},
+        time_tolerance_minutes=tolerance_for(sport),
+    )
+
+    out: dict[tuple[str, Book], list[OddQuote]] = defaultdict(list)
+    for q in candidates:
+        match = mapping.get(q.event_key)
+        if match is None:
+            continue
+        ref_key = match[0]
+        # L'heure du book compte aussi : au tennis, le rapprochement tolère
+        # trois heures d'écart. Si le book annonce un coup d'envoi encore à
+        # venir, c'est peut-être lui qui a raison.
+        book_parsed = parse_event_key(q.event_key)
+        if book_parsed is not None:
+            if (now - book_parsed[0]).total_seconds() / 60.0 < _LATE_MARKET_MIN_MIN:
+                continue
+        out[(ref_key, q.book)].append(q)
+    return dict(out)
+
+
+# (event_key, book) déjà signalés, avec l'instant de l'alerte. Un marché
+# oublié le reste plusieurs cycles : sans mémoire, la même erreur partirait
+# toutes les quinze secondes et rendrait le canal critique inutilisable.
+_LATE_ALERTED: dict[tuple, float] = {}
+_LATE_ALERT_COOLDOWN = float(os.getenv("LATE_MARKET_COOLDOWN_SEC", "1800"))
+
+
+def _report_late_markets(late: dict, sport: str, tg_cfg) -> None:
+    """Alerter une fois par (match, book), puis se taire pendant le délai."""
+    if not late:
+        return
+    now_m = time.monotonic()
+    for k in [k for k, t in _LATE_ALERTED.items() if now_m - t > _LATE_ALERT_COOLDOWN * 2]:
+        del _LATE_ALERTED[k]
+
+    now = datetime.now(timezone.utc)
+    fresh = []
+    for (ek, book), quotes in late.items():
+        seen = _LATE_ALERTED.get((ek, book))
+        if seen is not None and now_m - seen < _LATE_ALERT_COOLDOWN:
+            continue
+        parsed = parse_event_key(ek)
+        if parsed is None:
+            continue
+        fresh.append((ek, book, quotes, (now - parsed[0]).total_seconds() / 60.0))
+    if not fresh:
+        return
+    console.print(
+        f"\\[{sport}]   ⏱️  marchés en retard : "
+        + ", ".join(f"{b.value} ({len(q)} cotes)" for _, b, q, _ in fresh)
+    )
+    sent = send_late_market_alerts(
+        fresh, tg_cfg,
+        print_fn=lambda s: console.print(f"[yellow]{s}[/yellow]"), sport=sport,
+    )
+    # Ne mémoriser que ce qui est réellement parti : un envoi différé par la
+    # limite de débit doit repasser au cycle suivant.
+    for ek, book, _q, _late in sent:
+        _LATE_ALERTED[(ek, book)] = now_m
+
+
 # Books that share a single odds feed (Kambi): Unibet and 711 price identically,
 # so the same value bet on both is one opportunity, not two. UNIBET is the
 # canonical book kept for storage/dedup; 711 rides along in `also_books`.
@@ -648,11 +800,17 @@ def fetch_betano_quotes(
         if betano_file:
             data = _load(betano_file, live_max_age, "live")
             if data is not None:
-                quotes.extend(betano_parse_overview(data))
+                # Marquées comme live : le détecteur de marché en retard doit
+                # pouvoir les distinguer du prématch, sinon tout match en cours
+                # coté par Betano passerait pour une erreur du book.
+                quotes.extend(replace(q, from_live_feed=True)
+                              for q in betano_parse_overview(data))
         else:
             try:
                 with BetanoScraper() as bet:
-                    quotes.extend(betano_parse_overview(bet.fetch_live_overview()))
+                    quotes.extend(
+                        replace(q, from_live_feed=True)
+                        for q in betano_parse_overview(bet.fetch_live_overview()))
             except BetanoAuthError as e:
                 console.print(f"[yellow]Betano live skipped:[/yellow] {e}")
 
@@ -1393,6 +1551,18 @@ def _daemon_scan_sport(
         )
         pinnacle_q = [q for q in all_q if q.book == Book.PINNACLE]
         soft_raw   = [q for q in all_q if q.book not in SHARP_BOOKS]
+
+        # Marchés en retard : un book qui n'a pas suspendu son prématch sur un
+        # match déjà commencé. Placé AVANT la sortie anticipée sur Pinnacle
+        # muet — le détecteur s'appuie sur la mémoire des cycles précédents,
+        # donc il reste utile même quand Pinnacle ne répond pas à ce cycle.
+        try:
+            _late = find_late_markets(pinnacle_q, soft_raw, current_sport,
+                                      datetime.now(timezone.utc))
+            _report_late_markets(_late, current_sport, tg_cfg)
+        except Exception as e:                                  # noqa: BLE001
+            console.print(f"[yellow]\\[{current_sport}]   late-markets skipped: {e}[/yellow]")
+        remember_pinnacle_events(pinnacle_q, time.monotonic())
 
         if not pinnacle_q:
             failed = pinnacle_fetch_failed(current_sport)

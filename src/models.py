@@ -77,6 +77,12 @@ class OddQuote:
     # 86 et un appariement à 100 n'inspirent pourtant pas la même confiance, et
     # « mauvais matching » est l'une des causes soupçonnées de faux positifs.
     match_score: Optional[float] = None
+    # Cette cote vient-elle d'un flux LIVE ? Seul Betano en expose un, et il
+    # est fusionné avec son prématch dans la même liste. Sans ce drapeau, une
+    # cote live sur un match commencé est indiscernable d'un book qui a oublié
+    # de suspendre son marché prématch — or le premier cas est normal et le
+    # second est une erreur exploitable.
+    from_live_feed: bool = False
 
 
 @dataclass
