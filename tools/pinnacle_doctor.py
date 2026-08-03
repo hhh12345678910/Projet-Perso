@@ -48,7 +48,12 @@ BACK_RE = re.compile(r"Pinnacle rétabli")
 IDLE_RE = re.compile(r"aucun événement depuis (\d+) cycles")
 QUOTES_RE = re.compile(r"→\s+(\d+)\s+quotes\s+(\w+)")
 VBETS_RE = re.compile(r"value bets: (\d+) total")
-STALE_RE = re.compile(r"(périmé|stale|limite \d+)")
+# Un seul motif, sur le fragment qui n'apparaît qu'une fois par message.
+# La première version cherchait aussi « limite N » : rich coupant à 80
+# colonnes, le message se répandait sur deux lignes dont chacune matchait,
+# et le compteur doublait. Un diagnostic qui exagère se fait ignorer aussi
+# vite qu'un diagnostic muet.
+STALE_RE = re.compile(r"ignoré : dump vieux de|ignoré : flux périmé")
 
 
 class Run:
