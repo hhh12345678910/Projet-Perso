@@ -258,19 +258,32 @@ def _team(normalised: str) -> str:
         return normalised
 
 
-def _channel_marker(cfg, ev: float, odd: float) -> str | None:
-    """Le canal qui prendrait ce pari maintenant, ou None s'il n'en atteint
-    aucun. Rejoue exactement le routage de `send_value_bet` — un /scan qui
-    montrerait des paris qui n'alertent jamais serait trompeur."""
-    if ev >= cfg.min_premium_ev_pct and cfg.premium_min_odd <= odd <= cfg.premium_max_odd:
-        return "💎"
-    if ev >= cfg.premium_hi_min_ev and cfg.premium_hi_min_odd <= odd <= cfg.premium_hi_max_odd:
-        return "💎"
-    if ev >= cfg.min_critical_ev_pct:
-        return "🚨"
-    if cfg.min_ev_pct <= ev < cfg.main_max_ev_pct and cfg.main_min_odd <= odd <= cfg.main_max_odd:
-        return "📊"
-    return None
+def is_premium(cfg, ev: float, odd: float) -> bool:
+    """Les règles du canal premium, et elles seules.
+
+    Deux voies, sans plafond d'EV : cotes 1.5-4 à partir de 8 % d'EV, cotes 4-6
+    à partir de 20 %. /scan est une liste de ce qui est jouable au sens du
+    premium — pas du canal principal, dont les 5-8 % d'EV n'ont rien à y faire.
+    """
+    return bool(
+        (ev >= cfg.min_premium_ev_pct
+         and cfg.premium_min_odd <= odd <= cfg.premium_max_odd)
+        or (ev >= cfg.premium_hi_min_ev
+            and cfg.premium_hi_min_odd <= odd <= cfg.premium_hi_max_odd)
+    )
+
+
+def _selection_label(market: str, outcome: str, line, home: str, away: str) -> str:
+    """« Anderlecht » plutôt que « home ». Sur une liste, un label positionnel
+    oblige à remonter à la ligne du match pour savoir de qui on parle."""
+    if market == "h2h":
+        return {"home": home, "away": away, "draw": "Match nul"}.get(outcome, outcome)
+    if line is not None:
+        side = {"over": "Plus de", "under": "Moins de"}.get(outcome)
+        if side:
+            return f"{side} {line:g}"
+        return f"{outcome} {line:g}"
+    return outcome
 
 
 def select_playable(rows, played_markets: set, cfg, now: datetime) -> list[dict]:
@@ -296,25 +309,36 @@ def select_playable(rows, played_markets: set, cfg, now: datetime) -> list[dict]
         line = r["line"]
         if f"{r['event_key']}|{r['market']}|{line}" in played_markets:
             continue
-        marker = _channel_marker(cfg, r["ev_pct"], r["odd_taken"])
-        if marker is None:
+        ev, odd = r["ev_pct"], r["odd_taken"]
+        if not is_premium(cfg, ev, odd):
             continue
         key = (r["event_key"], r["market"], r["outcome_label"], line)
         prev = best.get(key)
-        if prev is None or r["odd_taken"] > prev["odd"]:
+        if prev is None or odd > prev["odd"]:
+            # Noms via le registre d'équipes, exactement comme les alertes : la
+            # clé ne porte que des fragments normalisés et collés
+            # ("clubbrugge"), et teams.display() les rend lisibles.
+            home, away = _team(parsed[1]), _team(parsed[2])
+            # La cote juste se déduit de la cote et de l'EV courantes —
+            # ev = (cote × p − 1) × 100, donc fair = cote / (1 + ev/100). Pas
+            # besoin de la stocker, et elle reste cohérente avec le prix affiché
+            # au lieu de dater de la première détection.
+            fair = odd / (1.0 + ev / 100.0) if ev > -100 else None
             best[key] = {
-                "marker": marker,
-                "ev": r["ev_pct"],
-                "odd": r["odd_taken"],
+                "ev": ev,
+                "odd": odd,
+                "fair": fair,
+                "kelly": r["kelly_pct"],
                 "book": r["book"],
                 "market": r["market"],
                 "outcome": r["outcome_label"],
                 "line": line,
                 "sport": (r["sport"] if "sport" in r.keys() else None) or "",
-                # Repli sur le registre d'équipes, comme les alertes : la clé ne
-                # porte que des noms normalisés et collés ("clubbrugge").
-                "home": (r["home"] if "home" in r.keys() else None) or _team(parsed[1]),
-                "away": (r["away"] if "away" in r.keys() else None) or _team(parsed[2]),
+                "home": home,
+                "away": away,
+                "selection": _selection_label(
+                    r["market"], r["outcome_label"], line, home, away
+                ),
                 "start": start,
             }
     out = sorted(best.values(), key=lambda b: -b["ev"])
@@ -337,9 +361,10 @@ def fetch_playable(cfg, *, now: datetime | None = None) -> list[dict]:
         # à celui-là qu'on peut miser maintenant.
         rows = con.execute(
             "SELECT v.event_key, v.book, v.market, v.outcome_label, v.line, "
+            "       v.kelly_pct, "
             "       COALESCE(v.last_odd, v.odd_taken) AS odd_taken, "
             "       COALESCE(v.last_ev, v.ev_pct)     AS ev_pct, "
-            "       e.home, e.away, e.sport "
+            "       e.sport "
             "FROM value_bets v LEFT JOIN events e ON e.event_key = v.event_key "
             "WHERE COALESCE(v.last_seen_at, v.detected_at) >= ?",
             (since,),
@@ -355,27 +380,36 @@ def _esc(s: str) -> str:
     return str(s).replace("&", "&amp;").replace("<", "&lt;").replace(">", "&gt;")
 
 
-def format_scan(bets: list[dict], *, now: datetime | None = None) -> list[str]:
-    """Rend le scan en un ou plusieurs messages HTML sous la limite Telegram."""
+def format_scan(bets: list[dict], *, now: datetime | None = None,
+                bankroll: float = 1000.0) -> list[str]:
+    """Rend le scan en un ou plusieurs messages HTML sous la limite Telegram.
+
+    Même disposition qu'une alerte — EV et book, match, coup d'envoi, pari avec
+    la cote juste, mise conseillée — mais empilée en liste, une ligne vide entre
+    chaque pari pour que l'œil sépare les blocs.
+    """
     now = now or datetime.now(timezone.utc)
     if not bets:
         return [
-            "🔎 <b>SCAN</b> — aucune value jouable actuellement.\n"
-            f"<i>Fenêtre : {SCAN_WINDOW_MIN} min. Les paris déjà joués et ceux "
-            f"à moins de 15 min du coup d'envoi sont exclus.</i>"
+            "🔎 <b>SCAN</b> — aucune value jouable actuellement.\n\n"
+            f"<i>Critères premium : EV ≥ 8 % sur cotes 1.5-4, EV ≥ 20 % sur "
+            f"cotes 4-6. Sont exclus les paris déjà joués, ceux à moins de "
+            f"15 min du coup d'envoi, et ceux qui n'ont plus été vus depuis "
+            f"{SCAN_WINDOW_MIN} min.</i>"
         ]
-    header = f"🔎 <b>SCAN</b> — {len(bets)} value{'s' if len(bets) > 1 else ''} jouable"
-    header += "s\n" if len(bets) > 1 else "\n"
+    plural = "s" if len(bets) > 1 else ""
+    header = f"🔎 <b>SCAN</b> — {len(bets)} value{plural} jouable{plural}\n"
     blocks = []
     for b in bets:
-        emoji = {"soccer": "⚽", "tennis": "🎾"}.get(b["sport"], "")
-        sel = b["outcome"] if b["line"] is None else f"{b['outcome']} {b['line']:g}"
-        mins = (b["start"] - now).total_seconds() / 60
-        when = f"dans {mins:.0f} min" if mins < 60 else f"dans {int(mins // 60)} h"
+        emoji = _SCAN_SPORT_EMOJI.get(b["sport"], "")
+        fair = f" (fair {b['fair']:.2f})" if b.get("fair") else ""
+        stake = _stake_line(b["ev"], b.get("kelly"), bankroll)
         blocks.append(
-            f"\n{emoji} <b>{_esc(b['home'])} — {_esc(b['away'])}</b>\n"
-            f"   {b['marker']} <b>+{b['ev']:.1f}%</b>  {_esc(sel)} @ {b['odd']:.2f}"
-            f"  ·  {_esc(_book_label(b['book']))}  ·  {when}"
+            f"\n🎯 <b>+{b['ev']:.2f}% EV</b> — {_esc(_book_label(b['book']))}\n"
+            f"{emoji} {_esc(b['home'])} vs {_esc(b['away'])}\n"
+            f"📅 {_esc(_kickoff(b['start'], now))}\n"
+            f"Pari : <b>{_esc(b['selection'])}</b> @ {b['odd']:.2f}{fair}\n"
+            f"{stake}\n"
         )
     msgs, cur = [], header
     for block in blocks:
@@ -386,6 +420,32 @@ def format_scan(bets: list[dict], *, now: datetime | None = None) -> list[str]:
     if cur.strip():
         msgs.append(cur)
     return msgs
+
+
+_SCAN_SPORT_EMOJI = {"soccer": "⚽", "football": "⚽", "tennis": "🎾",
+                     "basketball": "🏀", "hockey": "🏒"}
+
+
+def _kickoff(start: datetime, now: datetime) -> str:
+    """« Aujourd'hui 20:45 — dans 3 h », en heure de Bruxelles comme les
+    alertes : une liste sans horaire oblige à rouvrir chaque match pour savoir
+    lequel part en premier."""
+    try:
+        from src.alerter import _format_kickoff, _time_to_kickoff
+        return f"{_format_kickoff(start, now)}{_time_to_kickoff(start, now)}"
+    except Exception:
+        return start.strftime("%d/%m %H:%M")
+
+
+def _stake_line(ev: float, kelly: float | None, bankroll: float) -> str:
+    """La mise, calculée comme dans les alertes — même mode (kelly ou flat),
+    même arrondi. Une mise différente entre l'alerte et le scan pour le même
+    pari serait pire que pas de mise du tout."""
+    try:
+        from src.alerter import _advised_stake_line
+        return _advised_stake_line(ev, kelly, bankroll) or "Mise conseillée : —"
+    except Exception:
+        return "Mise conseillée : —"
 
 
 def _book_label(book_value: str) -> str:
@@ -443,7 +503,7 @@ def handle_message(msg: dict) -> None:
         tg("sendMessage", chat_id=chat_id, text=f"Scan indisponible ({type(e).__name__})")
         print(f"scan echoue: {type(e).__name__}: {e}")
         return
-    for part in format_scan(bets):
+    for part in format_scan(bets, bankroll=cfg.bankroll):
         tg("sendMessage", chat_id=chat_id, parse_mode="HTML",
            text=part, disable_web_page_preview=True)
     print(f"[{datetime.now():%H:%M:%S}] /scan -> {len(bets)} paris (chat {chat_id})")
@@ -541,6 +601,18 @@ def main() -> None:
     # compte, ce qui masquait le probleme : le bot demarrait normalement.
     from src.config import load_env_file
     print(f"env : {load_env_file(ROOT / '.env')} cles chargees depuis .env")
+
+    # Sans ce branchement, teams.display() retombe sur .capitalize() et rend
+    # « Clubbrugge » au lieu de « Club Brugge » : la cle d'evenement ne porte
+    # que des fragments normalises et colles, c'est le registre qui sait les
+    # reecrire. Le daemon l'initialise de son cote, pas ce service.
+    try:
+        from src import teams
+        from src.storage import Storage
+        teams.init(Storage(DB_PATH))
+        print(f"registre d'equipes : {len(teams._DISPLAY)} noms charges")
+    except Exception as e:
+        print(f"registre d'equipes indisponible ({type(e).__name__}) — noms bruts")
 
     offset = read_offset()
     print(f"bot_listener demarre (offset={offset}, db={DB_PATH}, xlsx={XLSX_PATH})")

@@ -10,7 +10,7 @@ from datetime import datetime, timedelta, timezone
 
 import pytest
 
-from bot_listener import _channel_marker, format_scan, select_playable
+from bot_listener import format_scan, is_premium, select_playable
 from src.alerter import TelegramConfig
 
 
@@ -33,7 +33,7 @@ def _row(*, ev=12.0, odd=2.40, book="unibet_be", market="h2h", outcome="home",
         "event_key": f"{start.strftime('%Y%m%d%H%M')}::"
                      f"{home.lower().replace(' ', '')}__vs__{away.lower().replace(' ', '')}",
         "book": book, "market": market, "outcome_label": outcome, "line": line,
-        "odd_taken": odd, "ev_pct": ev, "home": home, "away": away, "sport": sport,
+        "odd_taken": odd, "ev_pct": ev, "kelly_pct": 1.5, "sport": sport,
     }
 
 
@@ -74,16 +74,24 @@ def test_started_matches_are_excluded():
     assert _sel([_row(hours=-2)]) == []
 
 
-def test_bets_reaching_no_channel_are_excluded():
-    """Un /scan qui montre des paris qui n'alertent jamais serait trompeur."""
-    assert _sel([_row(ev=2.0, odd=2.40)]) == []      # sous le seuil principal
-    assert _sel([_row(ev=25.0, odd=12.0)]) == []     # EV forte mais hors bandes
-    assert _sel([_row(ev=15.0, odd=5.0)]) == []      # cote 4-6 sous les 20 % requis
+def test_only_premium_grade_bets_are_kept():
+    """/scan applique les regles du canal premium, pas celles du principal.
+
+    Les 5-8 % d'EV du canal principal n'ont rien a faire dans cette liste —
+    c'est le reproche exact de l'utilisateur."""
+    assert _sel([_row(ev=5.0, odd=2.40)]) == []      # canal principal
+    assert _sel([_row(ev=7.9, odd=2.40)]) == []      # juste sous les 8 %
+    assert len(_sel([_row(ev=8.0, odd=2.40)])) == 1  # borne incluse
+    assert _sel([_row(ev=15.0, odd=5.0)]) == []      # cote 4-6 sous les 20 %
+    assert len(_sel([_row(ev=20.0, odd=5.0)])) == 1  # voie cotes hautes
+    assert _sel([_row(ev=60.0, odd=14.0)]) == []     # hors bandes premium
 
 
-def test_huge_ev_outside_premium_bands_is_kept_as_critical():
-    kept = _sel([_row(ev=60.0, odd=14.0)])
-    assert len(kept) == 1 and kept[0]["marker"] == "🚨"
+def test_odds_bands_edges_are_inclusive():
+    assert len(_sel([_row(ev=8.0, odd=1.5)])) == 1
+    assert len(_sel([_row(ev=20.0, odd=6.0)])) == 1
+    assert _sel([_row(ev=50.0, odd=1.49)]) == []
+    assert _sel([_row(ev=50.0, odd=6.01)]) == []
 
 
 # ------------------------------------------------------- déduplication ------
@@ -102,9 +110,9 @@ def test_same_selection_on_several_books_keeps_the_best_price():
 
 
 def test_results_are_sorted_by_ev_descending():
-    rows = [_row(ev=8.0, outcome="home"), _row(ev=22.0, outcome="draw"),
+    rows = [_row(ev=8.5, outcome="home"), _row(ev=22.0, outcome="draw"),
             _row(ev=14.0, outcome="away")]
-    assert [b["ev"] for b in _sel(rows)] == [22.0, 14.0, 8.0]
+    assert [b["ev"] for b in _sel(rows)] == [22.0, 14.0, 8.5]
 
 
 def test_unparseable_event_key_is_skipped_not_crashed():
@@ -116,14 +124,14 @@ def test_unparseable_event_key_is_skipped_not_crashed():
 # ------------------------------------------------------------- marqueurs ----
 
 @pytest.mark.parametrize("ev,odd,expected", [
-    (12.0, 2.40, "💎"),    # bande premium 1.5-4
-    (25.0, 5.00, "💎"),    # bande premium haute 4-6
-    (60.0, 14.0, "🚨"),    # hors bandes -> critique
-    (6.0, 2.40, "📊"),     # canal principal
-    (6.0, 12.0, None),     # nulle part
+    (12.0, 2.40, True),     # bande premium 1.5-4
+    (25.0, 5.00, True),     # bande premium haute 4-6
+    (60.0, 14.0, False),    # hors bandes : c'est du critique, pas du premium
+    (6.0, 2.40, False),     # canal principal
+    (15.0, 5.00, False),    # cotes 4-6 sous les 20 %
 ])
-def test_channel_marker_mirrors_the_alert_routing(ev, odd, expected):
-    assert _channel_marker(_cfg(), ev, odd) == expected
+def test_is_premium_mirrors_the_premium_channel_rules(ev, odd, expected):
+    assert is_premium(_cfg(), ev, odd) is expected
 
 
 # --------------------------------------------------------------- rendu ------
@@ -133,18 +141,52 @@ def test_format_reports_emptiness_explicitly():
     assert len(out) == 1 and "aucune value jouable" in out[0]
 
 
-def test_format_lists_teams_price_book_and_delay():
-    out = format_scan(_sel([_row(ev=12.4, odd=2.35, hours=3)]), now=NOW)
-    assert len(out) == 1
-    msg = out[0]
-    assert "Anderlecht" in msg and "Club Brugge" in msg
-    assert "+12.4%" in msg and "@ 2.35" in msg
-    assert "dans 3 h" in msg
+def test_format_carries_everything_a_bet_needs():
+    """Tout ce qu'il faut pour miser sans rouvrir autre chose : EV, book, match,
+    date ET heure du coup d'envoi, pari, cote, cote juste, mise."""
+    msg = format_scan(_sel([_row(ev=12.4, odd=2.35, hours=3)]), now=NOW)[0]
+    assert "+12.40% EV" in msg
+    assert "Unibet" in msg                      # le book, en nom lisible
+    assert "@ 2.35" in msg
+    assert "(fair 2.09)" in msg                 # 2.35 / 1.124
+    assert "dans 3 h" in msg and "17:00" in msg  # heure de Bruxelles
+    assert "Mise conseillée" in msg and "€" in msg
 
 
-def test_format_shows_the_line_for_totals():
-    rows = [_row(market="totals", outcome="over", line=2.5)]
-    assert "over 2.5" in format_scan(_sel(rows), now=NOW)[0]
+def test_format_separates_each_bet_with_a_blank_line():
+    """Sans respiration entre les blocs, la liste est illisible sur téléphone."""
+    msg = format_scan(_sel([_row(outcome="home"), _row(outcome="draw")]), now=NOW)[0]
+    assert "\n\n🎯" in msg
+
+
+def test_format_derives_fair_odds_from_the_current_price():
+    """La cote juste se déduit de la cote et de l'EV affichées, donc elle reste
+    cohérente avec elles au lieu de dater de la première détection."""
+    msg = format_scan(_sel([_row(ev=25.0, odd=2.50)]), now=NOW)[0]
+    assert "(fair 2.00)" in msg                 # 2.50 / 1.25
+
+
+def test_format_names_the_selection_instead_of_home_away_draw():
+    """« Anderlecht » plutôt que « home » : sur une liste, un label positionnel
+    oblige à remonter à la ligne du match pour savoir de qui on parle."""
+    home = format_scan(_sel([_row(outcome="home")]), now=NOW)[0]
+    assert "<b>Anderlecht</b>" in home and ">home<" not in home
+    draw = format_scan(_sel([_row(outcome="draw")]), now=NOW)[0]
+    assert "Match nul" in draw
+    tot = _row(market="totals", outcome="over", line=2.5)
+    assert "Plus de 2.5" in format_scan(_sel([tot]), now=NOW)[0]
+
+
+def test_team_names_come_from_the_registry_not_the_raw_key(monkeypatch):
+    """Le bug signalé : sans le registre, teams.display() retombe sur
+    .capitalize() et rend « Clubbrugge » — collé et sans majuscule interne."""
+    from src import teams
+
+    monkeypatch.setitem(teams._DISPLAY, "clubbrugge", "Club Brugge")
+    monkeypatch.setitem(teams._DISPLAY, "anderlecht", "Anderlecht")
+    msg = format_scan(_sel([_row()]), now=NOW)[0]
+    assert "Anderlecht vs Club Brugge" in msg
+    assert "Clubbrugge" not in msg
 
 
 def test_format_splits_long_scans_across_messages():
