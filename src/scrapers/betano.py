@@ -591,3 +591,61 @@ def _extract_home_away(participants: Any) -> tuple[str | None, str | None]:
     if away is None:
         away = next((n for n in names if n != home), None)
     return home, away
+
+
+# Sports du flux live, par leur code d'événement. Seul le football nous
+# intéresse : au tennis le champ `score` porte les points du jeu en cours
+# ("40", "30", "AD"), il change à chaque échange, et le suivre produirait un
+# flot d'alertes sans rapport avec une occasion.
+_LIVE_SOCCER_SPORT_IDS = {"FOOT", "SOCCER", "FOOTBALL"}
+
+
+def parse_live_scores(data: dict) -> dict[str, tuple[int, int, int]]:
+    """Scores en direct du flux Betano : {event_key: (dom, ext, minute)}.
+
+    C'est la seule source de score en direct du projet. Le scraper Pinnacle
+    ignore délibérément les matchs en cours (`isLive`), et c'est justement ce
+    qui permet de détecter un coup d'envoi — mais il ne reste alors plus rien
+    pour savoir CE QUI SE PASSE pendant le match.
+
+    L'intérêt : un but est exactement ce qui rend exploitable un marché
+    prématch resté ouvert. « Les deux équipes marquent » sur un 1-1 est déjà
+    gagné, et ça ne se voit qu'ici.
+
+    Renvoie la même clé d'événement que parse_overview, donc les deux se
+    recoupent directement. Un score illisible est ignoré plutôt que deviné :
+    mieux vaut ne rien signaler qu'annoncer un but qui n'a pas eu lieu."""
+    events = data.get("events") or {}
+    out: dict[str, tuple[int, int, int]] = {}
+    for ev in events.values():
+        if not isinstance(ev, dict) or not ev.get("isLive"):
+            continue
+        if str(ev.get("sportId") or "").upper() not in _LIVE_SOCCER_SPORT_IDS:
+            continue
+        live = ev.get("liveData")
+        if not isinstance(live, dict):
+            continue
+        score = live.get("score")
+        if not isinstance(score, dict):
+            continue
+        try:
+            home_goals = int(str(score.get("home")).strip())
+            away_goals = int(str(score.get("away")).strip())
+        except (TypeError, ValueError):
+            continue
+        start = _parse_datetime(_first(ev, _FIELDS_EVENT_START))
+        if start is None:
+            continue
+        home, away = _extract_home_away(
+            _first(ev, _FIELDS_EVENT_PARTICIPANTS, default=[]))
+        if not (home and away):
+            continue
+        clock = live.get("clock")
+        secs = 0
+        if isinstance(clock, dict):
+            try:
+                secs = int(clock.get("secondsSinceStart") or 0)
+            except (TypeError, ValueError):
+                secs = 0
+        out[event_key(home, away, start)] = (home_goals, away_goals, secs // 60)
+    return out

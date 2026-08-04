@@ -25,6 +25,7 @@ from .models import Book, FairLine, MarketType, OddQuote, Outcome, ValueBet
 from .scrapers.betano import (
     BetanoAuthError,
     BetanoScraper,
+    parse_live_scores as betano_parse_live_scores,
     parse_overview as betano_parse_overview,
     parse_prematch as betano_parse_prematch,
     prematch_file as betano_prematch_file,
@@ -537,11 +538,66 @@ def find_late_markets(
 # donc chaque rappel apprend quelque chose de neuf. C'est aussi la cadence à
 # laquelle le score peut avoir changé, ce qui change tout sur un marché de
 # type « les deux équipes marquent ».
+# Dernier score connu par événement, pour repérer un but. Le flux live Betano
+# est la seule source de score du projet : Pinnacle ignore les matchs en cours.
+_LIVE_SCORES: dict[str, tuple[int, int, int]] = {}
+
 _LATE_ALERTED: dict[tuple, float] = {}
 _LATE_ALERT_COOLDOWN = float(os.getenv("LATE_MARKET_COOLDOWN_SEC", "300"))
 
 
-def _report_late_markets(late: dict, sport: str, tg_cfg) -> None:
+def read_live_scores(betano_file: str | None) -> dict[str, tuple[int, int, int]]:
+    """Scores en direct du dump Betano, ou {} si indisponible.
+
+    Jamais bloquant : une absence de score ne doit pas empêcher la détection
+    des marchés en retard, qui fonctionne très bien sans."""
+    if not betano_file:
+        return {}
+    try:
+        import json as _json
+        from pathlib import Path as _Path
+        raw = _Path(betano_file).read_text()
+        return betano_parse_live_scores(_json.loads(raw))
+    except Exception:                                           # noqa: BLE001
+        return {}
+
+
+def goals_since_last_cycle(
+    scores: dict[str, tuple[int, int, int]],
+    previous: dict[str, tuple[int, int, int]],
+) -> set[str]:
+    """Événements dont le score a changé depuis le cycle précédent.
+
+    Un événement vu pour la PREMIÈRE fois ne compte pas comme un but : au
+    démarrage du daemon tous les matchs en cours auraient l'air de venir de
+    marquer, et le canal partirait en rafale."""
+    changed: set[str] = set()
+    for ek, (h, a, _m) in scores.items():
+        prev = previous.get(ek)
+        if prev is None:
+            continue
+        if (h, a) != (prev[0], prev[1]):
+            changed.add(ek)
+    return changed
+
+
+def forget_finished_scores(scores: dict, now: datetime, max_age_h: float = 6.0) -> None:
+    """Oublier les matchs terminés — le daemon tourne pendant des semaines.
+
+    Le score n'est mémorisé que pour comparer deux cycles consécutifs ; passé
+    six heures le match est fini et n'apprendra plus rien. Sans ça le
+    dictionnaire garde tous les matchs jamais vus depuis le démarrage."""
+    stale = []
+    for ek in scores:
+        parsed = parse_event_key(ek)
+        if parsed is None or (now - parsed[0]).total_seconds() > max_age_h * 3600:
+            stale.append(ek)
+    for ek in stale:
+        del scores[ek]
+
+
+def _report_late_markets(late: dict, sport: str, tg_cfg,
+                         goals: set[str] | None = None) -> None:
     """Alerter une fois par (match, book), puis se taire pendant le délai."""
     if not late:
         return
@@ -549,21 +605,27 @@ def _report_late_markets(late: dict, sport: str, tg_cfg) -> None:
     for k in [k for k, t in _LATE_ALERTED.items() if now_m - t > _LATE_ALERT_COOLDOWN * 2]:
         del _LATE_ALERTED[k]
 
+    goals = goals or set()
     now = datetime.now(timezone.utc)
     fresh = []
     for (ek, book), quotes in late.items():
         seen = _LATE_ALERTED.get((ek, book))
-        if seen is not None and now_m - seen < _LATE_ALERT_COOLDOWN:
+        # Un but rouvre immédiatement la parole : c'est précisément l'instant
+        # où un marché prématch oublié devient exploitable — « les deux
+        # équipes marquent » sur un 1-1 est déjà gagné. Attendre le prochain
+        # rappel ferait manquer la seule minute qui compte.
+        if ek not in goals and seen is not None and now_m - seen < _LATE_ALERT_COOLDOWN:
             continue
         parsed = parse_event_key(ek)
         if parsed is None:
             continue
-        fresh.append((ek, book, quotes, (now - parsed[0]).total_seconds() / 60.0))
+        fresh.append((ek, book, quotes, (now - parsed[0]).total_seconds() / 60.0,
+                      _LIVE_SCORES.get(ek), ek in goals))
     if not fresh:
         return
     console.print(
         f"\\[{sport}]   ⏱️  marchés en retard : "
-        + ", ".join(f"{b.value} ({len(q)} cotes)" for _, b, q, _ in fresh)
+        + ", ".join(f"{b.value} ({len(q)} cotes)" for _, b, q, _, _, _ in fresh)
     )
     sent = send_late_market_alerts(
         fresh, tg_cfg,
@@ -571,7 +633,7 @@ def _report_late_markets(late: dict, sport: str, tg_cfg) -> None:
     )
     # Ne mémoriser que ce qui est réellement parti : un envoi différé par la
     # limite de débit doit repasser au cycle suivant.
-    for ek, book, _q, _late in sent:
+    for ek, book, *_rest in sent:
         _LATE_ALERTED[(ek, book)] = now_m
 
 
@@ -1564,9 +1626,20 @@ def _daemon_scan_sport(
         # muet — le détecteur s'appuie sur la mémoire des cycles précédents,
         # donc il reste utile même quand Pinnacle ne répond pas à ce cycle.
         try:
+            # Scores en direct, football seulement : le dump live couvre tous
+            # les sports mais un « score » de tennis change à chaque point.
+            _goals: set[str] = set()
+            if current_sport == "soccer":
+                _now_scores = read_live_scores(betano_file)
+                if _now_scores:
+                    _goals = goals_since_last_cycle(_now_scores, _LIVE_SCORES)
+                    _LIVE_SCORES.update(_now_scores)
+                    forget_finished_scores(_LIVE_SCORES, datetime.now(timezone.utc))
+                    if _goals:
+                        console.print(f"\\[{current_sport}]   ⚽ buts détectés : {len(_goals)}")
             _late = find_late_markets(pinnacle_q, soft_raw, current_sport,
                                       datetime.now(timezone.utc))
-            _report_late_markets(_late, current_sport, tg_cfg)
+            _report_late_markets(_late, current_sport, tg_cfg, goals=_goals)
         except Exception as e:                                  # noqa: BLE001
             console.print(f"[yellow]\\[{current_sport}]   late-markets skipped: {e}[/yellow]")
         remember_pinnacle_events(pinnacle_q, time.monotonic())

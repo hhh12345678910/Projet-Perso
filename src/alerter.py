@@ -899,7 +899,8 @@ class TelegramAlerter:
 
 
 def format_late_market(event_key: str, book: Book, quotes: list,
-                       minutes_late: float, sport: str | None = None) -> str:
+                       minutes_late: float, sport: str | None = None,
+                       score: tuple | None = None, is_goal: bool = False) -> str:
     """Message d'un marché prématch resté ouvert sur un match commencé."""
     parsed = parse_event_key(event_key)
     if parsed is not None:
@@ -912,9 +913,21 @@ def format_late_market(event_key: str, book: Book, quotes: list,
         + (f" {q.outcome.line}" if q.outcome.line is not None else "")
         for q in quotes
     })
+    # Le score change tout : « les deux équipes marquent » sur un 1-1 est déjà
+    # gagné, et c'est invisible sans cette ligne. Absent quand le flux live
+    # Betano ne couvre pas ce match — on le dit plutôt que de laisser croire
+    # à un 0-0.
+    if score is not None:
+        h, a, minute = score
+        score_line = f"⚽ <b>Score : {h}-{a}</b>  ({minute}')\n"
+    else:
+        score_line = "❔ Score inconnu — vérifie avant de jouer.\n"
+    titre = ("🥅 <b>BUT — MARCHÉ TOUJOURS OUVERT</b>" if is_goal
+             else "⏱️ <b>MARCHÉ EN RETARD</b>")
     return (
-        f"⏱️ <b>MARCHÉ EN RETARD</b> — {_BOOK_NAMES.get(book, book.value)}\n"
+        f"{titre} — {_BOOK_NAMES.get(book, book.value)}\n"
         f"{_sport_prefix(sport)}{matchup}\n"
+        f"{score_line}"
         f"Commencé depuis <b>{minutes_late:.0f} min</b> selon Pinnacle, "
         f"encore proposé en prématch.\n"
         f"Marchés ouverts : {', '.join(markets)}\n"
@@ -933,7 +946,10 @@ def send_late_market_alerts(
     ligne juste, c'est une erreur d'exploitation du book. Le mélanger aux
     alertes de value fausserait le CLV, qui est la mesure d'edge du système.
 
-    Chaque élément : (event_key, book, quotes, minutes_late). Renvoie ceux
+    Chaque élément : (event_key, book, quotes, minutes_late, score, is_goal),
+    où `score` vaut (dom, ext, minute) ou None si le flux live ne couvre pas ce
+    match. Les deux derniers champs sont optionnels : un appelant qui n'a pas de
+    score envoie un quadruplet et le message le dit. Renvoie les éléments
     réellement envoyés, pour que l'appelant ne marque que ceux-là."""
     if config is None or not items:
         return []
@@ -942,10 +958,14 @@ def send_late_market_alerts(
         return []
     sent: list[tuple] = []
     with TelegramAlerter(config, print_fn=print_fn) as alerter:
-        for ek, book, quotes, late in items:
-            text = format_late_market(ek, book, quotes, late, sport=sport)
+        for item in items:
+            ek, book, quotes, late = item[:4]
+            score = item[4] if len(item) > 4 else None
+            is_goal = bool(item[5]) if len(item) > 5 else False
+            text = format_late_market(ek, book, quotes, late, sport=sport,
+                                      score=score, is_goal=is_goal)
             if alerter._send(text, chat_id=chat):
-                sent.append((ek, book, quotes, late))
+                sent.append(item)
     return sent
 
 

@@ -11,6 +11,7 @@ un horaire simplement différent d'un book à l'autre.
 """
 from __future__ import annotations
 
+import importlib
 from datetime import datetime, timedelta, timezone
 
 import pytest
@@ -132,3 +133,131 @@ def test_memory_forgets_old_events():
     remember_pinnacle_events([], 7 * 3600.0)
     assert EK not in m._PINNACLE_RECENT
     m._PINNACLE_RECENT.clear()
+
+
+# ── Détection de but ──────────────────────────────────────────────────────
+# Le flux live Betano est la SEULE source de score du projet : Pinnacle ignore
+# les matchs en cours. Un but est exactement l'instant où un marché prématch
+# oublié devient exploitable — « les deux équipes marquent » sur un 1-1 est
+# déjà gagné.
+
+def _live_payload(events):
+    return {"events": {str(i): e for i, e in enumerate(events)}}
+
+
+def _live_event(home, away, h, a, *, sport="FOOT", live=True, secs=1200,
+                start_ms=None):
+    ms = start_ms if start_ms is not None else int(KICKOFF.timestamp() * 1000)
+    return {
+        "isLive": live, "sportId": sport, "startTime": ms,
+        "participants": [{"name": home, "isHome": True}, {"name": away}],
+        "liveData": {"score": {"home": str(h), "away": str(a)},
+                     "clock": {"secondsSinceStart": secs}},
+    }
+
+
+def test_live_scores_are_extracted_for_soccer():
+    from src.scrapers.betano import parse_live_scores
+    got = parse_live_scores(_live_payload([
+        _live_event("Union Saint-Gilloise", "Anderlecht", 1, 1)]))
+    assert got == {EK: (1, 1, 20)}
+
+
+def test_tennis_scores_are_ignored():
+    """Au tennis le champ `score` porte les points du jeu en cours ; il change
+    à chaque échange et produirait un flot d'alertes sans rapport."""
+    from src.scrapers.betano import parse_live_scores
+    got = parse_live_scores(_live_payload([
+        _live_event("Alcaraz", "Sinner", 40, 30, sport="TENNIS")]))
+    assert got == {}
+
+
+def test_a_match_not_live_is_ignored():
+    from src.scrapers.betano import parse_live_scores
+    got = parse_live_scores(_live_payload([
+        _live_event("Union Saint-Gilloise", "Anderlecht", 0, 0, live=False)]))
+    assert got == {}
+
+
+def test_an_unreadable_score_is_skipped_not_guessed():
+    """Mieux vaut ne rien signaler qu'annoncer un but qui n'a pas eu lieu."""
+    from src.scrapers.betano import parse_live_scores
+    bad = _live_event("Union Saint-Gilloise", "Anderlecht", 0, 0)
+    bad["liveData"]["score"] = {"home": "-", "away": None}
+    assert parse_live_scores(_live_payload([bad])) == {}
+
+
+def test_a_score_change_is_a_goal():
+    from src.main import goals_since_last_cycle
+    assert goals_since_last_cycle({EK: (1, 1, 20)}, {EK: (1, 0, 18)}) == {EK}
+    assert goals_since_last_cycle({EK: (1, 0, 20)}, {EK: (1, 0, 18)}) == set()
+
+
+def test_a_first_sighting_is_never_a_goal():
+    """Au démarrage du daemon, tous les matchs en cours seraient sinon
+    annoncés comme venant de marquer, et le canal partirait en rafale."""
+    from src.main import goals_since_last_cycle
+    assert goals_since_last_cycle({EK: (2, 1, 30)}, {}) == set()
+
+
+def test_finished_matches_are_forgotten():
+    """Le daemon tourne des semaines : sans purge, le dictionnaire des scores
+    garde tous les matchs vus depuis le démarrage."""
+    from src.main import forget_finished_scores
+    old = event_key("A", "B", NOW - timedelta(hours=7))
+    scores = {EK: (1, 1, 20), old: (2, 0, 90)}
+    forget_finished_scores(scores, NOW)
+    assert set(scores) == {EK}
+
+
+def test_the_real_send_path_accepts_what_the_cycle_builds():
+    """Le test du délai remplace send_late_market_alerts par un mock, ce qui
+    masquerait un désaccord d'arité entre les deux. Or `_report_late_markets`
+    construit désormais des sextuplets, et l'exception serait avalée par le
+    `except` du cycle : le détecteur se tairait sans une ligne au journal —
+    exactement le mode d'échec silencieux qui coûte le plus cher ici. Ce test
+    fait passer un vrai appel de bout en bout."""
+    from src.alerter import TelegramConfig, send_late_market_alerts
+    import src.alerter as a
+
+    cfg = TelegramConfig(bot_token="x", chat_id="1", critical_chat_id="9")
+    texts: list[str] = []
+    a.TelegramAlerter._send = lambda self, text, **kw: (texts.append(text) or True)
+
+    item = (EK, Book.CIRCUS_BE, [_soft()], 19.0, (1, 1, 20), True)
+    try:
+        sent = send_late_market_alerts([item], cfg)
+    finally:
+        importlib.reload(a)
+    assert sent == [item]
+    assert "1-1" in texts[0] and "BUT" in texts[0]
+
+
+def test_a_message_without_score_says_so_rather_than_implying_0_0():
+    """Betano ne couvre pas tous les championnats. Un message muet sur le score
+    se lirait comme un 0-0, et « les deux équipes marquent » n'a pas du tout la
+    même valeur à 0-0 qu'à 1-1."""
+    from src.alerter import format_late_market
+    msg = format_late_market(EK, Book.CIRCUS_BE, [_soft()], 19.0, sport="soccer")
+    assert "inconnu" in msg
+
+
+def test_a_goal_bypasses_the_reminder_delay():
+    """C'est tout l'intérêt : attendre le rappel suivant ferait manquer la
+    seule minute qui compte."""
+    import src.main as m
+    m._LATE_ALERTED.clear(); m._LIVE_SCORES.clear()
+    late = {(EK, Book.CIRCUS_BE): [_soft()]}
+    sent = []
+    m.send_late_market_alerts = lambda items, cfg, **kw: (sent.extend(items) or items)
+    try:
+        m._report_late_markets(late, "soccer", object())
+        assert len(sent) == 1, "première alerte"
+        m._report_late_markets(late, "soccer", object())
+        assert len(sent) == 1, "silence pendant le délai"
+        m._report_late_markets(late, "soccer", object(), goals={EK})
+        assert len(sent) == 2, "un but doit rouvrir la parole immédiatement"
+    finally:
+        m._LATE_ALERTED.clear()
+        import importlib
+        importlib.reload(m)
