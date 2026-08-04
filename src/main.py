@@ -432,6 +432,10 @@ _PINNACLE_RECENT_TTL = 6 * 3600.0
 # vraiment commencé.
 _LATE_MARKET_MIN_MIN = float(os.getenv("LATE_MARKET_MIN_MINUTES", "10"))
 _LATE_MARKET_MAX_MIN = float(os.getenv("LATE_MARKET_MAX_MINUTES", "75"))
+# Coupe-circuit : le détecteur peut se tromper en masse sans se tromper en
+# silence, et un canal critique noyé ne sert plus à rien. Mieux vaut pouvoir
+# l'éteindre depuis .env, sans déploiement, que de subir une nuit d'alertes.
+_LATE_MARKET_ENABLED = os.getenv("LATE_MARKET_ENABLED", "1") == "1"
 
 
 def remember_pinnacle_events(pinnacle_quotes: list[OddQuote], now: float) -> None:
@@ -447,7 +451,10 @@ def find_late_markets(
     soft_raw: list[OddQuote],
     sport: str,
     now: datetime,
+    *,
+    prior_odds: "Callable[[str, Book, datetime], dict]",
     recent: dict[str, float] | None = None,
+    stats: "Counter | None" = None,
 ) -> dict[tuple[str, Book], list[OddQuote]]:
     """Books qui proposent encore un marché PRÉMATCH sur un match commencé.
 
@@ -468,13 +475,28 @@ def find_late_markets(
       2. il ne le price plus maintenant (il est passé en direct) ;
       3. son coup d'envoi est dépassé d'au moins _LATE_MARKET_MIN_MIN.
 
+    Pourquoi la présence dans le flux ne suffit pas
+    ----------------------------------------------
+    Première version : « le book expose encore ce match, donc il a oublié de
+    suspendre ». Faux, et coûteux — le canal a été noyé. La plupart des books
+    belges continuent d'exposer un match commencé et se contentent de le
+    repricer en direct, sans que rien dans la réponse ne le dise. Seul Betano
+    marque ses cotes live, et seul Ladbrokes demande explicitement
+    `live: 0` ; pour Circus, Unibet (et ses clones Kambi), Napoleon ou
+    StarCasino, un match en cours est indiscernable d'un match à venir.
+
+    Le vrai discriminant est le PRIX. Un marché réellement oublié a gardé sa
+    cote d'avant le coup d'envoi ; un book qui price en direct l'a forcément
+    déplacée. D'où la quatrième condition : la cote actuelle doit être
+    identique à la dernière relevée avant le coup d'envoi. Sans historique on
+    se tait — l'exigence est une preuve positive d'immobilité, pas une absence
+    de preuve du contraire.
+
     Deux garde-fous supplémentaires, chacun contre un faux positif précis :
 
     - Les cotes issues d'un flux LIVE sont ignorées. Betano en expose un :
       sans ce filtre, tout match en cours qu'il price passerait pour une
-      erreur. Tous les autres books n'interrogent que du prématch — Napoleon
-      (`offerState=prematch`), Ladbrokes (`prematch:1, live:0`), Circus
-      (`GetPrematchSport`), Unibet (listView Kambi).
+      erreur.
 
     - On retient l'heure la PLUS TARDIVE parmi celles connues, à l'inverse de
       _kickoff qui prend la plus précoce. Les deux vont dans le sens sûr, mais
@@ -485,6 +507,15 @@ def find_late_markets(
     ouvert deux heures après le coup d'envoi ne relève plus de l'oubli mais
     d'un horaire faux, et le pari ne serait pas payé."""
     recent = _PINNACLE_RECENT if recent is None else recent
+    stats = Counter() if stats is None else stats
+    # Sans réponse de Pinnacle à ce cycle, `live_now` est vide et TOUT événement
+    # mémorisé passe pour disparu : le veto « Pinnacle le price encore » saute
+    # sans bruit, au moment précis où l'on est le moins sûr de soi. Un recul
+    # après 403 ou un sondage espacé suffisent à déclencher ça. On préfère ne
+    # rien dire — la détection reprendra au cycle suivant.
+    if not pinnacle_quotes:
+        stats["pinnacle_muet"] += 1
+        return {}
     live_now = {q.event_key for q in pinnacle_quotes}
 
     # Événements que Pinnacle connaissait, qu'il ne price plus, et dont le coup
@@ -512,6 +543,9 @@ def find_late_markets(
     )
 
     out: dict[tuple[str, Book], list[OddQuote]] = defaultdict(list)
+    # Un événement porte des dizaines de cotes : sans ce cache, l'historique
+    # serait relu une fois par cote au lieu d'une fois par (match, book).
+    history: dict[tuple[str, Book], dict] = {}
     for q in candidates:
         match = mapping.get(q.event_key)
         if match is None:
@@ -524,6 +558,29 @@ def find_late_markets(
         if book_parsed is not None:
             if (now - book_parsed[0]).total_seconds() / 60.0 < _LATE_MARKET_MIN_MIN:
                 continue
+
+        hkey = (ref_key, q.book)
+        if hkey not in history:
+            ref_parsed = parse_event_key(ref_key)
+            kickoff = ref_parsed[0] if ref_parsed is not None else now
+            # Avant le coup d'envoi la cote est rangée sous la clé de la
+            # référence ; une fois Pinnacle parti, plus rien ne la réaligne et
+            # elle repasse sous celle du book. On interroge donc les deux.
+            past = prior_odds(ref_key, q.book, kickoff)
+            if not past and q.event_key != ref_key:
+                past = prior_odds(q.event_key, q.book, kickoff)
+            history[hkey] = past or {}
+        before = history[hkey].get(
+            (q.market.value, q.outcome.label, q.outcome.line))
+        if before is None:
+            # Jamais relevée avant le coup d'envoi : impossible de prouver
+            # qu'elle n'a pas bougé. Le silence est le seul choix honnête.
+            stats["sans_historique"] += 1
+            continue
+        if abs(before - q.decimal_odd) > 1e-9:
+            stats["cote_bougée"] += 1
+            continue
+        stats["retenue"] += 1
         out[(ref_key, q.book)].append(q)
     return dict(out)
 
@@ -1622,26 +1679,37 @@ def _daemon_scan_sport(
         soft_raw   = [q for q in all_q if q.book not in SHARP_BOOKS]
 
         # Marchés en retard : un book qui n'a pas suspendu son prématch sur un
-        # match déjà commencé. Placé AVANT la sortie anticipée sur Pinnacle
-        # muet — le détecteur s'appuie sur la mémoire des cycles précédents,
-        # donc il reste utile même quand Pinnacle ne répond pas à ce cycle.
-        try:
-            # Scores en direct, football seulement : le dump live couvre tous
-            # les sports mais un « score » de tennis change à chaque point.
-            _goals: set[str] = set()
-            if current_sport == "soccer":
-                _now_scores = read_live_scores(betano_file)
-                if _now_scores:
-                    _goals = goals_since_last_cycle(_now_scores, _LIVE_SCORES)
-                    _LIVE_SCORES.update(_now_scores)
-                    forget_finished_scores(_LIVE_SCORES, datetime.now(timezone.utc))
-                    if _goals:
-                        console.print(f"\\[{current_sport}]   ⚽ buts détectés : {len(_goals)}")
-            _late = find_late_markets(pinnacle_q, soft_raw, current_sport,
-                                      datetime.now(timezone.utc))
-            _report_late_markets(_late, current_sport, tg_cfg, goals=_goals)
-        except Exception as e:                                  # noqa: BLE001
-            console.print(f"[yellow]\\[{current_sport}]   late-markets skipped: {e}[/yellow]")
+        # match déjà commencé. Placé avant l'analyse de value, mais après le
+        # fetch : il lui faut la réponse Pinnacle de CE cycle pour savoir quels
+        # matchs sont encore prématch.
+        if _LATE_MARKET_ENABLED:
+            try:
+                # Scores en direct, football seulement : le dump live couvre tous
+                # les sports mais un « score » de tennis change à chaque point.
+                _goals: set[str] = set()
+                if current_sport == "soccer":
+                    _now_scores = read_live_scores(betano_file)
+                    if _now_scores:
+                        _goals = goals_since_last_cycle(_now_scores, _LIVE_SCORES)
+                        _LIVE_SCORES.update(_now_scores)
+                        forget_finished_scores(_LIVE_SCORES, datetime.now(timezone.utc))
+                        if _goals:
+                            console.print(f"\\[{current_sport}]   ⚽ buts détectés : {len(_goals)}")
+                _stats: Counter = Counter()
+                _late = find_late_markets(
+                    pinnacle_q, soft_raw, current_sport, datetime.now(timezone.utc),
+                    prior_odds=storage.odds_before, stats=_stats)
+                # Sans ces compteurs, un filtre trop strict et un book sans
+                # erreur donnent la même chose : rien. Le journal doit dire
+                # laquelle des deux situations on observe.
+                if _stats:
+                    console.print(
+                        f"\\[{current_sport}]   marchés en retard — "
+                        + ", ".join(f"{k} {v}" for k, v in sorted(_stats.items()))
+                    )
+                _report_late_markets(_late, current_sport, tg_cfg, goals=_goals)
+            except Exception as e:                              # noqa: BLE001
+                console.print(f"[yellow]\\[{current_sport}]   late-markets skipped: {e}[/yellow]")
         remember_pinnacle_events(pinnacle_q, time.monotonic())
 
         if not pinnacle_q:

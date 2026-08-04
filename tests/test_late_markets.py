@@ -43,10 +43,35 @@ def _recent(ek=EK):
     return {ek: 0.0}
 
 
+# Pinnacle répond bien à ce cycle, simplement sur d'AUTRES matchs. C'est la
+# situation normale : notre match a disparu parce qu'il est passé en direct.
+# Passer une réponse vide voudrait dire « Pinnacle est muet », ce qui ne prouve
+# aucune disparition et doit rester sans effet.
+def _pin_elsewhere():
+    return [_pin(ek=event_key("Genk", "Gand", NOW + timedelta(hours=3)))]
+
+
+# La cote de _soft() vaut 2.4. « Figée » = le book affiche encore exactement son
+# prix d'avant le coup d'envoi, donc il a bien oublié de suspendre. « Bougée » =
+# il price en direct, ce qui est le comportement normal de la plupart des books
+# belges et n'a rien d'une erreur.
+def _frozen(_ek, _book, _before):
+    return {("h2h", "home", None): 2.4, ("h2h", "away", None): 2.4,
+            ("totals", "over", 2.5): 2.4, ("btts", "over", None): 2.4}
+
+
+def _moved(_ek, _book, _before):
+    return {k: v + 0.9 for k, v in _frozen(None, None, None).items()}
+
+
+def _no_history(_ek, _book, _before):
+    return {}
+
+
 def test_the_production_case_is_detected():
     """Pinnacle connaissait le match, ne le price plus (il est en direct), le
     coup d'envoi est dépassé de 19 min, et Circus propose encore du prématch."""
-    late = find_late_markets([], [_soft()], "soccer", NOW, recent=_recent())
+    late = find_late_markets(_pin_elsewhere(), [_soft()], "soccer", NOW, prior_odds=_frozen, recent=_recent())
     assert (EK, Book.CIRCUS_BE) in late
     assert len(late[(EK, Book.CIRCUS_BE)]) == 1
 
@@ -55,7 +80,7 @@ def test_a_match_pinnacle_still_prices_is_not_late():
     """Si Pinnacle price encore l'événement en prématch, c'est qu'il n'a pas
     commencé — quelle que soit l'heure affichée. C'est la disparition qui fait
     foi, pas l'horloge."""
-    late = find_late_markets([_pin()], [_soft()], "soccer", NOW, recent=_recent())
+    late = find_late_markets([_pin()], [_soft()], "soccer", NOW, prior_odds=_frozen, recent=_recent())
     assert late == {}
 
 
@@ -63,15 +88,15 @@ def test_a_live_quote_is_never_flagged():
     """Betano expose un flux live, fusionné avec son prématch dans la même
     liste. Sans ce filtre, tout match en cours qu'il price passerait pour une
     erreur du book."""
-    late = find_late_markets([], [_soft(book=Book.BETANO_BE, live=True)],
-                             "soccer", NOW, recent=_recent())
+    late = find_late_markets(_pin_elsewhere(), [_soft(book=Book.BETANO_BE, live=True)],
+                             "soccer", NOW, prior_odds=_frozen, recent=_recent())
     assert late == {}
 
 
 def test_an_event_pinnacle_never_priced_is_ignored():
     """Un match que Pinnacle n'a jamais pricé peut simplement avoir un horaire
     faux chez le book. Sans confirmation par la référence, on se tait."""
-    late = find_late_markets([], [_soft()], "soccer", NOW, recent={})
+    late = find_late_markets(_pin_elsewhere(), [_soft()], "soccer", NOW, prior_odds=_frozen, recent={})
     assert late == {}
 
 
@@ -80,7 +105,7 @@ def test_a_match_too_recent_is_ignored():
     quelques minutes et des arrondis de programmation."""
     ko = NOW - timedelta(minutes=3)
     ek = event_key("Union Saint-Gilloise", "Anderlecht", ko)
-    late = find_late_markets([], [_soft(ek=ek)], "soccer", NOW, recent=_recent(ek))
+    late = find_late_markets(_pin_elsewhere(), [_soft(ek=ek)], "soccer", NOW, prior_odds=_frozen, recent=_recent(ek))
     assert late == {}
 
 
@@ -89,7 +114,7 @@ def test_a_match_long_finished_is_ignored():
     plus de l'oubli mais d'un horaire faux — et le pari ne serait pas payé."""
     ko = NOW - timedelta(minutes=140)
     ek = event_key("Union Saint-Gilloise", "Anderlecht", ko)
-    late = find_late_markets([], [_soft(ek=ek)], "soccer", NOW, recent=_recent(ek))
+    late = find_late_markets(_pin_elsewhere(), [_soft(ek=ek)], "soccer", NOW, prior_odds=_frozen, recent=_recent(ek))
     assert late == {}
 
 
@@ -101,8 +126,8 @@ def test_the_book_own_kickoff_can_veto():
     book_ko = NOW + timedelta(minutes=30)          # le book dit : pas commencé
     ref = event_key("Alcaraz", "Sinner", pin_ko)
     cand = event_key("Alcaraz", "Sinner", book_ko)
-    late = find_late_markets([], [_soft(ek=cand)], "tennis", NOW,
-                             recent=_recent(ref))
+    late = find_late_markets(_pin_elsewhere(), [_soft(ek=cand)], "tennis", NOW,
+                             prior_odds=_frozen, recent=_recent(ref))
     assert late == {}
 
 
@@ -112,15 +137,80 @@ def test_several_markets_of_one_book_are_grouped():
         _soft(market=MarketType.H2H, label="away"),
         _soft(market=MarketType.TOTALS, label="over", line=2.5),
     ]
-    late = find_late_markets([], quotes, "soccer", NOW, recent=_recent())
+    late = find_late_markets(_pin_elsewhere(), quotes, "soccer", NOW, prior_odds=_frozen, recent=_recent())
     assert len(late[(EK, Book.CIRCUS_BE)]) == 3
 
 
 def test_two_books_are_reported_separately():
     late = find_late_markets(
-        [], [_soft(book=Book.CIRCUS_BE), _soft(book=Book.UNIBET_BE)],
-        "soccer", NOW, recent=_recent())
+        _pin_elsewhere(), [_soft(book=Book.CIRCUS_BE), _soft(book=Book.UNIBET_BE)],
+        "soccer", NOW, prior_odds=_frozen, recent=_recent())
     assert {b for _, b in late} == {Book.CIRCUS_BE, Book.UNIBET_BE}
+
+
+# ── Les deux causes du flood de production ────────────────────────────────
+# Le détecteur a noyé le canal critique dès sa mise en service. Deux défauts
+# indépendants, chacun capable à lui seul de produire des dizaines d'alertes
+# par cycle.
+
+def test_a_book_pricing_live_is_not_an_error():
+    """LA cause du flood. « Le book expose encore ce match » ne prouve rien :
+    Circus, Unibet, Napoleon et StarCasino continuent d'exposer un match
+    commencé et le reprice en direct, sans qu'aucun champ ne le dise. Seule
+    une cote restée IDENTIQUE à celle d'avant le coup d'envoi prouve l'oubli."""
+    late = find_late_markets(_pin_elsewhere(), [_soft()], "soccer", NOW,
+                             prior_odds=_moved, recent=_recent())
+    assert late == {}
+
+
+def test_without_history_we_stay_silent():
+    """Exiger une preuve positive d'immobilité, pas une absence de preuve du
+    contraire : un match jamais relevé avant son coup d'envoi (daemon
+    redémarré, book ajouté la veille) ne prouve aucune erreur."""
+    late = find_late_markets(_pin_elsewhere(), [_soft()], "soccer", NOW,
+                             prior_odds=_no_history, recent=_recent())
+    assert late == {}
+
+
+def test_only_the_frozen_market_of_a_live_book_is_reported():
+    """Un book peut repricer son 1X2 en direct tout en oubliant son BTTS.
+    C'est précisément l'occasion recherchée, donc le filtre est par issue et
+    non par match — sinon on jetterait le bébé avec l'eau du bain."""
+    def half(_ek, _book, _before):
+        return {("h2h", "home", None): 3.9,       # bougée : pricée en direct
+                ("btts", "over", None): 2.4}      # figée : oubliée
+    quotes = [_soft(market=MarketType.H2H, label="home"),
+              _soft(market=MarketType.BTTS, label="over")]
+    late = find_late_markets(_pin_elsewhere(), quotes, "soccer", NOW,
+                             prior_odds=half, recent=_recent())
+    kept = late[(EK, Book.CIRCUS_BE)]
+    assert [q.market for q in kept] == [MarketType.BTTS]
+
+
+def test_a_silent_pinnacle_proves_no_disappearance():
+    """Second défaut. Sans réponse de Pinnacle, aucun événement n'est dans
+    `live_now` : tous les matchs mémorisés passent pour disparus et le veto
+    « Pinnacle le price encore » saute sans bruit. Un recul après 403 ou un
+    sondage espacé suffisent — donc au moment où l'on est le moins sûr, le
+    détecteur devenait le plus bavard."""
+    late = find_late_markets([], [_soft()], "soccer", NOW,
+                             prior_odds=_frozen, recent=_recent())
+    assert late == {}
+
+
+def test_the_counters_explain_a_silence():
+    """Un filtre trop strict et un book sans erreur donnent le même résultat :
+    rien. Sans compteurs, impossible de savoir laquelle des deux situations on
+    observe — et c'est le mode d'échec le plus coûteux du projet."""
+    from collections import Counter
+    stats: Counter = Counter()
+    find_late_markets(_pin_elsewhere(), [_soft()], "soccer", NOW,
+                      prior_odds=_moved, recent=_recent(), stats=stats)
+    assert stats["cote_bougée"] == 1
+    stats.clear()
+    find_late_markets([], [_soft()], "soccer", NOW,
+                      prior_odds=_frozen, recent=_recent(), stats=stats)
+    assert stats["pinnacle_muet"] == 1
 
 
 def test_memory_forgets_old_events():

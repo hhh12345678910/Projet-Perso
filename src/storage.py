@@ -964,6 +964,34 @@ class Storage:
             )
             return c.execute(sql, params).fetchone()
 
+    def odds_before(
+        self, event_key: str, book: Book, before: datetime,
+    ) -> dict[tuple[str, str, Optional[float]], float]:
+        """Dernière cote de ce book sur cet événement AVANT `before`.
+
+        Sert à distinguer un marché prématch oublié d'un marché repricé en
+        direct. La plupart des books belges continuent d'exposer un match une
+        fois commencé, sans rien dire de son état : « le book propose encore ce
+        match » ne prouve donc aucune erreur. Ce qui la prouve, c'est que le
+        PRIX n'a pas bougé depuis le coup d'envoi — un book qui price en direct
+        déplace forcément ses cotes.
+
+        Une cote par (marché, issue, ligne), et non le dernier instantané
+        complet : un book ne republie pas tout son marché à chaque cycle, et
+        prendre le dernier instantané en laisserait passer."""
+        with self._conn() as c:
+            rows = c.execute(
+                # Colonnes nues avec MAX() : SQLite renvoie alors la ligne du
+                # maximum de chaque groupe, ce qui évite une sous-requête par
+                # issue. L'index idx_quotes_event rend la sélection directe.
+                "SELECT market, outcome_label, line, decimal_odd, MAX(fetched_at) "
+                "FROM quotes "
+                "WHERE event_key = ? AND book = ? AND fetched_at < ? "
+                "GROUP BY market, outcome_label, line",
+                (event_key, book.value, before.isoformat()),
+            ).fetchall()
+        return {(r[0], r[1], r[2]): r[3] for r in rows}
+
     def pinnacle_closing_group(
         self, event_key: str, market: str, line: Optional[float], before: datetime,
     ) -> list[sqlite3.Row]:
