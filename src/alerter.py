@@ -234,7 +234,8 @@ class TelegramConfig:
     # surebets. Opt-in via TELEGRAM_PREMIUM_CHAT_ID; no fallback when unset.
     premium_chat_id: str | None = None
     min_premium_ev_pct: float = 8.0      # value bets at/above this go to premium channel
-    min_premium_surebet_pct: float = 5.0  # prematch surebets (margin%) at/above this go to premium
+    # NB : le premium ne reçoit plus aucun surebet, quelle que soit la marge.
+    # Ils vont sur le canal surebet et nulle part ailleurs (hors copie critique).
     premium_min_odd: float = 1.5         # premium value bets only within this odds band
     premium_max_odd: float = 4.0
     # Second premium lane: high odds only when the EV is big. Lets curated
@@ -299,7 +300,6 @@ class TelegramConfig:
             min_critical_clv_pct=float(os.getenv("TELEGRAM_MIN_CRITICAL_CLV", "25.0")),
             premium_chat_id=os.getenv("TELEGRAM_PREMIUM_CHAT_ID") or None,
             min_premium_ev_pct=float(os.getenv("TELEGRAM_MIN_PREMIUM_EV", "8.0")),
-            min_premium_surebet_pct=float(os.getenv("TELEGRAM_MIN_PREMIUM_SUREBET", "5.0")),
             premium_min_odd=float(os.getenv("TELEGRAM_PREMIUM_MIN_ODD", "1.5")),
             premium_max_odd=float(os.getenv("TELEGRAM_PREMIUM_MAX_ODD", "4.0")),
             premium_hi_min_ev=float(os.getenv("TELEGRAM_PREMIUM_HI_EV", "20.0")),
@@ -828,16 +828,10 @@ class TelegramAlerter:
             delivered |= self._send(
                 "🚨 <b>SUREBET EXCEPTIONNEL</b>\n" + text, chat_id=cfg.effective_critical_chat_id
             )
-        # Premium copy: prematch-only surebets above the premium margin.
-        if (
-            not sb.suspicious
-            and not is_live
-            and cfg.effective_premium_chat_id
-            and cfg.min_premium_surebet_pct <= margin_pct < cfg.min_critical_surebet_pct
-        ):
-            delivered |= self._send(
-                "💎 <b>SUREBET PREMIUM</b>\n" + text, chat_id=cfg.effective_premium_chat_id
-            )
+        # Aucune copie premium, quel que soit le pourcentage : les surebets ont
+        # leur canal et n'ont rien à faire dans un canal de value bets. Le
+        # premium reste réservé aux value bets, ce qui le rend lisible d'un coup
+        # d'œil — un surebet et un value bet ne se jouent pas de la même façon.
         return delivered
 
     def send_middle(self, m: Middle, *, sport: str | None = None) -> bool:

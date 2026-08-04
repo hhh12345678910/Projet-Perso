@@ -2114,8 +2114,8 @@ def alert_test():
         "odd_taken": 1.86,
         "kelly_pct": 1.50,
     }
-    # Premium channel samples: a big value bet (>min_premium_ev, odds in band)
-    # and a juicy prematch surebet (>min_premium_surebet).
+    # Premium channel sample: a big value bet (>min_premium_ev, odds in band).
+    # Plus de surebet ici — le premium ne reçoit que des value bets.
     premium_ev = max(cfg.min_premium_ev_pct + 1.0, cfg.min_ev_pct + 1.0)
     sample_premium_bet = ValueBet(
         event_key="202607010000::testteamA__vs__testteamB",
@@ -2129,18 +2129,6 @@ def alert_test():
         kelly_stake_pct=1.50,
         detected_at=datetime.now(timezone.utc),
     )
-    sample_premium_surebet = Surebet(
-        event_key="202607010000::testteamA__vs__testteamB",
-        market=MarketType.H2H,
-        line=None,
-        legs={
-            "home": (1.95, Book.UNIBET_BE),
-            "draw": (3.85, Book.BETFIRST),
-            "away": (4.20, Book.LADBROKES_BE),
-        },
-        margin=cfg.min_premium_surebet_pct / 100 + 0.005,
-    )
-
     # Critical is the one channel with no odds band, so the sample deliberately
     # carries an absurd EV on a long shot — the shape of the alerts that get
     # filtered out everywhere else and are the whole reason to run this channel.
@@ -2189,18 +2177,12 @@ def alert_test():
         print_fn=lambda s: console.print(f"[yellow]{s}[/yellow]"),
         sport="soccer",
     )
-    # Premium : grosse value (envoyée aussi au canal principal) + surebet prématch.
+    # Premium : grosse value uniquement (les surebets ont leur propre canal).
     premium_bet_sent = send_alerts(
         [sample_premium_bet], cfg,
         print_fn=lambda s: console.print(f"[yellow]{s}[/yellow]"),
         sport="soccer",
     )
-    premium_sb_sent = send_surebet_alerts(
-        [sample_premium_surebet], cfg,
-        print_fn=lambda s: console.print(f"[yellow]{s}[/yellow]"),
-        sport="soccer",
-    )
-
     def _status(sent: bool, chat: str, label: str, fallback_note: str = "") -> None:
         if sent:
             console.print(f"[bold]{label} → chat {chat} ✓{fallback_note}[/bold]")
@@ -2244,7 +2226,6 @@ def alert_test():
     premium_chat = cfg.effective_premium_chat_id
     if premium_chat:
         _status(premium_bet_sent, premium_chat, "Premium value (grosse EV)")
-        _status(premium_sb_sent, premium_chat, "Premium surebet prématch")
     else:
         console.print(
             "[dim]Premium: TELEGRAM_PREMIUM_CHAT_ID non défini — canal premium désactivé.[/dim]"

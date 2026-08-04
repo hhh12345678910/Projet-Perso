@@ -7,3 +7,8 @@ typer>=0.12
 tenacity>=8.3
 python-dotenv>=1.0
 pytest>=8.2
+# bot_listener.py — écoute Telegram (bouton « Jouer », /scan) et journal Excel.
+# Absents jusqu'ici alors que le service en dépend : un checkout neuf ne pouvait
+# pas le lancer, ni faire tourner les tests qui l'importent.
+requests>=2.32
+openpyxl>=3.1

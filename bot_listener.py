@@ -20,12 +20,14 @@ from __future__ import annotations
 import os
 import sqlite3
 import time
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
 import requests
 from openpyxl import Workbook, load_workbook
 from openpyxl.worksheet.datavalidation import DataValidation
+
+from src.matcher import parse_event_key
 
 ROOT = Path(__file__).resolve().parent
 DB_PATH = ROOT / "data" / "valuebet.db"
@@ -235,6 +237,189 @@ def _track_played(bet: dict, dedup_key: str, now: datetime) -> None:
     track.append(TRACK_PATH, row)
 
 
+# ------------------------------------------------------------- /scan --------
+# Une détection plus vieille que ça n'est plus jouable : le daemon boucle en
+# 15-20 s, donc une ligne de dix minutes a déjà été réévaluée des dizaines de
+# fois. Si elle n'est pas réapparue, c'est que le prix a bougé.
+SCAN_WINDOW_MIN = int(os.environ.get("SCAN_WINDOW_MIN", "10"))
+SCAN_MAX_CHARS = 3500        # Telegram coupe à 4096 ; on garde de la marge
+SCAN_MAX_BETS = 60           # au-delà, la liste n'est plus lisible de toute façon
+
+
+def _channel_marker(cfg, ev: float, odd: float) -> str | None:
+    """Le canal qui prendrait ce pari maintenant, ou None s'il n'en atteint
+    aucun. Rejoue exactement le routage de `send_value_bet` — un /scan qui
+    montrerait des paris qui n'alertent jamais serait trompeur."""
+    if ev >= cfg.min_premium_ev_pct and cfg.premium_min_odd <= odd <= cfg.premium_max_odd:
+        return "💎"
+    if ev >= cfg.premium_hi_min_ev and cfg.premium_hi_min_odd <= odd <= cfg.premium_hi_max_odd:
+        return "💎"
+    if ev >= cfg.min_critical_ev_pct:
+        return "🚨"
+    if cfg.min_ev_pct <= ev < cfg.main_max_ev_pct and cfg.main_min_odd <= odd <= cfg.main_max_odd:
+        return "📊"
+    return None
+
+
+def select_playable(rows, played_markets: set, cfg, now: datetime) -> list[dict]:
+    """Parmi les détections récentes, celles encore jouables maintenant.
+
+    Trois filtres, dans cet ordre :
+      - le coup d'envoi est encore assez loin (même règle que les alertes) ;
+      - le marché n'a pas déjà été joué — un clic sur « Jouer » sur le 1 d'un
+        1X2 fait taire le X et le 2, comme pour les alertes ;
+      - le pari atteindrait bien un canal.
+
+    Puis une seule ligne par opportunité, au meilleur prix : la même sélection
+    est détectée sur plusieurs books, mais on n'en joue qu'une (§9).
+    """
+    best: dict[tuple, dict] = {}
+    for r in rows:
+        parsed = parse_event_key(r["event_key"])
+        if parsed is None:
+            continue
+        start = parsed[0]
+        if (start - now).total_seconds() / 60 < cfg.min_minutes_to_kickoff:
+            continue
+        line = r["line"]
+        if f"{r['event_key']}|{r['market']}|{line}" in played_markets:
+            continue
+        marker = _channel_marker(cfg, r["ev_pct"], r["odd_taken"])
+        if marker is None:
+            continue
+        key = (r["event_key"], r["market"], r["outcome_label"], line)
+        prev = best.get(key)
+        if prev is None or r["odd_taken"] > prev["odd"]:
+            best[key] = {
+                "marker": marker,
+                "ev": r["ev_pct"],
+                "odd": r["odd_taken"],
+                "book": r["book"],
+                "market": r["market"],
+                "outcome": r["outcome_label"],
+                "line": line,
+                "sport": (r["sport"] if "sport" in r.keys() else None) or "",
+                "home": (r["home"] if "home" in r.keys() else None) or parsed[1],
+                "away": (r["away"] if "away" in r.keys() else None) or parsed[2],
+                "start": start,
+            }
+    out = sorted(best.values(), key=lambda b: -b["ev"])
+    return out[:SCAN_MAX_BETS]
+
+
+def fetch_playable(cfg, *, now: datetime | None = None) -> list[dict]:
+    now = now or datetime.now(timezone.utc)
+    since = (now - timedelta(minutes=SCAN_WINDOW_MIN)).isoformat()
+    con = sqlite3.connect(str(DB_PATH))
+    con.row_factory = sqlite3.Row
+    con.execute("PRAGMA busy_timeout=5000")
+    try:
+        rows = con.execute(
+            "SELECT v.event_key, v.book, v.market, v.outcome_label, v.line, "
+            "       v.odd_taken, v.ev_pct, e.home, e.away, e.sport "
+            "FROM value_bets v LEFT JOIN events e ON e.event_key = v.event_key "
+            "WHERE v.detected_at >= ?",
+            (since,),
+        ).fetchall()
+    finally:
+        con.close()
+    from src.alerter import _load_played_keys
+    _, played_markets = _load_played_keys()
+    return select_playable(rows, played_markets, cfg, now)
+
+
+def _esc(s: str) -> str:
+    return str(s).replace("&", "&amp;").replace("<", "&lt;").replace(">", "&gt;")
+
+
+def format_scan(bets: list[dict], *, now: datetime | None = None) -> list[str]:
+    """Rend le scan en un ou plusieurs messages HTML sous la limite Telegram."""
+    now = now or datetime.now(timezone.utc)
+    if not bets:
+        return [
+            "🔎 <b>SCAN</b> — aucune value jouable actuellement.\n"
+            f"<i>Fenêtre : {SCAN_WINDOW_MIN} min. Les paris déjà joués et ceux "
+            f"à moins de 15 min du coup d'envoi sont exclus.</i>"
+        ]
+    header = f"🔎 <b>SCAN</b> — {len(bets)} value{'s' if len(bets) > 1 else ''} jouable"
+    header += "s\n" if len(bets) > 1 else "\n"
+    blocks = []
+    for b in bets:
+        emoji = {"soccer": "⚽", "tennis": "🎾"}.get(b["sport"], "")
+        sel = b["outcome"] if b["line"] is None else f"{b['outcome']} {b['line']:g}"
+        mins = (b["start"] - now).total_seconds() / 60
+        when = f"dans {mins:.0f} min" if mins < 60 else f"dans {int(mins // 60)} h"
+        blocks.append(
+            f"\n{emoji} <b>{_esc(b['home'])} — {_esc(b['away'])}</b>\n"
+            f"   {b['marker']} <b>+{b['ev']:.1f}%</b>  {_esc(sel)} @ {b['odd']:.2f}"
+            f"  ·  {_esc(_book_label(b['book']))}  ·  {when}"
+        )
+    msgs, cur = [], header
+    for block in blocks:
+        if len(cur) + len(block) > SCAN_MAX_CHARS:
+            msgs.append(cur)
+            cur = ""
+        cur += block
+    if cur.strip():
+        msgs.append(cur)
+    return msgs
+
+
+def _book_label(book_value: str) -> str:
+    try:
+        from src.alerter import _BOOK_NAMES
+        from src.models import Book
+        return _BOOK_NAMES.get(Book(book_value), book_value)
+    except Exception:
+        return book_value
+
+
+def _allowed_chats(cfg) -> set[str]:
+    """Les chats du projet. Le bot est joignable par n'importe qui sur Telegram :
+    sans cette garde, un inconnu qui trouve son nom obtiendrait la liste des
+    paris en tapant /scan."""
+    ids = (
+        cfg.chat_id, cfg.surebet_chat_id, cfg.live_surebet_chat_id,
+        cfg.clv_chat_id, cfg.critical_chat_id, cfg.premium_chat_id,
+    )
+    return {str(i) for i in ids if i}
+
+
+def handle_message(msg: dict) -> None:
+    text = (msg.get("text") or "").strip()
+    if not text.startswith("/"):
+        return
+    # "/scan@mon_bot arg" -> "/scan"
+    cmd = text.split()[0].split("@", 1)[0].lower()
+    if cmd not in ("/scan", "/start"):
+        return
+    chat_id = str((msg.get("chat") or {}).get("id") or "")
+
+    from src.alerter import TelegramConfig
+    cfg = TelegramConfig.from_env()
+    if cfg is None:
+        return
+    if chat_id not in _allowed_chats(cfg):
+        print(f"[{datetime.now():%H:%M:%S}] {cmd} ignore d'un chat inconnu ({chat_id})")
+        return
+
+    if cmd == "/start":
+        tg("sendMessage", chat_id=chat_id, parse_mode="HTML",
+           text="Commandes :\n/scan — les value bets encore jouables maintenant")
+        return
+
+    try:
+        bets = fetch_playable(cfg)
+    except Exception as e:
+        tg("sendMessage", chat_id=chat_id, text=f"Scan indisponible ({type(e).__name__})")
+        print(f"scan echoue: {type(e).__name__}: {e}")
+        return
+    for part in format_scan(bets):
+        tg("sendMessage", chat_id=chat_id, parse_mode="HTML",
+           text=part, disable_web_page_preview=True)
+    print(f"[{datetime.now():%H:%M:%S}] /scan -> {len(bets)} paris (chat {chat_id})")
+
+
 # ----------------------------------------------------------- Callbacks ------
 def handle_callback(cb: dict) -> None:
     data = cb.get("data", "")
@@ -294,14 +479,22 @@ def main() -> None:
     API = f"https://api.telegram.org/bot{load_token()}"
     offset = read_offset()
     print(f"bot_listener demarre (offset={offset}, db={DB_PATH}, xlsx={XLSX_PATH})")
+    try:    # fait apparaitre /scan dans le menu Telegram ; sans effet sur le reste
+        tg("setMyCommands", commands=[
+            {"command": "scan", "description": "Les value bets encore jouables"},
+        ])
+    except Exception as e:
+        print("setMyCommands ignore:", e)
     while True:
         try:
             resp = tg("getUpdates", offset=offset, timeout=50,
-                      allowed_updates=["callback_query"])
+                      allowed_updates=["callback_query", "message"])
             for upd in resp.get("result", []):
                 offset = upd["update_id"] + 1
                 if "callback_query" in upd:
                     handle_callback(upd["callback_query"])
+                elif "message" in upd:
+                    handle_message(upd["message"])
                 save_offset(offset)
         except requests.RequestException as e:
             print("reseau:", e)
