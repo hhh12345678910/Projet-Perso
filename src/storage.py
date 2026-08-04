@@ -246,6 +246,12 @@ MIGRATIONS = [
     ("bet_corrections", "seconds_to_align", "REAL"),
     ("bet_corrections", "odd_at_align", "REAL"),
     ("value_bets", "closing_lost", "INTEGER"),
+    # Une opportunité n'a qu'UNE ligne, écrite à la première détection. Sans
+    # ces colonnes, rien ne distingue un pari encore vivant d'un pari détecté
+    # il y a trois heures et mort depuis : detected_at ne bouge jamais.
+    ("value_bets", "last_seen_at", "TEXT"),
+    ("value_bets", "last_odd", "REAL"),
+    ("value_bets", "last_ev", "REAL"),
     ("clv_snapshots", "fair_odd", "REAL"),
     ("clv_snapshots", "fair_prob", "REAL"),
     ("clv_snapshots", "overround", "REAL"),
@@ -275,6 +281,11 @@ class Storage:
                     c.execute(f"ALTER TABLE {table} ADD COLUMN {column} {coltype}")
                 except sqlite3.OperationalError:
                     pass  # column already present
+            # Après les migrations : l'index porte sur une colonne qu'elles
+            # viennent d'ajouter, il ne peut pas vivre dans SCHEMA.
+            c.execute(
+                "CREATE INDEX IF NOT EXISTS idx_vb_last_seen ON value_bets(last_seen_at)"
+            )
 
     @contextmanager
     def _conn(self) -> Iterator[sqlite3.Connection]:
@@ -594,17 +605,34 @@ class Storage:
         """Persist a detected value bet. Returns the new row id, or the
         existing row id if the same (event, book, market, outcome, line) tuple
         is already on file — we want one tracking record per opportunity, not
-        one per scan that re-surfaced it."""
+        one per scan that re-surfaced it.
+
+        Une ré-détection ne touche QUE last_seen_at / last_odd / last_ev.
+        detected_at, odd_taken et ev_pct restent ceux de la première détection :
+        toute la mesure de CLV compare la clôture à l'EV de départ, et les
+        réécrire à chaque cycle la rendrait fausse — le CLV ne ferait plus que
+        répéter l'EV, exactement l'erreur corrigée en §1.
+
+        Ces trois colonnes sont en revanche la seule façon de savoir qu'un pari
+        est encore vivant : sans elles, un pari détecté il y a trois heures et
+        mort depuis est indiscernable d'un pari que le daemon vient de revoir.
+        """
         existing = self.find_value_bet_id(
             vb.event_key, vb.book.value, vb.market.value, vb.outcome.label, vb.outcome.line
         )
         if existing is not None:
+            with self._conn() as c:
+                c.execute(
+                    "UPDATE value_bets SET last_seen_at=?, last_odd=?, last_ev=? WHERE id=?",
+                    (vb.detected_at.isoformat(), vb.odd_taken, vb.ev_pct, existing),
+                )
             return existing
         with self._conn() as c:
             cur = c.execute(
                 "INSERT INTO value_bets(event_key, book, market, outcome_label, line, odd_taken, "
-                "fair_prob, fair_odd, ev_pct, kelly_pct, stake, detected_at) "
-                "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+                "fair_prob, fair_odd, ev_pct, kelly_pct, stake, detected_at, "
+                "last_seen_at, last_odd, last_ev) "
+                "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
                 (
                     vb.event_key,
                     vb.book.value,
@@ -618,6 +646,9 @@ class Storage:
                     vb.kelly_stake_pct,
                     stake,
                     vb.detected_at.isoformat(),
+                    vb.detected_at.isoformat(),
+                    vb.odd_taken,
+                    vb.ev_pct,
                 ),
             )
             return int(cur.lastrowid or 0)

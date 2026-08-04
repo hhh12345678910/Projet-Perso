@@ -161,3 +161,110 @@ def test_format_escapes_html_in_team_names():
     row = _row(home="A & <b>B</b>")
     msg = format_scan(_sel([row]), now=NOW)[0]
     assert "&amp;" in msg and "&lt;b&gt;" in msg
+
+
+# ------------------------------------------------------- fraîcheur réelle ---
+# Une opportunité n'a qu'UNE ligne en base, écrite à la première détection.
+# detected_at ne bouge jamais : c'est last_seen_at que le daemon rafraîchit à
+# chaque cycle où il revoit le pari. Ces tests verrouillent cette distinction —
+# s'en tromper cache exactement les paris qu'on veut voir.
+
+def test_reseen_bet_refreshes_last_seen_without_touching_detection(tmp_path):
+    from src.models import Book, MarketType, Outcome, ValueBet
+    from src.storage import Storage
+
+    st = Storage(tmp_path / "t.db")
+    t0 = datetime(2026, 8, 4, 9, 0, tzinfo=timezone.utc)
+
+    def vb(at, odd, ev):
+        return ValueBet(
+            event_key="209906010000::a__vs__b", book=Book.UNIBET_BE,
+            market=MarketType.H2H, outcome=Outcome(label="home"),
+            odd_taken=odd, fair_prob=0.55, fair_odd=1.80, ev_pct=ev,
+            kelly_stake_pct=1.5, detected_at=at,
+        )
+
+    first = st.insert_value_bet(vb(t0, 2.40, 12.0))
+    again = st.insert_value_bet(vb(t0 + timedelta(hours=3), 2.20, 6.0))
+    assert again == first, "une ré-détection ne doit pas créer une seconde ligne"
+
+    import sqlite3
+    con = sqlite3.connect(str(tmp_path / "t.db"))
+    con.row_factory = sqlite3.Row
+    r = con.execute("SELECT * FROM value_bets WHERE id=?", (first,)).fetchone()
+    con.close()
+    # La détection est intacte : tout le CLV compare la clôture à l'EV de départ.
+    assert r["detected_at"] == t0.isoformat()
+    assert r["odd_taken"] == 2.40 and r["ev_pct"] == 12.0
+    # La fraîcheur et le prix courant ont suivi.
+    assert r["last_seen_at"] == (t0 + timedelta(hours=3)).isoformat()
+    assert r["last_odd"] == 2.20 and r["last_ev"] == 6.0
+
+
+def test_scan_selects_on_last_seen_not_detected_at(tmp_path, monkeypatch):
+    """Le test qui aurait attrapé le bug, et il passe par fetch_playable — pas
+    par une requête recopiée dans le test, qui n'aurait rien prouvé.
+
+    Un pari détecté il y a 3 h mais revu il y a 10 s est jouable ; un pari
+    détecté il y a 5 min et mort depuis ne l'est pas. Filtrer sur detected_at
+    intervertit exactement les deux."""
+    import sqlite3
+    import bot_listener
+    from src.storage import Storage
+
+    db = tmp_path / "t.db"
+    Storage(db)                            # schéma + migrations
+    monkeypatch.setattr(bot_listener, "DB_PATH", db)
+    monkeypatch.setattr("src.alerter._PLAYS_DB", db)
+
+    now = datetime(2026, 8, 4, 12, 0, tzinfo=timezone.utc)
+    iso = lambda m: (now - timedelta(minutes=m)).isoformat()  # noqa: E731
+    kickoff = (now + timedelta(hours=3)).strftime("%Y%m%d%H%M")
+    con = sqlite3.connect(str(db))
+    con.executemany(
+        "INSERT INTO value_bets(event_key, book, market, outcome_label, line, "
+        "odd_taken, fair_prob, fair_odd, ev_pct, kelly_pct, detected_at, "
+        "last_seen_at, last_odd, last_ev) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?)",
+        [
+            # vieille détection, toujours vivante -> doit sortir, au prix ACTUEL
+            (f"{kickoff}::vivant__vs__x", "unibet_be", "h2h", "home", None,
+             2.40, 0.55, 1.8, 12.0, 1.5, iso(180), iso(0.2), 2.35, 11.0),
+            # détection récente, morte depuis -> ne doit pas sortir
+            (f"{kickoff}::mort__vs__y", "unibet_be", "h2h", "home", None,
+             2.40, 0.55, 1.8, 12.0, 1.5, iso(5), iso(40), 2.40, 12.0),
+        ],
+    )
+    con.commit()
+    con.close()
+
+    bets = bot_listener.fetch_playable(_cfg(), now=now)
+    assert [b["home"] for b in bets] == ["Vivant"]
+    # Et c'est le dernier prix vu qui est proposé, pas celui d'il y a 3 h :
+    # miser à 2.40 quand le book affiche 2.35 revient à courir après une cote
+    # qui n'existe plus.
+    assert bets[0]["odd"] == 2.35 and bets[0]["ev"] == 11.0
+
+
+def test_scan_query_still_sees_rows_written_before_the_migration(tmp_path):
+    """Les lignes déjà en base n'ont pas de last_seen_at — le COALESCE doit les
+    rattraper plutôt que de les faire disparaître au redémarrage."""
+    import sqlite3
+    from src.storage import Storage
+
+    Storage(tmp_path / "t.db")
+    con = sqlite3.connect(str(tmp_path / "t.db"))
+    now = datetime(2026, 8, 4, 12, 0, tzinfo=timezone.utc)
+    con.execute(
+        "INSERT INTO value_bets(event_key, book, market, outcome_label, line, "
+        "odd_taken, fair_prob, fair_odd, ev_pct, kelly_pct, detected_at) "
+        "VALUES (?,?,?,?,?,?,?,?,?,?,?)",
+        ("old", "unibet_be", "h2h", "home", None, 2.4, 0.55, 1.8, 12.0, 1.5,
+         (now - timedelta(minutes=2)).isoformat()),
+    )
+    con.commit()
+    n = con.execute(
+        "SELECT COUNT(*) FROM value_bets WHERE COALESCE(last_seen_at, detected_at) >= ?",
+        ((now - timedelta(minutes=10)).isoformat(),),
+    ).fetchone()[0]
+    con.close()
+    assert n == 1

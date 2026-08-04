@@ -246,6 +246,17 @@ SCAN_MAX_CHARS = 3500        # Telegram coupe à 4096 ; on garde de la marge
 SCAN_MAX_BETS = 60           # au-delà, la liste n'est plus lisible de toute façon
 
 
+def _team(normalised: str) -> str:
+    """Nom lisible depuis un fragment de clé, via le même registre que les
+    alertes. Retombe sur le fragment brut si le registre ne connaît pas encore
+    l'équipe."""
+    try:
+        from src import teams
+        return teams.display(normalised)
+    except Exception:
+        return normalised
+
+
 def _channel_marker(cfg, ev: float, odd: float) -> str | None:
     """Le canal qui prendrait ce pari maintenant, ou None s'il n'en atteint
     aucun. Rejoue exactement le routage de `send_value_bet` — un /scan qui
@@ -299,8 +310,10 @@ def select_playable(rows, played_markets: set, cfg, now: datetime) -> list[dict]
                 "outcome": r["outcome_label"],
                 "line": line,
                 "sport": (r["sport"] if "sport" in r.keys() else None) or "",
-                "home": (r["home"] if "home" in r.keys() else None) or parsed[1],
-                "away": (r["away"] if "away" in r.keys() else None) or parsed[2],
+                # Repli sur le registre d'équipes, comme les alertes : la clé ne
+                # porte que des noms normalisés et collés ("clubbrugge").
+                "home": (r["home"] if "home" in r.keys() else None) or _team(parsed[1]),
+                "away": (r["away"] if "away" in r.keys() else None) or _team(parsed[2]),
                 "start": start,
             }
     out = sorted(best.values(), key=lambda b: -b["ev"])
@@ -314,11 +327,20 @@ def fetch_playable(cfg, *, now: datetime | None = None) -> list[dict]:
     con.row_factory = sqlite3.Row
     con.execute("PRAGMA busy_timeout=5000")
     try:
+        # last_seen_at, pas detected_at : une opportunité n'a qu'une ligne,
+        # écrite à la première détection et jamais redatée. Filtrer sur
+        # detected_at ne montrerait que les paris NOUVELLEMENT apparus, en
+        # cachant tous ceux qui tiennent depuis des heures — l'inverse de ce
+        # qu'on veut. COALESCE couvre les lignes écrites avant la migration.
+        # Le prix affiché est le dernier vu, pas celui de la détection : c'est
+        # à celui-là qu'on peut miser maintenant.
         rows = con.execute(
             "SELECT v.event_key, v.book, v.market, v.outcome_label, v.line, "
-            "       v.odd_taken, v.ev_pct, e.home, e.away, e.sport "
+            "       COALESCE(v.last_odd, v.odd_taken) AS odd_taken, "
+            "       COALESCE(v.last_ev, v.ev_pct)     AS ev_pct, "
+            "       e.home, e.away, e.sport "
             "FROM value_bets v LEFT JOIN events e ON e.event_key = v.event_key "
-            "WHERE v.detected_at >= ?",
+            "WHERE COALESCE(v.last_seen_at, v.detected_at) >= ?",
             (since,),
         ).fetchall()
     finally:
