@@ -1060,7 +1060,7 @@ class Storage:
             return list(c.execute(
                 "SELECT vb.*, cs.pinnacle_odd AS closing_odd, "
                 "cs.fair_odd AS closing_fair_odd, cs.overround AS closing_overround, "
-                "cs.snapshot_at AS closed_at, e.sport AS sport, "
+                "cs.snapshot_at AS closed_at, e.sport AS sport, e.league AS league, "
                 "pb.dedup_key IS NOT NULL AS played, r.winner AS winner "
                 "FROM value_bets vb "
                 "JOIN clv_snapshots cs ON cs.value_bet_id = vb.id AND cs.closing = 1 "

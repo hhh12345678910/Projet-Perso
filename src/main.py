@@ -3041,7 +3041,8 @@ def export_history(
     _match = _pretty_match
 
     headers = [
-        "Date", "Coup d'envoi", "Délai (h)", "Sport", "Match", "Book", "Marché",
+        "Date", "Coup d'envoi", "Délai (h)", "Sport", "Ligue", "Catégorie ligue",
+        "Match", "Book", "Marché",
         "Pari", "Joué", "Cote prise", "Cote fair (détection)", "EV %",
         "Clôture brute (Pinnacle)", "Clôture juste (dévigée)", "Overround clôture",
         "CLV %", "Mise % (Kelly)", "Résultat", "P&L réel", "event_key",
@@ -3080,6 +3081,12 @@ def export_history(
                 kickoff[0].isoformat()[:19] if kickoff is not None else "",
                 delai,
                 r.get("sport") or "",
+                r.get("league") or "",
+                # La ligue brute compte 141 valeurs pour 375 paris : aucune n'a
+                # d'effectif exploitable (§9). La catégorie — amical, féminin,
+                # jeunes, coupe, D2, top5… — est le niveau auquel une analyse a
+                # une chance de conclure quelque chose.
+                _league_category(r.get("league")),
                 _match(r["event_key"]),
                 r["book"],
                 r["market"],
