@@ -63,8 +63,22 @@ API = ""  # rempli dans main()
 
 
 def tg(method: str, **params):
-    r = requests.post(f"{API}/{method}", json=params, timeout=65)
-    return r.json()
+    """Appel API Telegram. Les cles a None sont retirees : l'API rejette un
+    reply_markup null, et c'est ce qui faisait disparaitre le scan vide -- seul
+    cas ou le bouton est absent, donc seul message a partir sans clavier.
+
+    Un refus est journalise. Sans ca, un message rejete par Telegram ne laisse
+    aucune trace : ni erreur, ni message, rien a chercher."""
+    payload = {k: v for k, v in params.items() if v is not None}
+    r = requests.post(f"{API}/{method}", json=payload, timeout=65)
+    try:
+        data = r.json()
+    except ValueError:
+        print(f"{method}: reponse illisible (HTTP {r.status_code})")
+        return {}
+    if not data.get("ok", True):
+        print(f"{method} refuse par Telegram : {data.get('description')!r}")
+    return data
 
 
 # ---------------------------------------------------------------- Excel -----
@@ -397,11 +411,12 @@ def format_scan(bets: list[dict], *, now: datetime | None = None,
     now = now or datetime.now(timezone.utc)
     if not bets:
         return [(
-            "🔎 <b>SCAN</b> — aucune value jouable actuellement.\n\n"
-            f"<i>Critères premium : EV ≥ 8 % sur cotes 1.5-4, EV ≥ 20 % sur "
-            f"cotes 4-6. Sont exclus les paris déjà joués, ceux à moins de "
-            f"15 min du coup d'envoi, et ceux qui n'ont plus été vus depuis "
-            f"{SCAN_WINDOW_MIN} min.</i>", []
+            "🔎 <b>SCAN</b>\n\n"
+            "😴 <b>Aucune value à jouer pour le moment.</b>\n\n"
+            "<i>Critères premium : EV ≥ 8 % sur cotes 1.5-4, EV ≥ 20 % sur "
+            "cotes 4-6. Sont écartés les paris déjà joués, ceux à moins de "
+            f"15 min du coup d'envoi, et ceux que le scan n'a plus revus "
+            f"depuis {SCAN_WINDOW_MIN} min.</i>", []
         )]
     plural = "s" if len(bets) > 1 else ""
     header = f"🔎 <b>SCAN</b> — {len(bets)} value{plural} jouable{plural}\n"

@@ -142,8 +142,11 @@ def test_is_premium_mirrors_the_premium_channel_rules(ev, odd, expected):
 # --------------------------------------------------------------- rendu ------
 
 def test_format_reports_emptiness_explicitly():
+    """Un scan vide doit dire qu'il est vide. Le silence est indiscernable
+    d'une panne — et c'est exactement ce qui s'est produit."""
     out = _texts([])
-    assert len(out) == 1 and "aucune value jouable" in out[0]
+    assert len(out) == 1
+    assert "Aucune value à jouer" in out[0]
 
 
 def test_format_carries_everything_a_bet_needs():
@@ -547,3 +550,57 @@ def test_scanplay_callback_is_routed_to_its_handler(monkeypatch):
     monkeypatch.setattr(bot_listener, "handle_scan_play", lambda cb: seen.setdefault("scan", cb))
     bot_listener.handle_callback({"id": "x", "data": "scanplay:abc"})
     assert seen.get("scan") is not None
+
+
+def test_tg_drops_none_parameters(monkeypatch):
+    """reply_markup=None partait en JSON null, que l'API refuse — et comme
+    seul le scan VIDE n'a pas de bouton, lui seul disparaissait."""
+    import bot_listener
+    seen = {}
+
+    class _Resp:
+        status_code = 200
+        @staticmethod
+        def json():
+            return {"ok": True}
+
+    monkeypatch.setattr(bot_listener.requests, "post",
+                        lambda url, json, timeout: seen.update(json) or _Resp())
+    bot_listener.tg("sendMessage", chat_id="c", text="x", reply_markup=None)
+    assert "reply_markup" not in seen
+    assert seen["text"] == "x"
+
+
+def test_tg_logs_a_telegram_refusal(monkeypatch, capsys):
+    """Un envoi refuse ne laissait aucune trace : ni erreur, ni message."""
+    import bot_listener
+
+    class _Resp:
+        status_code = 200
+        @staticmethod
+        def json():
+            return {"ok": False, "description": "Bad Request: cant parse entities"}
+
+    monkeypatch.setattr(bot_listener.requests, "post",
+                        lambda url, json, timeout: _Resp())
+    bot_listener.tg("sendMessage", chat_id="c", text="x")
+    assert "cant parse entities" in capsys.readouterr().out
+
+
+def test_empty_scan_still_sends_a_message(tmp_path, monkeypatch):
+    """Bout en bout : base vide -> /scan doit quand meme repondre."""
+    import bot_listener
+    from src.storage import Storage
+
+    db = tmp_path / "t.db"
+    Storage(db)
+    monkeypatch.setattr(bot_listener, "DB_PATH", db)
+    monkeypatch.setattr("src.alerter._PLAYS_DB", db)
+    monkeypatch.setenv("TELEGRAM_BOT_TOKEN", "t")
+    monkeypatch.setenv("TELEGRAM_CHAT_ID", "42")
+    sent = []
+    monkeypatch.setattr(bot_listener, "tg", lambda m, **kw: sent.append((m, kw)) or {})
+
+    bot_listener.handle_message({"chat": {"id": 42}, "text": "/scan"})
+    assert [m for m, _ in sent] == ["sendMessage"]
+    assert "Aucune value à jouer" in sent[0][1]["text"]
