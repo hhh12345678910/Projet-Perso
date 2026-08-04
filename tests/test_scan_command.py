@@ -41,6 +41,11 @@ def _sel(rows, played=frozenset(), cfg=None):
     return select_playable(rows, set(played), cfg or _cfg(), NOW)
 
 
+def _texts(bets, **kw):
+    """Les textes seuls — format_scan renvoie (texte, paris du message)."""
+    return [t for t, _ in format_scan(bets, now=NOW, **kw)]
+
+
 # --------------------------------------------------------------- filtres ----
 
 def test_played_market_is_excluded_including_its_other_outcomes():
@@ -137,44 +142,52 @@ def test_is_premium_mirrors_the_premium_channel_rules(ev, odd, expected):
 # --------------------------------------------------------------- rendu ------
 
 def test_format_reports_emptiness_explicitly():
-    out = format_scan([], now=NOW)
+    out = _texts([])
     assert len(out) == 1 and "aucune value jouable" in out[0]
 
 
 def test_format_carries_everything_a_bet_needs():
     """Tout ce qu'il faut pour miser sans rouvrir autre chose : EV, book, match,
     date ET heure du coup d'envoi, pari, cote, cote juste, mise."""
-    msg = format_scan(_sel([_row(ev=12.4, odd=2.35, hours=3)]), now=NOW)[0]
+    msg = _texts(_sel([_row(ev=12.4, odd=2.35, hours=3)]))[0]
     assert "+12.40% EV" in msg
     assert "Unibet" in msg                      # le book, en nom lisible
     assert "@ 2.35" in msg
     assert "(fair 2.09)" in msg                 # 2.35 / 1.124
-    assert "dans 3 h" in msg and "17:00" in msg  # heure de Bruxelles
+    assert "17:00" in msg                       # heure de Bruxelles
     assert "Mise conseillée" in msg and "€" in msg
+
+
+def test_format_shows_the_date_without_the_countdown():
+    """La date suffit : « — dans 93 h » répète ce que la date porte déjà et
+    allonge chaque ligne d'une liste triée par EV."""
+    msg = _texts(_sel([_row(hours=93)]))[0]
+    assert "📅" in msg
+    assert "dans" not in msg
 
 
 def test_format_separates_each_bet_with_a_blank_line():
     """Sans respiration entre les blocs, la liste est illisible sur téléphone."""
-    msg = format_scan(_sel([_row(outcome="home"), _row(outcome="draw")]), now=NOW)[0]
+    msg = _texts(_sel([_row(outcome="home"), _row(outcome="draw")]))[0]
     assert "\n\n🎯" in msg
 
 
 def test_format_derives_fair_odds_from_the_current_price():
     """La cote juste se déduit de la cote et de l'EV affichées, donc elle reste
     cohérente avec elles au lieu de dater de la première détection."""
-    msg = format_scan(_sel([_row(ev=25.0, odd=2.50)]), now=NOW)[0]
+    msg = _texts(_sel([_row(ev=25.0, odd=2.50)]))[0]
     assert "(fair 2.00)" in msg                 # 2.50 / 1.25
 
 
 def test_format_names_the_selection_instead_of_home_away_draw():
     """« Anderlecht » plutôt que « home » : sur une liste, un label positionnel
     oblige à remonter à la ligne du match pour savoir de qui on parle."""
-    home = format_scan(_sel([_row(outcome="home")]), now=NOW)[0]
+    home = _texts(_sel([_row(outcome="home")]))[0]
     assert "<b>Anderlecht</b>" in home and ">home<" not in home
-    draw = format_scan(_sel([_row(outcome="draw")]), now=NOW)[0]
+    draw = _texts(_sel([_row(outcome="draw")]))[0]
     assert "Match nul" in draw
     tot = _row(market="totals", outcome="over", line=2.5)
-    assert "Plus de 2.5" in format_scan(_sel([tot]), now=NOW)[0]
+    assert "Plus de 2.5" in _texts(_sel([tot]))[0]
 
 
 def test_team_names_come_from_the_registry_not_the_raw_key(monkeypatch):
@@ -184,7 +197,7 @@ def test_team_names_come_from_the_registry_not_the_raw_key(monkeypatch):
 
     monkeypatch.setitem(teams._DISPLAY, "clubbrugge", "Club Brugge")
     monkeypatch.setitem(teams._DISPLAY, "anderlecht", "Anderlecht")
-    msg = format_scan(_sel([_row()]), now=NOW)[0]
+    msg = _texts(_sel([_row()]))[0]
     assert "Anderlecht vs Club Brugge" in msg
     assert "Clubbrugge" not in msg
 
@@ -193,7 +206,7 @@ def test_format_splits_long_scans_across_messages():
     """Telegram refuse au-delà de 4096 caractères — un scan chargé doit sortir
     en plusieurs messages plutôt que d'échouer en silence."""
     rows = [_row(outcome=f"o{i}", ev=10.0 + i * 0.01) for i in range(60)]
-    out = format_scan(_sel(rows), now=NOW)
+    out = _texts(_sel(rows))
     assert len(out) > 1
     assert all(len(m) <= 4096 for m in out)
 
@@ -201,7 +214,7 @@ def test_format_splits_long_scans_across_messages():
 def test_format_escapes_html_in_team_names():
     """Un nom d'équipe contenant < ou & casserait le parse_mode HTML."""
     row = _row(home="A & <b>B</b>")
-    msg = format_scan(_sel([row]), now=NOW)[0]
+    msg = _texts(_sel([row]))[0]
     assert "&amp;" in msg and "&lt;b&gt;" in msg
 
 
@@ -423,3 +436,114 @@ def test_scan_accepts_every_configured_channel(monkeypatch, tmp_path):
     assert bot_listener._allowed_chats(cfg) == {
         "-100main", "-100prem", "-100crit", "-100sure", "-100clv",
     }
+
+
+# ------------------------------------------------- bouton « Tout jouer » ----
+# Un clic engage TOUS les paris du message. C'est le comportement demande, et
+# c'est aussi ce qui le rend delicat : le bouton doit couvrir exactement les
+# paris affiches par SON message, et le scan suivant ne doit plus rien montrer.
+
+def _scan_env(tmp_path, monkeypatch):
+    """Une base neuve, avec bot_listener et l'alerter branches dessus."""
+    import bot_listener
+    from src.storage import Storage
+
+    db = tmp_path / "t.db"
+    Storage(db)
+    monkeypatch.setattr(bot_listener, "DB_PATH", db)
+    monkeypatch.setattr(bot_listener, "XLSX_PATH", tmp_path / "paris.xlsx")
+    monkeypatch.setattr(bot_listener, "TRACK_PATH", tmp_path / "track.csv")
+    monkeypatch.setattr("src.alerter._PLAYS_DB", db)
+    return bot_listener, db
+
+
+def test_scan_button_covers_exactly_its_own_message(tmp_path, monkeypatch):
+    """Quand la liste est decoupee, un bouton par message, chacun sur ses paris.
+
+    Un bouton qui vaudrait pour le scan entier enregistrerait des paris que son
+    message ne montre meme pas."""
+    bot_listener, _ = _scan_env(tmp_path, monkeypatch)
+    bets = _sel([_row(outcome=f"o{i}", ev=10.0 + i * 0.01) for i in range(60)])
+    parts = format_scan(bets, now=NOW)
+    assert len(parts) > 1, "le cas interessant est la liste decoupee"
+    assert sum(len(b) for _, b in parts) == len(bets)
+    tokens = [bot_listener.register_scan(b, 1000.0) for _, b in parts]
+    assert len(set(tokens)) == len(tokens)          # un jeton distinct par message
+    for token, (_, part_bets) in zip(tokens, parts):
+        assert len(bot_listener._scan_play_tokens(token)) == len(part_bets)
+
+
+def test_playing_a_scan_empties_the_next_one(tmp_path, monkeypatch):
+    """Le coeur de la demande, bout en bout : je scanne, j'appuie sur Tout
+    jouer, je rescanne — il ne doit plus rien rester."""
+    bot_listener, db = _scan_env(tmp_path, monkeypatch)
+    sent = []
+    monkeypatch.setattr(bot_listener, "tg", lambda m, **kw: sent.append((m, kw)) or {})
+
+    rows = [_row(outcome="home", ev=12.0), _row(outcome="away", ev=9.0, odd=3.1),
+            _row(home="Genk", away="Gent", ev=22.0, odd=5.2)]
+    bets = _sel(rows)
+    assert len(bets) == 3
+
+    token = bot_listener.register_scan(bets, 1000.0)
+    bot_listener.handle_scan_play({"id": "cb1", "data": f"scanplay:{token}",
+                                   "message": {"chat": {"id": 1}, "message_id": 2}})
+
+    # Deux cles de marche seulement : le home et le away du meme match sont le
+    # meme marche, et c'est bien le marche entier qui est fait taire.
+    from src.alerter import _load_played_keys
+    _, played = _load_played_keys()
+    assert len(played) == 2
+    assert select_playable(rows, played, _cfg(), NOW) == []
+
+
+def test_playing_a_scan_silences_the_other_outcomes_of_each_market(tmp_path, monkeypatch):
+    """Jouer le 1 d'un 1X2 fait taire le X et le 2, comme pour les alertes."""
+    bot_listener, _ = _scan_env(tmp_path, monkeypatch)
+    monkeypatch.setattr(bot_listener, "tg", lambda m, **kw: {})
+
+    home = _row(outcome="home", ev=12.0)
+    bot_listener.handle_scan_play({
+        "id": "cb", "data": f"scanplay:{bot_listener.register_scan(_sel([home]), 1000.0)}",
+        "message": {"chat": {"id": 1}, "message_id": 2}})
+
+    from src.alerter import _load_played_keys
+    _, played = _load_played_keys()
+    # Le X du meme marche n'etait pas dans le scan, il doit disparaitre aussi.
+    assert select_playable([_row(outcome="draw", ev=12.0)], played, _cfg(), NOW) == []
+
+
+def test_scan_button_is_idempotent_on_a_second_click(tmp_path, monkeypatch):
+    """Telegram peut rejouer un callback ; un double clic ne doit pas doubler
+    les lignes du tableur."""
+    bot_listener, _ = _scan_env(tmp_path, monkeypatch)
+    monkeypatch.setattr(bot_listener, "tg", lambda m, **kw: {})
+
+    token = bot_listener.register_scan(_sel([_row()]), 1000.0)
+    cb = {"id": "cb", "data": f"scanplay:{token}",
+          "message": {"chat": {"id": 1}, "message_id": 2}}
+    bot_listener.handle_scan_play(cb)
+    bot_listener.handle_scan_play(cb)
+
+    from openpyxl import load_workbook
+    ws = load_workbook(bot_listener.XLSX_PATH).active
+    assert ws.max_row == 2, "une seule ligne pour un pari clique deux fois"
+
+
+def test_unknown_scan_token_answers_instead_of_crashing(tmp_path, monkeypatch):
+    bot_listener, _ = _scan_env(tmp_path, monkeypatch)
+    sent = []
+    monkeypatch.setattr(bot_listener, "tg", lambda m, **kw: sent.append(kw) or {})
+    bot_listener.handle_scan_play({"id": "cb", "data": "scanplay:inconnu",
+                                   "message": {"chat": {"id": 1}, "message_id": 2}})
+    assert any("introuvable" in str(k.get("text", "")) for k in sent)
+
+
+def test_scanplay_callback_is_routed_to_its_handler(monkeypatch):
+    """Le bouton du scan et celui des alertes partagent le canal callback_query :
+    l'aiguillage doit distinguer scanplay: de play:."""
+    import bot_listener
+    seen = {}
+    monkeypatch.setattr(bot_listener, "handle_scan_play", lambda cb: seen.setdefault("scan", cb))
+    bot_listener.handle_callback({"id": "x", "data": "scanplay:abc"})
+    assert seen.get("scan") is not None

@@ -325,6 +325,7 @@ def select_playable(rows, played_markets: set, cfg, now: datetime) -> list[dict]
             # au lieu de dater de la première détection.
             fair = odd / (1.0 + ev / 100.0) if ev > -100 else None
             best[key] = {
+                "event_key": r["event_key"],
                 "ev": ev,
                 "odd": odd,
                 "fair": fair,
@@ -381,44 +382,49 @@ def _esc(s: str) -> str:
 
 
 def format_scan(bets: list[dict], *, now: datetime | None = None,
-                bankroll: float = 1000.0) -> list[str]:
+                bankroll: float = 1000.0) -> list[tuple[str, list[dict]]]:
     """Rend le scan en un ou plusieurs messages HTML sous la limite Telegram.
 
     Même disposition qu'une alerte — EV et book, match, coup d'envoi, pari avec
     la cote juste, mise conseillée — mais empilée en liste, une ligne vide entre
     chaque pari pour que l'œil sépare les blocs.
+
+    Renvoie (texte, paris de ce message). L'appariement n'est pas cosmétique :
+    le bouton « Tout jouer » d'un message doit engager exactement les paris
+    qu'il affiche. Quand la liste est découpée, un bouton qui vaudrait pour le
+    scan entier enregistrerait des paris que ce message ne montre pas.
     """
     now = now or datetime.now(timezone.utc)
     if not bets:
-        return [
+        return [(
             "🔎 <b>SCAN</b> — aucune value jouable actuellement.\n\n"
             f"<i>Critères premium : EV ≥ 8 % sur cotes 1.5-4, EV ≥ 20 % sur "
             f"cotes 4-6. Sont exclus les paris déjà joués, ceux à moins de "
             f"15 min du coup d'envoi, et ceux qui n'ont plus été vus depuis "
-            f"{SCAN_WINDOW_MIN} min.</i>"
-        ]
+            f"{SCAN_WINDOW_MIN} min.</i>", []
+        )]
     plural = "s" if len(bets) > 1 else ""
     header = f"🔎 <b>SCAN</b> — {len(bets)} value{plural} jouable{plural}\n"
-    blocks = []
+    msgs: list[tuple[str, list[dict]]] = []
+    cur, cur_bets = header, []
     for b in bets:
         emoji = _SCAN_SPORT_EMOJI.get(b["sport"], "")
         fair = f" (fair {b['fair']:.2f})" if b.get("fair") else ""
         stake = _stake_line(b["ev"], b.get("kelly"), bankroll)
-        blocks.append(
+        block = (
             f"\n🎯 <b>+{b['ev']:.2f}% EV</b> — {_esc(_book_label(b['book']))}\n"
             f"{emoji} {_esc(b['home'])} vs {_esc(b['away'])}\n"
             f"📅 {_esc(_kickoff(b['start'], now))}\n"
             f"Pari : <b>{_esc(b['selection'])}</b> @ {b['odd']:.2f}{fair}\n"
             f"{stake}\n"
         )
-    msgs, cur = [], header
-    for block in blocks:
-        if len(cur) + len(block) > SCAN_MAX_CHARS:
-            msgs.append(cur)
-            cur = ""
+        if len(cur) + len(block) > SCAN_MAX_CHARS and cur_bets:
+            msgs.append((cur, cur_bets))
+            cur, cur_bets = "", []
         cur += block
+        cur_bets.append(b)
     if cur.strip():
-        msgs.append(cur)
+        msgs.append((cur, cur_bets))
     return msgs
 
 
@@ -427,12 +433,14 @@ _SCAN_SPORT_EMOJI = {"soccer": "⚽", "football": "⚽", "tennis": "🎾",
 
 
 def _kickoff(start: datetime, now: datetime) -> str:
-    """« Aujourd'hui 20:45 — dans 3 h », en heure de Bruxelles comme les
-    alertes : une liste sans horaire oblige à rouvrir chaque match pour savoir
-    lequel part en premier."""
+    """« Aujourd'hui 20:45 », en heure de Bruxelles comme les alertes.
+
+    Sans le « — dans N h » des alertes : sur une liste triée par EV, ce délai
+    répète une information que la date porte déjà et allonge chaque ligne.
+    """
     try:
-        from src.alerter import _format_kickoff, _time_to_kickoff
-        return f"{_format_kickoff(start, now)}{_time_to_kickoff(start, now)}"
+        from src.alerter import _format_kickoff
+        return _format_kickoff(start, now)
     except Exception:
         return start.strftime("%d/%m %H:%M")
 
@@ -455,6 +463,115 @@ def _book_label(book_value: str) -> str:
         return _BOOK_NAMES.get(Book(book_value), book_value)
     except Exception:
         return book_value
+
+
+def _scan_payload(b: dict, bankroll: float) -> dict:
+    """Aplatit un pari du scan dans la ligne que le bouton « Jouer » enregistre.
+
+    Volontairement identique à ce que produit l'alerte (`_value_bet_play_payload`)
+    — même `selection` positionnelle (« home », « over 2.5 »), même arrondi de
+    mise. Le tableur mélangerait sinon deux écritures pour la même colonne selon
+    que le pari vient d'une alerte ou d'un scan.
+    """
+    from src.alerter import _advised_stake_eur
+    line_suffix = f" {b['line']:g}" if b["line"] is not None else ""
+    return {
+        "sport": b["sport"],
+        "match": f"{b['home']} vs {b['away']}",
+        "book": _book_label(b["book"]),
+        "selection": f"{b['outcome']}{line_suffix}",
+        "cote": round(b["odd"], 3),
+        "mise": _advised_stake_eur(b["ev"], b.get("kelly"), bankroll) or 0.0,
+        "ev": round(b["ev"], 2),
+        "dedup_key": f"{b['event_key']}|{b['market']}|{b['outcome']}|{b['line']}",
+    }
+
+
+def register_scan(bets: list[dict], bankroll: float) -> str | None:
+    """Enregistre les paris d'un message de scan et renvoie le jeton du bouton.
+
+    Chaque pari reçoit son propre jeton `pending_plays`, exactement comme s'il
+    avait été alerté ; `pending_scans` ne fait que les regrouper. Le clic
+    retombe ainsi sur le chemin déjà éprouvé du bouton des alertes, au lieu
+    d'en ouvrir un second qui pourrait diverger.
+    """
+    if not bets:
+        return None
+    import uuid
+    from src.alerter import _record_pending_play
+
+    scan_token = uuid.uuid4().hex[:12]
+    tokens = [_record_pending_play(_scan_payload(b, bankroll)) for b in bets]
+    con = sqlite3.connect(str(DB_PATH))
+    try:
+        con.execute("PRAGMA busy_timeout=5000")
+        con.execute(
+            "CREATE TABLE IF NOT EXISTS pending_scans("
+            "scan_token TEXT, play_token TEXT, created_at TEXT)"
+        )
+        con.execute(
+            "CREATE INDEX IF NOT EXISTS idx_pending_scans ON pending_scans(scan_token)"
+        )
+        now = datetime.now(timezone.utc).isoformat()
+        con.executemany(
+            "INSERT INTO pending_scans(scan_token, play_token, created_at) VALUES (?,?,?)",
+            [(scan_token, t, now) for t in tokens],
+        )
+        con.commit()
+    finally:
+        con.close()
+    return scan_token
+
+
+def _scan_play_tokens(scan_token: str) -> list[str]:
+    con = sqlite3.connect(str(DB_PATH))
+    try:
+        con.execute("PRAGMA busy_timeout=5000")
+        rows = con.execute(
+            "SELECT play_token FROM pending_scans WHERE scan_token = ?", (scan_token,)
+        ).fetchall()
+    except sqlite3.OperationalError:
+        return []           # table absente : aucun scan n'a encore été enregistré
+    finally:
+        con.close()
+    return [r[0] for r in rows]
+
+
+def handle_scan_play(cb: dict) -> None:
+    """Clic sur « Tout jouer » : enregistre d'un coup tous les paris du message.
+
+    Chacun passe par le même `append_bet` + `_record_played` qu'un clic
+    individuel, donc la suppression au niveau du marché s'applique aussi — un
+    scan suivant ne réaffichera ni ces paris ni les autres issues de leurs
+    marchés.
+    """
+    cb_id = cb["id"]
+    scan_token = cb.get("data", "").split(":", 1)[1]
+    tokens = _scan_play_tokens(scan_token)
+    if not tokens:
+        tg("answerCallbackQuery", callback_query_id=cb_id, text="Scan introuvable")
+        return
+    done = skipped = 0
+    for t in tokens:
+        try:
+            if already_logged(t):
+                skipped += 1
+                continue
+            bet = fetch_bet(t)
+            if not bet:
+                skipped += 1
+                continue
+            append_bet(bet)
+            _record_played(bet)
+            done += 1
+        except Exception as e:      # un pari en échec ne doit pas bloquer les autres
+            skipped += 1
+            print(f"scan play {t} echoue: {type(e).__name__}: {e}")
+    _mark_button_done(cb, f"✅ {done} joué{'s' if done > 1 else ''}")
+    note = f" ({skipped} ignoré{'s' if skipped > 1 else ''})" if skipped else ""
+    tg("answerCallbackQuery", callback_query_id=cb_id,
+       text=f"{done} pari{'s' if done > 1 else ''} enregistré{'s' if done > 1 else ''}{note}")
+    print(f"[{datetime.now():%H:%M:%S}] scan {scan_token}: {done} joues, {skipped} ignores")
 
 
 def _allowed_chats(cfg) -> set[str]:
@@ -503,15 +620,29 @@ def handle_message(msg: dict) -> None:
         tg("sendMessage", chat_id=chat_id, text=f"Scan indisponible ({type(e).__name__})")
         print(f"scan echoue: {type(e).__name__}: {e}")
         return
-    for part in format_scan(bets, bankroll=cfg.bankroll):
+    for part, part_bets in format_scan(bets, bankroll=cfg.bankroll):
+        markup = None
+        try:
+            scan_token = register_scan(part_bets, cfg.bankroll)
+            if scan_token:
+                n = len(part_bets)
+                markup = {"inline_keyboard": [[{
+                    "text": f"▶️ Tout jouer ({n})",
+                    "callback_data": f"scanplay:{scan_token}",
+                }]]}
+        except Exception as e:  # le scan doit partir même sans bouton
+            print(f"bouton de scan non cree: {type(e).__name__}: {e}")
         tg("sendMessage", chat_id=chat_id, parse_mode="HTML",
-           text=part, disable_web_page_preview=True)
+           text=part, disable_web_page_preview=True, reply_markup=markup)
     print(f"[{datetime.now():%H:%M:%S}] /scan -> {len(bets)} paris (chat {chat_id})")
 
 
 # ----------------------------------------------------------- Callbacks ------
 def handle_callback(cb: dict) -> None:
     data = cb.get("data", "")
+    if data.startswith("scanplay:"):
+        handle_scan_play(cb)
+        return
     if not data.startswith("play:"):
         return
     cb_id = cb["id"]
@@ -538,15 +669,15 @@ def handle_callback(cb: dict) -> None:
     print(f"[{datetime.now():%H:%M:%S}] logged {token} {bet['match']} {bet['book']}")
 
 
-def _mark_button_done(cb: dict) -> None:
-    """Remplace le bouton par un '✅ Joue' non cliquable (effet 'vert')."""
+def _mark_button_done(cb: dict, label: str = "✅ Joue") -> None:
+    """Remplace le bouton par un libelle non cliquable (effet 'vert')."""
     msg = cb.get("message", {})
     chat_id = msg.get("chat", {}).get("id")
     msg_id = msg.get("message_id")
     if chat_id is None or msg_id is None:
         return
     tg("editMessageReplyMarkup", chat_id=chat_id, message_id=msg_id,
-       reply_markup={"inline_keyboard": [[{"text": "✅ Joue", "callback_data": "noop"}]]})
+       reply_markup={"inline_keyboard": [[{"text": label, "callback_data": "noop"}]]})
 
 
 # --------------------------------------------------------------- Loop -------
