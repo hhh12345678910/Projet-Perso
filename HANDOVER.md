@@ -895,14 +895,15 @@ par construction, scraper déjà écrit.
 
 ## 13. Session du 04/08 — état actuel
 
-Une trentaine de commits, de `e431b5d` à `b26793d`. Quatre chantiers : le
+Une trentaine de commits, de `e431b5d` à `7f3d5fd`. Cinq chantiers : le
 plafond Pinnacle, l'outillage de diagnostic, la collecte de données pour un
-futur filtre ML, et un détecteur de marchés en retard.
+futur filtre ML, un détecteur de marchés en retard, et une panne totale
+diagnostiquée en fin de session (§13.11).
 
 ### Ce qui tourne en production
 
-Branche `claude/project-summary-2cz4sk`, commit `b26793d`. Sept books couverts
-à 100 % sur les derniers runs mesurés, cycle à 18-21 s de médiane.
+Branche `claude/project-summary-2cz4sk`, commit `7f3d5fd`. Sept books couverts
+à 100 % sur les derniers runs mesurés, cycle à 14-23 s de médiane.
 
 ⚠️ **La VM était restée sur `claude/stoic-babbage-q16wi3`** pendant une partie
 de la session — un `git pull` répondait « Already up to date » sur la mauvaise
@@ -1059,6 +1060,11 @@ résultat — rien — et qu'il faut pouvoir distinguer les deux.
 
 ### 13.9 À faire au prochain démarrage
 
+0. **Vérifier que Pinnacle est sorti de maintenance** (§13.11) — c'est le
+   préalable à tout le reste, le système est à l'arrêt sans lui :
+   ```bash
+   grep -E "maintenance annoncée|Pinnacle muet|Pinnacle rétabli" valuebet.log | tail
+   ```
 1. **Vérifier le détecteur de marchés en retard** (§13.7) — les compteurs
    après une soirée complète. C'est le point le plus chaud.
 2. **`pinnacle_doctor.py --runs 0` sur un run long** — confirmer 403 et verrous
@@ -1087,3 +1093,77 @@ résultat — rien — et qu'il faut pouvoir distinguer les deux.
 - **Ne pas réduire une taille de lot sans mesurer** : les batches de purge
   ramenés de 200k à 50k ont rendu l'opération beaucoup plus lente. Revenus à
   200k, avec progression toutes les 5 s.
+
+### 13.11 Panne totale du 04/08 — maintenance Pinnacle non signalée
+
+**Le symptôme perçu** : plus aucune notification de value. Le daemon tournait,
+les cycles s'enchaînaient en 14-23 s, les books soft renvoyaient leurs milliers
+de cotes. Rien ne signalait de problème.
+
+**La cause** : Pinnacle répondait `HTTP 503` avec
+`{"title": "MAINTENANCE", "detail": "API is currently undergoing maintenance"}`
+sur football **et** tennis, pendant des heures. Sans référence sharp, aucune
+ligne juste, donc zéro value bet — le système entier était à l'arrêt.
+
+**Pourquoi aucune alerte n'est partie** — la chaîne complète, parce que c'est
+le mode de défaillance le plus coûteux du projet :
+
+1. `tenacity` ré-emballe l'échec final dans `RetryError`, qui n'est **pas** une
+   `HTTPStatusError`.
+2. Le tri par code HTTP de `fetch_pinnacle_quotes` ne la voyait donc jamais.
+3. L'exception traversait `_fetch_all_parallel`, y était journalisée en
+   « Pinnacle skipped », et `_PINNACLE_FAILED` n'était jamais posé.
+4. Le cycle affichait alors `Pinnacle sans événement (hors-saison ?) —
+   skipping` — sur du football, un 4 août.
+5. `_pinnacle_health`, à qui l'on disait que tout allait bien, se taisait.
+
+**Corrigé dans `7f3d5fd`** : `RetryError` est déballée avant le tri
+(`_unwrap_retry`), et les **5xx rejoignent 403/429 dans le recul** — pendant
+une maintenance, réessayer à chaque cycle ne brasse que du vide. Le message
+nomme la maintenance quand le code est 503, pour ne pas repartir chercher un
+blocage d'IP inexistant. Trois tests, chacun vérifié en échec sans le
+correctif.
+
+**Le piège de diagnostic** : la première sonde écrite pour identifier la panne
+appelait `_get`, qui est justement enveloppé par le retry — elle a donc affiché
+`RetryError` sans jamais révéler le code HTTP. Pour voir le vrai code, il faut
+contourner le retry :
+
+```bash
+.venv/bin/python - <<'PY'
+from src.scrapers.pinnacle import PinnacleScraper, PINNACLE_BASE, SPORT_IDS
+with PinnacleScraper() as p:
+    for sport in ("soccer", "tennis"):
+        r = p._client.get(f"{PINNACLE_BASE}/sports/{SPORT_IDS[sport]}/matchups")
+        print(f"{sport:8} HTTP {r.status_code}  {r.text[:160]!r}")
+PY
+```
+
+**Ce que la panne démontre** : le système dépend entièrement d'une source
+unique, et une maintenance de son côté suffit à tout arrêter. C'est le
+quatrième argument — et le plus concret — en faveur de la seconde référence
+sharp (§6, Smarkets). Les 403 du 30/07 plafonnaient le débit ; ce 503 a coupé
+le courant.
+
+### 13.12 Comment lire une panne dans ce projet
+
+Ordre de diagnostic, appris à ses dépens deux fois dans la session :
+
+1. **Le daemon tourne-t-il ?** `systemctl is-active valuebet-daemon`
+2. **Quelle branche, quel commit ?** `git branch --show-current && git log
+   --oneline -1`. Un `git pull` qui répond « Already up to date » sur la
+   mauvaise branche a coûté un aller-retour complet.
+3. **Y a-t-il des détections ?** `grep "value bets:" valuebet.log | tail`. Un
+   compteur figé sur la même valeur = plus rien n'est calculé.
+4. **Pinnacle répond-il ?** La sonde de §13.11, jamais un `grep` sur le
+   journal : les messages y sont coupés à 80 colonnes par `rich`.
+5. **Par run, jamais en cumul.** `pinnacle_doctor.py --runs 0`. Un `grep -c`
+   sur `valuebet.log` additionne plusieurs jours et plusieurs versions du code.
+
+⚠️ **Le mode de défaillance dominant reste le silence** : un book répond, le
+scraper tourne, rien n'en sort, et rien ne l'écrit au journal. Chaque fois
+qu'un compteur ou un message a manqué dans cette session, il a fallu deux
+allers-retours pour s'en rendre compte. Quand un correctif restreint ce qui est
+signalé, **ajouter les compteurs de ce qui a été rejeté et pourquoi** — sinon
+un filtre trop strict et une absence réelle de problème deviennent
+indiscernables.
