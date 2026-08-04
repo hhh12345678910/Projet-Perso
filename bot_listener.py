@@ -534,6 +534,14 @@ def main() -> None:
         sys.stdout.reconfigure(line_buffering=True)
     except Exception:
         pass
+    # systemd lance ce service sans EnvironmentFile : sans ce chargement,
+    # os.environ est vide de toute config Telegram et TelegramConfig.from_env()
+    # renvoie None — /scan se desactivait tout seul sur une installation
+    # parfaitement configuree. load_token() lisait deja .env pour son propre
+    # compte, ce qui masquait le probleme : le bot demarrait normalement.
+    from src.config import load_env_file
+    print(f"env : {load_env_file(ROOT / '.env')} cles chargees depuis .env")
+
     offset = read_offset()
     print(f"bot_listener demarre (offset={offset}, db={DB_PATH}, xlsx={XLSX_PATH})")
     try:

@@ -2,6 +2,38 @@ from __future__ import annotations
 
 import os
 from dataclasses import dataclass, field
+from pathlib import Path
+
+
+def load_env_file(path: str | Path | None = None) -> int:
+    """Charge `.env` dans os.environ. Renvoie le nombre de clés posées.
+
+    Le daemon reçoit sa config par `scan-daemon.sh`, qui source `.env` avant de
+    lancer Python. Tout ce qui démarre autrement — une commande lancée à la
+    main, `doctor`, ou `bot_listener` sous systemd — n'a rien dans son
+    environnement et croit le projet non configuré. Ça s'est produit deux fois :
+    `doctor` annonçait « Telegram non configuré » sur une installation qui
+    marchait, et `/scan` se désactivait tout seul en n'acceptant aucun chat.
+
+    L'environnement existant gagne (`setdefault`) : un override explicite passé
+    au service reste prioritaire sur le fichier.
+    """
+    env_file = Path(path) if path else Path(__file__).resolve().parent.parent / ".env"
+    if not env_file.exists():
+        return 0
+    n = 0
+    for raw in env_file.read_text().splitlines():
+        line = raw.strip()
+        if not line or line.startswith("#") or "=" not in line:
+            continue
+        k, _, v = line.partition("=")
+        k, v = k.strip(), v.strip()
+        if v[:1] == v[-1:] and v[:1] in ("'", '"') and len(v) >= 2:
+            v = v[1:-1]
+        if k not in os.environ:
+            n += 1
+        os.environ.setdefault(k, v)
+    return n
 
 
 def _env_flag(name: str, default: bool = True) -> bool:

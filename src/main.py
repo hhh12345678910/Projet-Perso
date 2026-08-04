@@ -17,7 +17,7 @@ from tenacity import RetryError
 from rich.console import Console
 from rich.table import Table
 
-from .config import ScanConfig
+from .config import ScanConfig, load_env_file
 from .devig import devig, overround as _overround
 from .ev import ev_pct, fair_odd, kelly_fraction, kelly_stake
 from .leagues import categorize as _league_category
@@ -3719,22 +3719,9 @@ def doctor(hours: int = typer.Option(24, "--hours", help="Lookback window.")):
     now = datetime.now(timezone.utc)
     problems: list[str] = []
 
-    # The daemon gets its config from .env via scan-daemon.sh, but a hand-run
-    # command doesn't — so without this the check reports "Telegram not
-    # configured" on a perfectly working setup. A diagnostic that invents
-    # failures is worse than none, so read the same file the daemon does.
-    # Existing environment wins, so an explicit override still works.
-    env_file = project / ".env"
-    if env_file.exists():
-        for raw in env_file.read_text().splitlines():
-            line = raw.strip()
-            if not line or line.startswith("#") or "=" not in line:
-                continue
-            k, _, v = line.partition("=")
-            k, v = k.strip(), v.strip()
-            if v[:1] == v[-1:] and v[:1] in ("'", '"') and len(v) >= 2:
-                v = v[1:-1]
-            os.environ.setdefault(k, v)
+    # Sans ça, le diagnostic annonce « Telegram non configuré » sur une
+    # installation qui marche — il n'a simplement pas l'environnement du daemon.
+    load_env_file(project / ".env")
 
     # ── services ─────────────────────────────────────────────────────────
     st = Table(title="Services", show_lines=False)

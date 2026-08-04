@@ -310,3 +310,74 @@ def test_allowed_updates_covers_every_type_dispatch_handles():
     import bot_listener
     for kind in ("callback_query", "message", "channel_post", "edited_channel_post"):
         assert kind in bot_listener.ALLOWED_UPDATES
+
+
+# ------------------------------------------------------ chargement du .env --
+# bot_listener est lance par systemd sans EnvironmentFile : sans chargement
+# explicite, os.environ ne contient aucune config Telegram et /scan se
+# desactive tout seul sur une installation qui marche. load_token() lisait deja
+# .env pour son propre compte, ce qui masquait le probleme — le service
+# demarrait normalement et ne repondait a rien.
+
+def test_load_env_file_populates_os_environ(tmp_path, monkeypatch):
+    from src.config import load_env_file
+
+    env = tmp_path / ".env"
+    env.write_text(
+        "# un commentaire\n"
+        "\n"
+        "TELEGRAM_BOT_TOKEN=abc123\n"
+        'TELEGRAM_PREMIUM_CHAT_ID="-1001234"\n'
+        "LIGNE_SANS_EGAL\n"
+    )
+    for k in ("TELEGRAM_BOT_TOKEN", "TELEGRAM_PREMIUM_CHAT_ID"):
+        monkeypatch.delenv(k, raising=False)
+    assert load_env_file(env) == 2
+    import os
+    assert os.environ["TELEGRAM_BOT_TOKEN"] == "abc123"
+    assert os.environ["TELEGRAM_PREMIUM_CHAT_ID"] == "-1001234"   # guillemets retires
+
+
+def test_load_env_file_does_not_override_the_environment(monkeypatch, tmp_path):
+    """Un override passe au service doit rester prioritaire sur le fichier."""
+    from src.config import load_env_file
+    import os
+
+    env = tmp_path / ".env"
+    env.write_text("TELEGRAM_CHAT_ID=du_fichier\n")
+    monkeypatch.setenv("TELEGRAM_CHAT_ID", "de_l_environnement")
+    load_env_file(env)
+    assert os.environ["TELEGRAM_CHAT_ID"] == "de_l_environnement"
+
+
+def test_load_env_file_tolerates_a_missing_file(tmp_path):
+    from src.config import load_env_file
+    assert load_env_file(tmp_path / "pas_la") == 0
+
+
+def test_scan_accepts_every_configured_channel(monkeypatch, tmp_path):
+    """La garde de chat doit connaitre TOUS les canaux du .env, pas seulement
+    le principal — /scan est tape depuis le premium."""
+    from src.config import load_env_file
+    import bot_listener
+    from src.alerter import TelegramConfig
+
+    env = tmp_path / ".env"
+    env.write_text(
+        "TELEGRAM_BOT_TOKEN=t\n"
+        "TELEGRAM_CHAT_ID=-100main\n"
+        "TELEGRAM_PREMIUM_CHAT_ID=-100prem\n"
+        "TELEGRAM_CRITICAL_CHAT_ID=-100crit\n"
+        "TELEGRAM_SUREBET_CHAT_ID=-100sure\n"
+        "TELEGRAM_CLV_CHAT_ID=-100clv\n"
+    )
+    for k in ("TELEGRAM_BOT_TOKEN", "TELEGRAM_CHAT_ID", "TELEGRAM_PREMIUM_CHAT_ID",
+              "TELEGRAM_CRITICAL_CHAT_ID", "TELEGRAM_SUREBET_CHAT_ID",
+              "TELEGRAM_CLV_CHAT_ID", "TELEGRAM_LIVE_SUREBET_CHAT_ID"):
+        monkeypatch.delenv(k, raising=False)
+    load_env_file(env)
+    cfg = TelegramConfig.from_env()
+    assert cfg is not None, "config illisible alors que .env est complet"
+    assert bot_listener._allowed_chats(cfg) == {
+        "-100main", "-100prem", "-100crit", "-100sure", "-100clv",
+    }
