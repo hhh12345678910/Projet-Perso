@@ -369,8 +369,8 @@ def test_critical_channel_not_called_for_normal_ev_bet():
     assert calls == ["c"]
 
 
-def _critical_calls(bet) -> list[str]:
-    """Route one bet through a critical-enabled config, return the chats hit."""
+def _routed(bet, *, premium: bool = True) -> list[str]:
+    """Route one bet through a premium+critical config, return the chats hit."""
     calls = []
 
     class FakeClient:
@@ -381,9 +381,11 @@ def _critical_calls(bet) -> list[str]:
         def close(self): pass
 
     cfg = TelegramConfig(
-        bot_token="t", chat_id="c", min_ev_pct=3.0, main_max_ev_pct=100.0,
+        bot_token="t", chat_id="c", min_ev_pct=3.0, main_max_ev_pct=8.0,
+        premium_chat_id="prem" if premium else None,
+        min_premium_ev_pct=8.0, premium_min_odd=1.5, premium_max_odd=4.0,
+        premium_hi_min_ev=20.0, premium_hi_min_odd=4.0, premium_hi_max_odd=6.0,
         critical_chat_id="crit", min_critical_ev_pct=35.0,
-        critical_min_odd=1.5, critical_max_odd=6.0,
         min_send_interval_s=0.0,
     )
     with TelegramAlerter(cfg, client=FakeClient()) as a:
@@ -391,56 +393,62 @@ def _critical_calls(bet) -> list[str]:
     return calls
 
 
-def test_critical_channel_drops_bet_above_odds_band():
-    """Cote 14.00 à 97 % d'EV : le book ne s'est pas trompé, c'est l'appariement.
+def test_premium_takes_huge_ev_inside_its_bands_without_critical_copy():
+    """Cote 1.82 à 53 % et cote 2.40 à 50 % : du premium, et rien qu'une fois.
 
-    Le cas réel du 04/08 — StarCasino à 14.00 et 21.00 atteignaient le canal
-    critique parce qu'il était le seul sans filtre de cote."""
-    assert "crit" not in _critical_calls(_bet(ev_pct=97.0, odd=14.0))
-    assert "crit" not in _critical_calls(_bet(ev_pct=45.0, odd=21.0))
-
-
-def test_critical_channel_drops_bet_below_odds_band():
-    """Sous 1.5 la value est trop petite pour survivre à la marge du book."""
-    assert "crit" not in _critical_calls(_bet(ev_pct=60.0, odd=1.2))
+    Cas réels du doctor du 04/08. Ils partaient en critique parce que ce canal
+    ne regardait que l'EV ; ils rentrent dans la bande premium 1.5–4, qui n'a
+    aucun plafond d'EV — donc premium, sans doublon critique."""
+    for odd, ev in ((1.82, 53.0), (2.40, 50.0)):
+        calls = _routed(_bet(ev_pct=ev, odd=odd))
+        assert "prem" in calls, f"cote {odd} EV {ev} n'atteint pas premium"
+        assert "crit" not in calls, f"cote {odd} EV {ev} doublonne sur critique"
 
 
-def test_critical_channel_keeps_huge_ev_inside_odds_band():
-    """Aucun plafond d'EV : 50, 60, 80 % passent tant que la cote est bonne.
-
-    C'est le choix explicite de l'utilisateur — les grosses EV sont voulues,
-    seule la cote borne ce qui est croyable."""
+def test_premium_has_no_ev_ceiling():
+    """50, 60, 80, 300 % — aucun plafond, tant que la cote tient dans la bande."""
     for ev in (50.0, 60.0, 80.0, 300.0):
-        assert "crit" in _critical_calls(_bet(ev_pct=ev, odd=2.40)), f"EV {ev} bloquée"
+        calls = _routed(_bet(ev_pct=ev, odd=2.40))
+        assert "prem" in calls and "crit" not in calls, f"EV {ev} mal routée"
 
 
-def test_critical_channel_keeps_bets_at_odds_band_edges():
-    """Les bornes sont inclusives — 1.5 et 6.0 passent, 6.01 non."""
-    assert "crit" in _critical_calls(_bet(ev_pct=40.0, odd=1.5))
-    assert "crit" in _critical_calls(_bet(ev_pct=40.0, odd=6.0))
-    assert "crit" not in _critical_calls(_bet(ev_pct=40.0, odd=6.01))
+def test_critical_keeps_extreme_odds_outside_premium_bands():
+    """Cote 14.00 à 97 % et cote 21.00 à 45 % : aucune bande premium ne les
+    prend, le critique doit donc continuer de les recevoir. Aucune limite de
+    cote sur ce canal — c'est sa raison d'être."""
+    for odd, ev in ((14.0, 97.0), (21.0, 45.0), (40.0, 60.0)):
+        calls = _routed(_bet(ev_pct=ev, odd=odd))
+        assert "crit" in calls, f"cote {odd} EV {ev} perdue"
+        assert "prem" not in calls
 
 
-def test_critical_odds_band_reads_env(monkeypatch):
-    monkeypatch.setenv("TELEGRAM_BOT_TOKEN", "t")
-    monkeypatch.setenv("TELEGRAM_CHAT_ID", "c")
-    monkeypatch.setenv("TELEGRAM_CRITICAL_MIN_ODD", "2.0")
-    monkeypatch.setenv("TELEGRAM_CRITICAL_MAX_ODD", "8.0")
-    cfg = TelegramConfig.from_env()
-    assert cfg is not None
-    assert (cfg.critical_min_odd, cfg.critical_max_odd) == (2.0, 8.0)
+def test_critical_keeps_low_odds_outside_premium_bands():
+    """Sous 1.5 le premium ne prend pas non plus — le critique récupère."""
+    calls = _routed(_bet(ev_pct=60.0, odd=1.2))
+    assert "crit" in calls and "prem" not in calls
 
 
-def test_critical_odds_band_defaults_to_premium_span(monkeypatch):
-    """Par défaut la bande critique couvre les deux voies premium (1.5–4, 4–6)."""
-    monkeypatch.setenv("TELEGRAM_BOT_TOKEN", "t")
-    monkeypatch.setenv("TELEGRAM_CHAT_ID", "c")
-    monkeypatch.delenv("TELEGRAM_CRITICAL_MIN_ODD", raising=False)
-    monkeypatch.delenv("TELEGRAM_CRITICAL_MAX_ODD", raising=False)
-    cfg = TelegramConfig.from_env()
-    assert cfg is not None
-    assert cfg.critical_min_odd == cfg.premium_min_odd
-    assert cfg.critical_max_odd == cfg.premium_hi_max_odd
+def test_high_odds_premium_lane_wins_over_critical():
+    """Cote 5.20 à 46 % : voie premium 4–6 (EV ≥ 20) — premium, pas critique."""
+    calls = _routed(_bet(ev_pct=46.0, odd=5.20))
+    assert "prem" in calls and "crit" not in calls
+
+
+def test_high_odds_below_premium_lane_minimum_falls_to_critical():
+    """Cote 5.00 à 40 % passe la voie 4–6 ; à EV 36 % aussi. La frontière utile
+    est 20 % : en dessous, premium refuse et seul le critique peut voir passer
+    le pari — encore faut-il qu'il atteigne 35 % d'EV."""
+    assert "prem" in _routed(_bet(ev_pct=36.0, odd=5.0))
+    # EV 15 % sur cote 5.0 : sous les 20 % du premium ET sous les 35 % du
+    # critique -> nulle part, comportement inchangé.
+    assert _routed(_bet(ev_pct=15.0, odd=5.0)) == []
+
+
+def test_critical_still_fires_when_premium_chat_unconfigured():
+    """Sans canal premium, rien n'a été livré : le critique doit rattraper le
+    pari plutôt que de le laisser disparaître en silence."""
+    calls = _routed(_bet(ev_pct=53.0, odd=1.82), premium=False)
+    assert "crit" in calls
 
 
 def test_critical_channel_called_for_high_margin_surebet():

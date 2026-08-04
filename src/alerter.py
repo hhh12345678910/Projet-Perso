@@ -221,16 +221,12 @@ class TelegramConfig:
     # Critical channel — receives a copy of every alert that clears the higher thresholds.
     # If not set, critical alerts are still sent to the normal channels only.
     critical_chat_id: str | None = None
+    # Canal critique — la voie de DÉBORDEMENT, pas un doublon du premium.
+    # Aucune limite de cote et aucun plafond d'EV : c'est précisément là que
+    # doivent atterrir les cotes 14, 21, 40 à EV énorme, qu'aucune bande premium
+    # n'accepte. En revanche il ne reçoit rien de ce que le premium a déjà pris
+    # — une cote 1.82 à 53 % est du premium, et une seule alerte suffit.
     min_critical_ev_pct: float = 35.0    # value bets above this also go to critical channel
-    # Bande de cotes du canal critique. Aucun plafond d'EV n'est posé — une EV
-    # de 50, 60 ou 80 % est voulue et doit passer — mais la cote, elle, borne ce
-    # qui est croyable : hors 1.5–6 la "value" vient presque toujours d'un
-    # appariement raté, pas d'une erreur du book. Cette bande couvre exactement
-    # celle des deux voies premium (1.5–4 et 4–6), donc le canal critique ne
-    # peut plus servir de porte dérobée pour des cotes qu'aucun autre canal
-    # n'accepte.
-    critical_min_odd: float = 1.5
-    critical_max_odd: float = 6.0
     min_critical_surebet_pct: float = 10.0  # surebets (margin%) above this also go to critical
     min_critical_clv_pct: float = 25.0   # CLV% above this also goes to critical channel
     # Premium channel — curated "best opportunities" copy: big value bets (incl.
@@ -299,8 +295,6 @@ class TelegramConfig:
             max_defer_s=float(os.getenv("TELEGRAM_MAX_DEFER", "45.0")),
             critical_chat_id=os.getenv("TELEGRAM_CRITICAL_CHAT_ID") or None,
             min_critical_ev_pct=float(os.getenv("TELEGRAM_MIN_CRITICAL_EV", "35.0")),
-            critical_min_odd=float(os.getenv("TELEGRAM_CRITICAL_MIN_ODD", "1.5")),
-            critical_max_odd=float(os.getenv("TELEGRAM_CRITICAL_MAX_ODD", "6.0")),
             min_critical_surebet_pct=float(os.getenv("TELEGRAM_MIN_CRITICAL_SUREBET", "10.0")),
             min_critical_clv_pct=float(os.getenv("TELEGRAM_MIN_CRITICAL_CLV", "25.0")),
             premium_chat_id=os.getenv("TELEGRAM_PREMIUM_CHAT_ID") or None,
@@ -687,10 +681,12 @@ class TelegramAlerter:
         premium/critical copies, which live on their own chats with their own
         budgets):
           - main chat:     min_ev_pct <= EV < main_max_ev_pct, odd within the main band
-          - premium chat:  EV >= min_premium_ev_pct, odd within the premium band
-          - critical chat: EV >= min_critical_ev_pct, odd within the critical band
-                           (no EV ceiling — huge EV is wanted; the odds band is
-                           what keeps mis-matched events out)
+          - premium chat:  EV >= min_premium_ev_pct within 1.5-4, or
+                           EV >= premium_hi_min_ev within 4-6. No EV ceiling.
+          - critical chat: EV >= min_critical_ev_pct, no odds limit, but ONLY
+                           when premium did not already take the bet — critical
+                           is the overflow lane for huge EV on odds no premium
+                           band accepts, not a second copy of premium.
 
         Returns True if at least one message was actually delivered, so the
         daemon marks the bet notified only when something went out — a
@@ -745,11 +741,16 @@ class TelegramAlerter:
             ev >= cfg.premium_hi_min_ev
             and cfg.premium_hi_min_odd <= bet.odd_taken <= cfg.premium_hi_max_odd
         )
-        if (
+        # Le premium a-t-il vraiment pris ce pari ? La question porte sur la
+        # livraison, pas sur la seule éligibilité : si le canal n'est pas
+        # configuré, rien n'a été envoyé et le critique doit encore pouvoir
+        # rattraper le pari plutôt que de le laisser disparaître en silence.
+        _premium_takes = bool(
             not is_live
             and cfg.effective_premium_chat_id
             and (_prem_standard or _prem_high_odds)
-        ):
+        )
+        if _premium_takes:
             button = None
             try:
                 token = _record_pending_play(
@@ -770,7 +771,7 @@ class TelegramAlerter:
             not is_live
             and cfg.effective_critical_chat_id
             and ev >= cfg.min_critical_ev_pct
-            and cfg.critical_min_odd <= bet.odd_taken <= cfg.critical_max_odd
+            and not _premium_takes
         ):
             delivered |= self._send(
                 "🚨 <b>VALUE BET EXCEPTIONNEL</b>\n" + text, chat_id=cfg.effective_critical_chat_id

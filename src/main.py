@@ -3838,8 +3838,8 @@ def doctor(hours: int = typer.Option(24, "--hours", help="Lookback window.")):
                    f"  ou  EV ≥ {tg.premium_hi_min_ev}% cotes "
                    f"{tg.premium_hi_min_odd}–{tg.premium_hi_max_odd}")
         ct.add_row("critique", "oui" if tg.effective_critical_chat_id else "[yellow]non[/yellow]",
-                   f"EV ≥ {tg.min_critical_ev_pct}% — [bold]aucun plafond d'EV[/bold], cotes "
-                   f"{tg.critical_min_odd}–{tg.critical_max_odd}, prématch uniquement")
+                   f"EV ≥ {tg.min_critical_ev_pct}% — [bold]aucune limite de cote[/bold], "
+                   f"prématch uniquement, [bold]hors de ce que premium a pris[/bold]")
         console.print(ct)
         console.print(
             f"[dim]  dédoublonnage : max {tg.valuebet_max_alerts} alertes par pari ; "
@@ -3954,22 +3954,25 @@ def doctor(hours: int = typer.Option(24, "--hours", help="Lookback window.")):
                     for r in extreme:
                         parsed = parse_event_key(r["event_key"])
                         live = parsed is not None and parsed[0] <= now
-                        odd = r["odd_taken"]
-                        if not tg.effective_critical_chat_id:
+                        odd, ev = r["odd_taken"], r["ev_pct"]
+                        # Le premium prend d'abord ; le critique ne récupère que
+                        # ce qu'aucune bande premium n'accepte. Nommer lequel des
+                        # deux a routé, sinon « pas d'alerte critique » et « déjà
+                        # parti ailleurs » se ressemblent (§13.12).
+                        premium = bool(tg.effective_premium_chat_id) and (
+                            (ev >= tg.min_premium_ev_pct
+                             and tg.premium_min_odd <= odd <= tg.premium_max_odd)
+                            or (ev >= tg.premium_hi_min_ev
+                                and tg.premium_hi_min_odd <= odd <= tg.premium_hi_max_odd)
+                        )
+                        if live:
+                            verdict = "[yellow]live — premium et critique sont prématch only[/yellow]"
+                        elif premium:
+                            verdict = "[green]→ premium[/green] (pas de doublon critique)"
+                        elif not tg.effective_critical_chat_id:
                             verdict = "[yellow]canal critique non configuré[/yellow]"
-                        elif live:
-                            verdict = "[yellow]live — critique est prématch only[/yellow]"
-                        elif not (tg.critical_min_odd <= odd <= tg.critical_max_odd):
-                            # Une EV énorme est voulue ; une cote hors bande ne
-                            # l'est pas. Dire lequel des deux a bloqué, sinon un
-                            # filtre trop strict et une absence de signal se
-                            # ressemblent (§13.12).
-                            verdict = (
-                                f"[yellow]cote hors bande {tg.critical_min_odd}–"
-                                f"{tg.critical_max_odd} — appariement suspect[/yellow]"
-                            )
                         else:
-                            verdict = "[green]→ critique[/green]"
+                            verdict = "[green]→ critique[/green] (hors bandes premium)"
                         et.add_row(r["book"], f"{r['odd_taken']:.2f}",
                                    f"{r['ev_pct']:.0f}", verdict)
                     console.print(et)
