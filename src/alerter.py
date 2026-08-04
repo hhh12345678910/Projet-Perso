@@ -222,6 +222,15 @@ class TelegramConfig:
     # If not set, critical alerts are still sent to the normal channels only.
     critical_chat_id: str | None = None
     min_critical_ev_pct: float = 35.0    # value bets above this also go to critical channel
+    # Bande de cotes du canal critique. Aucun plafond d'EV n'est posé — une EV
+    # de 50, 60 ou 80 % est voulue et doit passer — mais la cote, elle, borne ce
+    # qui est croyable : hors 1.5–6 la "value" vient presque toujours d'un
+    # appariement raté, pas d'une erreur du book. Cette bande couvre exactement
+    # celle des deux voies premium (1.5–4 et 4–6), donc le canal critique ne
+    # peut plus servir de porte dérobée pour des cotes qu'aucun autre canal
+    # n'accepte.
+    critical_min_odd: float = 1.5
+    critical_max_odd: float = 6.0
     min_critical_surebet_pct: float = 10.0  # surebets (margin%) above this also go to critical
     min_critical_clv_pct: float = 25.0   # CLV% above this also goes to critical channel
     # Premium channel — curated "best opportunities" copy: big value bets (incl.
@@ -290,6 +299,8 @@ class TelegramConfig:
             max_defer_s=float(os.getenv("TELEGRAM_MAX_DEFER", "45.0")),
             critical_chat_id=os.getenv("TELEGRAM_CRITICAL_CHAT_ID") or None,
             min_critical_ev_pct=float(os.getenv("TELEGRAM_MIN_CRITICAL_EV", "35.0")),
+            critical_min_odd=float(os.getenv("TELEGRAM_CRITICAL_MIN_ODD", "1.5")),
+            critical_max_odd=float(os.getenv("TELEGRAM_CRITICAL_MAX_ODD", "6.0")),
             min_critical_surebet_pct=float(os.getenv("TELEGRAM_MIN_CRITICAL_SUREBET", "10.0")),
             min_critical_clv_pct=float(os.getenv("TELEGRAM_MIN_CRITICAL_CLV", "25.0")),
             premium_chat_id=os.getenv("TELEGRAM_PREMIUM_CHAT_ID") or None,
@@ -677,7 +688,9 @@ class TelegramAlerter:
         budgets):
           - main chat:     min_ev_pct <= EV < main_max_ev_pct, odd within the main band
           - premium chat:  EV >= min_premium_ev_pct, odd within the premium band
-          - critical chat: EV >= min_critical_ev_pct
+          - critical chat: EV >= min_critical_ev_pct, odd within the critical band
+                           (no EV ceiling — huge EV is wanted; the odds band is
+                           what keeps mis-matched events out)
 
         Returns True if at least one message was actually delivered, so the
         daemon marks the bet notified only when something went out — a
@@ -753,7 +766,12 @@ class TelegramAlerter:
                 reply_markup=button,
             )
 
-        if not is_live and cfg.effective_critical_chat_id and ev >= cfg.min_critical_ev_pct:
+        if (
+            not is_live
+            and cfg.effective_critical_chat_id
+            and ev >= cfg.min_critical_ev_pct
+            and cfg.critical_min_odd <= bet.odd_taken <= cfg.critical_max_odd
+        ):
             delivered |= self._send(
                 "🚨 <b>VALUE BET EXCEPTIONNEL</b>\n" + text, chat_id=cfg.effective_critical_chat_id
             )

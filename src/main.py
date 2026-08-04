@@ -3838,8 +3838,8 @@ def doctor(hours: int = typer.Option(24, "--hours", help="Lookback window.")):
                    f"  ou  EV ≥ {tg.premium_hi_min_ev}% cotes "
                    f"{tg.premium_hi_min_odd}–{tg.premium_hi_max_odd}")
         ct.add_row("critique", "oui" if tg.effective_critical_chat_id else "[yellow]non[/yellow]",
-                   f"EV ≥ {tg.min_critical_ev_pct}% — [bold]aucune limite de cote[/bold], "
-                   f"prématch uniquement")
+                   f"EV ≥ {tg.min_critical_ev_pct}% — [bold]aucun plafond d'EV[/bold], cotes "
+                   f"{tg.critical_min_odd}–{tg.critical_max_odd}, prématch uniquement")
         console.print(ct)
         console.print(
             f"[dim]  dédoublonnage : max {tg.valuebet_max_alerts} alertes par pari ; "
@@ -3954,10 +3954,20 @@ def doctor(hours: int = typer.Option(24, "--hours", help="Lookback window.")):
                     for r in extreme:
                         parsed = parse_event_key(r["event_key"])
                         live = parsed is not None and parsed[0] <= now
+                        odd = r["odd_taken"]
                         if not tg.effective_critical_chat_id:
                             verdict = "[yellow]canal critique non configuré[/yellow]"
                         elif live:
                             verdict = "[yellow]live — critique est prématch only[/yellow]"
+                        elif not (tg.critical_min_odd <= odd <= tg.critical_max_odd):
+                            # Une EV énorme est voulue ; une cote hors bande ne
+                            # l'est pas. Dire lequel des deux a bloqué, sinon un
+                            # filtre trop strict et une absence de signal se
+                            # ressemblent (§13.12).
+                            verdict = (
+                                f"[yellow]cote hors bande {tg.critical_min_odd}–"
+                                f"{tg.critical_max_odd} — appariement suspect[/yellow]"
+                            )
                         else:
                             verdict = "[green]→ critique[/green]"
                         et.add_row(r["book"], f"{r['odd_taken']:.2f}",

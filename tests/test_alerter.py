@@ -369,6 +369,80 @@ def test_critical_channel_not_called_for_normal_ev_bet():
     assert calls == ["c"]
 
 
+def _critical_calls(bet) -> list[str]:
+    """Route one bet through a critical-enabled config, return the chats hit."""
+    calls = []
+
+    class FakeClient:
+        def post(self, url, json):
+            calls.append(json["chat_id"])
+            r = MagicMock(); r.status_code = 200
+            return r
+        def close(self): pass
+
+    cfg = TelegramConfig(
+        bot_token="t", chat_id="c", min_ev_pct=3.0, main_max_ev_pct=100.0,
+        critical_chat_id="crit", min_critical_ev_pct=35.0,
+        critical_min_odd=1.5, critical_max_odd=6.0,
+        min_send_interval_s=0.0,
+    )
+    with TelegramAlerter(cfg, client=FakeClient()) as a:
+        a.send_value_bet(bet)
+    return calls
+
+
+def test_critical_channel_drops_bet_above_odds_band():
+    """Cote 14.00 à 97 % d'EV : le book ne s'est pas trompé, c'est l'appariement.
+
+    Le cas réel du 04/08 — StarCasino à 14.00 et 21.00 atteignaient le canal
+    critique parce qu'il était le seul sans filtre de cote."""
+    assert "crit" not in _critical_calls(_bet(ev_pct=97.0, odd=14.0))
+    assert "crit" not in _critical_calls(_bet(ev_pct=45.0, odd=21.0))
+
+
+def test_critical_channel_drops_bet_below_odds_band():
+    """Sous 1.5 la value est trop petite pour survivre à la marge du book."""
+    assert "crit" not in _critical_calls(_bet(ev_pct=60.0, odd=1.2))
+
+
+def test_critical_channel_keeps_huge_ev_inside_odds_band():
+    """Aucun plafond d'EV : 50, 60, 80 % passent tant que la cote est bonne.
+
+    C'est le choix explicite de l'utilisateur — les grosses EV sont voulues,
+    seule la cote borne ce qui est croyable."""
+    for ev in (50.0, 60.0, 80.0, 300.0):
+        assert "crit" in _critical_calls(_bet(ev_pct=ev, odd=2.40)), f"EV {ev} bloquée"
+
+
+def test_critical_channel_keeps_bets_at_odds_band_edges():
+    """Les bornes sont inclusives — 1.5 et 6.0 passent, 6.01 non."""
+    assert "crit" in _critical_calls(_bet(ev_pct=40.0, odd=1.5))
+    assert "crit" in _critical_calls(_bet(ev_pct=40.0, odd=6.0))
+    assert "crit" not in _critical_calls(_bet(ev_pct=40.0, odd=6.01))
+
+
+def test_critical_odds_band_reads_env(monkeypatch):
+    monkeypatch.setenv("TELEGRAM_BOT_TOKEN", "t")
+    monkeypatch.setenv("TELEGRAM_CHAT_ID", "c")
+    monkeypatch.setenv("TELEGRAM_CRITICAL_MIN_ODD", "2.0")
+    monkeypatch.setenv("TELEGRAM_CRITICAL_MAX_ODD", "8.0")
+    cfg = TelegramConfig.from_env()
+    assert cfg is not None
+    assert (cfg.critical_min_odd, cfg.critical_max_odd) == (2.0, 8.0)
+
+
+def test_critical_odds_band_defaults_to_premium_span(monkeypatch):
+    """Par défaut la bande critique couvre les deux voies premium (1.5–4, 4–6)."""
+    monkeypatch.setenv("TELEGRAM_BOT_TOKEN", "t")
+    monkeypatch.setenv("TELEGRAM_CHAT_ID", "c")
+    monkeypatch.delenv("TELEGRAM_CRITICAL_MIN_ODD", raising=False)
+    monkeypatch.delenv("TELEGRAM_CRITICAL_MAX_ODD", raising=False)
+    cfg = TelegramConfig.from_env()
+    assert cfg is not None
+    assert cfg.critical_min_odd == cfg.premium_min_odd
+    assert cfg.critical_max_odd == cfg.premium_hi_max_odd
+
+
 def test_critical_channel_called_for_high_margin_surebet():
     """Surebet with margin > min_critical_surebet_pct → also posted to critical channel."""
     calls = []
