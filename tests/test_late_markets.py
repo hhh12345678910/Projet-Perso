@@ -68,10 +68,27 @@ def _no_history(_ek, _book, _before):
     return {}
 
 
+# Le consensus live : d'autres books qui, eux, ont repricé. Sans eux on ne peut
+# pas savoir si le prix figé est devenu absurde, et le détecteur se tait — c'est
+# la règle ajoutée après le flood de production, où « cote inchangée » suffisait
+# à alerter alors qu'elle ne prouve aucune valeur.
+def _live(*, home=1.30, away=3.40, market=MarketType.H2H,
+          labels=("home", "away"), odds=None, line=None, ek=EK,
+          books=(Book.BETANO_BE, Book.STARCASINO_SPORT)):
+    odds = odds or (home, away)
+    return [
+        OddQuote(event_key=ek, book=b, market=market,
+                 outcome=Outcome(label=lab, line=line), decimal_odd=o,
+                 fetched_at=NOW, source_event_id="live", from_live_feed=True)
+        for b in books for lab, o in zip(labels, odds)
+    ]
+
+
 def test_the_production_case_is_detected():
     """Pinnacle connaissait le match, ne le price plus (il est en direct), le
     coup d'envoi est dépassé de 19 min, et Circus propose encore du prématch."""
-    late = find_late_markets(_pin_elsewhere(), [_soft()], "soccer", NOW, prior_odds=_frozen, recent=_recent())
+    late = find_late_markets(_pin_elsewhere(), [_soft()] + _live(), "soccer",
+                             NOW, prior_odds=_frozen, recent=_recent())
     assert (EK, Book.CIRCUS_BE) in late
     assert len(late[(EK, Book.CIRCUS_BE)]) == 1
 
@@ -132,19 +149,33 @@ def test_the_book_own_kickoff_can_veto():
 
 
 def test_several_markets_of_one_book_are_grouped():
+    """Les marchés figés d'un même book arrivent ensemble — mais seules les
+    issues DU BON CÔTÉ sortent.
+
+    Circus est figé à 2.40 sur les deux camps. Le match a tourné : le consensus
+    live donne 72 % au domicile. Prendre le domicile à 2.40 vaut +73 % ; prendre
+    l'extérieur à 2.40 quand il ne vaut plus que 28 % est un mauvais pari, pas
+    une occasion. L'ancienne règle signalait les deux, faute de mesurer quoi que
+    ce soit."""
     quotes = [
         _soft(market=MarketType.H2H, label="home"),
         _soft(market=MarketType.H2H, label="away"),
         _soft(market=MarketType.TOTALS, label="over", line=2.5),
     ]
+    quotes += _live()
+    quotes += _live(market=MarketType.TOTALS, labels=("over", "under"),
+                    odds=(1.25, 3.60), line=2.5)
     late = find_late_markets(_pin_elsewhere(), quotes, "soccer", NOW, prior_odds=_frozen, recent=_recent())
-    assert len(late[(EK, Book.CIRCUS_BE)]) == 3
+    kept = late[(EK, Book.CIRCUS_BE)]
+    assert {(q.market, q.outcome.label) for q in kept} == {
+        (MarketType.H2H, "home"), (MarketType.TOTALS, "over"),
+    }
 
 
 def test_two_books_are_reported_separately():
-    late = find_late_markets(
-        _pin_elsewhere(), [_soft(book=Book.CIRCUS_BE), _soft(book=Book.UNIBET_BE)],
-        "soccer", NOW, prior_odds=_frozen, recent=_recent())
+    quotes = [_soft(book=Book.CIRCUS_BE), _soft(book=Book.UNIBET_BE)] + _live()
+    late = find_late_markets(_pin_elsewhere(), quotes, "soccer", NOW,
+                             prior_odds=_frozen, recent=_recent())
     assert {b for _, b in late} == {Book.CIRCUS_BE, Book.UNIBET_BE}
 
 
@@ -181,6 +212,9 @@ def test_only_the_frozen_market_of_a_live_book_is_reported():
                 ("btts", "over", None): 2.4}      # figée : oubliée
     quotes = [_soft(market=MarketType.H2H, label="home"),
               _soft(market=MarketType.BTTS, label="over")]
+    quotes += _live()
+    quotes += _live(market=MarketType.BTTS, labels=("over", "under"),
+                    odds=(1.20, 4.20))
     late = find_late_markets(_pin_elsewhere(), quotes, "soccer", NOW,
                              prior_odds=half, recent=_recent())
     kept = late[(EK, Book.CIRCUS_BE)]
@@ -351,3 +385,68 @@ def test_a_goal_bypasses_the_reminder_delay():
         m._LATE_ALERTED.clear()
         import importlib
         importlib.reload(m)
+
+
+# ── La règle du consensus live ────────────────────────────────────────────
+# « Cote inchangée » prouve que le book n'a pas repricé. Ça ne prouve PAS que le
+# pari vaut quelque chose. Deux situations produisent une cote inchangée : le
+# book a oublié de suspendre un 1-1 (exploitable), et le book est simplement
+# lent sur un 0-0 sans histoire (rien à gagner). Le second noyait le canal.
+
+def test_a_slow_book_on_an_uneventful_match_is_silent():
+    """LE faux positif signalé : tout a commencé, les autres books pricent en
+    direct à peu près au même prix, et le book figé n'offre donc aucun écart.
+    Rien ne s'est passé dans le match — il n'y a rien à jouer."""
+    quotes = [_soft()] + _live(home=2.35, away=1.60)   # consensus ≈ le prix figé
+    late = find_late_markets(_pin_elsewhere(), quotes, "soccer", NOW,
+                             prior_odds=_frozen, recent=_recent())
+    assert late == {}
+
+
+def test_a_market_the_game_has_settled_is_reported_with_its_edge():
+    """Le cas utile : le match a tourné, le consensus live est à 1.30, et le
+    book figé paie encore 2.40. C'est cet écart qui fait l'alerte."""
+    from src.main import late_market_edge
+    quotes = [_soft()] + _live(home=1.30, away=3.40)
+    late = find_late_markets(_pin_elsewhere(), quotes, "soccer", NOW,
+                             prior_odds=_frozen, recent=_recent())
+    kept = late[(EK, Book.CIRCUS_BE)]
+    assert len(kept) == 1
+    assert late_market_edge(EK, Book.CIRCUS_BE, kept[0]) > 50.0
+
+
+def test_without_a_live_consensus_we_stay_silent():
+    """Personne d'autre ne price ce marché en direct : impossible de savoir si
+    le prix figé est devenu absurde. Même exigence de preuve positive que pour
+    l'historique."""
+    late = find_late_markets(_pin_elsewhere(), [_soft()], "soccer", NOW,
+                             prior_odds=_frozen, recent=_recent())
+    assert late == {}
+
+
+def test_one_live_book_is_not_a_consensus():
+    """Un seul book qui a bougé peut se tromper tout seul. Deux qui bougent
+    ensemble, c'est le marché."""
+    quotes = [_soft()] + _live(books=(Book.BETANO_BE,))
+    late = find_late_markets(_pin_elsewhere(), quotes, "soccer", NOW,
+                             prior_odds=_frozen, recent=_recent())
+    assert late == {}
+
+
+def test_the_frozen_book_never_feeds_its_own_consensus():
+    """Un book ne peut pas servir de référence à lui-même : sa propre cote
+    figée tirerait le consensus vers le prix périmé et effacerait l'écart."""
+    quotes = [_soft(book=Book.BETANO_BE)] + _live(
+        books=(Book.BETANO_BE, Book.STARCASINO_SPORT, Book.NAPOLEON_BE))
+    late = find_late_markets(_pin_elsewhere(), quotes, "soccer", NOW,
+                             prior_odds=_frozen, recent=_recent())
+    assert (EK, Book.BETANO_BE) in late
+
+
+def test_an_incomplete_market_is_not_devigged():
+    """Un 1X2 dont il manque une issue donne une somme d'implicites sous 1 :
+    le déviger fabriquerait des probabilités inventées."""
+    from src.live_consensus import book_probs
+    assert book_probs({"home": 2.0, "draw": 3.5}) is None       # somme 0.79
+    assert book_probs({"home": 2.0}) is None                     # une seule issue
+    assert book_probs({"home": 2.0, "draw": 3.5, "away": 3.4}) is not None

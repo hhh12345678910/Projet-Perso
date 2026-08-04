@@ -19,6 +19,7 @@ from rich.table import Table
 
 from .config import ScanConfig, load_env_file
 from .devig import devig, overround as _overround
+from .live_consensus import consensus_probs, edge_pct
 from .ev import ev_pct, fair_odd, kelly_fraction, kelly_stake
 from .leagues import categorize as _league_category
 from .matcher import parse_event_key, reconcile_event_keys, tolerance_for
@@ -437,6 +438,11 @@ _LATE_MARKET_MAX_MIN = float(os.getenv("LATE_MARKET_MAX_MINUTES", "75"))
 # silence, et un canal critique noyé ne sert plus à rien. Mieux vaut pouvoir
 # l'éteindre depuis .env, sans déploiement, que de subir une nuit d'alertes.
 _LATE_MARKET_ENABLED = os.getenv("LATE_MARKET_ENABLED", "1") == "1"
+# Écart minimal contre le consensus live pour qu'un marché figé mérite une
+# alerte. Élevé à dessein : la référence est une moyenne de books soft, dont les
+# marges live tournent à 8-12 %. On cherche des marchés qu'un but a déjà
+# tranchés, pas des edges à 3 % — ceux-là seraient du bruit de mesure.
+_LATE_MARKET_MIN_EDGE = float(os.getenv("LATE_MARKET_MIN_EDGE", "15.0"))
 
 
 def remember_pinnacle_events(pinnacle_quotes: list[OddQuote], now: float) -> None:
@@ -534,20 +540,27 @@ def find_late_markets(
     if not started:
         return {}
 
-    candidates = [q for q in soft_raw if not q.from_live_feed]
-    if not candidates:
+    if not soft_raw:
         return {}
     mapping = reconcile_event_keys(
         reference_keys=list(started),
-        candidate_keys={q.event_key for q in candidates},
+        candidate_keys={q.event_key for q in soft_raw},
         time_tolerance_minutes=tolerance_for(sport),
     )
 
-    out: dict[tuple[str, Book], list[OddQuote]] = defaultdict(list)
+    # Premier passage : classer chaque cote en FIGÉE (inchangée depuis le coup
+    # d'envoi, donc suspecte) ou VIVANTE (le book a repricé, donc utilisable
+    # comme référence). Une cote sans historique n'est ni l'une ni l'autre :
+    # on ne peut prouver ni qu'elle a bougé, ni qu'elle est restée. L'inclure
+    # dans le consensus tirerait la référence vers le prix périmé et masquerait
+    # justement l'écart qu'on cherche.
+    frozen: list[tuple[str, OddQuote]] = []
+    # (ref_key, market, line) -> {book: {label: cote}}
+    live: dict[tuple, dict[Book, dict[str, float]]] = defaultdict(lambda: defaultdict(dict))
     # Un événement porte des dizaines de cotes : sans ce cache, l'historique
     # serait relu une fois par cote au lieu d'une fois par (match, book).
     history: dict[tuple[str, Book], dict] = {}
-    for q in candidates:
+    for q in soft_raw:
         match = mapping.get(q.event_key)
         if match is None:
             continue
@@ -559,6 +572,13 @@ def find_late_markets(
         if book_parsed is not None:
             if (now - book_parsed[0]).total_seconds() / 60.0 < _LATE_MARKET_MIN_MIN:
                 continue
+        mkey = (ref_key, q.market.value, q.outcome.line)
+
+        # Une cote issue d'un flux live est vivante par construction : c'est le
+        # book lui-même qui la déclare en direct.
+        if q.from_live_feed:
+            live[mkey][q.book][q.outcome.label] = q.decimal_odd
+            continue
 
         hkey = (ref_key, q.book)
         if hkey not in history:
@@ -574,16 +594,59 @@ def find_late_markets(
         before = history[hkey].get(
             (q.market.value, q.outcome.label, q.outcome.line))
         if before is None:
-            # Jamais relevée avant le coup d'envoi : impossible de prouver
-            # qu'elle n'a pas bougé. Le silence est le seul choix honnête.
             stats["sans_historique"] += 1
             continue
         if abs(before - q.decimal_odd) > 1e-9:
             stats["cote_bougée"] += 1
+            live[mkey][q.book][q.outcome.label] = q.decimal_odd
+            continue
+        frozen.append((ref_key, q))
+
+    if not frozen:
+        return {}
+
+    # Second passage : une cote figée ne vaut une alerte que si le marché a
+    # DIVERGÉ. Sans cette mesure, on signalait aussi bien un book qui a oublié
+    # de suspendre un 1-1 qu'un book simplement lent sur un 0-0 sans histoire —
+    # le second n'offre rien à gagner, et c'est lui qui noyait le canal.
+    out: dict[tuple[str, Book], list[OddQuote]] = defaultdict(list)
+    consensus: dict[tuple, dict[str, float] | None] = {}
+    for ref_key, q in frozen:
+        mkey = (ref_key, q.market.value, q.outcome.line)
+        if mkey not in consensus:
+            others = {b: o for b, o in live.get(mkey, {}).items() if b != q.book}
+            consensus[mkey] = consensus_probs(others)
+        probs = consensus[mkey]
+        if probs is None:
+            # Personne d'autre ne price ce marché en direct : impossible de
+            # savoir si le prix figé est devenu absurde. On se tait.
+            stats["sans_consensus"] += 1
+            continue
+        fair = probs.get(q.outcome.label)
+        if fair is None:
+            stats["sans_consensus"] += 1
+            continue
+        edge = edge_pct(q.decimal_odd, fair)
+        if edge < _LATE_MARKET_MIN_EDGE:
+            stats["écart_faible"] += 1
             continue
         stats["retenue"] += 1
+        # L'écart voyage avec la cote : c'est lui que l'alerte doit montrer.
+        _LATE_EDGES[(ref_key, q.book, q.market.value, q.outcome.label,
+                     q.outcome.line)] = edge
         out[(ref_key, q.book)].append(q)
     return dict(out)
+
+
+# Écart mesuré par cote retenue, relu au moment de formater l'alerte. Un
+# dictionnaire plutôt qu'un champ sur OddQuote : la structure est gelée et
+# partagée par tous les scrapers, alors que cette valeur n'a de sens que ici.
+_LATE_EDGES: dict[tuple, float] = {}
+
+
+def late_market_edge(ref_key: str, book: Book, q: OddQuote) -> float | None:
+    return _LATE_EDGES.get(
+        (ref_key, book, q.market.value, q.outcome.label, q.outcome.line))
 
 
 # (event_key, book) déjà signalés, avec l'instant de la dernière alerte. Un
@@ -677,13 +740,16 @@ def _report_late_markets(late: dict, sport: str, tg_cfg,
         parsed = parse_event_key(ek)
         if parsed is None:
             continue
+        edges = {(q.market.value, q.outcome.label, q.outcome.line): e
+                 for q in quotes
+                 if (e := late_market_edge(ek, book, q)) is not None}
         fresh.append((ek, book, quotes, (now - parsed[0]).total_seconds() / 60.0,
-                      _LIVE_SCORES.get(ek), ek in goals))
+                      _LIVE_SCORES.get(ek), ek in goals, edges))
     if not fresh:
         return
     console.print(
         f"\\[{sport}]   ⏱️  marchés en retard : "
-        + ", ".join(f"{b.value} ({len(q)} cotes)" for _, b, q, _, _, _ in fresh)
+        + ", ".join(f"{b.value} ({len(q)} cotes)" for _, b, q, *_ in fresh)
     )
     sent = send_late_market_alerts(
         fresh, tg_cfg,

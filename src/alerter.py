@@ -911,21 +911,38 @@ class TelegramAlerter:
             return False
 
 
+def _edge_key(q) -> tuple:
+    """Identifie une cote dans la table des écarts."""
+    return (q.market.value, q.outcome.label, q.outcome.line)
+
+
 def format_late_market(event_key: str, book: Book, quotes: list,
                        minutes_late: float, sport: str | None = None,
-                       score: tuple | None = None, is_goal: bool = False) -> str:
-    """Message d'un marché prématch resté ouvert sur un match commencé."""
+                       score: tuple | None = None, is_goal: bool = False,
+                       edges: dict | None = None) -> str:
+    """Message d'un marché prématch resté ouvert sur un match commencé.
+
+    `edges` donne l'écart mesuré, par cote, contre le consensus des books qui
+    pricent déjà en direct. C'est la seule chose qui distingue une occasion
+    d'un book simplement lent, donc elle passe en tête du message."""
     parsed = parse_event_key(event_key)
     if parsed is not None:
         _, home_norm, away_norm = parsed
         matchup = f"{_prettify_team_name(home_norm)} vs {_prettify_team_name(away_norm)}"
     else:
         matchup = event_key
-    markets = sorted({
-        f"{q.market.value}"
-        + (f" {q.outcome.line}" if q.outcome.line is not None else "")
-        for q in quotes
-    })
+    edges = edges or {}
+    # Une ligne par issue retenue, la plus grosse d'abord : c'est celle-là
+    # qu'on joue. Le marché seul (« totals 2.5 ») ne dit ni de quel côté ni
+    # combien, ce qui obligeait à rouvrir le book pour le savoir.
+    lines = []
+    for q in sorted(quotes, key=lambda x: -(edges.get(_edge_key(x), 0.0))):
+        label = q.outcome.label + (f" {q.outcome.line:g}"
+                                   if q.outcome.line is not None else "")
+        gap = edges.get(_edge_key(q))
+        gap_txt = f"  <b>+{gap:.0f}%</b> vs live" if gap is not None else ""
+        lines.append(f"• {q.market.value} <b>{label}</b> @ {q.decimal_odd:.2f}{gap_txt}")
+    best = max(edges.values(), default=None)
     # Le score change tout : « les deux équipes marquent » sur un 1-1 est déjà
     # gagné, et c'est invisible sans cette ligne. Absent quand le flux live
     # Betano ne couvre pas ce match — on le dit plutôt que de laisser croire
@@ -943,9 +960,11 @@ def format_late_market(event_key: str, book: Book, quotes: list,
         f"{score_line}"
         f"Commencé depuis <b>{minutes_late:.0f} min</b> selon Pinnacle, "
         f"encore proposé en prématch.\n"
-        f"Marchés ouverts : {', '.join(markets)}\n"
-        f"⚠️ Vérifie le score avant de jouer — et sache que le book peut "
-        f"annuler un pari pris sur un marché qu'il aurait dû suspendre."
+        + (f"📈 Écart max <b>+{best:.0f}%</b> contre le prix live des autres books\n"
+           if best is not None else "")
+        + "\n".join(lines) + "\n"
+        + "⚠️ Vérifie le score avant de jouer — et sache que le book peut "
+        "annuler un pari pris sur un marché qu'il aurait dû suspendre."
     )
 
 
@@ -975,8 +994,9 @@ def send_late_market_alerts(
             ek, book, quotes, late = item[:4]
             score = item[4] if len(item) > 4 else None
             is_goal = bool(item[5]) if len(item) > 5 else False
+            edges = item[6] if len(item) > 6 else None
             text = format_late_market(ek, book, quotes, late, sport=sport,
-                                      score=score, is_goal=is_goal)
+                                      score=score, is_goal=is_goal, edges=edges)
             if alerter._send(text, chat_id=chat):
                 sent.append(item)
     return sent
