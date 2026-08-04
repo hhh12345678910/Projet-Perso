@@ -268,3 +268,45 @@ def test_scan_query_still_sees_rows_written_before_the_migration(tmp_path):
     ).fetchone()[0]
     con.close()
     assert n == 1
+
+
+# ------------------------------------------------------------- dispatch -----
+# Dans un CANAL Telegram, un message posté arrive en "channel_post" et non en
+# "message". Les canaux d'alerte du projet en sont : n'écouter que "message"
+# faisait que /scan ne recevait jamais rien, sans la moindre trace au journal.
+
+def _dispatch_capture(monkeypatch, upd):
+    import bot_listener
+    seen = {}
+    monkeypatch.setattr(bot_listener, "handle_message", lambda m: seen.setdefault("msg", m))
+    monkeypatch.setattr(bot_listener, "handle_callback", lambda c: seen.setdefault("cb", c))
+    bot_listener.dispatch(upd)
+    return seen
+
+
+def test_dispatch_routes_channel_post_like_a_message(monkeypatch):
+    post = {"chat": {"id": -100123}, "text": "/scan"}
+    assert _dispatch_capture(monkeypatch, {"update_id": 1, "channel_post": post}) == {"msg": post}
+
+
+def test_dispatch_routes_plain_message(monkeypatch):
+    msg = {"chat": {"id": 42}, "text": "/scan"}
+    assert _dispatch_capture(monkeypatch, {"update_id": 1, "message": msg}) == {"msg": msg}
+
+
+def test_dispatch_routes_callback_query(monkeypatch):
+    cb = {"id": "x", "data": "play:abc"}
+    assert _dispatch_capture(monkeypatch, {"update_id": 1, "callback_query": cb}) == {"cb": cb}
+
+
+def test_dispatch_logs_unhandled_update_types(monkeypatch, capsys):
+    _dispatch_capture(monkeypatch, {"update_id": 1, "poll_answer": {}})
+    assert "poll_answer" in capsys.readouterr().out
+
+
+def test_allowed_updates_covers_every_type_dispatch_handles():
+    """Telegram ne livre que ce qui est demandé : un type géré par dispatch mais
+    absent d'allowed_updates n'arriverait jamais — l'erreur d'origine."""
+    import bot_listener
+    for kind in ("callback_query", "message", "channel_post", "edited_channel_post"):
+        assert kind in bot_listener.ALLOWED_UPDATES

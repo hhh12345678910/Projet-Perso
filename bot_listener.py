@@ -19,6 +19,7 @@ from __future__ import annotations
 
 import os
 import sqlite3
+import sys
 import time
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
@@ -408,21 +409,27 @@ def _allowed_chats(cfg) -> set[str]:
 
 
 def handle_message(msg: dict) -> None:
-    text = (msg.get("text") or "").strip()
+    text = (msg.get("text") or msg.get("caption") or "").strip()
+    chat_id = str((msg.get("chat") or {}).get("id") or "")
     if not text.startswith("/"):
         return
     # "/scan@mon_bot arg" -> "/scan"
     cmd = text.split()[0].split("@", 1)[0].lower()
     if cmd not in ("/scan", "/start"):
+        print(f"[{datetime.now():%H:%M:%S}] commande inconnue {cmd!r} (chat {chat_id})")
         return
-    chat_id = str((msg.get("chat") or {}).get("id") or "")
 
     from src.alerter import TelegramConfig
     cfg = TelegramConfig.from_env()
     if cfg is None:
+        print("TELEGRAM_BOT_TOKEN/CHAT_ID absents — /scan desactive")
         return
-    if chat_id not in _allowed_chats(cfg):
-        print(f"[{datetime.now():%H:%M:%S}] {cmd} ignore d'un chat inconnu ({chat_id})")
+    allowed = _allowed_chats(cfg)
+    if chat_id not in allowed:
+        # Dire lequel, et contre quoi : sans ça, « /scan ne répond pas » et
+        # « le bot n'a rien reçu » sont indiscernables.
+        print(f"[{datetime.now():%H:%M:%S}] {cmd} refuse — chat {chat_id} "
+              f"absent des TELEGRAM_*_CHAT_ID connus ({sorted(allowed)})")
         return
 
     if cmd == "/start":
@@ -483,6 +490,27 @@ def _mark_button_done(cb: dict) -> None:
 
 
 # --------------------------------------------------------------- Loop -------
+# channel_post en plus de message : dans un CANAL Telegram, un message posté
+# n'arrive pas en "message" mais en "channel_post". Les canaux d'alerte de ce
+# projet en sont, donc sans lui /scan ne recevait rien — et un update jamais
+# reçu ne laisse aucune trace nulle part.
+ALLOWED_UPDATES = ["callback_query", "message", "channel_post", "edited_channel_post"]
+
+
+def dispatch(upd: dict) -> None:
+    """Aiguille un update. Un type non traité est journalisé, jamais jeté en
+    silence : sans ça « la commande ne répond pas » et « le bot n'a rien reçu »
+    sont indiscernables (§13.12)."""
+    if "callback_query" in upd:
+        handle_callback(upd["callback_query"])
+        return
+    for kind in ("message", "channel_post", "edited_channel_post"):
+        if kind in upd:
+            handle_message(upd[kind])
+            return
+    print(f"update ignore: {[k for k in upd if k != 'update_id']}")
+
+
 def read_offset() -> int:
     if OFFSET_PATH.exists():
         try:
@@ -499,8 +527,21 @@ def save_offset(off: int) -> None:
 def main() -> None:
     global API
     API = f"https://api.telegram.org/bot{load_token()}"
+    # Sous systemd, stdout n'est pas un terminal : Python le tamponne par blocs
+    # de 4 Ko et les diagnostics n'arrivent au journal que bien plus tard, quand
+    # on en a justement besoin tout de suite.
+    try:
+        sys.stdout.reconfigure(line_buffering=True)
+    except Exception:
+        pass
     offset = read_offset()
     print(f"bot_listener demarre (offset={offset}, db={DB_PATH}, xlsx={XLSX_PATH})")
+    try:
+        from src.alerter import TelegramConfig
+        _cfg = TelegramConfig.from_env()
+        print(f"chats acceptes pour /scan : {sorted(_allowed_chats(_cfg)) if _cfg else 'AUCUN'}")
+    except Exception as e:
+        print("config Telegram illisible:", e)
     try:    # fait apparaitre /scan dans le menu Telegram ; sans effet sur le reste
         tg("setMyCommands", commands=[
             {"command": "scan", "description": "Les value bets encore jouables"},
@@ -510,13 +551,10 @@ def main() -> None:
     while True:
         try:
             resp = tg("getUpdates", offset=offset, timeout=50,
-                      allowed_updates=["callback_query", "message"])
+                      allowed_updates=ALLOWED_UPDATES)
             for upd in resp.get("result", []):
                 offset = upd["update_id"] + 1
-                if "callback_query" in upd:
-                    handle_callback(upd["callback_query"])
-                elif "message" in upd:
-                    handle_message(upd["message"])
+                dispatch(upd)
                 save_offset(offset)
         except requests.RequestException as e:
             print("reseau:", e)
