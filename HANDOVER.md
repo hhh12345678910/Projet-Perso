@@ -1,15 +1,22 @@
 # Valuebet — état du projet
 
 Document de reprise. À lire en premier pour reprendre le travail sans
-redécouvrir le contexte. Dernière mise à jour : 30/07/2026.
+redécouvrir le contexte. Dernière mise à jour : 04/08/2026.
 
 **Si tu ne lis que trois choses :** §1 pour la mesure qui fait autorité
-(+8,86 % de CLV, 10,1 σ), §11 pour les cinq pannes silencieuses du 30/07 et le
-mode de défaillance qu'elles révèlent, §6 pour la seconde référence sharp —
-le plus gros levier restant.
+(+8,86 % de CLV, 10,1 σ), §11 pour le mode de défaillance dominant du projet
+(la panne silencieuse), §13 pour la session du 04/08 — état actuel, ce qui
+tourne, et ce qui reste ouvert.
 
-Dépôt : `hhh12345678910/Projet-Perso` — branche `claude/handover-md-review-r54ezj`
+Dépôt : `hhh12345678910/Projet-Perso` — branche **`claude/project-summary-2cz4sk`**
 VM : Google Cloud, `us-central1`, IP `34.59.193.111`, utilisateur `hubindylan98`
+Répertoire sur la VM : **`~/Projet-Perso`** (`valuebet` est le nom d'hôte, pas
+un dossier — l'erreur a coûté un aller-retour)
+
+Déploiement :
+```bash
+cd ~/Projet-Perso && git pull && sudo systemctl restart valuebet-daemon
+```
 
 ---
 
@@ -883,3 +890,200 @@ Le système entier est plafonné par le quota d'une source unique. C'est le
 troisième argument, et le plus concret, en faveur de la seconde référence
 sharp (§6) : **Smarkets**, API publique sans authentification, prix sans marge
 par construction, scraper déjà écrit.
+
+---
+
+## 13. Session du 04/08 — état actuel
+
+Une trentaine de commits, de `e431b5d` à `b26793d`. Quatre chantiers : le
+plafond Pinnacle, l'outillage de diagnostic, la collecte de données pour un
+futur filtre ML, et un détecteur de marchés en retard.
+
+### Ce qui tourne en production
+
+Branche `claude/project-summary-2cz4sk`, commit `b26793d`. Sept books couverts
+à 100 % sur les derniers runs mesurés, cycle à 18-21 s de médiane.
+
+⚠️ **La VM était restée sur `claude/stoic-babbage-q16wi3`** pendant une partie
+de la session — un `git pull` répondait « Already up to date » sur la mauvaise
+branche pendant que le travail partait ailleurs. Vérifier `git branch
+--show-current` avant de conclure qu'un correctif ne marche pas.
+
+### 13.1 Pinnacle — la cause réelle des 403
+
+**Ce n'était pas le nombre de requêtes, c'était le volume.** Le football
+téléchargeait ~5 Mo par cycle, soit ~12 Go/jour, et **les deux tiers étaient le
+calendrier** (`/sports/{id}/matchups`), qui ne porte aucune cote.
+
+Correctif : cache mémoire du calendrier (`PINNACLE_MATCHUPS_TTL_SEC`, 300 s par
+défaut) dans `src/scrapers/pinnacle.py`. Trafic passé de 0,25 à ~0,028 Mo/s.
+
+`PINNACLE_MIN_INTERVAL_SEC=60` est **justifié par la mesure** : `line_speed.py`
+montre 99,5 % de cotes Pinnacle inchangées à 60 s d'intervalle. L'espacement ne
+retarde aucune détection (les books soft restent interrogés à chaque cycle) ;
+il ne fait vieillir que la ligne de référence.
+
+**Non appliqué, offert** : `PINNACLE_MAX_REUSE_SEC=240`. Avec `60 + 120 ≤ 240`,
+un 403 isolé ne créerait jamais de trou de détection. Coût mesuré ≈ 0,02 point
+d'EV. À trancher.
+
+### 13.2 `database is locked` — 695 fetches perdus en 11 h
+
+Cause : `teams.record()` écrivait en base **pendant le parsing des scrapers**,
+et entrait en collision avec `close-lines` et la purge. Une exception y faisait
+tomber tout le scrape.
+
+Correctif : `src/teams.py` avale désormais les échecs de stockage — un registre
+d'affichage n'a aucune raison de faire échouer une collecte.
+
+### 13.3 Circus — 180 s de latence, pas 30
+
+Chrome throttle les timers des onglets en arrière-plan. Le userscript croyait
+tenir 30 s, la mesure disait 180 s. Correctif : cadencement piloté par un
+Worker, et découplage tick/période. **Mesuré après déploiement : 6-19 s.**
+
+Le harnais de selftest était lui-même faux (5/7 même sur la version d'origine) :
+`nextCycle()` mélangeait les requêtes de deux cycles. Corrigé en se
+synchronisant d'abord sur le silence ; 7/7 sur les deux versions, et 2/7 en
+réintroduisant volontairement le bug d'attribution.
+
+### 13.4 Outils de diagnostic
+
+| Outil | Ce qu'il répond |
+|---|---|
+| `tools/pinnacle_doctor.py` | Pourquoi Pinnacle est sauté. **Un tableau par run** (403/429, cycles sautés, verrous, couverture du book le plus faible) — `--runs 0` pour n'avoir que le tableau |
+| `tools/line_speed.py` | Vitesse de correction des books, dérive de la ligne Pinnacle |
+| `tools/clv_delay.py` | CLV par délai avant coup d'envoi, avec déduplication et tests de Welch |
+| `export-tracking` | Sort l'historique de la VM (4,2 Mo) |
+
+**Pourquoi le doctor existe** : trois messages différents portent le mot
+« skipping » et n'ont rien à voir entre eux (échec d'appel / zéro événement /
+exception traversante). Les confondre a envoyé deux diagnostics de cette
+session dans le décor.
+
+⚠️ **Un `grep -c` sur `valuebet.log` ne veut rien dire.** Le journal couvre
+plusieurs jours et plusieurs versions du code : 750 « database is locked » et
+314 « HTTP 403 » cumulés, alors que les runs récents n'en ont aucun. Toujours
+raisonner par run.
+
+`push-backups.sh` **ne peut pas fonctionner** : la base fait 31 Go, la limite
+GitHub est 100 Mo. D'où `export-tracking`.
+
+### 13.5 Ce que dit le CLV sur un mois complet
+
+**Correction importante d'une conclusion antérieure.** Sur 9 jours, la tranche
+24-48 h avant coup d'envoi paraissait être un trou (−0,82 %, n=51). Sur le mois
+complet elle est à **+2,92 % (σ=2,1)**, significativement positive. La
+recommandation de couper cette tranche était fausse et a été retirée.
+
+**Sur les paris joués vs non joués** — correction de l'utilisateur : « Je ne
+fais pas du triage, c'est juste que je n'ai pas le temps des fois de le jouer. »
+L'écart observé n'est donc pas une compétence de sélection, et jouer plus
+systématiquement ne dégraderait rien.
+
+**Non appliqué, offert** : faire porter la bande de cotes du canal premium sur
+`fair_odd` plutôt que sur `odd_taken`. Mesuré : +8,6 % de volume, +0,21 point
+de CLV, 44 % des paris changent de tranche. En attente de décision.
+
+### 13.6 Collecte pour un futur filtre ML
+
+L'objectif énoncé : « récolter un max de données sur tous les matchs que je
+peux suivre », pour entraîner plus tard un modèle qui filtre les mauvais paris.
+
+- `src/storage.py` : tables `bet_features` et `bet_corrections`
+- `src/leagues.py` : catégorisation des championnats, précédence
+  `amical > féminin > jeunes > coupe > D2 > D3 > top5 > région > autre`
+- `OddQuote.match_score` : le score du rapprochement flou était calculé puis
+  jeté. Un appariement à 86 et un à 100 n'inspirent pas la même confiance, et
+  « mauvais matching » est une cause soupçonnée de faux positifs.
+- La ligue est désormais persistée dans `events` (elle était écrite vide, donc
+  aucune analyse par championnat n'était possible, même a posteriori)
+- Commandes : `features-report`, `corrections-report`, `export-tracking`
+
+### 13.7 Détecteur de marchés en retard — et son flood
+
+L'occasion : un match commencé depuis 19 min, 1-1, et Circus proposait encore
+son marché « les deux équipes marquent » en prématch. Le pari était déjà gagné
+au moment de le prendre.
+
+**Mis en service, il a immédiatement noyé le canal critique.** Deux défauts
+indépendants, corrigés dans `b26793d` :
+
+1. **La prémisse était fausse.** « Le book expose encore ce match, donc il a
+   oublié de suspendre » ne tient pas : Circus, Unibet et ses clones Kambi,
+   Napoleon et StarCasino continuent d'exposer un match commencé et se
+   contentent de le repricer en direct, sans qu'aucun champ ne le signale.
+   Seuls **Betano** (drapeau live) et **Ladbrokes** (`live: 0`) permettent la
+   distinction. Le détecteur signalait le fonctionnement normal de 4 books sur 7.
+
+   Le vrai discriminant est le **prix** : un marché oublié a gardé sa cote
+   d'avant le coup d'envoi, un book qui price en direct l'a forcément déplacée.
+   Comparaison **par issue** et non par match — un book peut repricer son 1X2
+   tout en oubliant son BTTS, et c'est exactement l'occasion recherchée.
+   Sans historique on se tait : preuve positive d'immobilité exigée.
+
+2. **Pinnacle muet valait « tout a disparu ».** Sans réponse, `live_now` est
+   vide et le veto « Pinnacle le price encore » sautait sans bruit. Un recul
+   après 403 suffisait : au moment où le système était le moins sûr de lui, il
+   devenait le plus bavard.
+
+**Alerte instantanée sur but** : le flux live Betano est la **seule** source de
+score du projet (Pinnacle ignore les matchs en cours). Football uniquement — au
+tennis le champ `score` porte les points du jeu et change à chaque échange. Un
+événement vu pour la première fois n'est jamais un but, sinon le canal partirait
+en rafale à chaque redémarrage.
+
+Réglages `.env` : `LATE_MARKET_ENABLED` (coupe-circuit sans déploiement),
+`LATE_MARKET_MIN_MINUTES=10`, `LATE_MARKET_MAX_MINUTES=75`,
+`LATE_MARKET_COOLDOWN_SEC=300`.
+
+**À vérifier au prochain démarrage** — les compteurs par cycle :
+```bash
+grep "marchés en retard —" valuebet.log | tail -20
+```
+Format : `retenue N, cote bougée N, sans historique N, pinnacle muet N`. Ils
+existent parce qu'un filtre trop strict et un book sans erreur donnent le même
+résultat — rien — et qu'il faut pouvoir distinguer les deux.
+
+### 13.8 Demandes retirées par l'utilisateur
+
+- **Mise à jour / suppression automatique des messages Telegram** (EV qui
+  s'actualise, retrait sous 8 %). Retiré : « Je préfère peut-être un jour
+  prochain plus loin donc créer un SaaS. » Les trois fichiers ont été remis en
+  état, 391 tests + 7/7 JS vérifiés à ce moment-là.
+- **Purge de la base** : « je ne veux pas purger, je veux laisser comme c'était
+  avant, ça roulait bien » — précisé ensuite : « juste par rapport à la purge,
+  mais pas par rapport aux autres modifs ». Les correctifs de purge (verrou,
+  progression, `--max-seconds`) restent dans le code ; c'est l'exécution d'une
+  purge agressive qui est écartée.
+
+### 13.9 À faire au prochain démarrage
+
+1. **Vérifier le détecteur de marchés en retard** (§13.7) — les compteurs
+   après une soirée complète. C'est le point le plus chaud.
+2. **`pinnacle_doctor.py --runs 0` sur un run long** — confirmer 403 et verrous
+   à 0 après une journée pleine sans redémarrage. Les runs mesurés jusqu'ici
+   étaient trop courts (2 à 11 cycles) pour conclure.
+3. **Trancher les deux réglages offerts** : `PINNACLE_MAX_REUSE_SEC=240`
+   (§13.1) et la bande premium sur `fair_odd` (§13.5).
+4. **Smarkets comme seconde référence sharp** (§6) — le plus gros levier
+   restant. Les appels groupés lèvent le blocage des 26 minutes.
+5. **SaaS / plateforme web** montrant les value bets encore valides — intention
+   exprimée, rien de commencé.
+
+### 13.10 Pièges rencontrés, à ne pas refaire
+
+- **`echo 'VAR=x' >> .env` sans garde** a créé des doublons deux fois. Toujours :
+  `sed -i '/^VAR=/d' .env && echo 'VAR=x' >> .env`
+- **`set -euo pipefail` + `diff`** : `diff` sort en 1 dès qu'il y a une
+  différence et tuait `setup.sh --check` après le premier écart. Entourer de
+  `{ diff ... } || true`.
+- **Un mock peut masquer un désaccord d'arité.** `send_late_market_alerts`
+  attendait 4 champs et le cycle lui en passait 6 ; le `ValueError` aurait été
+  avalé par le `except` du cycle, détecteur muet sans une ligne au journal. Le
+  test remplaçait la fonction par un mock. Un test de bout en bout a été ajouté.
+- **Un test qui dépend de `time.monotonic()` absolu** échoue dans un conteneur
+  fraîchement démarré. Poser explicitement la valeur de départ.
+- **Ne pas réduire une taille de lot sans mesurer** : les batches de purge
+  ramenés de 200k à 50k ont rendu l'opération beaucoup plus lente. Revenus à
+  200k, avec progression toutes les 5 s.
