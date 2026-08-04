@@ -295,6 +295,94 @@ def test_a_403_is_an_outage(monkeypatch):
     assert m.pinnacle_fetch_failed("soccer") is True
 
 
+def _raising(exc):
+    class _Boom:
+        def __enter__(self): return self
+        def __exit__(self, *a): return False
+        def fetch_market_quotes(self, sport):
+            raise exc
+    return _Boom
+
+
+def _clean(m):
+    for d in (m._PINNACLE_CACHE, m._PINNACLE_BLOCKED_UNTIL, m._PINNACLE_BACKOFF,
+              m._PINNACLE_SERVED_FROM_CACHE, m._PINNACLE_FAILED,
+              m._PINNACLE_EMPTY_STREAK, m._PINNACLE_LAST_PROBE):
+        d.clear()
+
+
+def test_a_maintenance_503_is_an_outage_not_an_empty_calendar(monkeypatch):
+    """Panne vécue le 04/08 : Pinnacle a répondu 503 « MAINTENANCE » pendant
+    des heures, sur football ET tennis. tenacity ré-emballe l'échec final dans
+    RetryError, qui n'est pas une HTTPStatusError — le tri par code HTTP ne la
+    voyait donc jamais, le drapeau d'échec restait faux, et le cycle concluait
+    « Pinnacle sans événement (hors-saison ?) » sur du football un 4 août.
+
+    Conséquence : aucune alerte « Pinnacle muet », et la panne totale du
+    système s'est découverte à l'absence de notifications de value."""
+    import httpx
+    from tenacity import RetryError
+    import src.main as m
+
+    inner = httpx.HTTPStatusError(
+        "503", request=httpx.Request("GET", "https://x"),
+        response=httpx.Response(503, text='{"title": "MAINTENANCE"}'))
+
+    class _Attempt:
+        def exception(self): return inner
+
+    monkeypatch.setattr(m, "PinnacleScraper", _raising(RetryError(_Attempt())))
+    monkeypatch.setattr(m, "_PINNACLE_GAP", 0.0)
+    _clean(m)
+
+    assert m.fetch_pinnacle_quotes("soccer") == []
+    assert m.pinnacle_fetch_failed("soccer") is True, \
+        "un 503 est une panne, pas un calendrier vide"
+    # Et il doit reculer : marteler une API en maintenance ne sert à rien.
+    assert m._PINNACLE_BACKOFF.get("soccer", 0) > 0
+
+
+def test_a_retry_wrapped_403_still_backs_off(monkeypatch):
+    """Le déballage doit servir tous les codes, pas seulement le 503."""
+    import httpx
+    from tenacity import RetryError
+    import src.main as m
+
+    inner = httpx.HTTPStatusError(
+        "403", request=httpx.Request("GET", "https://x"),
+        response=httpx.Response(403))
+
+    class _Attempt:
+        def exception(self): return inner
+
+    monkeypatch.setattr(m, "PinnacleScraper", _raising(RetryError(_Attempt())))
+    monkeypatch.setattr(m, "_PINNACLE_GAP", 0.0)
+    _clean(m)
+
+    assert m.fetch_pinnacle_quotes("soccer") == []
+    assert m.pinnacle_fetch_failed("soccer") is True
+    assert m._PINNACLE_BACKOFF.get("soccer", 0) > 0
+
+
+def test_a_network_failure_is_reported_as_an_outage(monkeypatch):
+    """Une RetryError qui n'enveloppe aucun code HTTP (timeout, DNS) doit
+    quand même poser le drapeau : elle remonte, mais pas en silence."""
+    import httpx
+    from tenacity import RetryError
+    import src.main as m
+
+    class _Attempt:
+        def exception(self): return httpx.ConnectError("dns")
+
+    monkeypatch.setattr(m, "PinnacleScraper", _raising(RetryError(_Attempt())))
+    monkeypatch.setattr(m, "_PINNACLE_GAP", 0.0)
+    _clean(m)
+
+    with pytest.raises(Exception):
+        m.fetch_pinnacle_quotes("soccer")
+    assert m.pinnacle_fetch_failed("soccer") is True
+
+
 def test_an_out_of_season_sport_stops_burning_the_quota(monkeypatch):
     """Quatre sports scannés font huit requêtes Pinnacle par cycle, dont
     quatre pour des calendriers vides en août. C'est ce quota qui manque au

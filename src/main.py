@@ -13,6 +13,7 @@ import time
 
 import httpx
 import typer
+from tenacity import RetryError
 from rich.console import Console
 from rich.table import Table
 
@@ -1282,22 +1283,28 @@ def fetch_pinnacle_quotes(sport: str) -> list[OddQuote]:
             with PinnacleScraper() as pin:
                 quotes = list(pin.fetch_market_quotes(sport))
             _PINNACLE_LAST_CALL = time.monotonic()
-    except httpx.HTTPStatusError as e:
+    except (httpx.HTTPStatusError, RetryError) as raw:
         _PINNACLE_LAST_CALL = time.monotonic()
-        if e.response.status_code in (403, 429):
-            with _PINNACLE_LOCK:
-                back = min(_PINNACLE_BACKOFF.get(sport, 0.0) * 2 or _PINNACLE_BACKOFF_START,
-                           _PINNACLE_BACKOFF_MAX)
-                _PINNACLE_BACKOFF[sport] = back
-                _PINNACLE_BLOCKED_UNTIL[sport] = time.monotonic() + back
-            console.print(
-                f"[yellow]Pinnacle {sport} : HTTP {e.response.status_code}, "
-                f"pause de {back:.0f}s avant nouvelle tentative[/yellow]"
-            )
-            _PINNACLE_SERVED_FROM_CACHE[sport] = True
-            _PINNACLE_FAILED[sport] = True
-            return _pinnacle_cached(sport)
+        e = _unwrap_retry(raw)
         _PINNACLE_FAILED[sport] = True
+        if isinstance(e, httpx.HTTPStatusError):
+            code = e.response.status_code
+            # 5xx rejoint 403/429 : pendant une maintenance Pinnacle répond 503
+            # à chaque appel, et réessayer à chaque cycle ne fait que brasser du
+            # vide. Le recul vaut aussi pour une panne d'en face.
+            if code in (403, 429) or code >= 500:
+                with _PINNACLE_LOCK:
+                    back = min(_PINNACLE_BACKOFF.get(sport, 0.0) * 2 or _PINNACLE_BACKOFF_START,
+                               _PINNACLE_BACKOFF_MAX)
+                    _PINNACLE_BACKOFF[sport] = back
+                    _PINNACLE_BLOCKED_UNTIL[sport] = time.monotonic() + back
+                console.print(
+                    f"[yellow]Pinnacle {sport} : HTTP {code}"
+                    + (" (maintenance annoncée)" if code == 503 else "")
+                    + f", pause de {back:.0f}s avant nouvelle tentative[/yellow]"
+                )
+                _PINNACLE_SERVED_FROM_CACHE[sport] = True
+                return _pinnacle_cached(sport)
         raise
 
     _PINNACLE_SERVED_FROM_CACHE[sport] = False
@@ -1324,6 +1331,23 @@ def fetch_pinnacle_quotes(sport: str) -> list[OddQuote]:
                     f"{_PINNACLE_IDLE_INTERVAL / 60:.0f} min[/dim]"
                 )
     return quotes
+
+
+def _unwrap_retry(exc: BaseException) -> BaseException:
+    """Rendre à une RetryError l'exception qu'elle enveloppe.
+
+    tenacity ré-emballe l'échec final dans `RetryError`, qui n'est pas une
+    `HTTPStatusError`. Le tri par code HTTP juste au-dessus ne la voyait donc
+    jamais : un 503 de maintenance traversait `fetch_pinnacle_quotes` sans
+    poser le drapeau d'échec, ressortait de `_fetch_all_parallel` en simple
+    « Pinnacle skipped », et le cycle concluait « Pinnacle sans événement
+    (hors-saison ?) » — sur du football, un 4 août. Aucune alerte n'est partie
+    et la panne s'est vue à l'absence de value bets, pas au journal."""
+    if isinstance(exc, RetryError) and exc.last_attempt is not None:
+        inner = exc.last_attempt.exception()
+        if inner is not None:
+            return inner
+    return exc
 
 
 def pinnacle_fetch_failed(sport: str) -> bool:
