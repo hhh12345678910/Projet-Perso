@@ -213,6 +213,34 @@ def report(run: Run, idx: int, total: int, sport_filter: str) -> None:
     print()
 
 
+def overview(runs: list[Run]) -> None:
+    """Un run par ligne — la seule vue qui montre l'effet d'un correctif.
+
+    Le rapport détaillé ne porte que sur les derniers runs, ce qui ne dit rien
+    d'une tendance. Et un `grep -c` sur le journal entier dit encore moins :
+    il additionne toutes les versions du code depuis des jours, donc un
+    compteur reste énorme longtemps après que la cause a disparu. Ici chaque
+    ligne est bornée à un démarrage du daemon : c'est ce qui permet de lire
+    « avant / après » sans se raconter d'histoires."""
+    print(f"{'#':>3} {'début':>9} {'→ fin':>9} {'cycles':>7} {'méd.':>6} "
+          f"{'403/429':>8} {'échec':>6} {'verrous':>8} {'min. couv.':>11}")
+    for i, r in enumerate(runs, start=1):
+        d = sorted(r.durations)
+        med = f"{d[len(d)//2]}s" if d else "—"
+        refus = sum(n for (_sp, code), n in r.http.items() if code in ("403", "429"))
+        locked = sum(n for (_b, msg), n in r.skipped.items() if "locked" in msg)
+        slots = r.cycles * max(1, len(r.sports))
+        cov = min((100 * n / slots for n in r.quotes.values()), default=0.0) if slots else 0.0
+        flag = "" if cov >= 95 else "  ⚠️"
+        print(f"{i:>3} {r.first_ts:>9} {r.last_ts:>9} {r.cycles:>7} {med:>6} "
+              f"{refus:>8} {sum(r.fail.values()):>6} {locked:>8} "
+              f"{cov:>10.0f} %{flag}")
+    print("\n  403/429 : refus de Pinnacle — recul déclenché, cotes perdues\n"
+          "  échec   : cycles où Pinnacle a été sauté après un appel raté\n"
+          "  verrous : « database is locked » — la base bloque le scrape\n"
+          "  min. couv. : le book le MOINS présent de ce run (le maillon faible)\n")
+
+
 def main() -> None:
     p = argparse.ArgumentParser(description=__doc__,
                                 formatter_class=argparse.RawDescriptionHelpFormatter)
@@ -228,7 +256,13 @@ def main() -> None:
         print(f"Aucun cycle trouvé dans {args.log}.")
         return
     print(f"{len(runs)} run(s) dans le journal — un run = un démarrage du daemon.\n")
-    for i, r in enumerate(runs[-args.runs:], start=len(runs) - min(args.runs, len(runs)) + 1):
+    overview(runs)
+    # `runs[-0:]` renvoie TOUTE la liste : sans ce garde-fou, « --runs 0 »
+    # détaille tout au lieu de ne rien détailler, et numérote les runs à côté.
+    if args.runs <= 0:
+        return
+    n = min(args.runs, len(runs))
+    for i, r in enumerate(runs[-n:], start=len(runs) - n + 1):
         report(r, i, len(runs), args.sport)
 
 
