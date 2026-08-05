@@ -257,13 +257,14 @@ CREATE INDEX IF NOT EXISTS idx_bc_open
 -- référence ou si c'est la référence qui est venue à lui — or c'est exactement
 -- la question à laquelle une courbe doit répondre.
 CREATE TABLE IF NOT EXISTS odds_history (
-    value_bet_id  INTEGER NOT NULL,
+    value_bet_id  INTEGER NOT NULL,   -- identifie la SÉLECTION suivie
+    book          TEXT NOT NULL,      -- de qui est cette cote
     seen_at       TEXT NOT NULL,
     odd           REAL NOT NULL,
     fair_odd      REAL,
     ev_pct        REAL
 );
-CREATE INDEX IF NOT EXISTS idx_oh_bet ON odds_history(value_bet_id, seen_at);
+CREATE INDEX IF NOT EXISTS idx_oh_bet ON odds_history(value_bet_id, book, seen_at);
 """
 
 
@@ -526,21 +527,31 @@ class Storage:
         return len(rows)
 
     def open_corrections(self, *, max_age_hours: float = 48.0) -> list[sqlite3.Row]:
-        """Suivis encore ouverts : au moins un des deux jalons reste à franchir.
+        """Suivis encore ouverts : **jusqu'au coup d'envoi**.
 
-        La condition porte sur `aligned_at` et non sur `corrected_at` seul : un
-        book peut avoir fermé la fenêtre sans avoir rejoint la ligne juste, et
-        c'est justement ce trajet-là qu'on veut continuer à observer.
+        La condition portait sur les jalons — un suivi se fermait dès que la
+        fenêtre jouable ET l'alignement étaient franchis. C'était suffisant pour
+        mesurer des délais, mais ça tronquait la courbe : un book qui rejoint la
+        ligne juste en dix minutes cessait d'être observé pendant les six heures
+        suivantes, alors que c'est là que le marché se forme.
 
-        Borné en âge pour que la requête reste petite à chaque cycle — au-delà,
-        un book qui n'a pas bougé ne bougera plus, et son observation censurée
-        est déjà enregistrée."""
-        cutoff = (datetime.now(timezone.utc) - timedelta(hours=max_age_hours)).isoformat()
+        Les jalons ne s'en trouvent pas faussés : chaque `UPDATE` porte sa
+        propre garde `... IS NULL`, donc un jalon déjà franchi n'est jamais
+        réécrit.
+
+        Un suivi sans `kickoff` connu retombe sur l'ancienne règle : sans heure
+        de fin, il faut bien un critère d'arrêt. Et l'âge reste borné pour que
+        la requête demeure petite à chaque cycle — un horaire faux ne doit pas
+        faire traîner un suivi indéfiniment."""
+        now = datetime.now(timezone.utc)
+        cutoff = (now - timedelta(hours=max_age_hours)).isoformat()
         with self._conn() as c:
             return list(c.execute(
                 "SELECT * FROM bet_corrections "
-                "WHERE (corrected_at IS NULL OR aligned_at IS NULL) "
-                "AND detected_at > ?", (cutoff,)
+                "WHERE detected_at > ? AND ("
+                "  (kickoff IS NOT NULL AND kickoff > ?)"
+                "  OR (kickoff IS NULL AND (corrected_at IS NULL OR aligned_at IS NULL))"
+                ")", (cutoff, now.isoformat())
             ))
 
     def update_corrections(
@@ -561,12 +572,8 @@ class Storage:
         with self._conn() as c:
             if history:
                 c.executemany(
-                    "INSERT INTO odds_history(value_bet_id, seen_at, odd, fair_odd, ev_pct) "
-                    "VALUES (?, ?, ?, ?, ?)", history,
-                )
-                c.executemany(
-                    "UPDATE bet_corrections SET last_odd_seen = ? WHERE value_bet_id = ?",
-                    [(h[2], h[0]) for h in history],
+                    "INSERT INTO odds_history(value_bet_id, book, seen_at, odd, "
+                    "fair_odd, ev_pct) VALUES (?, ?, ?, ?, ?, ?)", history,
                 )
             if observed:
                 c.executemany(
@@ -1105,15 +1112,16 @@ class Storage:
         """
         with self._conn() as c:
             return list(c.execute(
-                "SELECT h.value_bet_id, h.seen_at, h.odd, h.fair_odd, h.ev_pct, "
-                "       v.event_key, v.book, v.market, v.outcome_label, v.line, "
+                "SELECT h.value_bet_id, h.book, h.seen_at, h.odd, h.fair_odd, h.ev_pct, "
+                "       v.event_key, v.market, v.outcome_label, v.line, "
                 "       v.odd_taken, v.ev_pct AS ev_detect, v.detected_at, "
+                "       v.book AS detect_book, "
                 "       e.sport "
                 "FROM odds_history h "
                 "JOIN value_bets v ON v.id = h.value_bet_id "
                 "LEFT JOIN events e ON e.event_key = v.event_key "
                 "WHERE v.detected_at >= ? AND v.ev_pct >= ? "
-                "ORDER BY h.value_bet_id, h.seen_at",
+                "ORDER BY h.value_bet_id, h.book, h.seen_at",
                 (since, min_ev),
             ))
 

@@ -359,11 +359,19 @@ def build_bet_features(
     return rows
 
 
+# Dernière cote enregistrée par (suivi, book), en mémoire. Une table le ferait
+# aussi, au prix d'une écriture par book et par cycle — alors que le seul coût
+# de l'oubli est un point redondant après un redémarrage, qui ne fausse aucune
+# courbe. Borné par le nombre de suivis ouverts, donc par la fenêtre de 48 h.
+_CURVE_LAST: dict[tuple, float] = {}
+
+
 def track_corrections(
     open_rows: list[dict],
     soft_quotes: list[OddQuote],
     now: datetime,
     fair_lines: dict | None = None,
+    pinnacle_quotes: list[OddQuote] | None = None,
 ) -> tuple[list[tuple], list[tuple], list[tuple], list[tuple]]:
     """Confronter les suivis ouverts aux cotes du cycle.
 
@@ -375,6 +383,19 @@ def track_corrections(
     cycle à l'autre, n'écrire que les changements divise le volume par cinquante
     sans perdre une seule information — la série se reconstruit en propageant la
     dernière valeur connue.
+
+    La trajectoire couvre **tous les books** qui proposent la sélection, plus
+    Pinnacle, et pas seulement le book qui a déclenché la détection : un graphe
+    du marché demande toutes les courbes, et le prix d'un seul book ne dit pas
+    si c'est lui qui a bougé ou le marché entier.
+
+    Pinnacle y figure comme n'importe quel autre book, avec sa cote AFFICHÉE.
+    `fair_odd` porte à part la même ligne dévigée — les deux ne se confondent
+    pas, l'écart entre elles étant la commission, mesurée à 6,6 % en médiane.
+
+    Une sélection détectée sur trois books n'est enregistrée QU'UNE fois : sans
+    cette déduplication, chacun des trois suivis relèverait les sept books et on
+    écrirait trois copies de la même courbe.
 
     `fair_lines` permet d'y joindre la référence AU MÊME INSTANT. Sans elle on
     verrait le book bouger sans savoir s'il rejoint la référence ou si c'est la
@@ -408,10 +429,43 @@ def track_corrections(
             current[key] = q.decimal_odd
 
     ts = now.isoformat()
+    # Toutes les cotes du cycle par sélection, tous books confondus.
+    by_selection: dict[tuple, dict[str, float]] = defaultdict(dict)
+    for q in list(soft_quotes) + list(pinnacle_quotes or []):
+        skey = (q.event_key, q.market.value, q.outcome.label, q.outcome.line)
+        prev = by_selection[skey].get(q.book.value)
+        if prev is None or q.decimal_odd < prev:
+            by_selection[skey][q.book.value] = q.decimal_odd
+
     observed: list[tuple] = []
     corrected: list[tuple] = []
     aligned: list[tuple] = []
     history: list[tuple] = []
+    # Une seule courbe par sélection, portée par le plus petit id : trois
+    # détections de la même sélection ne doivent pas produire trois copies.
+    curve_owner: dict[tuple, int] = {}
+    for r in sorted(open_rows, key=lambda x: int(x["value_bet_id"])):
+        skey = (r["event_key"], r["market"], r["outcome_label"], r["line"])
+        curve_owner.setdefault(skey, int(r["value_bet_id"]))
+
+    for skey, owner in curve_owner.items():
+        cur_fair = _current_fair_odd(fair_lines, {
+            "event_key": skey[0], "market": skey[1],
+            "outcome_label": skey[2], "line": skey[3],
+        })
+        for book, odd in sorted(by_selection.get(skey, {}).items()):
+            ckey = (owner, book)
+            last = _CURVE_LAST.get(ckey)
+            if last is not None and abs(last - odd) <= 1e-9:
+                continue
+            _CURVE_LAST[ckey] = odd
+            # L'EV n'a pas de sens pour la référence elle-même : la comparer à
+            # sa propre ligne dévigée mesurerait la commission, pas un edge.
+            ev = None
+            if cur_fair and book != Book.PINNACLE.value:
+                ev = (odd / cur_fair - 1.0) * 100.0
+            history.append((owner, book, ts, odd, cur_fair, ev))
+
     for r in open_rows:
         key = (r["event_key"], r["book"], r["market"], r["outcome_label"], r["line"])
         odd = current.get(key)
@@ -419,15 +473,6 @@ def track_corrections(
             continue
         vid = int(r["value_bet_id"])
         observed.append((ts, odd, vid))
-
-        # Un point de trajectoire, seulement si la cote a bougé. Le premier
-        # passage (last_odd_seen à NULL) en écrit toujours un : c'est l'origine
-        # de la courbe, sans laquelle on ne saurait pas d'où le book est parti.
-        last = r.get("last_odd_seen")
-        if last is None or abs(float(last) - odd) > 1e-9:
-            cur_fair = _current_fair_odd(fair_lines, r)
-            ev = (odd / cur_fair - 1.0) * 100.0 if cur_fair else None
-            history.append((vid, ts, odd, cur_fair, ev))
         try:
             det = datetime.fromisoformat(r["detected_at"])
             if det.tzinfo is None:
@@ -1975,6 +2020,7 @@ def _daemon_scan_sport(
             ])
             obs, corr, algn, hist = track_corrections(
                 [dict(r) for r in storage.open_corrections()], soft_q, _now, fair,
+                pinnacle_q,
             )
             storage.update_corrections(obs, corr, algn, hist)
             if corr or algn:
@@ -3011,7 +3057,8 @@ def export_tracking(
     # `quotes` est délibérément absente : c'est la seule table volumineuse, et
     # la seule dont le contenu soit reconstituable par un simple scan.
     TABLES = ("events", "value_bets", "clv_snapshots", "played_bets",
-              "results", "bet_features", "bet_corrections", "teams")
+              "results", "bet_features", "bet_corrections", "odds_history",
+              "teams")
 
     src = ScanConfig().db_path
     if not os.path.exists(src):
@@ -3100,20 +3147,23 @@ def export_curves(
         return
 
     headers = [
-        "value_bet_id", "Sport", "Match", "Book", "Marché", "Pari",
-        "Coup d'envoi", "Détecté à", "Cote détection", "EV détection %",
-        "Instant", "Minutes après détection", "Minutes avant coup d'envoi",
-        "Cote", "Cote juste", "EV %",
+        "value_bet_id", "Sport", "Match", "Marché", "Pari",
+        "Coup d'envoi", "Détecté à", "Book détection", "Cote détection",
+        "EV détection %",
+        "Book", "Instant", "Minutes après détection",
+        "Minutes avant coup d'envoi", "Cote", "Cote juste", "EV %",
     ]
-    by_bet: dict[int, list] = defaultdict(list)
+    # Groupé par (pari, book) : chaque book est une courbe distincte, et
+    # `--filled` doit propager chacune séparément.
+    by_bet: dict[tuple, list] = defaultdict(list)
     for r in rows:
-        by_bet[r["value_bet_id"]].append(r)
+        by_bet[(r["value_bet_id"], r["book"])].append(r)
 
     n_pts = 0
     with open(out, "w", newline="", encoding="utf-8") as f:
         w = csv.writer(f)
         w.writerow(headers)
-        for vid, pts in by_bet.items():
+        for (vid, book), pts in by_bet.items():
             head = pts[0]
             ko = parse_event_key(head["event_key"])
             kickoff = ko[0] if ko else None
@@ -3133,13 +3183,15 @@ def export_curves(
                     continue
                 w.writerow([
                     vid, head["sport"] or "", _pretty_match(head["event_key"]),
-                    head["book"], head["market"],
+                    head["market"],
                     f"{head['outcome_label']}"
                     + (f" {head['line']}" if head["line"] is not None else ""),
                     kickoff.isoformat()[:19] if kickoff else "",
                     head["detected_at"][:19],
+                    head["detect_book"],
                     f"{float(head['odd_taken']):.2f}",
                     f"{float(head['ev_detect']):.2f}",
+                    book,
                     p["seen_at"][:19],
                     f"{(t - det).total_seconds() / 60:.1f}",
                     f"{(kickoff - t).total_seconds() / 60:.1f}" if kickoff else "",
@@ -3149,7 +3201,8 @@ def export_curves(
                 ])
                 n_pts += 1
     console.print(
-        f"[green]✓[/green] {len(by_bet)} trajectoires, {n_pts} points → "
+        f"[green]✓[/green] {len({k[0] for k in by_bet})} sélections, "
+        f"{len(by_bet)} courbes, {n_pts} points → "
         f"[bold]{out}[/bold]"
     )
 

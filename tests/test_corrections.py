@@ -178,36 +178,82 @@ def test_observations_accumulate_and_track_the_lowest_price(tmp_path):
     assert abs(low - 2.25) < 1e-9
 
 
-# ── Trajectoire complète — une ligne par CHANGEMENT ───────────────────────
+# ── Trajectoire complète — une ligne par CHANGEMENT, tous books ──────────
 # Les deux jalons ne donnent que deux instants. Un graphe demande tous les
-# points. Comme 97 à 99 % des cotes sont identiques d'un cycle à l'autre,
-# n'écrire que les changements divise le volume par cinquante — et la série
-# se reconstruit en propageant la dernière valeur connue.
+# points, et pour TOUS les books : le prix d'un seul ne dit pas si c'est lui qui
+# a bougé ou le marché entier. Comme 97 à 99 % des cotes sont identiques d'un
+# cycle à l'autre, n'écrire que les changements divise le volume par cinquante.
 
-def _hist(open_rows, quotes, now=T0, fair=None):
-    return track_corrections(open_rows, quotes, now, fair)[3]
+@pytest.fixture(autouse=True)
+def _clear_curve_state():
+    """`_CURVE_LAST` est un état de module, partagé dans le process."""
+    from src.main import _CURVE_LAST
+    _CURVE_LAST.clear()
+    yield
+    _CURVE_LAST.clear()
+
+
+def _hist(open_rows, quotes, now=T0, fair=None, pin=None):
+    return track_corrections(open_rows, quotes, now, fair, pin)[3]
 
 
 def test_first_observation_always_opens_the_curve():
     """Sans point d'origine, on ne saurait pas d'où le book est parti."""
     h = _hist([_open_row(2.30)], [_quote(2.30)])
-    assert len(h) == 1 and h[0][2] == 2.30
+    assert len(h) == 1
+    owner, book, _ts, odd, _fair, _ev = h[0]
+    assert odd == 2.30 and book == "unibet_be"
 
 
 def test_an_unchanged_odd_writes_nothing():
     """Le cœur de l'économie de volume : 97 à 99 % des cycles sont muets."""
-    row = _open_row(2.30)
-    row["last_odd_seen"] = 2.30
-    assert _hist([row], [_quote(2.30)]) == []
+    rows, q = [_open_row(2.30)], [_quote(2.30)]
+    assert len(_hist(rows, q)) == 1        # premier passage
+    assert _hist(rows, q) == []            # second : rien n'a bougé
 
 
 def test_every_change_is_recorded():
-    row = _open_row(2.30)
-    row["last_odd_seen"] = 2.30
-    h = _hist([row], [_quote(2.25)])
-    assert len(h) == 1
-    vid, ts, odd, fair, ev = h[0]
-    assert odd == 2.25 and vid == int(row["value_bet_id"])
+    rows = [_open_row(2.30)]
+    _hist(rows, [_quote(2.30)])
+    h = _hist(rows, [_quote(2.25)])
+    assert len(h) == 1 and h[0][3] == 2.25
+
+
+def test_all_books_of_the_selection_are_tracked_not_just_the_detected_one():
+    """Le graphe demandé montre TOUS les books. Le suivi est ouvert sur Unibet,
+    mais StarCasino et Napoleon pricent la même sélection."""
+    h = _hist([_open_row(2.30)], [
+        _quote(2.30, book=Book.UNIBET_BE),
+        _quote(2.45, book=Book.STARCASINO_SPORT),
+        _quote(2.20, book=Book.NAPOLEON_BE),
+    ])
+    assert {p[1] for p in h} == {"unibet_be", "starcasino_sport", "napoleon_be"}
+
+
+def test_pinnacle_is_tracked_as_a_series_of_its_own():
+    """« Je veux voir aussi la cote de Pinnacle » : elle entre comme les autres,
+    avec sa cote AFFICHÉE. `fair_odd` porte à part la même ligne dévigée —
+    l'écart entre les deux est la commission, pas un edge."""
+    pin = [_quote(2.05, book=Book.PINNACLE)]
+    h = _hist([_open_row(2.30)], [_quote(2.30)], pin=pin)
+    series = {p[1]: p for p in h}
+    assert "pinnacle" in series
+    assert series["pinnacle"][3] == 2.05
+    assert series["pinnacle"][5] is None, "aucune EV pour la référence elle-même"
+
+
+def test_one_selection_detected_on_three_books_writes_one_curve():
+    """Sans déduplication, chacun des trois suivis relèverait tous les books et
+    on écrirait trois copies de la même courbe."""
+    rows = []
+    for i, bk in enumerate(("unibet_be", "starcasino_sport", "napoleon_be"), 1):
+        r = _open_row(2.30, book=bk)
+        r["value_bet_id"] = i
+        rows.append(r)
+    h = _hist(rows, [_quote(2.30, book=Book.UNIBET_BE),
+                     _quote(2.45, book=Book.STARCASINO_SPORT)])
+    assert {p[0] for p in h} == {1}, "une seule courbe, portée par le plus petit id"
+    assert len(h) == 2
 
 
 def test_a_market_absent_from_the_cycle_writes_nothing():
@@ -220,14 +266,14 @@ def test_the_reference_of_the_moment_travels_with_the_point():
     """La ligne juste bouge aussi. Enregistrer celle de la détection ferait
     croire à une convergence du book alors que c'est parfois Pinnacle qui s'est
     déplacé — l'inverse de ce qu'un graphe doit montrer."""
-    from src.models import FairLine, MarketType
+    from src.models import FairLine
     row = _open_row(2.30)
     fair = {(row["event_key"], MarketType(row["market"]), row["line"]):
             FairLine(event_key=row["event_key"], market=MarketType(row["market"]),
                      outcomes={row["outcome_label"]: 0.50})}
     h = _hist([row], [_quote(2.30)], fair=fair)
     assert len(h) == 1
-    _vid, _ts, odd, fair_odd, ev = h[0]
+    _owner, _book, _ts, odd, fair_odd, ev = h[0]
     assert fair_odd == pytest.approx(2.00)          # 1 / 0.50
     assert ev == pytest.approx(15.0)                # 2.30 / 2.00 - 1
 
@@ -236,23 +282,51 @@ def test_a_missing_reference_leaves_the_point_but_empties_the_fair():
     """Un point sans référence reste un point de prix valable ; le taire
     trouerait la courbe pour une information annexe."""
     h = _hist([_open_row(2.30)], [_quote(2.30)], fair=None)
-    assert len(h) == 1 and h[0][3] is None and h[0][4] is None
+    assert len(h) == 1 and h[0][4] is None and h[0][5] is None
 
 
-def test_history_and_last_odd_seen_stay_consistent(tmp_path):
-    """Bout en bout : deux cycles, une seule écriture par changement, et
-    last_odd_seen suit — sinon le cycle suivant réécrirait le même point."""
+def test_the_curve_runs_to_kickoff_not_to_alignment(tmp_path):
+    """Un book qui rejoint la ligne juste en dix minutes cessait d'être observé
+    pendant les six heures suivantes — or c'est là que le marché se forme."""
     from src.storage import Storage
     st = Storage(tmp_path / "t.db")
-    st.seed_corrections([(1, T0.isoformat(), None, "unibet_be", EK,
+    ko = T0 + timedelta(hours=4)
+    st.seed_corrections([(1, T0.isoformat(), ko.isoformat(), "unibet_be", EK,
+                          "h2h", "home", None, 2.30, 2.10)])
+    # Les deux jalons sont franchis : sous l'ancienne règle, le suivi fermait.
+    st.update_corrections([], [(T0.isoformat(), 60.0, 2.05, 1)],
+                          [(T0.isoformat(), 60.0, 2.05, 1)])
+    assert len(st.open_corrections()) == 1, "le suivi doit rester ouvert"
+
+
+def test_a_tracking_past_its_kickoff_is_closed(tmp_path):
+    from src.storage import Storage
+    st = Storage(tmp_path / "t.db")
+    past = datetime.now(timezone.utc) - timedelta(hours=1)
+    st.seed_corrections([(1, datetime.now(timezone.utc).isoformat(),
+                          past.isoformat(), "unibet_be", EK,
+                          "h2h", "home", None, 2.30, 2.10)])
+    assert st.open_corrections() == []
+
+
+def test_history_survives_a_full_cycle_loop(tmp_path):
+    """Bout en bout : une seule écriture par changement, sur deux books."""
+    from src.storage import Storage
+    st = Storage(tmp_path / "t.db")
+    ko = datetime.now(timezone.utc) + timedelta(hours=3)
+    st.seed_corrections([(1, datetime.now(timezone.utc).isoformat(),
+                          ko.isoformat(), "unibet_be", EK,
                           "h2h", "home", None, 2.30, 2.10)])
     for odd in (2.30, 2.30, 2.25, 2.25, 2.20):
         rows = [dict(r) for r in st.open_corrections()]
-        o, c, a, h = track_corrections(rows, [_quote(odd)], T0)
+        o, c, a, h = track_corrections(
+            rows, [_quote(odd), _quote(odd + 0.1, book=Book.STARCASINO_SPORT)],
+            datetime.now(timezone.utc),
+        )
         st.update_corrections(o, c, a, h)
     import sqlite3
     con = sqlite3.connect(str(tmp_path / "t.db"))
-    pts = con.execute("SELECT odd FROM odds_history WHERE value_bet_id=1 "
-                      "ORDER BY rowid").fetchall()
+    got = con.execute("SELECT book, odd FROM odds_history ORDER BY rowid").fetchall()
     con.close()
-    assert [p[0] for p in pts] == [2.30, 2.25, 2.20], "un point par changement"
+    assert [g[1] for g in got if g[0] == "unibet_be"] == [2.30, 2.25, 2.20]
+    assert len([g for g in got if g[0] == "starcasino_sport"]) == 3
