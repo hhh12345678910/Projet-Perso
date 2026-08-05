@@ -237,11 +237,41 @@ CREATE TABLE IF NOT EXISTS bet_corrections (
 );
 CREATE INDEX IF NOT EXISTS idx_bc_open
     ON bet_corrections(corrected_at, detected_at);
+
+-- Trajectoire complète d'une cote détectée, de la détection au coup d'envoi.
+--
+-- Table permanente, JAMAIS purgée. C'est la seule façon de tracer un graphe :
+-- `quotes` porte déjà chaque cote de chaque cycle, mais elle pèse 20 Go pour
+-- deux jours et se purge chaque nuit — l'historique y est détruit avant d'avoir
+-- pu servir. `bet_corrections` survit, elle, mais ne garde que des jalons
+-- (première correction, alignement) : deux points, pas une courbe.
+--
+-- UNE LIGNE PAR CHANGEMENT, jamais par cycle. Mesuré par tools/line_speed.py :
+-- 97 à 99 % des cotes sont identiques d'un cycle à l'autre. Écrire chaque cycle
+-- multiplierait le volume par cinquante pour répéter la même valeur. La série
+-- complète se reconstruit en propageant la dernière valeur connue (forward
+-- fill), sans aucune perte d'information.
+--
+-- `fair_odd` est la ligne de référence AU MÊME INSTANT, pas celle de la
+-- détection. Sans elle on verrait le book bouger sans savoir s'il rejoint la
+-- référence ou si c'est la référence qui est venue à lui — or c'est exactement
+-- la question à laquelle une courbe doit répondre.
+CREATE TABLE IF NOT EXISTS odds_history (
+    value_bet_id  INTEGER NOT NULL,
+    seen_at       TEXT NOT NULL,
+    odd           REAL NOT NULL,
+    fair_odd      REAL,
+    ev_pct        REAL
+);
+CREATE INDEX IF NOT EXISTS idx_oh_bet ON odds_history(value_bet_id, seen_at);
 """
 
 
 MIGRATIONS = [
     ("bet_corrections", "fair_odd", "REAL"),
+    # Dernière cote enregistrée dans odds_history : permet de n'écrire que
+    # les changements sans relire la table à chaque cycle.
+    ("bet_corrections", "last_odd_seen", "REAL"),
     ("bet_corrections", "aligned_at", "TEXT"),
     ("bet_corrections", "seconds_to_align", "REAL"),
     ("bet_corrections", "odd_at_align", "REAL"),
@@ -515,14 +545,29 @@ class Storage:
 
     def update_corrections(
         self, observed: Iterable[tuple], corrected: Iterable[tuple],
-        aligned: Iterable[tuple] = (),
+        aligned: Iterable[tuple] = (), history: Iterable[tuple] = (),
     ) -> None:
         """`observed` = (instant, cote vue, id) pour les suivis encore ouverts ;
         `corrected` = (instant, secondes, cote, id) pour ceux dont la fenêtre
         jouable vient de se fermer ; `aligned` = idem pour ceux qui viennent de
-        rejoindre la ligne juste."""
+        rejoindre la ligne juste ; `history` = (id, instant, cote, cote juste,
+        ev) pour les seules cotes qui ont CHANGÉ depuis le dernier point
+        enregistré.
+
+        Le tout dans une seule transaction : l'historique n'a de sens que s'il
+        est cohérent avec le `last_odd_seen` qui décide du prochain point."""
         observed, corrected, aligned = list(observed), list(corrected), list(aligned)
+        history = list(history)
         with self._conn() as c:
+            if history:
+                c.executemany(
+                    "INSERT INTO odds_history(value_bet_id, seen_at, odd, fair_odd, ev_pct) "
+                    "VALUES (?, ?, ?, ?, ?)", history,
+                )
+                c.executemany(
+                    "UPDATE bet_corrections SET last_odd_seen = ? WHERE value_bet_id = ?",
+                    [(h[2], h[0]) for h in history],
+                )
             if observed:
                 c.executemany(
                     "UPDATE bet_corrections SET observed_until = ?, "
@@ -1050,6 +1095,26 @@ class Storage:
                 f"WHERE book = 'pinnacle' AND event_key = ? AND market = ? "
                 f"  AND {line_clause} AND fetched_at = ?",
                 (*head, *tail, last[0]),
+            ))
+
+    def odds_curves(self, *, since: str, min_ev: float = 0.0) -> list[sqlite3.Row]:
+        """Trajectoires complètes, jointes à l'identité du pari.
+
+        Ordonné par (pari, instant) : l'appelant peut regrouper en un seul
+        passage sans trier, ce qui compte quand la table aura un an de points.
+        """
+        with self._conn() as c:
+            return list(c.execute(
+                "SELECT h.value_bet_id, h.seen_at, h.odd, h.fair_odd, h.ev_pct, "
+                "       v.event_key, v.book, v.market, v.outcome_label, v.line, "
+                "       v.odd_taken, v.ev_pct AS ev_detect, v.detected_at, "
+                "       e.sport "
+                "FROM odds_history h "
+                "JOIN value_bets v ON v.id = h.value_bet_id "
+                "LEFT JOIN events e ON e.event_key = v.event_key "
+                "WHERE v.detected_at >= ? AND v.ev_pct >= ? "
+                "ORDER BY h.value_bet_id, h.seen_at",
+                (since, min_ev),
             ))
 
     def all_closed_bets(self) -> list[sqlite3.Row]:

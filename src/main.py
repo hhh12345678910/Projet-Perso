@@ -363,10 +363,24 @@ def track_corrections(
     open_rows: list[dict],
     soft_quotes: list[OddQuote],
     now: datetime,
-) -> tuple[list[tuple], list[tuple], list[tuple]]:
+    fair_lines: dict | None = None,
+) -> tuple[list[tuple], list[tuple], list[tuple], list[tuple]]:
     """Confronter les suivis ouverts aux cotes du cycle.
 
-    Renvoie (observations, corrections, alignements) — deux jalons distincts
+    Renvoie (observations, corrections, alignements, historique).
+
+    Le quatrième élément est la trajectoire : un point par cote qui a CHANGÉ
+    depuis le dernier enregistré. Les jalons ne donnent que deux instants ; une
+    courbe demande tous les points, et 97 à 99 % des cotes étant identiques d'un
+    cycle à l'autre, n'écrire que les changements divise le volume par cinquante
+    sans perdre une seule information — la série se reconstruit en propageant la
+    dernière valeur connue.
+
+    `fair_lines` permet d'y joindre la référence AU MÊME INSTANT. Sans elle on
+    verrait le book bouger sans savoir s'il rejoint la référence ou si c'est la
+    référence qui est venue à lui.
+
+    Les deux jalons restent distincts
     qu'il ne faut surtout pas confondre :
 
     1. **Correction** : le book descend STRICTEMENT sous la cote détectée. Le
@@ -397,6 +411,7 @@ def track_corrections(
     observed: list[tuple] = []
     corrected: list[tuple] = []
     aligned: list[tuple] = []
+    history: list[tuple] = []
     for r in open_rows:
         key = (r["event_key"], r["book"], r["market"], r["outcome_label"], r["line"])
         odd = current.get(key)
@@ -404,6 +419,15 @@ def track_corrections(
             continue
         vid = int(r["value_bet_id"])
         observed.append((ts, odd, vid))
+
+        # Un point de trajectoire, seulement si la cote a bougé. Le premier
+        # passage (last_odd_seen à NULL) en écrit toujours un : c'est l'origine
+        # de la courbe, sans laquelle on ne saurait pas d'où le book est parti.
+        last = r.get("last_odd_seen")
+        if last is None or abs(float(last) - odd) > 1e-9:
+            cur_fair = _current_fair_odd(fair_lines, r)
+            ev = (odd / cur_fair - 1.0) * 100.0 if cur_fair else None
+            history.append((vid, ts, odd, cur_fair, ev))
         try:
             det = datetime.fromisoformat(r["detected_at"])
             if det.tzinfo is None:
@@ -416,7 +440,28 @@ def track_corrections(
         fair = r.get("fair_odd")
         if r.get("aligned_at") is None and fair and odd <= float(fair):
             aligned.append((ts, secs, odd, vid))
-    return observed, corrected, aligned
+    return observed, corrected, aligned, history
+
+
+def _current_fair_odd(fair_lines: dict | None, r: dict) -> float | None:
+    """Cote juste de CE cycle pour la sélection suivie, ou None.
+
+    La ligne de référence bouge elle aussi. Enregistrer celle de la détection
+    ferait croire à une convergence du book alors que c'est parfois Pinnacle qui
+    s'est déplacé — l'inverse de ce qu'on veut lire sur un graphe."""
+    if not fair_lines:
+        return None
+    try:
+        market = MarketType(r["market"])
+    except ValueError:
+        return None
+    fl = fair_lines.get((r["event_key"], market, r["line"]))
+    if fl is None:
+        return None
+    prob = fl.outcomes.get(r["outcome_label"])
+    if not prob or prob <= 0.0 or prob >= 1.0:
+        return None
+    return 1.0 / prob
 
 
 # Événements que Pinnacle a pricés en prématch, et quand. Sert uniquement au
@@ -1928,10 +1973,10 @@ def _daemon_scan_sport(
                  b.outcome.label, b.outcome.line, b.odd_taken, b.fair_odd)
                 for b, vid in zip(bets, bet_ids)
             ])
-            obs, corr, algn = track_corrections(
-                [dict(r) for r in storage.open_corrections()], soft_q, _now,
+            obs, corr, algn, hist = track_corrections(
+                [dict(r) for r in storage.open_corrections()], soft_q, _now, fair,
             )
-            storage.update_corrections(obs, corr, algn)
+            storage.update_corrections(obs, corr, algn, hist)
             if corr or algn:
                 console.print(f"\\[{current_sport}]   fenêtres fermées : {len(corr)}, "
                               f"alignements : {len(algn)}")
@@ -3015,6 +3060,134 @@ def export_tracking(
             "[yellow]⚠️  Au-delà de 90 Mo : GitHub refuse les fichiers de plus "
             "de 100 Mo. Exporte vers un autre support.[/yellow]"
         )
+
+
+@app.command(name="export-curves")
+def export_curves(
+    out: str = typer.Option("curves.csv", "--out", help="Fichier CSV de sortie."),
+    days: float = typer.Option(30.0, "--days", help="Détections des N derniers jours."),
+    min_ev: float = typer.Option(0.0, "--min-ev", help="Ne garder que les EV >= ce seuil."),
+    filled: bool = typer.Option(
+        False, "--filled/--changes-only",
+        help="Rééchantillonner à la minute en propageant la dernière valeur "
+             "connue. Plus gros, mais directement traçable.",
+    ),
+):
+    """Exporter la TRAJECTOIRE de chaque détection : un point par changement de
+    cote, de la détection au coup d'envoi.
+
+    Une ligne par point, avec l'identité du pari répétée sur chaque ligne — un
+    tableur ou un notebook peuvent alors grouper par `value_bet_id` et tracer
+    directement, sans jointure.
+
+    La base ne stocke que les CHANGEMENTS (97 à 99 % des cycles répètent la même
+    cote). `--filled` reconstitue la série minute par minute en propageant la
+    dernière valeur connue : c'est la même information, sous la forme qu'attend
+    un graphe à pas régulier.
+    """
+    import csv
+    from datetime import timedelta as _td
+    storage = Storage(ScanConfig().db_path)
+    teams.init(storage)
+    since = (datetime.now(timezone.utc) - _td(days=days)).isoformat()
+    rows = storage.odds_curves(since=since, min_ev=min_ev)
+    if not rows:
+        console.print(
+            "[bold]Aucune trajectoire.[/bold] La table se remplit au fil des "
+            "cycles ; elle est vide tant que le daemon n'a pas tourné avec "
+            "cette version."
+        )
+        return
+
+    headers = [
+        "value_bet_id", "Sport", "Match", "Book", "Marché", "Pari",
+        "Coup d'envoi", "Détecté à", "Cote détection", "EV détection %",
+        "Instant", "Minutes après détection", "Minutes avant coup d'envoi",
+        "Cote", "Cote juste", "EV %",
+    ]
+    by_bet: dict[int, list] = defaultdict(list)
+    for r in rows:
+        by_bet[r["value_bet_id"]].append(r)
+
+    n_pts = 0
+    with open(out, "w", newline="", encoding="utf-8") as f:
+        w = csv.writer(f)
+        w.writerow(headers)
+        for vid, pts in by_bet.items():
+            head = pts[0]
+            ko = parse_event_key(head["event_key"])
+            kickoff = ko[0] if ko else None
+            try:
+                det = datetime.fromisoformat(head["detected_at"])
+                if det.tzinfo is None:
+                    det = det.replace(tzinfo=timezone.utc)
+            except (ValueError, TypeError):
+                continue
+            series = _fill_curve(pts, kickoff) if filled else pts
+            for p in series:
+                try:
+                    t = datetime.fromisoformat(p["seen_at"])
+                    if t.tzinfo is None:
+                        t = t.replace(tzinfo=timezone.utc)
+                except (ValueError, TypeError):
+                    continue
+                w.writerow([
+                    vid, head["sport"] or "", _pretty_match(head["event_key"]),
+                    head["book"], head["market"],
+                    f"{head['outcome_label']}"
+                    + (f" {head['line']}" if head["line"] is not None else ""),
+                    kickoff.isoformat()[:19] if kickoff else "",
+                    head["detected_at"][:19],
+                    f"{float(head['odd_taken']):.2f}",
+                    f"{float(head['ev_detect']):.2f}",
+                    p["seen_at"][:19],
+                    f"{(t - det).total_seconds() / 60:.1f}",
+                    f"{(kickoff - t).total_seconds() / 60:.1f}" if kickoff else "",
+                    f"{float(p['odd']):.3f}",
+                    f"{float(p['fair_odd']):.3f}" if p["fair_odd"] else "",
+                    f"{float(p['ev_pct']):+.2f}" if p["ev_pct"] is not None else "",
+                ])
+                n_pts += 1
+    console.print(
+        f"[green]✓[/green] {len(by_bet)} trajectoires, {n_pts} points → "
+        f"[bold]{out}[/bold]"
+    )
+
+
+def _fill_curve(points: list, kickoff: datetime | None) -> list[dict]:
+    """Rééchantillonne une trajectoire à la minute, en propageant la dernière
+    valeur connue.
+
+    Une cote reste valable jusqu'à son changement suivant : entre deux points,
+    la valeur n'est pas inconnue, elle est constante. C'est ce qui rend
+    l'écriture des seuls changements sans perte — mais un graphe à pas régulier
+    veut la série développée."""
+    from datetime import timedelta as _td
+    out: list[dict] = []
+    for i, p in enumerate(points):
+        try:
+            t = datetime.fromisoformat(p["seen_at"])
+            if t.tzinfo is None:
+                t = t.replace(tzinfo=timezone.utc)
+        except (ValueError, TypeError):
+            continue
+        if i + 1 < len(points):
+            try:
+                nxt = datetime.fromisoformat(points[i + 1]["seen_at"])
+                if nxt.tzinfo is None:
+                    nxt = nxt.replace(tzinfo=timezone.utc)
+            except (ValueError, TypeError):
+                nxt = t
+        else:
+            # Le dernier point tient jusqu'au coup d'envoi, pas au-delà.
+            nxt = kickoff if kickoff and kickoff > t else t
+        cur = t
+        while cur <= nxt:
+            out.append({**dict(p), "seen_at": cur.isoformat()})
+            cur += _td(minutes=1)
+            if len(out) > 20000:      # garde-fou : un horaire faux ferait boucler
+                return out
+    return out
 
 
 @app.command(name="export-history")

@@ -9,6 +9,8 @@ from __future__ import annotations
 
 from datetime import datetime, timedelta, timezone
 
+import pytest
+
 from src.main import track_corrections
 from src.models import Book, MarketType, OddQuote, Outcome
 from src.storage import Storage
@@ -34,7 +36,7 @@ def _quote(odd, book=Book.UNIBET_BE, label="home", line=None):
 def test_correction_recorded_when_the_price_drops_below_what_we_took():
     """La définition est opérationnelle : le prix qu'on avait n'existe plus,
     donc la fenêtre jouable est fermée."""
-    obs, corr, algn = track_corrections([_open_row(2.30)], [_quote(2.20)],
+    obs, corr, algn, _hist = track_corrections([_open_row(2.30)], [_quote(2.20)],
                                   T0 + timedelta(minutes=7))
     assert len(obs) == 1
     assert len(corr) == 1
@@ -44,7 +46,7 @@ def test_correction_recorded_when_the_price_drops_below_what_we_took():
 
 
 def test_no_correction_while_the_price_holds():
-    obs, corr, algn = track_corrections([_open_row(2.30)], [_quote(2.30)],
+    obs, corr, algn, _hist = track_corrections([_open_row(2.30)], [_quote(2.30)],
                                   T0 + timedelta(minutes=7))
     assert len(obs) == 1, "l'observation compte même sans correction"
     assert corr == []
@@ -52,7 +54,7 @@ def test_no_correction_while_the_price_holds():
 
 def test_a_longer_price_is_not_a_correction():
     """Le book qui allonge sa cote va dans l'autre sens : la valeur augmente."""
-    obs, corr, algn = track_corrections([_open_row(2.30)], [_quote(2.45)], T0)
+    obs, corr, algn, _hist = track_corrections([_open_row(2.30)], [_quote(2.45)], T0)
     assert corr == []
 
 
@@ -60,26 +62,26 @@ def test_a_missing_market_is_not_counted_as_uncorrected():
     """Ne rien voir ne prouve rien : le book a pu retirer le marché, ou le
     scraper échouer. Compter ça comme « toujours pas corrigé » ferait passer
     une panne de scraper pour de la lenteur de bookmaker."""
-    obs, corr, algn = track_corrections([_open_row()], [], T0 + timedelta(hours=1))
+    obs, corr, algn, _hist = track_corrections([_open_row()], [], T0 + timedelta(hours=1))
     assert obs == [] and corr == []
 
 
 def test_another_book_does_not_close_our_row():
-    obs, corr, algn = track_corrections(
+    obs, corr, algn, _hist = track_corrections(
         [_open_row(2.30, book="unibet_be")],
         [_quote(1.90, book=Book.LADBROKES_BE)], T0)
     assert obs == [] and corr == []
 
 
 def test_another_outcome_does_not_close_our_row():
-    obs, corr, algn = track_corrections([_open_row(2.30)], [_quote(1.50, label="away")], T0)
+    obs, corr, algn, _hist = track_corrections([_open_row(2.30)], [_quote(1.50, label="away")], T0)
     assert obs == [] and corr == []
 
 
 def test_lowest_quote_of_the_cycle_wins():
     """Plusieurs cotes pour la même clé dans un cycle : c'est la plus basse qui
     décide, puisque c'est elle qui dit si le prix a disparu."""
-    obs, corr, algn = track_corrections([_open_row(2.30)],
+    obs, corr, algn, _hist = track_corrections([_open_row(2.30)],
                                   [_quote(2.35), _quote(2.10)], T0)
     assert len(corr) == 1 and corr[0][2] == 2.10
 
@@ -123,7 +125,7 @@ def test_a_closed_window_keeps_being_watched_until_alignment(tmp_path):
 def test_alignment_needs_the_fair_line_not_just_the_taken_price():
     """Le second jalon est bien plus exigeant : à 2,20 la fenêtre est fermée
     (on avait 2,30) mais la ligne juste, à 2,10, n'est pas atteinte."""
-    obs, corr, algn = track_corrections(
+    obs, corr, algn, _hist = track_corrections(
         [_open_row(odd_taken=2.30, fair_odd=2.10)], [_quote(2.20)],
         T0 + timedelta(minutes=3))
     assert len(corr) == 1, "la fenêtre doit être fermée"
@@ -131,7 +133,7 @@ def test_alignment_needs_the_fair_line_not_just_the_taken_price():
 
 
 def test_alignment_recorded_when_the_fair_line_is_reached():
-    obs, corr, algn = track_corrections(
+    obs, corr, algn, _hist = track_corrections(
         [_open_row(odd_taken=2.30, fair_odd=2.10)], [_quote(2.05)],
         T0 + timedelta(minutes=40))
     assert len(algn) == 1
@@ -146,14 +148,14 @@ def test_a_milestone_already_crossed_is_not_recorded_twice():
     row = _open_row(odd_taken=2.30, fair_odd=2.10)
     row["corrected_at"] = T0.isoformat()
     row["aligned_at"] = T0.isoformat()
-    obs, corr, algn = track_corrections([row], [_quote(1.90)], T0 + timedelta(hours=2))
+    obs, corr, algn, _hist = track_corrections([row], [_quote(1.90)], T0 + timedelta(hours=2))
     assert obs and corr == [] and algn == []
 
 
 def test_alignment_is_skipped_when_the_fair_line_is_unknown():
     """Les suivis créés avant l'ajout de la colonne n'ont pas de fair_odd :
     ils ne doivent pas s'aligner par accident sur une valeur absente."""
-    obs, corr, algn = track_corrections(
+    obs, corr, algn, _hist = track_corrections(
         [_open_row(odd_taken=2.30, fair_odd=None)], [_quote(1.10)], T0)
     assert len(corr) == 1 and algn == []
 
@@ -174,3 +176,83 @@ def test_observations_accumulate_and_track_the_lowest_price(tmp_path):
         "SELECT observations, min_odd_seen FROM bet_corrections").fetchone()
     assert obs == 2
     assert abs(low - 2.25) < 1e-9
+
+
+# ── Trajectoire complète — une ligne par CHANGEMENT ───────────────────────
+# Les deux jalons ne donnent que deux instants. Un graphe demande tous les
+# points. Comme 97 à 99 % des cotes sont identiques d'un cycle à l'autre,
+# n'écrire que les changements divise le volume par cinquante — et la série
+# se reconstruit en propageant la dernière valeur connue.
+
+def _hist(open_rows, quotes, now=T0, fair=None):
+    return track_corrections(open_rows, quotes, now, fair)[3]
+
+
+def test_first_observation_always_opens_the_curve():
+    """Sans point d'origine, on ne saurait pas d'où le book est parti."""
+    h = _hist([_open_row(2.30)], [_quote(2.30)])
+    assert len(h) == 1 and h[0][2] == 2.30
+
+
+def test_an_unchanged_odd_writes_nothing():
+    """Le cœur de l'économie de volume : 97 à 99 % des cycles sont muets."""
+    row = _open_row(2.30)
+    row["last_odd_seen"] = 2.30
+    assert _hist([row], [_quote(2.30)]) == []
+
+
+def test_every_change_is_recorded():
+    row = _open_row(2.30)
+    row["last_odd_seen"] = 2.30
+    h = _hist([row], [_quote(2.25)])
+    assert len(h) == 1
+    vid, ts, odd, fair, ev = h[0]
+    assert odd == 2.25 and vid == int(row["value_bet_id"])
+
+
+def test_a_market_absent_from_the_cycle_writes_nothing():
+    """Ne rien voir ne prouve rien : le book peut avoir retiré le marché, ou le
+    scraper avoir échoué. Inventer un point ferait mentir la courbe."""
+    assert _hist([_open_row(2.30)], []) == []
+
+
+def test_the_reference_of_the_moment_travels_with_the_point():
+    """La ligne juste bouge aussi. Enregistrer celle de la détection ferait
+    croire à une convergence du book alors que c'est parfois Pinnacle qui s'est
+    déplacé — l'inverse de ce qu'un graphe doit montrer."""
+    from src.models import FairLine, MarketType
+    row = _open_row(2.30)
+    fair = {(row["event_key"], MarketType(row["market"]), row["line"]):
+            FairLine(event_key=row["event_key"], market=MarketType(row["market"]),
+                     outcomes={row["outcome_label"]: 0.50})}
+    h = _hist([row], [_quote(2.30)], fair=fair)
+    assert len(h) == 1
+    _vid, _ts, odd, fair_odd, ev = h[0]
+    assert fair_odd == pytest.approx(2.00)          # 1 / 0.50
+    assert ev == pytest.approx(15.0)                # 2.30 / 2.00 - 1
+
+
+def test_a_missing_reference_leaves_the_point_but_empties_the_fair():
+    """Un point sans référence reste un point de prix valable ; le taire
+    trouerait la courbe pour une information annexe."""
+    h = _hist([_open_row(2.30)], [_quote(2.30)], fair=None)
+    assert len(h) == 1 and h[0][3] is None and h[0][4] is None
+
+
+def test_history_and_last_odd_seen_stay_consistent(tmp_path):
+    """Bout en bout : deux cycles, une seule écriture par changement, et
+    last_odd_seen suit — sinon le cycle suivant réécrirait le même point."""
+    from src.storage import Storage
+    st = Storage(tmp_path / "t.db")
+    st.seed_corrections([(1, T0.isoformat(), None, "unibet_be", EK,
+                          "h2h", "home", None, 2.30, 2.10)])
+    for odd in (2.30, 2.30, 2.25, 2.25, 2.20):
+        rows = [dict(r) for r in st.open_corrections()]
+        o, c, a, h = track_corrections(rows, [_quote(odd)], T0)
+        st.update_corrections(o, c, a, h)
+    import sqlite3
+    con = sqlite3.connect(str(tmp_path / "t.db"))
+    pts = con.execute("SELECT odd FROM odds_history WHERE value_bet_id=1 "
+                      "ORDER BY rowid").fetchall()
+    con.close()
+    assert [p[0] for p in pts] == [2.30, 2.25, 2.20], "un point par changement"
