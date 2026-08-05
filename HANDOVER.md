@@ -1,14 +1,14 @@
 # Valuebet — état du projet
 
 Document de reprise. À lire en premier pour reprendre le travail sans
-redécouvrir le contexte. Dernière mise à jour : 04/08/2026.
+redécouvrir le contexte. Dernière mise à jour : 04/08/2026 (soirée).
 
-**Si tu ne lis que trois choses :** §1 pour la mesure qui fait autorité
-(+8,86 % de CLV, 10,1 σ), §11 pour le mode de défaillance dominant du projet
-(la panne silencieuse), §13 pour la session du 04/08 — état actuel, ce qui
-tourne, et ce qui reste ouvert.
+**Si tu ne lis que trois choses :** §14.1 pour la mesure qui fait autorité
+(+10,18 % de CLV sur 858 opportunités, 18,4 σ), §11 pour le mode de défaillance
+dominant du projet (la panne silencieuse), §14 pour la session du 04/08 au soir
+— état actuel, ce qui tourne, et ce qui reste ouvert.
 
-Dépôt : `hhh12345678910/Projet-Perso` — branche **`claude/project-summary-2cz4sk`**
+Dépôt : `hhh12345678910/Projet-Perso` — branche **`claude/resume-clarification-1541xa`**
 VM : Google Cloud, `us-central1`, IP `34.59.193.111`, utilisateur `hubindylan98`
 Répertoire sur la VM : **`~/Projet-Perso`** (`valuebet` est le nom d'hôte, pas
 un dossier — l'erreur a coûté un aller-retour)
@@ -48,24 +48,29 @@ la période de ~5 semaines :
 
 Le basket, retiré depuis, avait coûté **−384 € sur 1 341 € misés** (−28,6 %).
 
-**Le CLV réel est de +8,9 %**, et non les +10 % du tableur ni les +21,7 %
-qu'affichait `clv-report`. Quatre mesures indépendantes concordent :
+**Le CLV réel est de +10,2 %** sur le canal Premium, et non les +10 % du
+tableur ni les +21,7 % qu'affichait `clv-report` avant correction. Plusieurs
+mesures indépendantes concordent :
 
 | Mesure | Population | n | CLV | Significativité |
 |---|---|---|---|---|
 | Appariement HAR ↔ clôtures | paris réglés | — | +8,26 % | — |
-| Natif, paris joués | opportunités dédupliquées | 186 | +9,29 % | 5,1 σ |
-| **Natif, canal Premium complet** | **opportunités dédupliquées** | **423** | **+8,86 %** | **10,1 σ** |
+| Natif, canal Premium (30/07) | opportunités dédupliquées | 423 | +8,86 % | 10,1 σ |
+| **Natif, canal Premium (04/08)** | **opportunités dédupliquées** | **858** | **+10,18 %** | **18,4 σ** |
 
-La troisième ligne fait autorité : elle porte sur **toutes** les détections
-éligibles au Premium, jouées ou non, ce qui supprime le biais de sélection
-manuelle. IC 95 % : [+7,14 % ; +10,59 %]. 78,3 % d'opportunités positives.
+La dernière ligne fait autorité — **voir §14.1 pour le détail**. Elle porte sur
+**toutes** les détections éligibles au Premium, jouées ou non, ce qui supprime
+le biais de sélection manuelle. IC 95 % : [+9,09 % ; +11,27 %]. 80 %
+d'opportunités positives. Le doublement de l'effectif entre le 30/07 et le
+04/08 a confirmé et légèrement relevé la mesure.
 
-⚠️ **La sélection manuelle n'apporte rien de mesurable.** Opportunités jouées
-+8,23 % (n=132) contre non jouées +9,15 % (n=291). Trier à la main parmi les
-alertes ne fait pas mieux que le filtre automatique — donc jouer plus
-systématiquement ne dégraderait rien, et le temps d'arbitrage est mieux investi
-ailleurs.
+⚠️ **La sélection manuelle n'apporte rien de mesurable.** Mesuré deux fois, à
+une semaine d'intervalle, à filtre égal (canal premium seulement) : le 30/07,
+jouées +8,23 % (n=132) contre non jouées +9,15 % (n=291) ; le 04/08, jouées
++9,97 % (n=252) contre non jouées +10,27 % (n=606), écart −0,30 point,
+**t = −0,25, non significatif**. Trier à la main parmi les alertes ne fait pas
+mieux que le filtre automatique — donc jouer plus systématiquement ne
+dégraderait rien, et le temps d'arbitrage est mieux investi ailleurs.
 
 ⚠️ **Pourquoi le CLV était faux.** Il était mesuré contre la cote de clôture
 *affichée* par Pinnacle, commission comprise, alors que l'EV est mesurée contre
@@ -241,7 +246,10 @@ python -m src.main track-update              # suivi des paris joués -> CSV
 python -m src.main settle --from <csv>       # injecte les scores, calcule le P&L
 python -m src.main backfill-fair-lines       # rattrape les clôtures d'avant le correctif
 python -m src.main backfill-played-bets      # rattache les anciens clics à leur détection
-python -m src.main export-history --out <csv>   # détections + délai + overround + CLV
+python -m src.main export-history --out <csv>   # détections + ligue + délai + overround + CLV
+python -m src.main features --premium         # CLV par championnat  (PAS `features-report`)
+python -m src.main corrections                # vitesse de correction par book (PAS `corrections-report`)
+python -m src.main export-tracking --out <db> # historique durable, transportable
 python -m src.main books-coverage --sport soccer,tennis   # events, horizon, ∩ Pinnacle
 python -m src.main betano-value-test --min-ev 0.5   # dry-run, sans alerte
 python -m src.main betano-coverage           # ce que contient le dump Betano
@@ -263,6 +271,10 @@ sqlite3 data/valuebet.db "SELECT book, COUNT(*) FROM value_bets \
 
 node tools/circus-ingest.selftest.js tools/circus-ingest.user.js  # 7 scénarios
 
+# Telegram — /scan répond dans les canaux du projet (§14.5). Après toute
+# modification de bot_listener.py : sudo systemctl restart valuebet-listener
+sudo journalctl -u valuebet-listener --since "5 min ago" --no-pager | grep -v systemd
+
 grep "done in" valuebet.log | tail -5        # durée des cycles (~17 s normal)
 tac valuebet.log | awk '/══ CYCLE/{c++} c<5' | tac | grep -oiP '\b\w[\w ]*(?= skipped:)' | sort | uniq -c
 ```
@@ -273,6 +285,7 @@ tac valuebet.log | awk '/══ CYCLE/{c++} c<5' | tac | grep -oiP '\b\w[\w ]*(?
 |---|---|
 | `valuebet-daemon` | Boucle de scan continue |
 | `betano-ingest` | Réception des push navigateur |
+| **`valuebet-listener`** | **Bouton « Jouer » + commande `/scan` (`bot_listener.py`)** |
 | `valuebet-prune.timer` | Purge nocturne (rétention 2 jours) |
 | `valuebet-close-lines.timer` | **Capture horaire des lignes de clôture** |
 
@@ -280,6 +293,12 @@ Les services s'appellent `valuebet-daemon` et `betano-ingest`, **pas**
 `valuebet` ni `valuebet-ingest`. `betano-ingest` sert aussi Circus, malgré son
 nom. Ses logs vont au journal systemd, il n'y a pas de fichier
 `betano-ingest.log`.
+
+⚠️ **`valuebet-listener` ne figurait pas dans ce tableau** jusqu'au 04/08 au
+soir, alors qu'il tourne depuis juillet — le chercher a coûté un aller-retour.
+Il n'a aucun fichier d'unité dans le dépôt, il n'existe que sur la VM. Un seul
+process doit faire le `getUpdates` : deux instances se volent les updates et le
+bouton « Jouer » devient erratique.
 
 ⚠️ `close-lines` doit tourner **plus souvent que la rétention**. Le prix de
 clôture n'existe que dans notre propre capture (Pinnacle retire les marchés
@@ -1060,6 +1079,12 @@ résultat — rien — et qu'il faut pouvoir distinguer les deux.
 
 ### 13.9 À faire au prochain démarrage
 
+⚠️ **Liste dépassée — voir §14.12.** Conservée pour la trace de ce qui a été
+tranché depuis : le 0 est résolu (Pinnacle répond 200), le 3 est tranché et
+appliqué (§14.8), le 1 est réécrit (§14.6) et sa vérification reportée en
+§14.12. Le 2 se heurte au défaut de découpage du doctor (§14.10). Le 5 a reçu
+un premier morceau avec `/scan` (§14.5).
+
 0. **Vérifier que Pinnacle est sorti de maintenance** (§13.11) — c'est le
    préalable à tout le reste, le système est à l'arrêt sans lui :
    ```bash
@@ -1070,8 +1095,8 @@ résultat — rien — et qu'il faut pouvoir distinguer les deux.
 2. **`pinnacle_doctor.py --runs 0` sur un run long** — confirmer 403 et verrous
    à 0 après une journée pleine sans redémarrage. Les runs mesurés jusqu'ici
    étaient trop courts (2 à 11 cycles) pour conclure.
-3. **Trancher les deux réglages offerts** : `PINNACLE_MAX_REUSE_SEC=240`
-   (§13.1) et la bande premium sur `fair_odd` (§13.5).
+3. ✅ **`PINNACLE_MAX_REUSE_SEC=240` appliqué** — justifié par la mesure, voir
+   §14.8. La bande premium sur `fair_odd` (§13.5) reste, elle, non tranchée.
 4. **Smarkets comme seconde référence sharp** (§6) — le plus gros levier
    restant. Les appels groupés lèvent le blocage des 26 minutes.
 5. **SaaS / plateforme web** montrant les value bets encore valides — intention
@@ -1167,3 +1192,329 @@ allers-retours pour s'en rendre compte. Quand un correctif restreint ce qui est
 signalé, **ajouter les compteurs de ce qui a été rejeté et pourquoi** — sinon
 un filtre trop strict et une absence réelle de problème deviennent
 indiscernables.
+
+---
+
+## 14. Session du 04/08 au soir — Telegram, marchés en retard, mesure
+
+Branche **`claude/resume-clarification-1541xa`**, neuf commits de `4f64b1f` à
+`9c38213`. Quatre chantiers : le routage des canaux, une commande `/scan` sur
+Telegram, la réécriture du détecteur de marchés en retard, et l'analyse
+complète du CLV sur les données exportées.
+
+⚠️ **La VM a changé de branche.** Elle suivait `claude/project-summary-2cz4sk`,
+elle suit maintenant `claude/resume-clarification-1541xa`. Un `git pull` sur
+l'ancienne branche répondrait « Already up to date » sans rien ramener —
+toujours le piège du §13. Vérifier `git branch --show-current`.
+
+### 14.1 La mesure qui fait autorité — 2 612 opportunités
+
+Analyse de `export-history` sur 18 751 lignes couvrant le 21/06 → 04/08.
+
+⚠️ **Seuls 9 jours sont exploitables.** Le CLV dévigé n'existe qu'à partir du
+**27/07** — avant le 24/07 la couverture est de 0 %, `backfill-fair-lines` ne
+pouvant rattraper que les clôtures dont les cotes n'avaient pas été purgées.
+Toute affirmation portant sur « un mois de données » est fausse.
+
+Entonnoir, à refaire à l'identique la prochaine fois :
+
+| | n |
+|---|---|
+| Lignes du fichier | 18 751 |
+| … avec un CLV dévigé | 5 543 |
+| … prématch (délai > 0) | 4 619 |
+| **→ opportunités dédupliquées** | **2 612** |
+| Matchs distincts | 1 949 |
+
+**1,77 ligne par opportunité.** Sans déduplication, tous les effectifs sont
+gonflés de 77 % et toutes les significativités avec. Clé de déduplication :
+`event_key + Marché + Pari`, en gardant la meilleure cote. Les 924 détections à
+délai négatif sont retirées : elles comparent une cote live à une ligne
+Pinnacle prématch morte depuis le coup d'envoi.
+
+| Population | n | CLV | σ | positifs |
+|---|---|---|---|---|
+| Toutes opportunités | 2 612 | +7,36 % | 21,1 | 75 % |
+| **Canal premium** | **858** | **+10,18 %** | **18,4** | 80 % |
+| — voie cotes 1,5-4 (EV ≥ 8 %) | 771 | +8,67 % | 16,8 | 79 % |
+| — **voie cotes 4-6 (EV ≥ 20 %)** | 87 | **+23,58 %** | 9,1 | **91 %** |
+
+**La voie « cotes hautes » rend près de trois fois plus que la voie normale.**
+C'est de loin le meilleur segment du système.
+
+### 14.2 Ce que confirme la ventilation
+
+**L'EV est informative**, croissance quasi monotone : 5-8 % → +3,85 %
+(n=1279) ; 8-10 % → +6,42 % ; 12-15 % → +8,60 % ; 15-20 % → +12,56 % ;
+20-30 % → +18,78 % ; > 30 % → +33,67 % (n=83).
+
+**Le délai ne justifie toujours aucun couperet.** < 2 h +7,61 % ; 6-12 h
++9,75 % ; 12-24 h +6,65 % ; **24-48 h +3,87 % (3,3 σ, significativement
+positif)** ; > 48 h +5,37 %. Troisième mesure consécutive à confirmer qu'il ne
+faut pas couper cette tranche.
+
+**Le tennis tient sa promesse** : +9,49 % sur 485 opportunités, **91 %
+positives**, contre +6,85 % au football sur 2 120. Moins que les +13,50 %
+annoncés en juillet, mais sur cinq fois plus de données. C'est l'argument le
+plus fort pour la seconde référence sharp — Pinnacle ne price que ~71 matchs de
+tennis, il plafonne le gisement le plus rentable.
+
+⚠️ **La cote n'est pas un facteur indépendant de l'EV.** Croisement des deux :
+
+| | cote 1,5-3 | cote 3-6 | cote > 6 |
+|---|---|---|---|
+| EV 5-10 % | +4,5 % (952) | +3,7 % (532) | +8,0 % (98) |
+| EV 10-20 % | +7,4 % (230) | +8,9 % (341) | +10,6 % (109) |
+| EV 20 %+ | +31,2 % (23) | +22,5 % (130) | +24,2 % (87) |
+
+L'EV domine largement ; la cote ajoute un résidu réel mais modeste. Une cote
+haute ne vaut pas par elle-même, elle vaut parce qu'elle porte souvent une
+grosse EV. L'hypothèse du §9 (« probablement le même effet vu deux fois ») est
+confirmée.
+
+⚠️ **Les championnats ne disent toujours rien.** 81 % des détections tombent
+dans la catégorie « autre » (2 114 / 2 612) : la catégorisation ne discrimine
+pas. Les autres catégories font 14 à 88 opportunités, et sur dix catégories
+testées l'étalement observé est dans ce que le hasard produit. Règle du §9
+inchangée.
+
+### 14.3 Un trou de routage — 739 opportunités n'atteignent aucun canal
+
+| Canal | n | CLV |
+|---|---|---|
+| Premium | 858 | +10,18 % |
+| Critique | 36 | +34,14 % |
+| Principal | 979 | +4,08 % |
+| **Aucun canal** | **739** | **+7,12 %** |
+
+Le cas le plus net : **cote > 6 avec 20 % ≤ EV < 35 %**. Trop haute pour le
+premium (qui s'arrête à 6), pas assez pour le critique (qui commence à 35 %).
+Ce segment donne **+15,08 % sur 45 opportunités**, et l'ensemble des cotes > 6
+à EV ≥ 20 % donne **+23,55 % sur 81** — exactement la performance de la voie
+premium 4-6.
+
+**La voie « cotes hautes » s'arrête arbitrairement à 6 alors que la mesure dit
+qu'elle continue au-delà.** Deux façons de récupérer ça, non tranchées :
+étendre `TELEGRAM_PREMIUM_HI_MAX_ODD` à 10 ou 15, ou descendre
+`TELEGRAM_MIN_CRITICAL_EV` de 35 % à 20 % pour les cotes hors bandes.
+
+### 14.4 Routage des canaux — ce qui a changé
+
+**Critique = débordement du premium, plus un doublon.** Le canal critique
+garde son absence de limite de cote — c'est sa raison d'être, les cotes 14, 21
+à EV énorme doivent y arriver — mais il ne reçoit plus ce que le premium a déjà
+pris. Une cote 1,82 à 53 % d'EV est du premium, et une seule alerte suffit.
+L'exclusion porte sur la **livraison**, pas l'éligibilité : si le canal premium
+n'est pas configuré, le critique rattrape le pari plutôt que de le perdre.
+
+**Les surebets ne vont plus en premium**, quelle que soit la marge. Ils ont
+leur canal. La copie vers le critique au-delà de `min_critical_surebet_pct` est
+conservée, elle n'a pas été remise en cause.
+
+`max_ev_pct` reste à 1000 % : **aucun plafond d'EV**, c'est un choix explicite
+de l'utilisateur. Une EV de 50, 60 ou 80 % est voulue.
+
+### 14.5 `/scan` — les value bets encore jouables
+
+`bot_listener.py` écoute désormais les messages en plus des clics. `/scan`
+renvoie la liste de ce qui est jouable maintenant, au format des alertes, avec
+un bouton **« ▶️ Tout jouer (N) »** qui enregistre d'un coup tous les paris du
+message — le scan suivant est alors vide.
+
+Règles de sélection, toutes calquées sur l'existant :
+- **critères du canal premium uniquement** (`is_premium()`), pas ceux du
+  principal — les 5-8 % d'EV n'ont rien à faire dans cette liste ;
+- marché non joué, via le même `_load_played_keys()` que les alertes, donc la
+  suppression au niveau du **marché** s'applique : jouer le 1 d'un 1X2 retire
+  le X et le 2 du scan suivant ;
+- plus de `min_minutes_to_kickoff` avant le coup d'envoi ;
+- une seule ligne par opportunité, au meilleur prix.
+
+⚠️ **`detected_at` ne bouge jamais.** `insert_value_bet` ne crée qu'UNE ligne
+par opportunité et renvoie l'existante sans rien écrire quand le daemon la
+redétecte. Filtrer sur `detected_at` sélectionne donc les paris *nouvellement
+apparus*, pas les paris *encore vivants* — l'inverse de ce qu'on veut. Trois
+colonnes ajoutées : `last_seen_at`, `last_odd`, `last_ev`, rafraîchies à chaque
+re-détection. `detected_at`, `odd_taken` et `ev_pct` restent ceux de la
+première détection : tout le CLV compare la clôture à l'EV de départ, et les
+réécrire rendrait le CLV faux — l'erreur même du §1.
+
+Réglage : `SCAN_WINDOW_MIN` (10 min par défaut). Assez pour traverser un recul
+Pinnacle, assez serré pour qu'un pari mort ne traîne pas.
+
+### 14.6 Marchés en retard — mesurer au lieu de deviner
+
+Le détecteur du §13.7 prouvait une seule chose : que la cote n'avait pas bougé
+depuis le coup d'envoi. Ça ne dit **rien** de la valeur du pari. Deux
+situations la produisent :
+
+- le book a oublié de suspendre, c'est 1-1 à la 19ᵉ, le marché est tranché →
+  exploitable ;
+- le book n'a pas encore repricé, il est 0-0 et rien ne s'est passé → aucun
+  edge.
+
+Le canal recevait surtout des seconds. **Le manque de fond : il n'existe aucune
+référence LIVE dans le système**, le scraper Pinnacle ignorant `isLive`.
+
+`src/live_consensus.py` fabrique une référence de substitution : sur un match
+commencé, les autres books pricent en direct et le daemon collecte déjà leurs
+cotes. On sépare les books **figés** des books qui ont **bougé**, on dévige les
+seconds, et on mesure l'écart du prix figé contre cette ligne. Sous
+`LATE_MARKET_MIN_EDGE` (15 %), silence.
+
+Choix qui décident du résultat :
+- la moyenne porte sur les **probabilités dévigées**, pas sur les cotes —
+  moyenner des cotes mélange des marges et penche vers le book le plus gourmand ;
+- **un book ne nourrit jamais son propre consensus**, sa cote figée tirerait la
+  référence vers le prix périmé ;
+- deux books vivants minimum ;
+- un marché incomplet est rejeté par sa somme d'implicites (≤ 1), sans avoir à
+  savoir combien d'issues il devrait porter ;
+- **seul le bon côté sort** : sur un 1X2 figé à 2,40 des deux côtés, le
+  domicile vaut +73 % et l'extérieur −33 %.
+
+⚠️ **Le BTTS n'est collecté par aucun scraper.** Le cas d'origine — « les deux
+équipes marquent » sur un 1-1 — reste donc indétectable. Il avait été exclu
+partout parce que Pinnacle ne le price pas ; le consensus live lève cet
+obstacle en principe, mais il faut d'abord ajouter la collecte chez Circus et
+Betano.
+
+### 14.7 Pinnacle est derrière Cloudflare — le test d'IP, à faire un jour
+
+**C'est le point à reprendre en priorité sur ce sujet.**
+
+Découvert le 04/08 : ouvrir l'API Pinnacle dans un navigateur renvoie une page
+**Cloudflare** « Sorry, you have been blocked ». Le projet ne savait pas que
+Pinnacle était derrière un anti-bot. Ça rend l'hypothèse du §12 — filtrage
+d'ASN, comme DataDome pour Betano et le blocage Gaming1 pour Circus —
+**nettement plus plausible**. Un 403 n'est d'ailleurs pas le code d'une
+limitation de débit ; ce serait 429.
+
+⚠️ **Ouvrir l'URL dans un navigateur ne teste RIEN.** La navigation n'envoie ni
+`X-API-Key`, ni `Origin`, ni `Referer` — Cloudflare classe robot sur ce seul
+critère, quelle que soit l'IP. Le blocage obtenu ainsi ne prouve pas que l'IP
+résidentielle est refusée. C'est l'erreur commise une fois ; ne pas la refaire.
+
+**Le protocole correct :**
+
+1. Installer `tools/pinnacle-ip-test.user.js` dans le Tampermonkey du
+   navigateur qui héberge les onglets Betano et Circus (celui sur l'IP
+   résidentielle). Il rejoue les cinq en-têtes de `_headers()` à l'identique,
+   via `GM_xmlhttpRequest` — le seul moyen de ne pas buter sur le CORS. Il ne
+   se déclenche que par le menu Tampermonkey, aucun trafic parasite.
+2. Abaisser temporairement le seuil d'alerte pour être prévenu des coupures
+   courtes — les 403 observés durent 3 à 4 minutes, loin des 20 min par défaut :
+   ```bash
+   sed -i '/^PINNACLE_ALERT_AFTER_MIN=/d' .env && echo 'PINNACLE_ALERT_AFTER_MIN=3' >> .env
+   sudo systemctl restart valuebet-daemon
+   ```
+   Le canal critique reste lisible : une seule alerte par panne.
+3. Au prochain `🚨 Pinnacle muet`, lancer **🎯 Tester Pinnacle depuis cette IP**
+   dans le menu Tampermonkey, **pendant que la panne dure**.
+4. Remettre `PINNACLE_ALERT_AFTER_MIN=20` ensuite.
+
+| VM | Maison | Conclusion | Suite |
+|---|---|---|---|
+| 403 | **200** | filtrage d'IP/ASN | l'espacement ne servira à rien ; il faudra `PINNACLE_PROXY` / `PINNACLE_LOCAL_IP`, ou un pont navigateur comme pour Betano |
+| 403 | 403 | quota sur la clé d'API publique | l'espacement est le bon levier, les réglages actuels sont déjà la bonne réponse |
+
+### 14.8 Réglages tranchés par la mesure
+
+`tools/line_speed.py` donne **99,6 % de cotes Pinnacle inchangées à 60 s**
+d'intervalle, 99,1 % à 120 s, 95,2 % à 300 s. Le coût d'une référence
+légèrement périmée est donc de l'ordre de 0,01 à 0,09 point d'EV.
+
+Appliqués dans `.env`, et justifiés :
+
+```
+PINNACLE_MIN_INTERVAL_SEC=60      # quasi gratuit : 99,6 % de cotes identiques
+PINNACLE_MAX_REUSE_SEC=240        # 60 + 120 <= 240 : un 403 isolé ne crée plus
+                                  # de trou de détection. Coût ~0,05 point d'EV.
+```
+
+⚠️ La valeur par défaut de `PINNACLE_MAX_REUSE_SEC` est **150**, pas 240. Sans
+override, un recul après 403 peut dépasser la durée de réutilisation : le cache
+meurt et plus rien n'est détecté. Règle de dimensionnement à garder :
+**plafond de recul < MAX_REUSE**.
+
+### 14.9 Vitesse de correction des books — combien de temps pour cliquer
+
+`python -m src.main corrections` (le nom réel de la commande est `corrections`,
+**pas** `corrections-report` comme l'annonçait le §13.6 ; de même `features` et
+non `features-report`).
+
+| Book | suivis | médiane jouable | médiane alignement | CLV (§14.1) |
+|---|---|---|---|---|
+| **Unibet** | 336 | **34 min** | 46 min | +8,26 % |
+| StarCasino | 334 | 7 min | 8 min | +7,09 % |
+| Ladbrokes | 109 | 7 min | 24 min | +11,44 % |
+| Circus | 84 | 6 min | 15 min | +9,14 % |
+| Betano | 165 | 5 min | 25 min | +5,21 % |
+| **Napoleon** | 141 | **4 min** | 9 min | +4,95 % |
+
+Unibet est **cinq à huit fois plus lent** que tous les autres — bon edge ET le
+temps de réagir. Napoleon cumule le moins bon edge et la fenêtre la plus
+courte. `line_speed` classe les books dans le même ordre indépendamment
+(Unibet 98,1 % de cotes inchangées à 300 s, Napoleon 94,0 %).
+
+Conséquence pratique : **une alerte Napoleon non jouée dans les cinq minutes
+est perdue**, une alerte Unibet attend une demi-heure. Ça renforce
+l'orientation du §6 — moins de paris, plus gros, en privilégiant ceux dont la
+fenêtre laisse le temps de miser correctement.
+
+### 14.10 Deux défauts d'outillage à corriger
+
+⚠️ **`pinnacle_doctor.py` découpe mal les runs.** Un run affiché à « 2 034
+cycles entre 18:32:38 et 18:41:08 » avec une médiane de 20 s est
+arithmétiquement impossible (un quart de seconde par cycle). Les horodatages du
+journal ne portent pas la date, et le découpage mélange plusieurs jours. **Ne
+pas se fier aux agrégats par run tant que ce n'est pas corrigé** — c'est le
+piège du §13.4 dans l'outil censé l'éviter.
+
+⚠️ **Les noms de books sont dédoublés dans `paris_track.csv`.** « Ladbrokes »
+et « ladbrokes_be », « StarCasino » et « starcasino_sport », « Unibet / 711 /
+Bingoal / Scooore » et « unibet_be » coexistent. Deux écrivains, deux formats :
+`bot_listener` enregistre le nom d'affichage au clic, `track-update` réécrit
+avec la valeur brute de l'enum. Toute analyse par book sur ce fichier est
+coupée en deux.
+
+### 14.11 Pièges rencontrés dans cette session
+
+- **Un canal Telegram ne délivre pas ses messages en `message` mais en
+  `channel_post`.** `/scan` ne recevait donc rien, et un update jamais livré ne
+  laisse aucune trace nulle part. `allowed_updates` couvre désormais les deux.
+- **`bot_listener` est lancé par systemd sans `EnvironmentFile`.** Sans
+  chargement explicite de `.env`, `TelegramConfig.from_env()` renvoyait `None`
+  et `/scan` n'acceptait aucun chat. Ce qui masquait la panne : `load_token()`
+  lit `.env` pour son propre compte, donc le service démarrait normalement. Le
+  chargeur est maintenant partagé dans `src/config.load_env_file()`.
+- **`reply_markup=None` part en JSON `null`, que l'API refuse.** Le scan vide
+  était le seul message sans bouton, donc le seul rejeté — et `tg()` ne
+  regardait jamais la réponse de Telegram. Tout refus est désormais journalisé.
+- **Sous systemd, Python tamponne stdout par blocs de 4 Ko.** Un message
+  imprimé à 08:09 n'est arrivé au journal qu'à 16:10, à l'arrêt du process.
+  `sys.stdout.reconfigure(line_buffering=True)` au démarrage.
+- **`teams.display()` a besoin de `teams.init(storage)`**, sinon il retombe sur
+  `.capitalize()` et rend « Clubbrugge ». Le daemon l'initialise, les autres
+  services doivent le faire aussi.
+
+### 14.12 À faire au prochain démarrage
+
+1. **Vérifier les compteurs du détecteur de marchés en retard** après une
+   soirée complète — les deux nouvelles causes de rejet disent si le seuil est
+   bon :
+   ```bash
+   grep "marchés en retard —" valuebet.log | tail -20
+   ```
+   `écart_faible` doit absorber les anciens faux positifs. Si `retenue` reste à
+   0 sur toute une soirée de football, le seuil de 15 % est trop haut.
+2. **Le test d'IP Pinnacle** (§14.7) — le seul qui tranche entre filtrage d'ASN
+   et quota, et il conditionne tout le reste sur ce sujet.
+3. **Trancher le trou de routage** des cotes > 6 à EV 20-35 % (§14.3).
+4. **Smarkets comme seconde référence sharp** (§6) — reste le plus gros levier.
+   Le tennis à +9,49 % avec 91 % d'opportunités positives est plafonné par
+   Pinnacle seul.
+5. Corriger les deux défauts d'outillage du §14.10.
+6. **Résultats automatiques** — toujours aucune source de scores, donc aucun
+   P&L réel dans `paris_track.csv` (997 paris, 0 résultat rempli). Pas
+   bloquant : sur cette durée le P&L mesure la chance, le CLV mesure l'edge.
