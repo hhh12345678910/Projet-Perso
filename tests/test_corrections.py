@@ -330,3 +330,33 @@ def test_history_survives_a_full_cycle_loop(tmp_path):
     con.close()
     assert [g[1] for g in got if g[0] == "unibet_be"] == [2.30, 2.25, 2.20]
     assert len([g for g in got if g[0] == "starcasino_sport"]) == 3
+
+
+def test_closed_curves_are_forgotten_once_the_map_grows():
+    """`_CURVE_LAST` ne rétrécissait jamais : à ~2 000 entrées par jour, il
+    finirait par peser plus que le service."""
+    from src.main import _CURVE_LAST, _forget_closed_curves, _CURVE_LAST_MAX
+    _CURVE_LAST.clear()
+    for i in range(_CURVE_LAST_MAX + 10):
+        _CURVE_LAST[(i, "unibet_be")] = 2.0
+    # En dessous du seuil, on ne reconstruit rien pour ne rien supprimer.
+    assert _forget_closed_curves({1, 2, 3}) > 0
+    assert set(k[0] for k in _CURVE_LAST) == {1, 2, 3}
+    _CURVE_LAST.clear()
+    _CURVE_LAST[(99, "unibet_be")] = 2.0
+    assert _forget_closed_curves(set()) == 0, "sous le seuil : aucun balayage"
+    _CURVE_LAST.clear()
+
+
+def test_the_age_bound_is_configurable_without_deploying(monkeypatch, tmp_path):
+    """C'est le premier paramètre à baisser si un cycle s'allonge."""
+    from src.storage import Storage
+    st = Storage(tmp_path / "t.db")
+    old = datetime.now(timezone.utc) - timedelta(hours=100)
+    ko = datetime.now(timezone.utc) + timedelta(hours=2)
+    st.seed_corrections([(1, old.isoformat(), ko.isoformat(), "unibet_be", EK,
+                          "h2h", "home", None, 2.30, 2.10)])
+    monkeypatch.setenv("CORRECTIONS_MAX_AGE_HOURS", "168")
+    assert len(st.open_corrections()) == 1
+    monkeypatch.setenv("CORRECTIONS_MAX_AGE_HOURS", "48")
+    assert st.open_corrections() == [], "détecté il y a 100 h, hors borne à 48 h"

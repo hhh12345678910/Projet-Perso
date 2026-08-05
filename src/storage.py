@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import os
 import sqlite3
 import time
 from contextlib import contextmanager
@@ -237,6 +238,10 @@ CREATE TABLE IF NOT EXISTS bet_corrections (
 );
 CREATE INDEX IF NOT EXISTS idx_bc_open
     ON bet_corrections(corrected_at, detected_at);
+-- `detected_at` est la première condition de open_corrections, et la seule qui
+-- soit sélective. Sans cet index, chaque cycle balaye toute la table — anodin
+-- tant qu'elle est jeune, coûteux sur une table permanente qui grossit d'un an.
+CREATE INDEX IF NOT EXISTS idx_bc_detected ON bet_corrections(detected_at);
 
 -- Trajectoire complète d'une cote détectée, de la détection au coup d'envoi.
 --
@@ -526,7 +531,7 @@ class Storage:
             )
         return len(rows)
 
-    def open_corrections(self, *, max_age_hours: float = 48.0) -> list[sqlite3.Row]:
+    def open_corrections(self, *, max_age_hours: float | None = None) -> list[sqlite3.Row]:
         """Suivis encore ouverts : **jusqu'au coup d'envoi**.
 
         La condition portait sur les jalons — un suivi se fermait dès que la
@@ -542,7 +547,16 @@ class Storage:
         Un suivi sans `kickoff` connu retombe sur l'ancienne règle : sans heure
         de fin, il faut bien un critère d'arrêt. Et l'âge reste borné pour que
         la requête demeure petite à chaque cycle — un horaire faux ne doit pas
-        faire traîner un suivi indéfiniment."""
+        faire traîner un suivi indéfiniment.
+
+        La borne d'âge est le levier de coût de tout le suivi : elle décide
+        combien de lignes sont relues ET réécrites à chaque cycle. 168 h couvre
+        41 % de détections dont le coup d'envoi dépasse 48 h, au prix d'environ
+        trois fois plus de suivis ouverts. Réglable par
+        `CORRECTIONS_MAX_AGE_HOURS` sans déploiement, précisément parce que
+        c'est le premier paramètre à baisser si un cycle s'allonge."""
+        if max_age_hours is None:
+            max_age_hours = float(os.getenv("CORRECTIONS_MAX_AGE_HOURS", "168"))
         now = datetime.now(timezone.utc)
         cutoff = (now - timedelta(hours=max_age_hours)).isoformat()
         with self._conn() as c:

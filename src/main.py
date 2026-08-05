@@ -362,8 +362,23 @@ def build_bet_features(
 # Dernière cote enregistrée par (suivi, book), en mémoire. Une table le ferait
 # aussi, au prix d'une écriture par book et par cycle — alors que le seul coût
 # de l'oubli est un point redondant après un redémarrage, qui ne fausse aucune
-# courbe. Borné par le nombre de suivis ouverts, donc par la fenêtre de 48 h.
+# courbe.
+#
+# Purgé des suivis fermés : sans ça le dictionnaire ne rétrécit jamais, et à
+# ~2 000 entrées par jour il finirait par peser plus que le service. Le seuil
+# évite de reconstruire un ensemble à chaque cycle pour ne rien supprimer.
 _CURVE_LAST: dict[tuple, float] = {}
+_CURVE_LAST_MAX = 50_000
+
+
+def _forget_closed_curves(live_owners: set[int]) -> int:
+    """Oublie les suivis qui ne sont plus ouverts. Renvoie le nombre oublié."""
+    if len(_CURVE_LAST) <= _CURVE_LAST_MAX:
+        return 0
+    stale = [k for k in _CURVE_LAST if k[0] not in live_owners]
+    for k in stale:
+        del _CURVE_LAST[k]
+    return len(stale)
 
 
 def track_corrections(
@@ -447,6 +462,8 @@ def track_corrections(
     for r in sorted(open_rows, key=lambda x: int(x["value_bet_id"])):
         skey = (r["event_key"], r["market"], r["outcome_label"], r["line"])
         curve_owner.setdefault(skey, int(r["value_bet_id"]))
+
+    _forget_closed_curves(set(curve_owner.values()))
 
     for skey, owner in curve_owner.items():
         cur_fair = _current_fair_odd(fair_lines, {
@@ -2018,11 +2035,20 @@ def _daemon_scan_sport(
                  b.outcome.label, b.outcome.line, b.odd_taken, b.fair_odd)
                 for b, vid in zip(bets, bet_ids)
             ])
+            # Le suivi est la partie du cycle dont le coût grandit avec la
+            # borne d'âge : chaque suivi ouvert est relu ET réécrit. Sans cette
+            # mesure, un cycle qui s'allonge ne dirait pas d'où vient le temps.
+            _t0 = time.monotonic()
+            _open = [dict(r) for r in storage.open_corrections()]
             obs, corr, algn, hist = track_corrections(
-                [dict(r) for r in storage.open_corrections()], soft_q, _now, fair,
-                pinnacle_q,
+                _open, soft_q, _now, fair, pinnacle_q,
             )
             storage.update_corrections(obs, corr, algn, hist)
+            _ms = (time.monotonic() - _t0) * 1000
+            console.print(
+                f"\\[{current_sport}]   suivi : {len(_open)} ouverts, "
+                f"{len(hist)} points, {_ms:.0f} ms"
+            )
             if corr or algn:
                 console.print(f"\\[{current_sport}]   fenêtres fermées : {len(corr)}, "
                               f"alignements : {len(algn)}")
