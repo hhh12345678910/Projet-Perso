@@ -1204,15 +1204,62 @@ def fetch_napoleon_quotes(sport: str) -> list[OddQuote]:
         return []
 
 
-def fetch_betfirst_quotes(sport: str) -> list[OddQuote]:
-    """Fetch + parse the BetFirst events-table for a sport (paginated)."""
+# BetFirst hors du cycle : rafraîchi en arrière-plan, jamais attendu.
+#
+# Même paginé en parallèle, ce book reste le plus lent du portefeuille — et
+# _fetch_all_parallel attend TOUS les books avant de rendre la main, donc sa
+# durée devient celle du cycle entier. Or il n'a aucune raison d'être frais à
+# la seconde : ses prix sont les pires du portefeuille (−3,20 points de CLV à
+# sélection identique), il est là pour la donnée, pas pour être joué.
+#
+# Le cycle lit donc toujours le cache et repart aussitôt. Un rafraîchissement
+# est lancé en fond quand le cache a vieilli ; le premier cycle après un
+# démarrage voit un cache vide, ce qui est sans conséquence.
+_BETFIRST_TTL = float(os.getenv("BETFIRST_REFRESH_SEC", "300"))
+# Au-delà, on préfère RIEN à des cotes mortes. C'est la leçon de la garde de
+# fraîcheur du §5 : un flux périmé traité comme frais fabrique des value bets
+# contre des prix qui n'existent plus, en silence.
+_BETFIRST_MAX_AGE = float(os.getenv("BETFIRST_MAX_AGE_SEC", "1200"))
+_BETFIRST_CACHE: dict[str, tuple[float, list[OddQuote]]] = {}
+_BETFIRST_REFRESHING: set[str] = set()
+_BETFIRST_LOCK = threading.Lock()
+
+
+def _betfirst_refresh(sport: str) -> None:
+    """Recharge BetFirst en fond. Ne lève jamais : c'est un thread détaché, une
+    exception y serait perdue et emporterait le drapeau de rafraîchissement."""
     try:
         with BetFirstScraper() as bf:
             data = bf.fetch_all_events(sport, days_ahead=3, max_market_count=10)
-        return list(betfirst_parse_events_table(data))
-    except httpx.HTTPError as e:
-        console.print(f"[yellow]BetFirst skipped:[/yellow] {e}")
+        quotes = list(betfirst_parse_events_table(data))
+        with _BETFIRST_LOCK:
+            _BETFIRST_CACHE[sport] = (time.monotonic(), quotes)
+        console.print(f"\\[{sport}]   BetFirst rafraîchi : {len(quotes)} cotes")
+    except Exception as e:                                      # noqa: BLE001
+        console.print(f"[yellow]BetFirst refresh échoué : {e}[/yellow]")
+    finally:
+        with _BETFIRST_LOCK:
+            _BETFIRST_REFRESHING.discard(sport)
+
+
+def fetch_betfirst_quotes(sport: str) -> list[OddQuote]:
+    """Cotes BetFirst en cache. Ne bloque jamais le cycle."""
+    now = time.monotonic()
+    with _BETFIRST_LOCK:
+        ts, quotes = _BETFIRST_CACHE.get(sport, (0.0, []))
+        age = now - ts if ts else float("inf")
+        stale = age > _BETFIRST_TTL
+        busy = sport in _BETFIRST_REFRESHING
+        if stale and not busy:
+            _BETFIRST_REFRESHING.add(sport)
+            launch = True
+        else:
+            launch = False
+    if launch:
+        threading.Thread(target=_betfirst_refresh, args=(sport,), daemon=True).start()
+    if age > _BETFIRST_MAX_AGE:
         return []
+    return quotes
 
 
 def fetch_ladbrokes_quotes(sport: str) -> list[OddQuote]:
@@ -1555,13 +1602,12 @@ def _fetch_all_parallel(
         # MeridianBet: scraper prêt mais l'API exige un token (anti-bot
         # TrafficGuard) -> réactiver ici une fois le token capturé.
         # "MeridianBet": lambda: fetch_meridian_quotes(sport),
-        # BetFirst : le 403 est tombé — vérifié le 06/08, 6 865 cotes sur 892
-        # événements. Réactivé, mais sa pagination a dû être parallélisée : en
-        # série sur 7 jours elle prenait 80 s, et le cycle attend tous les books.
-        # ⚠️ C'est le book aux PIRES prix du portefeuille : −3,20 points de CLV
-        # à sélection identique, meilleur prix seulement 15 % du temps. Il est
-        # là pour la donnée (consensus live, surebets, features), pas pour être
-        # joué — le couper dans /book est probablement le bon réglage.
+        # BetFirst : le 403 est tombé (vérifié le 06/08). Servi depuis un cache
+        # rafraîchi EN FOND — le cycle ne l'attend jamais. Voir
+        # fetch_betfirst_quotes : même paginé en parallèle il reste le plus lent
+        # du portefeuille, et sa fraîcheur n'a aucune valeur puisqu'il offre les
+        # pires prix (−3,20 points de CLV à sélection identique, meilleur prix
+        # 15 % du temps). Il est là pour la donnée, pas pour être joué.
         "BetFirst":      lambda: fetch_betfirst_quotes(sport),
         "Ladbrokes":     lambda: fetch_ladbrokes_quotes(sport),
         "StarCasino":    lambda: fetch_starcasinosport_quotes(sport),
