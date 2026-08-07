@@ -270,6 +270,19 @@ CREATE TABLE IF NOT EXISTS odds_history (
     ev_pct        REAL
 );
 CREATE INDEX IF NOT EXISTS idx_oh_bet ON odds_history(value_bet_id, book, seen_at);
+
+-- Books dont les alertes sont COUPÉES. Table d'exceptions, pas d'inscriptions :
+-- un book absent d'ici alerte normalement, donc ajouter un scraper ne demande
+-- rien et l'oubli d'une ligne ne rend jamais un book silencieux par accident.
+--
+-- Ne concerne QUE la notification. La collecte, le stockage, les courbes, le
+-- CLV et tous les exports continuent pour tous les books sans exception —
+-- c'est la condition posée par l'utilisateur : couper le bruit sans jamais
+-- perdre de données.
+CREATE TABLE IF NOT EXISTS book_alerts_off (
+    book        TEXT PRIMARY KEY,
+    disabled_at TEXT NOT NULL
+);
 """
 
 
@@ -1117,6 +1130,39 @@ class Storage:
                 f"  AND {line_clause} AND fetched_at = ?",
                 (*head, *tail, last[0]),
             ))
+
+    def books_alert_off(self) -> set[str]:
+        """Books dont les alertes sont coupées."""
+        with self._conn() as c:
+            return {r[0] for r in c.execute("SELECT book FROM book_alerts_off")}
+
+    def toggle_book_alert(self, book: str) -> bool:
+        """Bascule un book. Renvoie True si les alertes sont désormais ACTIVES."""
+        with self._conn() as c:
+            row = c.execute(
+                "SELECT 1 FROM book_alerts_off WHERE book = ?", (book,)
+            ).fetchone()
+            if row:
+                c.execute("DELETE FROM book_alerts_off WHERE book = ?", (book,))
+                return True
+            c.execute(
+                "INSERT INTO book_alerts_off(book, disabled_at) VALUES (?, ?)",
+                (book, datetime.now(timezone.utc).isoformat()),
+            )
+            return False
+
+    def books_seen(self, *, days: float = 7.0) -> list[str]:
+        """Books ayant produit une détection récemment.
+
+        Liste dynamique plutôt que codée en dur : un book ajouté apparaît seul
+        dans /book, un book retiré en disparaît, et personne n'a à tenir un
+        second inventaire à jour."""
+        since = (datetime.now(timezone.utc) - timedelta(days=days)).isoformat()
+        with self._conn() as c:
+            return [r[0] for r in c.execute(
+                "SELECT DISTINCT book FROM value_bets WHERE detected_at >= ? "
+                "ORDER BY book", (since,)
+            )]
 
     def odds_curves(self, *, since: str, min_ev: float = 0.0) -> list[sqlite3.Row]:
         """Trajectoires complètes, jointes à l'identité du pari.

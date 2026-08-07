@@ -616,6 +616,31 @@ def _market_key(dedup_key: str) -> str | None:
     return f"{event}|{market}|{line}"
 
 
+def _load_books_alert_off() -> set[str]:
+    """Books dont l'utilisateur a coupé les alertes via /book.
+
+    Relu à chaque construction d'alerter, donc à chaque cycle : une bascule
+    depuis Telegram prend effet immédiatement, sans redémarrer le daemon.
+
+    ⚠️ Ne coupe QUE la notification. Les cotes de ces books continuent d'être
+    collectées, stockées, suivies en courbe et exportées — c'est tout l'intérêt
+    du réglage : faire taire sans jamais cesser de mesurer."""
+    try:
+        con = sqlite3.connect(str(_PLAYS_DB))
+        con.execute("PRAGMA busy_timeout=3000")
+        con.execute(
+            "CREATE TABLE IF NOT EXISTS book_alerts_off "
+            "(book TEXT PRIMARY KEY, disabled_at TEXT NOT NULL)"
+        )
+        rows = con.execute("SELECT book FROM book_alerts_off").fetchall()
+        con.close()
+        return {r[0] for r in rows}
+    except Exception:
+        # En cas de doute on alerte : un book muet par accident est bien plus
+        # coûteux qu'une alerte de trop.
+        return set()
+
+
 def _load_played_keys() -> tuple[set, set]:
     """(selections, markets) already played — neither should alert again.
 
@@ -664,6 +689,7 @@ class TelegramAlerter:
         self._owns_client = client is None
         self._print = print_fn
         self._played_keys, self._played_markets = _load_played_keys()
+        self._books_off = _load_books_alert_off()
 
     def close(self) -> None:
         if self._owns_client:
@@ -698,6 +724,10 @@ class TelegramAlerter:
         # silence X and 2 on that match, since they're the other side of a
         # position already held.
         if f"{bet.event_key}|{bet.market.value}|{bet.outcome.line}" in self._played_markets:
+            return False
+        # Book mis en sourdine via /book. La détection a bien eu lieu et reste
+        # en base ; seul l'envoi est supprimé.
+        if bet.book.value in self._books_off:
             return False
         ev = bet.ev_pct
         text = format_value_bet(bet, sport=sport, bankroll=cfg.bankroll)

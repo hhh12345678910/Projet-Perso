@@ -604,3 +604,96 @@ def test_empty_scan_still_sends_a_message(tmp_path, monkeypatch):
     bot_listener.handle_message({"chat": {"id": 42}, "text": "/scan"})
     assert [m for m, _ in sent] == ["sendMessage"]
     assert "Aucune value à jouer" in sent[0][1]["text"]
+
+
+# ------------------------------------------------------------- /book --------
+# Choisir de quels books on est NOTIFIÉ. La contrainte posée est stricte : un
+# book décoché doit continuer d'être scrapé, stocké, suivi et exporté. Seul
+# l'envoi Telegram disparaît.
+
+def test_a_book_is_alerting_until_it_is_explicitly_muted(tmp_path):
+    """Table d'exceptions, pas d'inscriptions : ajouter un scraper ne demande
+    rien, et l'oubli d'une ligne ne rend jamais un book muet par accident."""
+    from src.storage import Storage
+    st = Storage(tmp_path / "t.db")
+    assert st.books_alert_off() == set()
+    assert st.toggle_book_alert("napoleon_be") is False      # -> coupé
+    assert st.books_alert_off() == {"napoleon_be"}
+    assert st.toggle_book_alert("napoleon_be") is True       # -> réactivé
+    assert st.books_alert_off() == set()
+
+
+def test_a_muted_book_sends_nothing(tmp_path, monkeypatch):
+    from src.alerter import TelegramAlerter, TelegramConfig
+    from src.storage import Storage
+    db = tmp_path / "t.db"
+    Storage(db).toggle_book_alert("unibet_be")
+    monkeypatch.setattr("src.alerter._PLAYS_DB", db)
+
+    from src.models import Book, MarketType, Outcome, ValueBet
+    from datetime import datetime as _dt, timezone as _tz
+    calls = []
+
+    class FakeClient:
+        def post(self, url, json):
+            calls.append(json["chat_id"])
+            class _R: status_code = 200
+            return _R()
+        def close(self): pass
+
+    bet = ValueBet(event_key="209906010000::a__vs__b", book=Book.UNIBET_BE,
+                   market=MarketType.H2H, outcome=Outcome(label="home"),
+                   odd_taken=2.4, fair_prob=0.5, fair_odd=2.0, ev_pct=12.0,
+                   kelly_stake_pct=1.5, detected_at=_dt.now(_tz.utc))
+    cfg = TelegramConfig(bot_token="t", chat_id="c", min_ev_pct=3.0,
+                         main_max_ev_pct=100.0, min_send_interval_s=0.0)
+    with TelegramAlerter(cfg, client=FakeClient()) as a:
+        assert a.send_value_bet(bet) is False
+    assert calls == []
+
+
+def test_muting_a_book_never_touches_collection(tmp_path):
+    """Le point non négociable : la détection reste en base, avec sa cote et
+    son EV. Seule la notification disparaît."""
+    from src.models import Book, MarketType, Outcome, ValueBet
+    from src.storage import Storage
+    from datetime import datetime as _dt, timezone as _tz
+    st = Storage(tmp_path / "t.db")
+    st.toggle_book_alert("unibet_be")
+    vb = ValueBet(event_key="209906010000::a__vs__b", book=Book.UNIBET_BE,
+                  market=MarketType.H2H, outcome=Outcome(label="home"),
+                  odd_taken=2.4, fair_prob=0.5, fair_odd=2.0, ev_pct=20.0,
+                  kelly_stake_pct=1.5, detected_at=_dt.now(_tz.utc))
+    vid = st.insert_value_bet(vb)
+    import sqlite3
+    con = sqlite3.connect(str(tmp_path / "t.db"))
+    row = con.execute("SELECT book, ev_pct FROM value_bets WHERE id=?", (vid,)).fetchone()
+    con.close()
+    assert row == ("unibet_be", 20.0), "la détection doit rester intacte"
+
+
+def test_the_keyboard_shows_the_state_of_each_book():
+    from bot_listener import book_keyboard
+    kb = book_keyboard(["unibet_be", "napoleon_be"], {"napoleon_be"})
+    flat = [b for row in kb["inline_keyboard"] for b in row]
+    by_data = {b["callback_data"]: b["text"] for b in flat}
+    assert by_data["bookalert:unibet_be"].startswith("✅")
+    assert by_data["bookalert:napoleon_be"].startswith("☐")
+    assert "bookalert:__all__" in by_data and "bookalert:__none__" in by_data
+
+
+def test_the_book_list_follows_what_actually_produced_detections(tmp_path):
+    """Liste dynamique : un book ajouté apparaît seul, un book retiré
+    disparaît, personne ne tient un second inventaire."""
+    from src.models import Book, MarketType, Outcome, ValueBet
+    from src.storage import Storage
+    from datetime import datetime as _dt, timezone as _tz, timedelta as _td
+    st = Storage(tmp_path / "t.db")
+    now = _dt.now(_tz.utc)
+    for i, (bk, when) in enumerate([(Book.UNIBET_BE, now),
+                                    (Book.CIRCUS_BE, now - _td(days=30))]):
+        st.insert_value_bet(ValueBet(
+            event_key=f"20990601000{i}::a__vs__b", book=bk, market=MarketType.H2H,
+            outcome=Outcome(label="home"), odd_taken=2.4, fair_prob=0.5,
+            fair_odd=2.0, ev_pct=10.0, kelly_stake_pct=1.5, detected_at=when))
+    assert st.books_seen(days=7) == ["unibet_be"], "Circus est trop ancien"

@@ -471,7 +471,7 @@ def _stake_line(ev: float, kelly: float | None, bankroll: float) -> str:
         return "Mise conseillée : —"
 
 
-def _book_label(book_value: str) -> str:
+def _book_label_cached(book_value: str) -> str:
     try:
         from src.alerter import _BOOK_NAMES
         from src.models import Book
@@ -589,6 +589,79 @@ def handle_scan_play(cb: dict) -> None:
     print(f"[{datetime.now():%H:%M:%S}] scan {scan_token}: {done} joues, {skipped} ignores")
 
 
+# ------------------------------------------------------------- /book --------
+# Choisir de quels books on veut être NOTIFIÉ. Rien d'autre : les books
+# décochés continuent d'être scrapés, stockés, suivis en courbe et exportés.
+# C'est la condition posée — couper le bruit sans jamais perdre de données.
+
+def _book_label(book_value: str) -> str:
+    return _book_label_cached(book_value)
+
+
+def book_keyboard(books: list[str], off: set[str]) -> dict:
+    """Un bouton par book, coché ou non. Deux par ligne pour rester lisible
+    sur un téléphone."""
+    rows, cur = [], []
+    for b in books:
+        mark = "☐" if b in off else "✅"
+        cur.append({"text": f"{mark} {_book_label_cached(b)[:18]}",
+                    "callback_data": f"bookalert:{b}"})
+        if len(cur) == 2:
+            rows.append(cur); cur = []
+    if cur:
+        rows.append(cur)
+    rows.append([{"text": "✅ Tout activer", "callback_data": "bookalert:__all__"},
+                 {"text": "☐ Tout couper", "callback_data": "bookalert:__none__"}])
+    return {"inline_keyboard": rows}
+
+
+def book_message(books: list[str], off: set[str]) -> str:
+    on = [b for b in books if b not in off]
+    return (
+        "📚 <b>Books qui envoient des alertes</b>\n\n"
+        f"Actifs : <b>{len(on)}/{len(books)}</b>\n\n"
+        "<i>Décocher un book ne coupe QUE ses notifications. Ses cotes "
+        "continuent d'être collectées, suivies et exportées — la mesure ne "
+        "perd rien.</i>"
+    )
+
+
+def _books_and_off():
+    from src.storage import Storage
+    st = Storage(DB_PATH)
+    books = st.books_seen(days=7)
+    return books, st.books_alert_off()
+
+
+def handle_book_toggle(cb: dict) -> None:
+    """Bascule un book et redessine le clavier en place."""
+    from src.storage import Storage
+    cb_id = cb["id"]
+    target = cb.get("data", "").split(":", 1)[1]
+    st = Storage(DB_PATH)
+    books = st.books_seen(days=7)
+    if target == "__all__":
+        for b in st.books_alert_off():
+            st.toggle_book_alert(b)
+        note = "Tous les books alertent"
+    elif target == "__none__":
+        off = st.books_alert_off()
+        for b in books:
+            if b not in off:
+                st.toggle_book_alert(b)
+        note = "Toutes les alertes coupées"
+    else:
+        now_on = st.toggle_book_alert(target)
+        note = f"{_book_label_cached(target)} : {'alertes ON' if now_on else 'alertes OFF'}"
+    off = st.books_alert_off()
+    msg = cb.get("message", {})
+    tg("editMessageText", chat_id=msg.get("chat", {}).get("id"),
+       message_id=msg.get("message_id"), parse_mode="HTML",
+       text=book_message(books, off), reply_markup=book_keyboard(books, off))
+    tg("answerCallbackQuery", callback_query_id=cb_id, text=note)
+    print(f"[{datetime.now():%H:%M:%S}] /book {target} -> coupés : {sorted(off)}")
+
+
 def _allowed_chats(cfg) -> set[str]:
     """Les chats du projet. Le bot est joignable par n'importe qui sur Telegram :
     sans cette garde, un inconnu qui trouve son nom obtiendrait la liste des
@@ -607,7 +680,7 @@ def handle_message(msg: dict) -> None:
         return
     # "/scan@mon_bot arg" -> "/scan"
     cmd = text.split()[0].split("@", 1)[0].lower()
-    if cmd not in ("/scan", "/start"):
+    if cmd not in ("/scan", "/start", "/book"):
         print(f"[{datetime.now():%H:%M:%S}] commande inconnue {cmd!r} (chat {chat_id})")
         return
 
@@ -657,6 +730,9 @@ def handle_callback(cb: dict) -> None:
     data = cb.get("data", "")
     if data.startswith("scanplay:"):
         handle_scan_play(cb)
+        return
+    if data.startswith("bookalert:"):
+        handle_book_toggle(cb)
         return
     if not data.startswith("play:"):
         return
@@ -771,6 +847,7 @@ def main() -> None:
     try:    # fait apparaitre /scan dans le menu Telegram ; sans effet sur le reste
         tg("setMyCommands", commands=[
             {"command": "scan", "description": "Les value bets encore jouables"},
+            {"command": "book", "description": "Choisir les books qui alertent"},
         ])
     except Exception as e:
         print("setMyCommands ignore:", e)
