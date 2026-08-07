@@ -1,12 +1,12 @@
 # Valuebet — état du projet
 
 Document de reprise. À lire en premier pour reprendre le travail sans
-redécouvrir le contexte. Dernière mise à jour : 04/08/2026 (soirée).
+redécouvrir le contexte. Dernière mise à jour : 06/08/2026.
 
 **Si tu ne lis que trois choses :** §14.1 pour la mesure qui fait autorité
 (+10,18 % de CLV sur 858 opportunités, 18,4 σ), §11 pour le mode de défaillance
-dominant du projet (la panne silencieuse), §14 pour la session du 04/08 au soir
-— état actuel, ce qui tourne, et ce qui reste ouvert.
+dominant du projet (la panne silencieuse), §15 pour la session du 06/08 — état
+actuel, ce qui tourne, et ce qui reste ouvert.
 
 Dépôt : `hhh12345678910/Projet-Perso` — branche **`claude/resume-clarification-1541xa`**
 VM : Google Cloud, `us-central1`, IP `34.59.193.111`, utilisateur `hubindylan98`
@@ -132,12 +132,19 @@ scrapers, pas réécrire le moteur.
 | Napoleon | ✅ | plateforme Superbet — 1X2 en football, vainqueur en tennis |
 | **Betano** | ✅ via navigateur | voir §3 |
 | **Circus** | ✅ via navigateur | plateforme Gaming1, voir §10 — football + tennis |
-| BetFirst | ❌ désactivé | plus de compte ; fonctionnait en tennis |
-| Betcenter | ❌ | cotes erronées |
-| 711 / Bingoal / Scooore | ❌ | jumeaux Kambi d'Unibet, prix identiques |
-| MeridianBet | ❌ | token anti-bot |
-| Golden Palace | ❌ | compte limité |
-| Smarkets | ❌ retiré | voir §5 |
+| **Golden Palace** | ✅ réactivé le 06/08 | plateforme Altenar, aucune auth — 2ᵉ meilleure couverture (§15.2) |
+| **BetFirst** | ✅ réactivé le 06/08 | **hors du cycle**, cache de fond — pires prix du portefeuille (§15.2) |
+| Betcenter | ❌ | cotes erronées — répond (40 313 cotes), mais reste dehors |
+| 711 / Bingoal / Scooore | ❌ | jumeaux Kambi d'Unibet, prix identiques. Répondent tous les trois |
+| MeridianBet | ❌ | token anti-bot — répond, 0 cote |
+| Bet777 | ❌ | Gaming1/Ardent, aucun scraper. Écarté par l'utilisateur le 06/08 |
+| MagicBetting | ❌ | **Digitain**, pas Gaming1 (§15.6). Payloads chiffrés |
+| Smarkets | ❌ retiré | voir §5 — reste le plus gros levier ouvert |
+
+⚠️ `tools/book_revive_check.py` sonde les books désactivés et dit lesquels
+répondent encore. Leurs motifs vieillissent : « compte limité » pour Golden
+Palace ne concernait que le PARI, son API ne demande aucune authentification.
+Lancer cette sonde avant de croire un motif écrit il y a un mois.
 
 **Sports scannés : soccer, tennis** (`SPORT_LIST` dans `.env`). Basket retiré
 (pas d'alertes souhaitées), volley retiré (Pinnacle ne price que 2 événements →
@@ -250,6 +257,8 @@ python -m src.main export-history --out <csv>   # détections + ligue + délai +
 python -m src.main features --premium         # CLV par championnat  (PAS `features-report`)
 python -m src.main corrections                # vitesse de correction par book (PAS `corrections-report`)
 python -m src.main export-tracking --out <db> # historique durable, transportable
+python -m src.main export-curves --out <csv> --days 7   # trajectoires (§15.1)
+python tools/book_revive_check.py             # quels books desactives repondent encore
 python -m src.main books-coverage --sport soccer,tennis   # events, horizon, ∩ Pinnacle
 python -m src.main betano-value-test --min-ev 0.5   # dry-run, sans alerte
 python -m src.main betano-coverage           # ce que contient le dump Betano
@@ -271,8 +280,8 @@ sqlite3 data/valuebet.db "SELECT book, COUNT(*) FROM value_bets \
 
 node tools/circus-ingest.selftest.js tools/circus-ingest.user.js  # 7 scénarios
 
-# Telegram — /scan répond dans les canaux du projet (§14.5). Après toute
-# modification de bot_listener.py : sudo systemctl restart valuebet-listener
+# Telegram — /scan et /book répondent dans les canaux du projet (§14.5, §15.3).
+# Après toute modification de bot_listener.py : sudo systemctl restart valuebet-listener
 sudo journalctl -u valuebet-listener --since "5 min ago" --no-pager | grep -v systemd
 
 grep "done in" valuebet.log | tail -5        # durée des cycles (~17 s normal)
@@ -1500,6 +1509,9 @@ coupée en deux.
 
 ### 14.12 À faire au prochain démarrage
 
+⚠️ **Liste dépassée — voir §15.8.** Le point 1 est déployé et vérifié, le 5
+est fait (§15.1). Le reste est repris là-bas.
+
 1. **Vérifier les compteurs du détecteur de marchés en retard** après une
    soirée complète — les deux nouvelles causes de rejet disent si le seuil est
    bon :
@@ -1518,3 +1530,233 @@ coupée en deux.
 6. **Résultats automatiques** — toujours aucune source de scores, donc aucun
    P&L réel dans `paris_track.csv` (997 paris, 0 résultat rempli). Pas
    bloquant : sur cette durée le P&L mesure la chance, le CLV mesure l'edge.
+
+---
+
+## 15. Session du 06/08 — courbes complètes, deux books retrouvés
+
+Branche **`claude/resume-clarification-1541xa`**, de `78194c5` à `83bc817`.
+Cinq chantiers : la conservation de toutes les données, le filtre d'alertes par
+book, la réactivation de deux scrapers, et **deux pannes silencieuses trouvées
+qui perdaient le tennis de deux books entiers**.
+
+### 15.1 Tout conserver — `odds_history`
+
+Demande de l'utilisateur : garder chaque changement de cote, les horodatages,
+le book, le marché, le délai, la clôture, le CLV. Pour tracer des graphes et
+préparer un modèle.
+
+**Rien de tout ça ne survivait.** `quotes` porte bien chaque cote de chaque
+cycle, mais pèse 20 Go pour deux jours et se purge chaque nuit — l'historique
+était détruit avant d'avoir pu servir. `bet_corrections` survit mais ne garde
+que deux jalons : deux points, pas une courbe.
+
+Table `odds_history`, **permanente, jamais purgée** :
+
+| Colonne | |
+|---|---|
+| `value_bet_id` | identifie la SÉLECTION suivie |
+| `book` | de qui est cette cote — **tous** les books, Pinnacle compris |
+| `seen_at`, `odd` | l'instant et le prix |
+| `fair_odd`, `ev_pct` | la référence AU MÊME INSTANT, et l'EV recalculée |
+
+⚠️ **Une ligne par CHANGEMENT, jamais par cycle.** `line_speed.py` mesure 97 à
+99 % de cotes identiques d'un cycle à l'autre : écrire chaque cycle
+multiplierait le volume par cinquante pour répéter la même valeur. **~0,2 Go
+par an au lieu de 128** — c'est ce qui rend la chose possible. La série
+complète se reconstruit en propageant la dernière valeur connue : entre deux
+points la cote n'est pas inconnue, elle est constante.
+
+Trois choix qui décident du résultat :
+- **`fair_odd` est la référence de l'instant**, pas celle de la détection. Sans
+  elle on verrait le book bouger sans savoir s'il rejoint la référence ou si
+  c'est la référence qui est venue à lui.
+- **Pinnacle est une série comme les autres**, avec sa cote AFFICHÉE ;
+  `fair_odd` porte à part la même ligne dévigée. L'écart entre les deux est la
+  commission (6,6 % en médiane), pas un edge — d'où l'absence d'EV sur cette
+  série.
+- **Une sélection détectée sur trois books n'écrit QU'UNE courbe.** Sans cette
+  déduplication, chacun des trois suivis relèverait les sept books.
+
+Le suivi court **jusqu'au coup d'envoi**, plus jusqu'à l'alignement : un book
+qui rejoint la ligne juste en dix minutes cessait d'être observé pendant les
+six heures suivantes, alors que c'est là que le marché se forme. Borne d'âge à
+168 h (`CORRECTIONS_MAX_AGE_HOURS`) parce que 41 % des sélections ont un coup
+d'envoi à plus de 48 h. **Coût mesuré : 274 ms par cycle sur 581 suivis** — le
+suivi n'est pas ce qui ralentit les cycles.
+
+Export : `export-curves --out <csv> --days 7`, plat, groupable par
+`value_bet_id` et `Book`. `--filled` rééchantillonne à la minute.
+
+⚠️ **La purge ne touche à rien de tout ça.** Vérifié dans le code : elle ne
+supprime que `quotes` (2 jours) et les `notified_*` (30 jours). `odds_history`,
+`bet_features`, `bet_corrections`, `value_bets`, `clv_snapshots`,
+`played_bets`, `events` sont permanents. `export-tracking` les emporte tous.
+
+### 15.2 Golden Palace et BetFirst réactivés
+
+`tools/book_revive_check.py` a tranché — **les motifs de désactivation
+vieillissent, et deux étaient trompeurs** :
+
+| Book | Motif inscrit | Réalité du 06/08 |
+|---|---|---|
+| Golden Palace | « compte limité » | ne concernait que le PARI. Son API Altenar ne demande **aucune authentification**. 1,8 s, 6 729 cotes, 1 354 événements |
+| BetFirst | « 403 depuis le VPS » | le blocage est tombé. Mais **80 secondes** de collecte |
+
+**Golden Palace** est la 2ᵉ meilleure couverture du portefeuille (831
+événements partagés avec Pinnacle en football, contre 847 pour StarCasino).
+Jamais mesuré en CLV faute de données ; il l'est maintenant.
+
+**BetFirst** paginait séquentiellement, jusqu'à 50 pages sur 7 jours. Or
+`_fetch_all_parallel` attend TOUS les books avant de rendre la main : le cycle
+serait passé de 20 s à 80 s — exactement ce qui a fait retirer Smarkets (§5).
+Deux corrections, puis une troisième :
+1. pages en parallèle, **4 workers seulement** (ce book avait été coupé sur un
+   403 ; cinquante requêtes simultanées seraient le meilleur moyen de le
+   retrouver) ;
+2. horizon de 7 à 3 jours ;
+3. **sorti du cycle** : servi depuis un cache rafraîchi en fond
+   (`BETFIRST_REFRESH_SEC`), le cycle ne l'attend jamais. Au-delà de
+   `BETFIRST_MAX_AGE_SEC` le cache renvoie RIEN plutôt que des cotes mortes.
+
+⚠️ **BetFirst est le book aux PIRES prix** : −3,20 points de CLV à sélection
+identique, meilleur prix 15 % du temps. Il est là pour la DONNÉE — consensus
+live, surebets, features — pas pour être joué. Le décocher dans `/book` est le
+bon réglage.
+
+⚠️ **`books-coverage` sous-déclare systématiquement BetFirst** : la commande
+prend un instantané, et le cache de fond est froid au premier appel. Relancer
+deux minutes plus tard. Ce n'est pas une panne.
+
+**Bet777 et Betcenter restent dehors**, sur décision de l'utilisateur. Betcenter
+répond pourtant — 40 313 cotes, six fois plus que les autres — mais ses cotes
+sont fausses, et un book faux ne pollue pas que les alertes : il fausse aussi
+les surebets et le consensus live des marchés en retard.
+
+### 15.3 `/book` — choisir qui alerte, sans jamais couper la collecte
+
+Commande Telegram : une liste à cocher, un bouton par book, plus « Tout
+activer » / « Tout couper ». Le clavier se redessine en place, l'effet est
+immédiat sans redémarrer le daemon.
+
+⚠️ **Le filtre est à UN seul endroit : dans `send_value_bet`, après la
+détection.** Un book décoché continue d'être scrapé, stocké dans `value_bets`,
+suivi dans `odds_history`, mesuré en CLV et sorti par tous les exports. C'est
+la condition posée par l'utilisateur, et un test la verrouille explicitement.
+
+Table d'**exceptions** (`book_alerts_off`), pas d'inscriptions : un book absent
+alerte normalement. Ajouter un scraper ne demande donc rien, et une erreur de
+lecture fait alerter — un book muet par accident coûte bien plus qu'une alerte
+de trop. La liste des books est dynamique : ceux ayant produit une détection
+sur sept jours.
+
+### 15.4 Les noms inversés — deux books dont tout le tennis était perdu
+
+**La trouvaille de la session.** Mesure de couverture du tennis, après
+rapprochement flou :
+
+| Book | avant | après |
+|---|---|---|
+| Ladbrokes | **1** match partagé sur 138 | **33** |
+| BetFirst | **3** sur 88 | **24** |
+| les six autres | 36 à 47 | inchangés |
+
+Cause : Eurobet (Ladbrokes) et BetFirst nomment les joueurs **NOM D'ABORD,
+séparés par une virgule** — « Griekspoor, Tallon », « Hontama, Mai » — alors
+que Pinnacle écrit prénom d'abord.
+
+⚠️ **Pourquoi c'était invisible, et pourquoi j'ai d'abord écarté cette piste.**
+`team_similarity` utilise `token_set_ratio`, qui ignore l'ordre des mots et
+donne **100** sur ces paires. Elle n'est donc pas en cause. Mais le
+rapprochement compare des fragments de **CLÉ**, et `event_key` colle les mots :
+
+```
+tallongriekspoor  vs  griekspoortallon   ->  76,9   REJETÉ (seuil 85)
+alexmichelsen     vs  michelsenalex      ->  81,8   REJETÉ
+zizoubergs        vs  bergszizou         ->  66,7   REJETÉ
+```
+
+Un seul token, l'ordre redevient décisif, le score s'effondre. **Tous rejetés.**
+Un book qui répond, un scraper qui tourne, des centaines de cotes par cycle, et
+presque rien qui en sort — sans une seule erreur nulle part.
+
+Correction : `src/matcher.swap_surname_first()`, appliqué **par
+`normalize_team`**. Deux raisons de le placer là plutôt que dans les scrapers :
+il doit s'exécuter AVANT l'effacement de la ponctuation (après, la virgule a
+disparu et les deux formats sont indiscernables), et tout book adoptant cette
+convention est couvert sans qu'on ait à le découvrir.
+
+Deux gardes : une seule virgule (les paires de double « Bolelli S / Vavassori A »
+n'en portent pas, un nom de club jamais), et au plus deux mots après la virgule.
+Le football, déjà apparié à 573 événements, n'est pas touché.
+
+**Bilan tennis de la journée** — environ 140 paires book × match récupérées ou
+créées, dans le sport au meilleur CLV (+9,49 %, 91 % d'opportunités positives) :
+Ladbrokes +32, BetFirst +21, Golden Palace +43 (nouveau), Betano +42 (onglet
+remis en service).
+
+### 15.5 Marchés en retard — mesurer au lieu de deviner (rappel §14.6)
+
+Déployé et vérifié. Les compteurs par cycle portent désormais deux causes de
+rejet supplémentaires, `sans_consensus` et `écart_faible` — c'est cette
+dernière qui doit absorber les anciens faux positifs.
+
+### 15.6 MagicBetting — Digitain, pas Gaming1
+
+Le §6 annonce « Bet777 et Magic Betting : même plateforme Gaming1, seul `ROOM`
+change ». **C'est faux pour MagicBetting.** Les HAR montrent
+`sport-ak.bldiframe.com` et `sentry.digitain.tools` : c'est **Digitain**.
+
+Bonne nouvelle — ce n'est pas un jumeau de Circus, donc pas le scénario
+Unibet/711/Bingoal/Scooore. C'est une source de prix réellement indépendante.
+
+Mauvaise nouvelle : **toutes les réponses sont chiffrées**.
+`{"payload": "...", "timestamp": ...}`, entropie 7,98 bits/octet. Mesures
+faites, à ne pas refaire :
+- ni gzip, ni zlib, ni deflate ;
+- **pas un chiffrement par blocs** — les longueurs ne sont pas multiples de 16,
+  tous les restes apparaissent. C'est du flot ;
+- **la clé ne dérive pas du seul timestamp** : deux réponses partageant le
+  timestamp `1785958924`, XORées, donnent 0,8 % d'octets nuls — le hasard pur.
+
+L'API est publique, sans authentification (juste un `Referer`), et derrière
+Cloudflare. La clé est dans le bundle JS de l'iframe, qui n'apparaît dans aucun
+HAR capturé — il vient du cache. `bootstrapper.min.js` n'est qu'un chargeur, il
+ne contient rien.
+
+**Deux voies si le sujet revient** : récupérer le bundle (Sources → déplier
+`sport-ak.bldiframe.com`, ou « Disable cache » puis rechargement forcé) pour
+réimplémenter le déchiffrement côté serveur ; ou un pont navigateur comme
+Betano et Circus, qui lit les données après que l'application les a déchiffrées
+— plus robuste à une rotation de clé, mais au prix d'un **troisième onglet
+permanent**.
+
+### 15.7 Pièges de cette session
+
+- **Un remplacement de texte qui ne remplace rien.** Le bloc `/book` n'a jamais
+  été inséré : la chaîne visée différait de deux mots de celle du fichier. La
+  commande tombait donc dans le code du `/scan` et **répondait un SCAN**. Aucune
+  erreur, aucune trace. Toujours utiliser un outil d'édition qui échoue quand
+  le motif est absent, et **écrire le test avant de déployer**.
+- **Une sonde avant une réactivation.** Sans `book_revive_check.py`, BetFirst
+  serait parti en production avec ses 80 secondes, et les cycles auraient
+  quadruplé — on l'aurait découvert par les symptômes.
+- **`books-coverage` ne voit pas les books à cache de fond.** Deux minutes
+  d'attente, ou on conclut à tort qu'un book est mort.
+
+### 15.8 À faire au prochain démarrage
+
+1. **Smarkets** (§6) — reste le plus gros levier. Le tennis vient de gagner
+   140 paires et reste plafonné par les ~62 matchs que Pinnacle price seul.
+   Une maintenance Pinnacle de trois heures le 06/08 a de nouveau tout arrêté :
+   c'est le cinquième argument.
+2. **Le trou de routage** (§14.3) : cotes > 6 à EV 20-35 %, 45 opportunités à
+   +15 % qui n'atteignent aucun canal. Non tranché.
+3. **Les deux défauts d'outillage** (§14.10) : découpage en runs du
+   `pinnacle_doctor`, noms de books dédoublés dans `paris_track.csv`.
+4. **Le test d'IP Pinnacle** (§14.7) — toujours en attente d'un vrai 403. La
+   coupure du 06/08 était un 503 de maintenance, qui ne discrimine rien.
+5. **Volume des courbes** — vérifier après une semaine pleine :
+   `SELECT COUNT(*) FROM odds_history`. Projeté à ~0,2 Go/an, à confirmer.
+6. **Résultats automatiques** — toujours aucune source de scores, donc aucun
+   P&L réel. Seul manque de la liste du §15.1 qui reste hors d'atteinte.
