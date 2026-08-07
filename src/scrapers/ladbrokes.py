@@ -242,16 +242,46 @@ def _parse_event_time(event_info: dict) -> datetime | None:
     return datetime.fromtimestamp(ts, tz=timezone.utc)
 
 
+def _swap_surname_first(name: str) -> str:
+    """« Griekspoor, Tallon » -> « Tallon Griekspoor ».
+
+    Eurobet nomme les joueurs NOM D'ABORD, séparés par une virgule ; Pinnacle
+    écrit prénom d'abord. Sans cette remise en ordre, le rapprochement échoue
+    silencieusement sur la totalité du tennis.
+
+    Pourquoi la similarité ne rattrape pas toute seule : `team_similarity`
+    utilise `token_set_ratio`, qui ignore l'ordre des mots et donne 100 sur
+    ces paires. Mais le rapprochement compare des fragments de CLÉ, et
+    `event_key` colle les mots — « griekspoortallon » contre
+    « tallongriekspoor » ne fait plus qu'un seul token, l'ordre redevient
+    décisif, et le score tombe à 77. Sous le seuil de 85, donc rejeté.
+    Mesuré le 06/08 : 1 seul match partagé avec Pinnacle sur 138, quand les
+    six autres books étaient entre 37 et 47.
+
+    Une seule virgule exigée : les paires de double (« Bolelli S / Vavassori A »)
+    n'en portent pas, et un nom d'équipe de football n'en porte jamais.
+    """
+    if name.count(",") != 1:
+        return name
+    last, _, first = name.partition(",")
+    last, first = last.strip(), first.strip()
+    if not last or not first:
+        return name
+    return f"{first} {last}"
+
+
 def _home_away(event_info: dict) -> tuple[str | None, str | None]:
     home = (event_info.get("teamHome") or {}).get("description")
     away = (event_info.get("teamAway") or {}).get("description")
     if home and away:
-        return home, away
+        return _swap_surname_first(home), _swap_surname_first(away)
     # Fallback: split eventDescription on " - ".
     desc = event_info.get("eventDescription") or ""
     parts = [p.strip() for p in desc.split(" - ", 1)]
     if len(parts) == 2 and all(parts):
-        return parts[0], parts[1]
+        # Même remise en ordre que plus haut : ce repli sert exactement les
+        # mêmes événements, il ne doit pas produire des noms d'un autre format.
+        return _swap_surname_first(parts[0]), _swap_surname_first(parts[1])
     return None, None
 
 
