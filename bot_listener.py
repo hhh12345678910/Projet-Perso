@@ -699,7 +699,26 @@ def handle_message(msg: dict) -> None:
 
     if cmd == "/start":
         tg("sendMessage", chat_id=chat_id, parse_mode="HTML",
-           text="Commandes :\n/scan — les value bets encore jouables maintenant")
+           text="Commandes :\n"
+                "/scan — les value bets encore jouables maintenant\n"
+                "/book — choisir les books qui envoient des alertes")
+        return
+
+    if cmd == "/book":
+        try:
+            books, off = _books_and_off()
+        except Exception as e:
+            tg("sendMessage", chat_id=chat_id,
+               text=f"/book indisponible ({type(e).__name__})")
+            print(f"/book echoue: {type(e).__name__}: {e}")
+            return
+        if not books:
+            tg("sendMessage", chat_id=chat_id, parse_mode="HTML",
+               text="Aucun book n'a produit de détection ces 7 derniers jours.")
+            return
+        tg("sendMessage", chat_id=chat_id, parse_mode="HTML",
+           text=book_message(books, off), reply_markup=book_keyboard(books, off))
+        print(f"[{datetime.now():%H:%M:%S}] /book -> {len(books)} books (chat {chat_id})")
         return
 
     try:

@@ -697,3 +697,53 @@ def test_the_book_list_follows_what_actually_produced_detections(tmp_path):
             outcome=Outcome(label="home"), odd_taken=2.4, fair_prob=0.5,
             fair_odd=2.0, ev_pct=10.0, kelly_stake_pct=1.5, detected_at=when))
     assert st.books_seen(days=7) == ["unibet_be"], "Circus est trop ancien"
+
+
+def test_book_is_not_routed_to_the_scan(tmp_path, monkeypatch):
+    """Le bug du 06/08 : /book renvoyait un SCAN. La commande passait le filtre
+    des commandes connues, puis tombait dans le code du scan faute de bloc
+    dédié. Aucune erreur, juste la mauvaise réponse."""
+    import bot_listener
+    from src.storage import Storage
+    db = tmp_path / "t.db"
+    Storage(db)
+    monkeypatch.setattr(bot_listener, "DB_PATH", db)
+    monkeypatch.setattr("src.alerter._PLAYS_DB", db)
+    monkeypatch.setenv("TELEGRAM_BOT_TOKEN", "t")
+    monkeypatch.setenv("TELEGRAM_CHAT_ID", "42")
+    sent = []
+    monkeypatch.setattr(bot_listener, "tg", lambda m, **kw: sent.append(kw) or {})
+
+    bot_listener.handle_message({"chat": {"id": 42}, "text": "/book"})
+    assert sent, "/book doit répondre quelque chose"
+    txt = sent[0].get("text", "")
+    assert "SCAN" not in txt, "/book a été routé vers le scan"
+
+
+def test_book_lists_the_books_with_their_state(tmp_path, monkeypatch):
+    import bot_listener
+    from src.models import Book, MarketType, Outcome, ValueBet
+    from src.storage import Storage
+    from datetime import datetime as _dt, timezone as _tz
+    db = tmp_path / "t.db"
+    st = Storage(db)
+    for i, bk in enumerate((Book.UNIBET_BE, Book.NAPOLEON_BE)):
+        st.insert_value_bet(ValueBet(
+            event_key=f"20990601000{i}::a__vs__b", book=bk, market=MarketType.H2H,
+            outcome=Outcome(label="home"), odd_taken=2.4, fair_prob=0.5,
+            fair_odd=2.0, ev_pct=10.0, kelly_stake_pct=1.5,
+            detected_at=_dt.now(_tz.utc)))
+    st.toggle_book_alert("napoleon_be")
+    monkeypatch.setattr(bot_listener, "DB_PATH", db)
+    monkeypatch.setattr("src.alerter._PLAYS_DB", db)
+    monkeypatch.setenv("TELEGRAM_BOT_TOKEN", "t")
+    monkeypatch.setenv("TELEGRAM_CHAT_ID", "42")
+    sent = []
+    monkeypatch.setattr(bot_listener, "tg", lambda m, **kw: sent.append(kw) or {})
+
+    bot_listener.handle_message({"chat": {"id": 42}, "text": "/book"})
+    assert "Books qui envoient des alertes" in sent[0]["text"]
+    kb = sent[0]["reply_markup"]["inline_keyboard"]
+    by = {b["callback_data"]: b["text"] for row in kb for b in row}
+    assert by["bookalert:unibet_be"].startswith("✅")
+    assert by["bookalert:napoleon_be"].startswith("☐")
