@@ -210,3 +210,19 @@ def test_odds_too_old_are_dropped_rather_than_served(monkeypatch):
     m._BETFIRST_CACHE["soccer"] = (_t.monotonic() - 2, ["cote fraîche"])
     assert m.fetch_betfirst_quotes("soccer") == ["cote fraîche"]
     _reset_betfirst_cache()
+
+
+def test_betfirst_participants_are_reordered():
+    """BetFirst nomme aussi les joueurs NOM D'ABORD (« Hontama, Mai »). Mesuré
+    le 06/08 : 3 matchs partagés avec Pinnacle sur 88, contre 36 à 47 pour les
+    autres books."""
+    from src.scrapers.betfirst import _extract_home_away
+    parts = [{"label": "Ku, Y", "side": 1}, {"label": "Hontama, Mai", "side": 2}]
+    assert _extract_home_away(parts) == ("Y Ku", "Mai Hontama")
+
+
+def test_betfirst_doubles_are_left_alone():
+    from src.scrapers.betfirst import _extract_home_away
+    parts = [{"label": "Barry C / Genov A", "side": 1},
+             {"label": "Loureiro J V C / Ribeiro E", "side": 2}]
+    assert _extract_home_away(parts) == ("Barry C / Genov A", "Loureiro J V C / Ribeiro E")

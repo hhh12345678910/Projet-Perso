@@ -191,3 +191,55 @@ def test_a_wider_window_does_not_defeat_the_name_check():
     ref = ["202608011400::norbertgombos__vs__kilianfeldbausch"]
     cand = {"202608011610::rogerfederer__vs__rafaelnadal"}
     assert not reconcile_event_keys(ref, cand, time_tolerance_minutes=tolerance_for("tennis"))
+
+
+# ── Noms « Nom, Prénom » — Ladbrokes et BetFirst ──────────────────────────
+# Le tennis de ces deux books était perdu ENTIÈREMENT et en silence : 1 match
+# partagé avec Pinnacle sur 138 pour Ladbrokes, 3 sur 88 pour BetFirst, quand
+# les autres books étaient entre 36 et 47.
+
+def test_surname_first_names_are_reordered():
+    from src.matcher import swap_surname_first
+    assert swap_surname_first("Griekspoor, Tallon") == "Tallon Griekspoor"
+    assert swap_surname_first("Hontama, Mai") == "Mai Hontama"
+    assert swap_surname_first("Ku, Y") == "Y Ku"
+    assert swap_surname_first("Urribarrens Ramirez, Iker") == "Iker Urribarrens Ramirez"
+
+
+def test_doubles_pairs_and_clubs_are_left_alone():
+    """Les paires de double n'ont pas de virgule, les clubs non plus. Toucher
+    à ce qui marche casserait le football, déjà apparié à 573 événements."""
+    from src.matcher import swap_surname_first
+    for name in ("Bolelli S / Vavassori A", "Radovanovic T / Rolland de Ravel C",
+                 "Club Brugge", "RSC Anderlecht", "Loureiro J V C / Ribeiro E"):
+        assert swap_surname_first(name) == name
+
+
+def test_a_comma_that_is_not_a_name_separator_is_left_alone():
+    """Au plus deux mots après la virgule : un prénom, éventuellement composé —
+    pas une seconde entité."""
+    from src.matcher import swap_surname_first
+    assert swap_surname_first("Dupont, Jean Michel") == "Jean Michel Dupont"
+    assert swap_surname_first("Machin, Une Autre Equipe Entiere") == \
+        "Machin, Une Autre Equipe Entiere"
+    for bad in ("Griekspoor,", ", Tallon", "A, B, C"):
+        assert swap_surname_first(bad) == bad
+
+
+def test_normalization_makes_both_formats_identical():
+    """Le point qui compte : après normalisation, les deux écritures donnent la
+    MÊME clé — sinon aucun rapprochement n'est possible."""
+    from src.matcher import normalize_team
+    assert normalize_team("Griekspoor, Tallon") == normalize_team("Tallon Griekspoor")
+    assert normalize_team("Hontama, Mai") == normalize_team("Mai Hontama")
+
+
+def test_the_key_fragments_finally_match():
+    """Sans la remise en ordre le score tombait à 77, sous le seuil de 85 —
+    invisible pour team_similarity, qui ignore l'ordre et donnait 100."""
+    from rapidfuzz import fuzz
+    from src.matcher import normalize_team
+    a = normalize_team("Tallon Griekspoor").replace(" ", "")
+    b = normalize_team("Griekspoor, Tallon").replace(" ", "")
+    assert a == b
+    assert fuzz.ratio(a, b) == 100

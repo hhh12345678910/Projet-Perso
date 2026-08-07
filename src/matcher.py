@@ -49,10 +49,49 @@ def _extract_class(s: str) -> tuple[str, str]:
     return cls, s
 
 
+def swap_surname_first(name: str) -> str:
+    """« Griekspoor, Tallon » → « Tallon Griekspoor ».
+
+    Plusieurs books nomment les joueurs NOM D'ABORD, séparés par une virgule —
+    Ladbrokes (Eurobet) et BetFirst au moins. Pinnacle écrit prénom d'abord.
+
+    Sans cette remise en ordre, le tennis de ces books est perdu ENTIÈREMENT et
+    en silence. `team_similarity` n'y voit rien : elle utilise
+    `token_set_ratio`, insensible à l'ordre, et donne 100 sur ces paires. Mais
+    le rapprochement compare des fragments de CLÉ, et `event_key` colle les
+    mots — « griekspoortallon » contre « tallongriekspoor » ne fait plus qu'un
+    seul token, l'ordre redevient décisif, et le score tombe à 67-82. Sous le
+    seuil de 85, donc rejeté. Mesuré le 06/08 : Ladbrokes partageait 1 match de
+    tennis avec Pinnacle sur 138, BetFirst 3 sur 88, quand les autres books
+    étaient entre 36 et 47.
+
+    La remise en ordre vit ici, et non dans chaque scraper, pour deux raisons :
+    elle doit s'appliquer avant que la ponctuation soit effacée (après, la
+    virgule a disparu et les deux formats sont indiscernables), et tout book
+    adoptant cette convention est couvert sans qu'on ait à le découvrir.
+
+    Deux gardes contre les faux positifs :
+      - une seule virgule. Les paires de double (« Bolelli S / Vavassori A »)
+        n'en portent pas, et un nom de club n'en porte jamais ;
+      - au plus deux mots après la virgule. Un prénom, éventuellement composé
+        — pas une seconde entité qui ferait de la virgule un séparateur.
+    """
+    if name.count(",") != 1:
+        return name
+    last, _, first = name.partition(",")
+    last, first = last.strip(), first.strip()
+    if not last or not first or len(first.split()) > 2:
+        return name
+    return f"{first} {last}"
+
+
 @lru_cache(maxsize=100_000)
 def normalize_team(name: str) -> str:
     s = unicodedata.normalize("NFKD", name).encode("ascii", "ignore").decode("ascii")
     s = s.lower()
+    # Avant l'effacement de la ponctuation : après, la virgule a disparu et
+    # « nom, prénom » devient indiscernable de « prénom nom ».
+    s = swap_surname_first(s)
     cls, s = _extract_class(s)             # detect class while word boundaries exist
     s = _TEAM_NOISE.sub(" ", s)
     s = re.sub(r"[^a-z0-9 ]", " ", s)

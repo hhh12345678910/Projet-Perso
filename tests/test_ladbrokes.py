@@ -140,54 +140,11 @@ def test_is_retryable_only_transient():
 
 
 # ── Noms de joueurs : Eurobet met le NOM d'abord ──────────────────────────
-# Mesuré le 06/08 : Ladbrokes ne partageait qu'UN match de tennis avec Pinnacle
-# sur 138, quand les six autres books étaient entre 37 et 47. La cause n'est ni
-# l'horaire ni le scraper — c'est l'ordre des mots.
-
-def test_surname_first_is_reordered():
-    from src.scrapers.ladbrokes import _swap_surname_first
-    assert _swap_surname_first("Griekspoor, Tallon") == "Tallon Griekspoor"
-    assert _swap_surname_first("Merida Aguilar, Daniel") == "Daniel Merida Aguilar"
-    assert _swap_surname_first("Bergs, Zizou") == "Zizou Bergs"
-
-
-def test_doubles_pairs_and_team_names_are_left_alone():
-    """Les paires de double n'ont pas de virgule, les clubs non plus. Toucher à
-    ce qui n'en a pas besoin casserait le football, qui marche."""
-    from src.scrapers.ladbrokes import _swap_surname_first
-    for name in ("Bolelli S / Vavassori A", "Club Brugge", "RSC Anderlecht",
-                 "Nys H / Roger-Vasselin E"):
-        assert _swap_surname_first(name) == name
-
-
-def test_a_malformed_comma_is_left_alone():
-    from src.scrapers.ladbrokes import _swap_surname_first
-    for name in ("Griekspoor,", ", Tallon", "A, B, C"):
-        assert _swap_surname_first(name) == name
-
-
-def test_the_reordering_restores_the_match(monkeypatch):
-    """Le test qui compte : sans la remise en ordre, la similarité tombe sous
-    le seuil de 85 et le match est perdu.
-
-    La fonction de similarité elle-même donne 100 (token_set_ratio ignore
-    l'ordre) — mais le rapprochement compare des fragments de CLÉ, où
-    `event_key` a collé les mots. « griekspoortallon » contre
-    « tallongriekspoor » n'est plus qu'un token, l'ordre redevient décisif."""
-    from rapidfuzz import fuzz
-    from src.matcher import normalize_team
-    from src.scrapers.ladbrokes import _swap_surname_first
-
-    def key_score(a: str, b: str) -> float:
-        ka = normalize_team(a).replace(" ", "")
-        kb = normalize_team(b).replace(" ", "")
-        return max(fuzz.token_set_ratio(ka, kb), fuzz.partial_ratio(ka, kb))
-
-    pinnacle = "Tallon Griekspoor"
-    brut = "Griekspoor, Tallon"
-    assert key_score(pinnacle, brut) < 85, "le test ne prouverait rien"
-    assert key_score(pinnacle, _swap_surname_first(brut)) == 100
-
+# La remise en ordre elle-même vit dans src/matcher.py (swap_surname_first) et
+# y est testée : elle doit s'appliquer avant l'effacement de la ponctuation, et
+# tout book adoptant cette convention en profite. Ici on vérifie seulement que
+# CE scraper la branche sur ses deux chemins d'extraction — celui des champs
+# teamHome/teamAway, et le repli sur eventDescription.
 
 def test_home_away_reorders_both_sides():
     from src.scrapers.ladbrokes import _home_away
@@ -202,3 +159,10 @@ def test_the_description_fallback_reorders_too():
     from src.scrapers.ladbrokes import _home_away
     ei = {"eventDescription": "Bergs, Zizou - Shelton, B"}
     assert _home_away(ei) == ("Zizou Bergs", "B Shelton")
+
+
+def test_doubles_pairs_survive_the_scraper_path():
+    from src.scrapers.ladbrokes import _home_away
+    ei = {"teamHome": {"description": "Bolelli S / Vavassori A"},
+          "teamAway": {"description": "Luz O / Matos R"}}
+    assert _home_away(ei) == ("Bolelli S / Vavassori A", "Luz O / Matos R")

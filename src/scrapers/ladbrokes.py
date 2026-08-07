@@ -8,7 +8,7 @@ import httpx
 from tenacity import retry, retry_if_exception, stop_after_attempt, wait_exponential
 
 from ..filter import is_noise_event
-from ..matcher import event_key
+from ..matcher import event_key, swap_surname_first as _swap_surname_first
 from ..models import Book, MarketType, OddQuote, Outcome
 from ..teams import record_pair
 
@@ -240,34 +240,6 @@ def _parse_event_time(event_info: dict) -> datetime | None:
     if ts > 1e12:
         ts /= 1000.0
     return datetime.fromtimestamp(ts, tz=timezone.utc)
-
-
-def _swap_surname_first(name: str) -> str:
-    """« Griekspoor, Tallon » -> « Tallon Griekspoor ».
-
-    Eurobet nomme les joueurs NOM D'ABORD, séparés par une virgule ; Pinnacle
-    écrit prénom d'abord. Sans cette remise en ordre, le rapprochement échoue
-    silencieusement sur la totalité du tennis.
-
-    Pourquoi la similarité ne rattrape pas toute seule : `team_similarity`
-    utilise `token_set_ratio`, qui ignore l'ordre des mots et donne 100 sur
-    ces paires. Mais le rapprochement compare des fragments de CLÉ, et
-    `event_key` colle les mots — « griekspoortallon » contre
-    « tallongriekspoor » ne fait plus qu'un seul token, l'ordre redevient
-    décisif, et le score tombe à 77. Sous le seuil de 85, donc rejeté.
-    Mesuré le 06/08 : 1 seul match partagé avec Pinnacle sur 138, quand les
-    six autres books étaient entre 37 et 47.
-
-    Une seule virgule exigée : les paires de double (« Bolelli S / Vavassori A »)
-    n'en portent pas, et un nom d'équipe de football n'en porte jamais.
-    """
-    if name.count(",") != 1:
-        return name
-    last, _, first = name.partition(",")
-    last, first = last.strip(), first.strip()
-    if not last or not first:
-        return name
-    return f"{first} {last}"
 
 
 def _home_away(event_info: dict) -> tuple[str | None, str | None]:

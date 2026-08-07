@@ -8,7 +8,7 @@ import httpx
 from tenacity import retry, retry_if_exception, stop_after_attempt, wait_exponential
 
 from ..filter import is_noise_event
-from ..matcher import event_key
+from ..matcher import event_key, swap_surname_first
 from ..models import Book, MarketType, OddQuote, Outcome
 from ..teams import record_pair
 
@@ -270,6 +270,11 @@ def _extract_home_away(participants: list) -> tuple[str | None, str | None]:
         name = p.get("label")
         if not name:
             continue
+        # BetFirst nomme aussi les joueurs NOM D'ABORD (« Hontama, Mai »).
+        # normalize_team remet l'ordre pour l'appariement ; on le fait ici en
+        # plus pour que le registre d'équipes — donc les alertes — affiche le
+        # nom dans le bon sens.
+        name = swap_surname_first(name)
         if p.get("side") == 1:
             home = name
         elif p.get("side") == 2:
