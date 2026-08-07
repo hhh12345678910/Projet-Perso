@@ -1632,8 +1632,37 @@ def _fetch_all_parallel(
     if sport in CIRCUS_SPORTS:
         tasks["Circus"] = lambda: fetch_circus_quotes(sport)
 
+    # Coupe-circuit par book, sans déploiement. Les motifs de désactivation
+    # vivent dans les commentaires du registre ci-dessus et y restent — ceci
+    # sert aux décisions du moment : un book trop lent, un book qui se met à
+    # renvoyer n'importe quoi, un test A/B de couverture.
+    #
+    # ⚠️ Coupe la COLLECTE, donc les données. Pour ne faire taire que les
+    # alertes en continuant de mesurer, c'est /book qu'il faut (§15.3).
+    disabled = {
+        b.strip().lower()
+        for b in os.getenv("BOOKS_DISABLED", "").split(",") if b.strip()
+    }
+    if disabled:
+        dropped = [n for n in tasks if n.lower() in disabled]
+        for name in dropped:
+            del tasks[name]
+        if dropped:
+            console.print(
+                f"[dim]\\[{sport}]   books coupés par BOOKS_DISABLED : "
+                f"{', '.join(dropped)}[/dim]"
+            )
+        # Un nom mal orthographié ne couperait rien et ne dirait rien : c'est
+        # exactement le genre de réglage qu'on croit appliqué et qui ne l'est pas.
+        unknown = disabled - {n.lower() for n in tasks} - {d.lower() for d in dropped}
+        if unknown:
+            console.print(
+                f"[yellow]\\[{sport}]   BOOKS_DISABLED : nom(s) inconnu(s) "
+                f"{', '.join(sorted(unknown))} — aucun book de ce nom[/yellow]"
+            )
+
     all_quotes: list[OddQuote] = []
-    with ThreadPoolExecutor(max_workers=len(tasks)) as executor:
+    with ThreadPoolExecutor(max_workers=max(1, len(tasks))) as executor:
         futures = {executor.submit(fn): name for name, fn in tasks.items()}
         for future in as_completed(futures):
             name = futures[future]

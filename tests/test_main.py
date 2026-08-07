@@ -38,3 +38,51 @@ def test_prune_retention_reads_the_environment(monkeypatch):
     ligne de clôture étant capturée dans l'heure suivant le coup d'envoi."""
     assert _prune_default(monkeypatch, "1") == 1
     assert _prune_default(monkeypatch, "7") == 7
+
+
+# ── BOOKS_DISABLED — coupe-circuit par book, sans déploiement ─────────────
+
+def _tasks_for(monkeypatch, disabled: str) -> set[str]:
+    """Quels books le cycle interroge, sous un BOOKS_DISABLED donné."""
+    import src.main as m
+    monkeypatch.setenv("BOOKS_DISABLED", disabled)
+    seen: set[str] = set()
+
+    class _Pool:
+        def __init__(self, max_workers=1): pass
+        def __enter__(self): return self
+        def __exit__(self, *a): return False
+        def submit(self, fn):
+            class _F:
+                def result(self_inner): return []
+            return _F()
+
+    monkeypatch.setattr(m, "ThreadPoolExecutor", _Pool)
+    monkeypatch.setattr(m, "as_completed", lambda futures: (seen.update(futures.values()), [])[1])
+    m._fetch_all_parallel("soccer", betano_file=None)
+    return seen
+
+
+def test_a_book_can_be_cut_without_deploying(monkeypatch):
+    assert "BetFirst" in _tasks_for(monkeypatch, "")
+    assert "BetFirst" not in _tasks_for(monkeypatch, "betfirst")
+
+
+def test_the_cut_is_case_insensitive_and_takes_a_list(monkeypatch):
+    kept = _tasks_for(monkeypatch, "BetFirst, goldenpalace")
+    assert "BetFirst" not in kept and "GoldenPalace" not in kept
+    assert "Unibet" in kept, "les autres books ne bougent pas"
+
+
+def test_an_unknown_name_is_reported(monkeypatch, capsys):
+    """Un nom mal orthographié ne couperait rien et ne dirait rien — c'est le
+    genre de réglage qu'on croit appliqué et qui ne l'est pas."""
+    _tasks_for(monkeypatch, "betfrist")
+    assert "inconnu" in capsys.readouterr().out.lower()
+
+
+def test_cutting_every_book_does_not_crash(monkeypatch):
+    """max_workers=0 lèverait ValueError."""
+    kept = _tasks_for(monkeypatch, "pinnacle,unibet,betfirst,goldenpalace,"
+                                   "ladbrokes,starcasino,napoleon,betano,circus")
+    assert kept == set() or "Pinnacle" not in kept

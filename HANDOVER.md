@@ -1624,6 +1624,13 @@ identique, meilleur prix 15 % du temps. Il est là pour la DONNÉE — consensus
 live, surebets, features — pas pour être joué. Le décocher dans `/book` est le
 bon réglage.
 
+⚠️ **Coupe-circuit par book, sans déploiement** : `BOOKS_DISABLED=betfirst`
+dans `.env`, puis redémarrage du daemon. Liste séparée par des virgules,
+insensible à la casse, et un nom inconnu est signalé au journal — sans quoi un
+réglage mal orthographié ne couperait rien et ne dirait rien. Il coupe la
+COLLECTE, donc les données : pour ne faire taire que les alertes en continuant
+de mesurer, c'est `/book` (§15.3).
+
 ⚠️ **`books-coverage` sous-déclare systématiquement BetFirst** : la commande
 prend un instantané, et le cache de fond est froid au premier appel. Relancer
 deux minutes plus tard. Ce n'est pas une panne.
