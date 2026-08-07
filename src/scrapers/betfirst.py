@@ -150,32 +150,60 @@ class BetFirstScraper:
         self,
         sport: str = "soccer",
         *,
-        days_ahead: int = 7,
+        days_ahead: int = 3,
         max_market_count: int = 10,
         max_pages: int = 50,
+        max_workers: int = 4,
     ) -> dict:
         """Iterate over every page of the events table and merge into a single
         events/markets/selections payload — the same shape parse_events_table
-        consumes."""
-        events: list = []
-        markets: list = []
-        selections: list = []
-        page = 1
-        while page <= max_pages:
-            payload = self.fetch_events_table(
-                sport,
-                days_ahead=days_ahead,
-                max_market_count=max_market_count,
-                page_number=page,
-            )
-            data = payload.get("data") or {}
-            events.extend(data.get("events") or [])
-            markets.extend(data.get("markets") or [])
-            selections.extend(data.get("selections") or data.get("marketSelections") or [])
-            total_pages = data.get("totalPages") or 1
-            if page >= total_pages:
-                break
-            page += 1
+        consumes.
+
+        Les pages sont récupérées EN PARALLÈLE après la première. En série sur
+        sept jours, la collecte prenait 80 secondes — et comme le cycle de scan
+        attend tous les books avant de rendre la main, elle aurait fait passer
+        les cycles de 20 s à 80 s. C'est exactement ce qui a fait retirer
+        Smarkets (§5) : une source lente ne coûte pas seulement son temps, elle
+        silencie tout le reste pendant qu'elle travaille.
+
+        `max_workers` reste bas volontairement. Ce book avait été coupé sur un
+        403 d'anti-bot ; cinquante requêtes simultanées seraient le meilleur
+        moyen de le retrouver. Quatre suffisent à ramener la durée dans le
+        budget d'un cycle.
+
+        `days_ahead` passe de 7 à 3 jours : la mesure du 05/08 donne une médiane
+        de 23,5 h avant coup d'envoi sur les opportunités suivies, et la tranche
+        au-delà de 48 h est la moins rentable de toutes. Payer quatre jours de
+        pagination supplémentaire pour la queue la plus faible n'a pas de sens.
+        """
+        first = self.fetch_events_table(
+            sport, days_ahead=days_ahead,
+            max_market_count=max_market_count, page_number=1,
+        )
+        data = first.get("data") or {}
+        events = list(data.get("events") or [])
+        markets = list(data.get("markets") or [])
+        selections = list(data.get("selections") or data.get("marketSelections") or [])
+        total_pages = min(int(data.get("totalPages") or 1), max_pages)
+
+        if total_pages > 1:
+            from concurrent.futures import ThreadPoolExecutor
+            def _page(n: int) -> dict:
+                try:
+                    return self.fetch_events_table(
+                        sport, days_ahead=days_ahead,
+                        max_market_count=max_market_count, page_number=n,
+                    )
+                except Exception:
+                    # Une page perdue ampute la couverture ; la faire échouer
+                    # entière la supprimerait. On garde ce qu'on a.
+                    return {}
+            with ThreadPoolExecutor(max_workers=max_workers) as ex:
+                for payload in ex.map(_page, range(2, total_pages + 1)):
+                    d = payload.get("data") or {}
+                    events.extend(d.get("events") or [])
+                    markets.extend(d.get("markets") or [])
+                    selections.extend(d.get("selections") or d.get("marketSelections") or [])
         return {"data": {"events": events, "markets": markets, "selections": selections}}
 
 

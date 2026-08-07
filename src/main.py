@@ -1208,7 +1208,7 @@ def fetch_betfirst_quotes(sport: str) -> list[OddQuote]:
     """Fetch + parse the BetFirst events-table for a sport (paginated)."""
     try:
         with BetFirstScraper() as bf:
-            data = bf.fetch_all_events(sport, days_ahead=7, max_market_count=10)
+            data = bf.fetch_all_events(sport, days_ahead=3, max_market_count=10)
         return list(betfirst_parse_events_table(data))
     except httpx.HTTPError as e:
         console.print(f"[yellow]BetFirst skipped:[/yellow] {e}")
@@ -1555,16 +1555,24 @@ def _fetch_all_parallel(
         # MeridianBet: scraper prêt mais l'API exige un token (anti-bot
         # TrafficGuard) -> réactiver ici une fois le token capturé.
         # "MeridianBet": lambda: fetch_meridian_quotes(sport),
-        # BetFirst: desactive — 403 Forbidden sur l'events-table depuis le VPS,
-        # malgre le sessiontoken invite + les en-tetes x-sb-*. L'anti-bot bloque
-        # desormais l'IP datacenter, meme probleme que Betano. Reactiver
-        # uniquement si le blocage tombe ou via un push navigateur.
-        # "BetFirst":      lambda: fetch_betfirst_quotes(sport),
+        # BetFirst : le 403 est tombé — vérifié le 06/08, 6 865 cotes sur 892
+        # événements. Réactivé, mais sa pagination a dû être parallélisée : en
+        # série sur 7 jours elle prenait 80 s, et le cycle attend tous les books.
+        # ⚠️ C'est le book aux PIRES prix du portefeuille : −3,20 points de CLV
+        # à sélection identique, meilleur prix seulement 15 % du temps. Il est
+        # là pour la donnée (consensus live, surebets, features), pas pour être
+        # joué — le couper dans /book est probablement le bon réglage.
+        "BetFirst":      lambda: fetch_betfirst_quotes(sport),
         "Ladbrokes":     lambda: fetch_ladbrokes_quotes(sport),
         "StarCasino":    lambda: fetch_starcasinosport_quotes(sport),
         "Napoleon":      lambda: fetch_napoleon_quotes(sport),
         # "Betcenter":     lambda: fetch_betcenter_quotes(sport),  # desactive: cotes erronees
-        # Golden Palace retiré: compte limité, plus exploitable.
+        # Golden Palace : le motif « compte limité » ne concernait que le PARI.
+        # Son API Altenar ne demande aucune authentification, et elle répond en
+        # 1,8 s — vérifié le 06/08, 6 729 cotes sur 1 354 événements, la
+        # meilleure couverture d'événements de tout le portefeuille. Jamais
+        # mesuré en CLV faute de données : il l'est maintenant.
+        "GoldenPalace":  lambda: fetch_goldenpalace_quotes(sport),
     }
     # The live dump mixes every sport, so it's parsed once (on the sport that
     # owns include_file_books) to avoid duplicating it across sport threads.
