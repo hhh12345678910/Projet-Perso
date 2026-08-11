@@ -1,12 +1,19 @@
 # Valuebet — état du projet
 
 Document de reprise. À lire en premier pour reprendre le travail sans
-redécouvrir le contexte. Dernière mise à jour : 06/08/2026.
+redécouvrir le contexte. Dernière mise à jour : 11/08/2026.
 
-**Si tu ne lis que trois choses :** §14.1 pour la mesure qui fait autorité
-(+10,18 % de CLV sur 858 opportunités, 18,4 σ), §11 pour le mode de défaillance
-dominant du projet (la panne silencieuse), §15 pour la session du 06/08 — état
-actuel, ce qui tourne, et ce qui reste ouvert.
+**Si tu ne lis que trois choses :** §16.1 pour la mesure qui fait autorité
+(+10,40 % de CLV sur 1 397 opportunités premium, 22,9 σ — elle remplace §14.1),
+§11 pour le mode de défaillance dominant du projet (la panne silencieuse), et
+§16.8 pour la liste de travail à jour.
+
+État du code : **§15 décrit ce qui tourne aujourd'hui.** La §16 n'a modifié
+aucun code — c'est une session de mesure, et ses conclusions sont des décisions
+en attente, pas des changements déjà appliqués.
+
+Rapport visuel de l'analyse du 11/08 (courbes d'alignement, CLV découpée) :
+https://claude.ai/code/artifact/255c254a-32e3-4dfc-b275-03b8a7cd961e
 
 Dépôt : `hhh12345678910/Projet-Perso` — branche **`claude/resume-clarification-1541xa`**
 VM : Google Cloud, `us-central1`, IP `34.59.193.111`, utilisateur `hubindylan98`
@@ -1218,6 +1225,11 @@ toujours le piège du §13. Vérifier `git branch --show-current`.
 
 ### 14.1 La mesure qui fait autorité — 2 612 opportunités
 
+⚠️ **PÉRIMÉE — voir §16.1.** Refaite le 11/08 sur 4 365 opportunités
+(21/06 → 10/08) : le canal premium y fait **+10,40 % à 22,9 σ**. Les chiffres
+ci-dessous restent lisibles comme point de comparaison historique, mais ne
+doivent plus être cités. La méthode, elle, est inchangée.
+
 Analyse de `export-history` sur 18 751 lignes couvrant le 21/06 → 04/08.
 
 ⚠️ **Seuls 9 jours sont exploitables.** Le CLV dévigé n'existe qu'à partir du
@@ -1288,6 +1300,10 @@ testées l'étalement observé est dans ce que le hasard produit. Règle du §9
 inchangée.
 
 ### 14.3 Un trou de routage — 739 opportunités n'atteignent aucun canal
+
+⚠️ **PÉRIMÉE — voir §16.2.** Le trou est bien plus gros que ce qui est décrit
+ici : **2 917 opportunités sur 4 365**, dont deux poches à ouvrir (cote 4–6
+EV 8–20 à +7,68 % sur 403, et cote > 6 EV 20–35 à +17,35 % sur 76).
 
 | Canal | n | CLV |
 |---|---|---|
@@ -1753,6 +1769,11 @@ permanent**.
 
 ### 15.8 À faire au prochain démarrage
 
+⚠️ **PÉRIMÉE — voir §16.8.** Liste refaite le 11/08 après l'analyse, avec les
+priorités classées par rapport sur effort. Un seul point ci-dessous a été
+tranché depuis : le volume des courbes (point 5), confirmé à 69 105 lignes
+d'`odds_history` sur cinq jours.
+
 1. **Smarkets** (§6) — reste le plus gros levier. Le tennis vient de gagner
    140 paires et reste plafonné par les ~62 matchs que Pinnacle price seul.
    Une maintenance Pinnacle de trois heures le 06/08 a de nouveau tout arrêté :
@@ -1767,3 +1788,291 @@ permanent**.
    `SELECT COUNT(*) FROM odds_history`. Projeté à ~0,2 Go/an, à confirmer.
 6. **Résultats automatiques** — toujours aucune source de scores, donc aucun
    P&L réel. Seul manque de la liste du §15.1 qui reste hors d'atteinte.
+
+---
+
+## 16. Session du 11/08 — l'analyse complète des trois exports
+
+Aucun code modifié cette session : c'est une session de **mesure**. Trois
+fichiers exportés de la VM (`curves.csv` 61 757 points, `detections.csv`
+22 158 lignes, `tracking.db` 23 Mo) croisés pour répondre à une question :
+« est-ce que ma CLV est toujours incroyable ? ».
+
+**Rapport visuel complet, avec tous les graphiques :**
+https://claude.ai/code/artifact/255c254a-32e3-4dfc-b275-03b8a7cd961e
+
+Il contient les courbes d'alignement (une couleur par book, annotées), les
+courbes de survie, la CLV par book / délai / EV / cote / ligue, la répartition
+positif-négatif par book, le trou de routage et la tendance quotidienne.
+
+### 16.1 La mesure qui fait autorité — remplace §14.1
+
+⚠️ **§14.1 est périmé.** Elle portait sur 2 612 opportunités du 21/06 → 04/08.
+Cette section porte sur **4 365 opportunités** du 21/06 → 10/08. Toute
+affirmation chiffrée doit venir d'ici.
+
+Entonnoir, à refaire à l'identique la prochaine fois :
+
+| | n |
+|---|---|
+| Lignes du fichier | 22 158 |
+| … avec une clôture Pinnacle dévigée | 8 950 (40 %) |
+| … prématch (délai > 0) | 8 000 |
+| **→ opportunités dédupliquées** | **4 365** |
+| Matchs distincts | 3 297 |
+
+**1,83 ligne par opportunité** (1,77 au 04/08). Clé de déduplication inchangée :
+`event_key + Marché + Pari`, meilleure cote gardée. Sans elle, tous les
+effectifs sont gonflés de 83 % et les σ multipliées par 1,35.
+
+| Périmètre | n | CLV | σ | % positives |
+|---|---|---|---|---|
+| Toutes opportunités | 4 365 | **+7,03 %** | 26,3 | 74 % |
+| **Canal premium** | 1 397 | **+10,40 %** | 22,9 | 80 % |
+| … voie 1,5–4 (EV ≥ 8) | 1 255 | +8,86 % | 21,2 | 79 % |
+| … voie 4–6 (EV ≥ 20) | 142 | **+24,00 %** | 10,8 | 88 % |
+| Paris réellement joués | 485 | +12,05 % | 12,1 | 78 % |
+
+**L'edge tient et progresse.** Le 04/08 : +10,18 % sur 858 opportunités
+premium. Le 10/08 : +10,40 % sur 1 397. Avec 63 % de données en plus, le
+chiffre gagne un dixième au lieu de se diluer — c'est la signature d'un edge
+réel. Coupé en deux : +9,23 % avant les 14 derniers jours (204 opportunités),
++10,60 % sur les 14 derniers (1 193). Moyenne glissante 5 jours : +9,8 % fin
+juillet → +11,5 % le 08/08, sans un seul jour négatif.
+
+### 16.2 Le trou de routage, enfin chiffré — remplace §14.3
+
+§14.3 annonçait « 45 opportunités à +15 % ». Le vrai chiffre est bien plus
+gros. En rejouant les seuils de production (premium : cote 1,5–4 EV ≥ 8 et
+cote 4–6 EV ≥ 20 ; critique : `TELEGRAM_MIN_CRITICAL_EV=35`, sans limite de
+cote, seulement si le premium n'a pas pris) :
+
+| Canal | n | part | CLV | σ |
+|---|---|---|---|---|
+| Premium | 1 397 | 32 % | +10,40 % | 22,9 |
+| Critique | 51 | 1 % | +36,86 % | 6,3 |
+| **AUCUN** | **2 917** | **67 %** | +4,89 % | 16,0 |
+
+La zone muette découpée — **deux morceaux ne devraient pas y être** :
+
+| Tranche | n | CLV | σ | % pos | verdict |
+|---|---|---|---|---|---|
+| **cote 4–6, EV 8–20** | **403** | **+7,68 %** | 8,6 | 74 % | **à ouvrir** |
+| **cote > 6, EV 20–35** | **76** | **+17,35 %** | 5,7 | 79 % | **à ouvrir** |
+| cote > 6, EV 8–20 | 209 | +8,68 % | 4,3 | 65 % | discutable |
+| cote 1,5–6, EV 5–8 | 1 972 | +3,62 % | 12,1 | 71 % | laisser dehors |
+| cote < 1,5 | 160 | +5,17 % | 10,2 | 85 % | laisser dehors |
+| cote > 6, EV 5–8 | 97 | +0,91 % | 0,4 | 59 % | **laisser dehors** |
+
+Mécanique du trou : le premium refuse au-dessus de la cote 4 sans EV ≥ 20 ; le
+critique refuse en dessous de EV 35. Entre les deux, rien.
+
+**Contrefactuel de l'élargissement** — si le premium prenait `cote 4–6 dès
+EV ≥ 8` et `cote > 6 dès EV ≥ 20` :
+
+| | n | CLV | σ |
+|---|---|---|---|
+| Premium actuel | 1 397 | +10,40 % | 22,9 |
+| **Premium élargi** | **1 927** | **+10,80 %** | **24,6** |
+
+**+38 % de volume ET un meilleur taux.** C'est le seul changement de toute
+l'analyse qui ne coûte rien. Non appliqué — décision de l'utilisateur en
+attente. Le code à toucher : `src/alerter.py`, `_prem_standard` et
+`_prem_high_odds` (lignes ~766-781).
+
+### 16.3 Vitesse d'alignement par book — la mesure qui manquait
+
+Kaplan-Meier sur 4 213 opportunités de `bet_corrections`, une par
+(book, event_key, marché, sélection), la plus ancienne détection gardée. Les
+paris dont le match commence avant correction sont **censurés**, pas comptés
+comme des échecs.
+
+| Book | suivis | corrigés | médiane | 3ᵉ quartile | alignement | chute de cote |
+|---|---|---|---|---|---|---|
+| Circus | 297 | 88 % | 4 min | 11 min | 12 min | −8,9 % |
+| Napoleon | 552 | 76 % | 5 min | 38 min | 23 min | −8,1 % |
+| Betano | 513 | 82 % | 5 min | 25 min | 17 min | −8,9 % |
+| Ladbrokes | 335 | 88 % | 6 min | 17 min | 21 min | −11,7 % |
+| Golden Palace | 321 | 87 % | 6 min | 14 min | 7 min | −16,7 % |
+| StarCasino | 1 128 | 86 % | 7 min | 15 min | 8 min | −14,3 % |
+| **Unibet** | **1 046** | **77 %** | **38 min** | **4 h 12** | **1 h 06** | −8,3 % |
+
+Part encore ouverte (non corrigée) après une heure : **55 % chez Unibet**,
+18 à 24 % partout ailleurs.
+
+**Unibet est l'anomalie du panel, et elle est exploitable.** Il corrige six
+fois plus lentement que les autres ET garde le plancher de marge le plus bas :
+sa courbe d'écart à la cote juste reste entre −1,5 et −2,7 % pendant des
+heures, quand les autres sont déjà à −7 %. C'est cohérent avec sa CLV premium,
+la deuxième du panel à +11,49 %.
+
+Lecture des courbes de convergence (`curves.csv`, médiane de
+`(cote − juste) / juste`) :
+- à la détection, le book fautif est à **+1 à +5 %** au-dessus de la juste ;
+- **à 5 minutes il est déjà à −4 à −9 %** — l'essentiel de la value disparaît
+  dans cette fenêtre ;
+- ensuite chaque book atteint **son plancher** et n'en bouge plus : Golden
+  Palace −9,5 %, Ladbrokes −9,8 %, Napoleon −6 %. Ce plancher est la marge
+  maison ;
+- **Pinnacle se stabilise à −8 %** sur tout le graphique : c'est sa
+  commission. C'est la preuve visuelle qu'il faut mesurer contre la clôture
+  **dévigée** et jamais contre la cote affichée, sous peine d'offrir +8 % de
+  CLV gratuite à tout le monde.
+
+### 16.4 Les découpes de CLV
+
+**Par EV — monotone sur sept tranches, sans une seule exception :**
+
+| EV | n | CLV | σ |
+|---|---|---|---|
+| 5–8 % | 2 189 | +3,53 % | 12,1 |
+| 8–10 % | 654 | +5,89 % | 9,8 |
+| 10–12 % | 432 | +6,09 % | 8,4 |
+| 12–15 % | 386 | +7,91 % | 8,7 |
+| 15–20 % | 309 | +12,30 % | 11,6 |
+| 20–30 % | 258 | +17,74 % | 13,9 |
+| > 30 % | 137 | **+36,76 %** | 12,2 |
+
+C'est le meilleur certificat de santé du système : l'EV calculée en amont
+prédit réellement ce qui se passe sur la clôture. Le devig fonctionne, le
+matching est propre, la référence est la bonne. **Et c'est la validation
+chiffrée du refus de plafonner l'EV** — les gros EV ne sont pas des erreurs de
+mesure, ce sont les meilleurs paris du fichier.
+
+**Par cote :** 1,5–2 → +5,24 % · 2–2,5 → +4,99 % · 2,5–3 → +5,84 % ·
+3–4 → +7,37 % · 4–6 → +8,39 % · **> 6 → +11,97 %** (468 opportunités, 8,4 σ).
+
+**Par délai avant le coup d'envoi** (canal premium) :
+
+| Tranche | n | CLV | σ | % pos |
+|---|---|---|---|---|
+| 0–2 h | 298 | +11,95 % | 12,5 | 88 % |
+| 2–6 h | 198 | +11,20 % | 7,8 | 78 % |
+| 6–12 h | 424 | +11,14 % | 14,3 | 83 % |
+| 12–24 h | 173 | +9,92 % | 8,8 | 78 % |
+| **24–48 h** | **125** | **+5,44 %** | **3,3** | **62 %** |
+| > 48 h | 179 | +9,10 % | 7,4 | 74 % |
+
+**La tranche 24–48 h est le seul vrai trou.** Explication mécanique : à deux
+jours du match, la ligne Pinnacle elle-même n'est pas informée ; on mesure un
+écart contre une référence qui va bouger, et la moitié de l'edge apparent est
+du bruit qui se résorbe. Au-delà de 48 h ça remonte : lignes d'ouverture sur
+marchés peu liquides, décalage réel mais mise praticable minuscule. **La coupe
+doit viser 24–48 h précisément, pas « tout ce qui est loin ».**
+
+**Par book** (toutes opportunités) :
+
+| Book | n | CLV | % positives | perte moy. quand négatif |
+|---|---|---|---|---|
+| Ladbrokes | 293 | +10,54 % | 77 % | −11,2 % |
+| Golden Palace | 58 | +8,70 % | 78 % | −9,7 % |
+| Circus | 109 | +8,12 % | 71 % | −14,4 % |
+| Unibet | 1 450 | +8,07 % | **80 %** | −9,6 % |
+| StarCasino | 1 463 | +6,47 % | 72 % | −11,2 % |
+| BetFirst | 36 | +6,08 % | 72 % | −13,3 % |
+| Betano | 555 | +5,57 % | 72 % | −13,6 % |
+| **Napoleon** | 401 | **+4,28 %** | **62 %** | −11,7 % |
+
+Sur le canal premium seul : Circus +12,90 % (27, échantillon trop mince),
+Unibet +11,49 % (450), Ladbrokes +11,33 % (100), StarCasino +10,84 % (479),
+Betano +7,96 % (162), Napoleon +6,64 % (152).
+
+**26 % des opportunités ont une CLV négative**, pour une perte moyenne de
+−11,26 %. Ce n'est pas une anomalie, c'est la variance normale d'un edge de
+7 %. Napoleon est le seul book où l'équilibre se dégrade vraiment.
+
+**Par sport :** tennis +9,87 % sur 787 opportunités, **90 % de positives** ;
+football +6,39 % sur 3 571, 71 %. Le correctif des noms inversés du 06/08
+(§15.4) porte ses fruits.
+
+**Par marché :** h2h +7,36 % (3 841) · totals **+4,58 %** (524) — la moitié.
+
+**Par catégorie de ligue** (≥ 50 opportunités) : amicaux +9,39 % · autres
++7,82 % · féminin +7,04 % · Scandinavie +6,57 % · Europe de l'Est +5,87 % ·
+top 5 +5,67 % · D2 +4,93 % · coupes +4,59 % · D3 +4,05 % · **Amérique du Sud
++3,45 %**. ⚠️ **2 502 des 4 365 opportunités tombent dans « autre »** : tant
+que ce seau reste plein, cette découpe ne peut rien décider.
+
+### 16.5 Contrefactuels — ce que coûterait chaque filtre
+
+Tous calculés sur le canal premium tel qu'il est aujourd'hui (1 397, +10,40 %) :
+
+| Filtre | n restant | CLV | volume gardé |
+|---|---|---|---|
+| Sans les détections > 24 h et < 48 h | 1 096 | +11,19 % | 78 % |
+| Sans Napoleon | 1 245 | +10,86 % | 89 % |
+| Sans les totals | 1 255 | +10,79 % | 90 % |
+| ≤ 24 h **et** sans totals | 985 | +11,54 % | 70 % |
+
+Aucun n'est appliqué. Le seul qui ajoute du volume au lieu d'en retirer est
+l'élargissement du §16.2.
+
+### 16.6 Ce que cette analyse ne prouve pas
+
+À relire avant de tirer une conclusion de n'importe quel chiffre ci-dessus.
+
+- **La CLV n'est pas de l'argent.** La table `results` est à **zéro ligne**.
+  1 209 paris joués enregistrés, aucun résultat, aucun P&L calculable. Tout ce
+  document mesure la *promesse* de gain. C'est le seul trou structurel du
+  dispositif.
+- **Pinnacle est juge et partie.** Une seule référence. S'il se trompe
+  systématiquement sur un segment (petites ligues, tennis féminin, marchés
+  exotiques), la CLV y sera fausse sans que rien ne le signale. Smarkets
+  reste le plus gros levier ouvert du projet (§6, §15.8).
+- **40 % de couverture seulement.** Les 60 % de lignes sans clôture ne sont
+  pas un tirage au hasard : ce sont les matchs que Pinnacle n'a pas cotés
+  jusqu'au bout, donc plutôt les moins liquides. Le vrai edge sur l'ensemble
+  des détections est vraisemblablement un peu plus bas qu'affiché.
+- **Échantillons jeunes** : Golden Palace (58), Circus (109), BetFirst (36).
+  Leurs positions au classement ne sont pas stables ; deux à trois semaines
+  de plus avant d'en tirer quoi que ce soit.
+- **Les 50 jours ne sont pas 50 jours pleins.** La couverture CLV ne devient
+  dense qu'à partir du 20/07. L'essentiel des 4 365 opportunités tient sur
+  trois semaines, en plein été — un régime de compétitions qui n'est pas
+  celui d'une saison normale.
+
+### 16.7 Méthode, pour refaire la mesure à l'identique
+
+```bash
+# Sur la VM — les trois exports
+python3 -m src.main export-history --days 60 --out detections.csv
+python3 -m src.main export-curves  --days 60 --out curves.csv
+gzip -c ~/Projet-Perso/data/tracking.db > tracking.db.gz
+```
+
+Règles à ne jamais relâcher :
+1. **Dédupliquer par `event_key + Marché + Pari`**, meilleure cote gardée.
+   Sans ça tout est faux de +83 %.
+2. **Ne garder que le prématch** (`Délai (h) > 0`).
+3. **Mesurer contre la clôture dévigée**, jamais la cote affichée.
+4. **Porter le σ sur chaque découpe** et signaler tout sous-groupe < 50.
+5. Pour les vitesses d'alignement, **censurer** les paris non corrigés à
+   `observed_until` — les compter comme « jamais corrigés » sous-estimerait
+   gravement la vitesse des books.
+6. Pour les courbes, **exiger ≥ 30 relevés par point** et couper l'axe à
+   3 jours : au-delà les effectifs s'effondrent et les courbes remontent
+   artificiellement.
+
+### 16.8 À faire au prochain démarrage — remplace §15.8
+
+Par ordre de rapport sur effort :
+
+1. **Élargir le premium** (§16.2) : `cote 4–6 dès EV ≥ 8` et `cote > 6 dès
+   EV ≥ 20`. +38 % de volume, +0,4 point de CLV, 24,6 σ. `src/alerter.py`,
+   `_prem_standard` / `_prem_high_odds`. **Décision utilisateur en attente.**
+2. **Remplir la table `results`** (§16.6). Sans elle, aucun P&L réel n'existe.
+   Aucune source de scores identifiée à ce jour — c'est un vrai chantier.
+3. **Smarkets** comme deuxième référence sharp (§6). Toujours le plus gros
+   levier structurel.
+4. **Couper la tranche 24–48 h** du premium (§16.4). +0,8 point de CLV pour
+   22 % de volume en moins — arbitrage à trancher.
+5. **Classer les ligues** : 57 % des opportunités en « autre » rendent la
+   découpe par ligue inutilisable, et c'est celle qui permettrait de couper
+   l'Amérique du Sud et les coupes sans toucher au reste.
+6. **Traiter les totals à part** (+4,58 % contre +7,36 %) : seuil d'EV plus
+   haut ou mise réduite.
+7. **Durcir Napoleon** : 38 % de CLV négative, +4,28 %, le plus mauvais des
+   huit.
+8. Reliquats d'outillage inchangés : découpage en runs du `pinnacle_doctor`,
+   noms de books dédoublés dans `paris_track.csv` (§14.10), test d'IP
+   Pinnacle en attente d'un vrai 403 (§14.7).
