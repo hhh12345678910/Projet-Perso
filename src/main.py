@@ -2106,12 +2106,25 @@ def _daemon_scan_sport(
             # appelée : c'est le mode de défaillance dominant du projet (§11).
             # La ligne s'imprime MÊME à zéro — sans quoi « pas branché » et
             # « branché mais vide » seraient indiscernables (§13.12).
-            _from_sec = sum(
-                1 for f in fair.values() if f.reference_book != Book.PINNACLE
-            )
+            # Le repli agit au niveau du MARCHÉ (event_key, marché, ligne), pas
+            # du match. Deux cas très différents se cachent donc derrière le
+            # même compteur, et seul le second peut prêter à discussion :
+            #   - match absent de Pinnacle       -> couverture réellement neuve
+            #   - match pricé, mais pas CE marché -> ex. Pinnacle donne le 1X2
+            #     et pas l'over/under, Smarkets fournit l'over/under
+            # Les séparer permet de trancher sur des chiffres plutôt que sur
+            # une intuition.
+            _pin_events = {q.event_key for q in pinnacle_q}
+            _sec_lines = [
+                k for k, f in fair.items() if f.reference_book != Book.PINNACLE
+            ]
+            _new_match = sum(1 for k in _sec_lines if k[0] not in _pin_events)
+            _new_market = len(_sec_lines) - _new_match
             console.print(
                 f"\\[{current_sport}]   Smarkets : {len(secondary)} cotes, "
-                f"{_from_sec} lignes de référence en repli"
+                f"{len(_sec_lines)} lignes de référence en repli "
+                f"({_new_match} matchs absents de Pinnacle, "
+                f"{_new_market} marchés manquants sur un match qu'il price)"
             )
         # Persist the event (with its sport) for every Pinnacle event in the
         # reference frame. Value bets are keyed onto these same event_keys, so
