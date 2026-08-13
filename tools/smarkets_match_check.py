@@ -152,6 +152,7 @@ def main() -> int:
         p("\n      Aucun. Rien à corriger.")
         return 0
 
+    tol_s = tolerance_for(args.sport) * 60
     pin_parsed = [(k, parse_event_key(k)) for k in pin]
     pin_parsed = [(k, v) for k, v in pin_parsed if v is not None]
     near = []
@@ -171,7 +172,19 @@ def main() -> int:
             bp = parse_event_key(best)
             dh = (bp[0] - pk[0]).total_seconds() / 3600 if bp else 0.0
             same_day = bool(bp) and bp[0].date() == pk[0].date()
-            near.append((best_s, k, best, dh, same_day))
+            # Combien de références CONCURRENTES marquent aussi >= 98 dans la
+            # tolérance ? Deux ou plus, et la garde d'ambiguïté écarte le
+            # candidat — c'est le seul mécanisme du code qui rejette un nom
+            # parfait à horaire proche.
+            rivals = []
+            for r2, pr2 in pin_parsed:
+                if abs((pr2[0] - pk[0]).total_seconds()) > tol_s:
+                    continue
+                s2 = (team_similarity(pk[1], pr2[1])
+                      + team_similarity(pk[2], pr2[2])) / 2
+                if s2 >= 98:
+                    rivals.append((r2, pr2[0]))
+            near.append((best_s, k, best, dh, same_day, rivals))
     p(f"      {len(unmatched[:args.max_near])} examinés "
       f"({time.monotonic() - t0:.1f} s)")
 
@@ -183,8 +196,11 @@ def main() -> int:
         return 0
 
     p(f"\n      {len(near)} quasi-appariements (score ≥ 60), les plus proches :\n")
-    for s, k, r, dh, same_day in near[: args.show]:
-        if s >= 98 and wide and abs(dh) * 60 <= wide and same_day:
+    for s, k, r, dh, same_day, rivals in near[: args.show]:
+        if s >= 98 and len(rivals) > 1:
+            verdict = (f"AMBIGUÏTÉ — {len(rivals)} événements Pinnacle "
+                       f"identiques dans la fenêtre")
+        elif s >= 98 and wide and abs(dh) * 60 <= wide and same_day:
             verdict = "?? devrait passer — À CREUSER"
         elif s >= 98 and not same_day:
             verdict = "hors jour civil"
@@ -195,6 +211,9 @@ def main() -> int:
         p(f"       {s:5.1f}  écart {dh:+.1f} h  — {verdict}")
         p(f"              smarkets : {_teams(k)}")
         p(f"              pinnacle : {_teams(r)}")
+        if len(rivals) > 1:
+            for rk, rt in sorted(rivals, key=lambda x: x[1])[:4]:
+                p(f"                  concurrent : {rt:%d/%m %H:%M}  {_teams(rk)}")
     p("\n      Un score élevé et pourtant rejeté = piège de clé, comme le")
     p("      §15.4 (« Griekspoor, Tallon » contre « Tallon Griekspoor »).")
     return 0
