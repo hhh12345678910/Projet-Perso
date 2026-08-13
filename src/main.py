@@ -2147,6 +2147,16 @@ def _daemon_scan_sport(
         if not pinnacle_was_cached(current_sport):
             storage.insert_quotes(pinnacle_q)
 
+        # Persister Smarkets EST la condition pour pouvoir le juger plus tard.
+        # Le prix de clôture n'existe que dans notre propre capture : Pinnacle
+        # comme Smarkets retirent leurs marchés prématch au coup d'envoi (§4).
+        # Sans ces lignes en base, tout pari valorisé sur Smarkets resterait
+        # définitivement sans CLV — donc absent d'export-history et invisible à
+        # toute analyse. Une source neuve qu'on ne peut pas mesurer ne sert à
+        # rien, et l'absence ne se verrait nulle part.
+        if secondary:
+            storage.insert_quotes(secondary)
+
         ref_keys = {fl.event_key for fl in fair.values()}
         soft_q = remap_to_reference(soft_raw, ref_keys, current_sport)
         storage.insert_quotes(soft_q)
@@ -2626,9 +2636,18 @@ def _closing_prices(storage: Storage, cfg: ScanConfig, bet) -> tuple | None:
     if parsed is None:
         return None
     kickoff, _, _ = parsed
-    group = storage.pinnacle_closing_group(
+    # Mesurer chaque pari contre LA référence qui l'a valorisé. Un pari
+    # valorisé sur Smarkets ne peut pas être mesuré contre Pinnacle : si
+    # Pinnacle pricait ce marché, il n'y aurait pas eu de repli. Le laisser
+    # sans clôture le rendrait invisible à `export-history`, à `clv-report` et
+    # à toute analyse — une source neuve qu'on ne peut pas juger ne sert à rien.
+    try:
+        ref_book = bet["reference_book"] or "pinnacle"
+    except (KeyError, IndexError):
+        ref_book = "pinnacle"
+    group = storage.closing_group(
         event_key=bet["event_key"], market=bet["market"],
-        line=bet["line"], before=kickoff,
+        line=bet["line"], before=kickoff, book=ref_book,
     )
     row = next((q for q in group if q["outcome_label"] == bet["outcome_label"]), None)
     if row is None:
@@ -3495,8 +3514,8 @@ def export_history(
     headers = [
         "Date", "Coup d'envoi", "Délai (h)", "Sport", "Ligue", "Catégorie ligue",
         "Match", "Book", "Marché",
-        "Pari", "Joué", "Cote prise", "Cote fair (détection)", "EV %",
-        "Clôture brute (Pinnacle)", "Clôture juste (dévigée)", "Overround clôture",
+        "Pari", "Joué", "Cote prise", "Cote fair (détection)", "Référence", "EV %",
+        "Clôture brute (référence)", "Clôture juste (dévigée)", "Overround clôture",
         "CLV %", "Mise % (Kelly)", "Résultat", "P&L réel", "event_key",
     ]
     with open(out, "w", newline="", encoding="utf-8") as f:
@@ -3546,6 +3565,10 @@ def export_history(
                 "oui" if r.get("played") else "",
                 f"{taken:.2f}",
                 f"{float(r['fair_odd']):.2f}",
+                # Quelle source sharp a produit la fair odd ci-dessus. Sans
+                # cette colonne, les paris valorisés sur une référence de repli
+                # sont mélangés aux autres et leur CLV propre est indécelable.
+                (r["reference_book"] if "reference_book" in r.keys() else None) or "pinnacle",
                 f"{float(r['ev_pct']):.2f}",
                 f"{raw:.2f}" if raw else "",
                 f"{fair_close:.2f}" if fair_close else "",

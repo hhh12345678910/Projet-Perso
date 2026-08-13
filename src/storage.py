@@ -1102,23 +1102,30 @@ class Storage:
             ).fetchall()
         return {(r[0], r[1], r[2]): r[3] for r in rows}
 
-    def pinnacle_closing_group(
+    def closing_group(
         self, event_key: str, market: str, line: Optional[float], before: datetime,
+        book: str = "pinnacle",
     ) -> list[sqlite3.Row]:
-        """Every competing outcome Pinnacle priced in one market, taken from the
+        """Every competing outcome ONE book priced in a market, taken from the
         single most recent capture before kickoff.
 
         Deviging needs the whole market, not one side of it: the margin can only
         be removed by normalising the competing outcomes against each other. All
         rows come from the same fetched_at so the set is internally consistent —
-        mixing two capture times would leave a spurious margin behind."""
+        mixing two capture times would leave a spurious margin behind.
+
+        `book` est paramétrable parce qu'un pari valorisé contre une référence
+        de repli doit être mesuré contre la clôture de CETTE référence. Le
+        mesurer contre Pinnacle serait impossible — s'il pricait ce marché, il
+        n'y aurait pas eu de repli — et le laisser sans clôture le rendrait
+        invisible à toute mesure, ce qui est pire."""
         with self._conn() as c:
             line_clause = "line IS NULL" if line is None else "line = ?"
-            head: list = [event_key, market]
+            head: list = [book, event_key, market]
             tail: list = [] if line is None else [line]
             last = c.execute(
                 f"SELECT MAX(fetched_at) FROM quotes "
-                f"WHERE book = 'pinnacle' AND event_key = ? AND market = ? "
+                f"WHERE book = ? AND event_key = ? AND market = ? "
                 f"  AND {line_clause} AND fetched_at < ?",
                 (*head, *tail, before.isoformat()),
             ).fetchone()
@@ -1126,10 +1133,16 @@ class Storage:
                 return []
             return list(c.execute(
                 f"SELECT * FROM quotes "
-                f"WHERE book = 'pinnacle' AND event_key = ? AND market = ? "
+                f"WHERE book = ? AND event_key = ? AND market = ? "
                 f"  AND {line_clause} AND fetched_at = ?",
                 (*head, *tail, last[0]),
             ))
+
+    def pinnacle_closing_group(
+        self, event_key: str, market: str, line: Optional[float], before: datetime,
+    ) -> list[sqlite3.Row]:
+        """Conservé : tout le code existant et ses tests passent par ce nom."""
+        return self.closing_group(event_key, market, line, before, book="pinnacle")
 
     def books_alert_off(self) -> set[str]:
         """Books dont les alertes sont coupées."""

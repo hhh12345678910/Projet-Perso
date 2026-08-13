@@ -288,3 +288,53 @@ def test_fast_path_never_crosses_two_events():
     lyon = [q for q in qs if "lyon" in q.event_key][0]
     assert arsenal.decimal_odd == pytest.approx(1 / 0.4050, abs=1e-3)
     assert lyon.decimal_odd == pytest.approx(1 / 0.5050, abs=1e-3)
+
+
+# ------------------------------------- mesurer un pari valorisé sur un repli --
+#
+# Un pari valorisé contre Smarkets ne peut pas être mesuré contre la clôture
+# Pinnacle : si Pinnacle pricait ce marché, il n'y aurait pas eu de repli. Sans
+# les deux correctifs ci-dessous, ces paris n'auraient JAMAIS de CLV et
+# disparaîtraient de toute analyse — sans une seule erreur nulle part.
+
+def test_closing_group_reads_the_book_it_is_asked_for(tmp_path):
+    from datetime import datetime as _dt, timezone as _tz
+    from src.storage import Storage
+    from src.models import Book as _B, MarketType as _MT, OddQuote as _Q, Outcome as _O
+
+    st = Storage(str(tmp_path / "t.db"))
+    ek = "202608141900::alpha__vs__beta"
+    seen = _dt(2026, 8, 14, 18, 0, tzinfo=_tz.utc)
+    st.insert_quotes([
+        _Q(event_key=ek, book=_B.SMARKETS, market=_MT.H2H,
+           outcome=_O(label=lbl), decimal_odd=odd, fetched_at=seen,
+           source_event_id="x")
+        for lbl, odd in (("home", 2.00), ("away", 2.05))
+    ])
+    before = _dt(2026, 8, 14, 19, 0, tzinfo=_tz.utc)
+
+    # Pinnacle n'a rien : la clôture doit être introuvable de son côté...
+    assert st.closing_group(ek, "h2h", None, before, book="pinnacle") == []
+    # ...et parfaitement lisible du côté de la référence réelle.
+    grp = st.closing_group(ek, "h2h", None, before, book="smarkets")
+    assert {r["outcome_label"] for r in grp} == {"home", "away"}
+
+
+def test_pinnacle_closing_group_still_behaves_as_before(tmp_path):
+    """Le nom historique reste utilisé partout ailleurs — il ne doit pas
+    changer de comportement."""
+    from datetime import datetime as _dt, timezone as _tz
+    from src.storage import Storage
+    from src.models import Book as _B, MarketType as _MT, OddQuote as _Q, Outcome as _O
+
+    st = Storage(str(tmp_path / "t2.db"))
+    ek = "202608141900::alpha__vs__beta"
+    seen = _dt(2026, 8, 14, 18, 0, tzinfo=_tz.utc)
+    st.insert_quotes([
+        _Q(event_key=ek, book=b, market=_MT.H2H, outcome=_O(label="home"),
+           decimal_odd=2.0, fetched_at=seen, source_event_id="x")
+        for b in (_B.PINNACLE, _B.SMARKETS)
+    ])
+    before = _dt(2026, 8, 14, 19, 0, tzinfo=_tz.utc)
+    grp = st.pinnacle_closing_group(ek, "h2h", None, before)
+    assert len(grp) == 1 and grp[0]["book"] == "pinnacle"
