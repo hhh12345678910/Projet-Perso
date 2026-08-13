@@ -2096,7 +2096,23 @@ def _daemon_scan_sport(
         _pinnacle_health(current_sport, ok=True, tg_cfg=tg_cfg)
 
         cfg = ScanConfig(sport=current_sport, min_ev_pct=min_ev, bankroll=bankroll)
-        fair = build_fair_lines(pinnacle_q, cfg.devig_method)
+        # Seconde référence sharp, servie par le cache de fond — le cycle ne
+        # l'attend jamais. Repli STRICT : elle ne sert que là où Pinnacle ne
+        # price rien, et n'est jamais moyennée avec lui.
+        secondary = fetch_smarkets_quotes(current_sport)
+        fair = build_fair_lines(pinnacle_q, cfg.devig_method, secondary_quotes=secondary)
+        if _SMARKETS_ENABLED and current_sport in SMARKETS_SPORT_DOMAINS:
+            # Compter ce qui SORT de la source, jamais se contenter de l'avoir
+            # appelée : c'est le mode de défaillance dominant du projet (§11).
+            # La ligne s'imprime MÊME à zéro — sans quoi « pas branché » et
+            # « branché mais vide » seraient indiscernables (§13.12).
+            _from_sec = sum(
+                1 for f in fair.values() if f.reference_book != Book.PINNACLE
+            )
+            console.print(
+                f"\\[{current_sport}]   Smarkets : {len(secondary)} cotes, "
+                f"{_from_sec} lignes de référence en repli"
+            )
         # Persist the event (with its sport) for every Pinnacle event in the
         # reference frame. Value bets are keyed onto these same event_keys, so
         # this lets clv-report break CLV down per sport instead of "unknown".
