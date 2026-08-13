@@ -338,3 +338,39 @@ def test_pinnacle_closing_group_still_behaves_as_before(tmp_path):
     before = _dt(2026, 8, 14, 19, 0, tzinfo=_tz.utc)
     grp = st.pinnacle_closing_group(ek, "h2h", None, before)
     assert len(grp) == 1 and grp[0]["book"] == "pinnacle"
+
+
+def test_smarkets_traces_its_curve_but_never_closes_a_soft_window():
+    """Smarkets doit apparaître dans odds_history comme les autres books, mais
+    ne doit JAMAIS compter comme la disparition du prix d'un book soft : la
+    fenêtre jouable se mesure sur le book où l'on mise, pas sur la référence."""
+    from datetime import datetime as _dt, timezone as _tz
+    from src.main import track_corrections
+    from src.models import Book as _B, MarketType as _MT, OddQuote as _Q, Outcome as _O
+
+    ek, now = "202608141900::alpha__vs__beta", _dt(2026, 8, 14, 12, tzinfo=_tz.utc)
+
+    def q(book, odd):
+        return _Q(event_key=ek, book=book, market=_MT.H2H,
+                  outcome=_O(label="home"), decimal_odd=odd,
+                  fetched_at=now, source_event_id="x")
+
+    open_rows = [{
+        "value_bet_id": 1, "book": _B.UNIBET_BE.value, "event_key": ek,
+        "market": "h2h", "outcome_label": "home", "line": None,
+        "odd_taken": 2.50, "fair_odd": 2.30,
+        "detected_at": now.isoformat(),
+        "corrected_at": None, "aligned_at": None,
+    }]
+
+    # Le book soft tient son prix ; Smarkets est très en dessous.
+    _obs, corr, _algn, hist = track_corrections(
+        open_rows, [q(_B.UNIBET_BE, 2.50)], now,
+        None, [q(_B.PINNACLE, 2.28)],
+        secondary_quotes=[q(_B.SMARKETS, 1.95)],
+    )
+    books = {h[1] for h in hist}
+    assert "smarkets" in books, "la courbe Smarkets doit être enregistrée"
+    assert {"unibet_be", "pinnacle"} <= books
+    # La cote basse de Smarkets ne doit pas déclarer la fenêtre fermée.
+    assert corr == [], "une référence ne ferme jamais la fenêtre d'un book soft"

@@ -392,6 +392,7 @@ def track_corrections(
     now: datetime,
     fair_lines: dict | None = None,
     pinnacle_quotes: list[OddQuote] | None = None,
+    secondary_quotes: list[OddQuote] | None = None,
 ) -> tuple[list[tuple], list[tuple], list[tuple], list[tuple]]:
     """Confronter les suivis ouverts aux cotes du cycle.
 
@@ -405,9 +406,15 @@ def track_corrections(
     dernière valeur connue.
 
     La trajectoire couvre **tous les books** qui proposent la sélection, plus
-    Pinnacle, et pas seulement le book qui a déclenché la détection : un graphe
-    du marché demande toutes les courbes, et le prix d'un seul book ne dit pas
-    si c'est lui qui a bougé ou le marché entier.
+    les sources sharp — Pinnacle et Smarkets —, et pas seulement le book qui a
+    déclenché la détection : un graphe du marché demande toutes les courbes, et
+    le prix d'un seul book ne dit pas si c'est lui qui a bougé ou le marché
+    entier.
+
+    Smarkets étant un exchange, sa courbe se lit différemment : ses prix sont
+    sans marge par construction, donc l'écart entre sa cote et `fair_odd` n'est
+    pas une commission mais du bruit de liquidité. C'est précisément ce qui
+    rend la comparaison intéressante.
 
     Pinnacle y figure comme n'importe quel autre book, avec sa cote AFFICHÉE.
     `fair_odd` porte à part la même ligne dévigée — les deux ne se confondent
@@ -450,8 +457,14 @@ def track_corrections(
 
     ts = now.isoformat()
     # Toutes les cotes du cycle par sélection, tous books confondus.
+    #
+    # Les sources sharp (Pinnacle, Smarkets) tracent leur courbe ici comme
+    # n'importe quel book, mais n'entrent JAMAIS dans `current` ci-dessus :
+    # ce dictionnaire décide si le prix d'un book SOFT a disparu, et une
+    # référence n'est pas un prix qu'on cherche à prendre.
     by_selection: dict[tuple, dict[str, float]] = defaultdict(dict)
-    for q in list(soft_quotes) + list(pinnacle_quotes or []):
+    for q in (list(soft_quotes) + list(pinnacle_quotes or [])
+              + list(secondary_quotes or [])):
         skey = (q.event_key, q.market.value, q.outcome.label, q.outcome.line)
         prev = by_selection[skey].get(q.book.value)
         if prev is None or q.decimal_odd < prev:
@@ -2252,6 +2265,7 @@ def _daemon_scan_sport(
             _open = [dict(r) for r in storage.open_corrections()]
             obs, corr, algn, hist = track_corrections(
                 _open, soft_q, _now, fair, pinnacle_q,
+                secondary_quotes=secondary,
             )
             storage.update_corrections(obs, corr, algn, hist)
             _ms = (time.monotonic() - _t0) * 1000
