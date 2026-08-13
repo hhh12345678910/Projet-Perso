@@ -148,3 +148,143 @@ def test_is_retryable_only_transient():
     assert _is_retryable(httpx.ConnectError("x")) is True
     assert _is_retryable(server) is True
     assert _is_retryable(forbidden) is False
+
+
+# ---------------------------------------------------------------- appels groupés
+#
+# Le §5 avait retiré Smarkets pour ses ~26 minutes de rafraîchissement, dues à
+# une requête par événement et par marché. Les tests ci-dessous couvrent le
+# chemin groupé qui lève ce blocage — et surtout son ATTRIBUTION, qui est le
+# piège du §10 : une réponse groupée ne dit pas quelle requête elle sert.
+
+from datetime import timedelta                                        # noqa: E402
+from src.scrapers.smarkets import (                                   # noqa: E402
+    SmarketsScraper,
+    iter_all_quotes_fast,
+)
+
+
+def _scraper_with(get_impl):
+    """Un vrai SmarketsScraper dont seul le transport est remplacé."""
+    sc = SmarketsScraper.__new__(SmarketsScraper)
+    sc._delay = 0
+    sc._get = get_impl
+    return sc
+
+
+def test_grouped_markets_are_attributed_by_event_id_not_arrival_order():
+    # Le serveur rend les marchés dans le DÉSORDRE : ceux de l'événement 2
+    # arrivent avant ceux de l'événement 1. Attribuer par ordre d'arrivée
+    # croiserait les deux événements — la panne Circus du §10.
+    def _get(path, params=None):
+        assert path == "/events/1,2/markets/"
+        return {"markets": [
+            {"id": 20, "event_id": 2, "state": "open",
+             "market_type": {"name": "WINNER_3_WAY"}},
+            {"id": 10, "event_id": 1, "state": "open",
+             "market_type": {"name": "WINNER_3_WAY"}},
+        ]}
+    got = _scraper_with(_get).fetch_markets_for_events([1, 2])
+    assert [m["id"] for m in got[1]] == [10]
+    assert [m["id"] for m in got[2]] == [20]
+
+
+def test_grouped_contracts_are_attributed_by_market_id():
+    def _get(path, params=None):
+        assert path == "/markets/10,20/contracts/"
+        return {"contracts": [
+            {"id": 200, "market_id": 20, "name": "Over 2.5"},
+            {"id": 100, "market_id": 10, "name": "Draw"},
+        ]}
+    got = _scraper_with(_get).fetch_contracts_for_markets([10, 20])
+    assert [c["id"] for c in got[10]] == [100]
+    assert [c["id"] for c in got[20]] == [200]
+
+
+def test_grouped_call_falls_back_to_single_calls_when_api_refuses():
+    # Si l'API refuse la syntaxe groupée, on ne devine pas : on retombe sur
+    # les appels unitaires, lents mais jamais faux.
+    calls = []
+
+    def _get(path, params=None):
+        if "," in path:
+            raise httpx.HTTPStatusError("400", request=None, response=None)
+        calls.append(path)
+        return {"contracts": [{"id": 1, "name": "Draw"}]}
+
+    sc = _scraper_with(_get)
+    sc.fetch_market_contracts = lambda mid: sc._get(f"/markets/{mid}/contracts/")["contracts"]
+    got = sc.fetch_contracts_for_markets([10, 20])
+    assert calls == ["/markets/10/contracts/", "/markets/20/contracts/"]
+    assert len(got[10]) == 1 and len(got[20]) == 1
+
+
+def test_grouped_call_falls_back_when_response_cannot_be_attributed():
+    # Réponse groupée acceptée, mais sans market_id : inattribuable, donc
+    # repli. Preuve positive exigée, jamais de supposition.
+    def _get(path, params=None):
+        if "," in path:
+            return {"contracts": [{"id": 1, "name": "Draw"}]}   # pas de market_id
+        return {"contracts": [{"id": 9, "name": "Draw"}]}
+
+    sc = _scraper_with(_get)
+    sc.fetch_market_contracts = lambda mid: sc._get(f"/markets/{mid}/contracts/")["contracts"]
+    got = sc.fetch_contracts_for_markets([10, 20])
+    assert got[10][0]["id"] == 9 and got[20][0]["id"] == 9
+
+
+def test_within_hours_drops_far_events_but_keeps_unparseable_dates():
+    soon = (datetime.now(timezone.utc) + timedelta(hours=6)).isoformat().replace("+00:00", "Z")
+    far = (datetime.now(timezone.utc) + timedelta(hours=200)).isoformat().replace("+00:00", "Z")
+
+    def _get(path, params=None):
+        return {"events": [
+            {"id": 1, "name": "A vs B", "start_datetime": soon},
+            {"id": 2, "name": "C vs D", "start_datetime": far},
+            {"id": 3, "name": "E vs F", "start_datetime": None},
+        ], "pagination": {}}
+
+    got = _scraper_with(_get).fetch_upcoming_events("soccer", within_hours=48)
+    assert {e["id"] for e in got} == {1, 3}
+
+
+def test_fast_path_never_crosses_two_events():
+    # Le test qui compte : deux événements traités dans la même passe groupée
+    # ne doivent jamais échanger leurs cotes.
+    soon = (datetime.now(timezone.utc) + timedelta(hours=3)).isoformat().replace("+00:00", "Z")
+
+    def _get(path, params=None):
+        if path.startswith("/events/") and path.endswith("/markets/"):
+            return {"markets": [
+                {"id": 20, "event_id": 2, "state": "open", "name": "Full-time result",
+                 "market_type": {"name": "WINNER_3_WAY"}},
+                {"id": 10, "event_id": 1, "state": "open", "name": "Full-time result",
+                 "market_type": {"name": "WINNER_3_WAY"}},
+            ]}
+        if path.startswith("/events/"):
+            return {"events": [
+                {"id": 1, "name": "Arsenal vs Chelsea", "start_datetime": soon},
+                {"id": 2, "name": "Lyon vs Monaco", "start_datetime": soon},
+            ], "pagination": {}}
+        if "contracts" in path:
+            return {"contracts": [
+                {"id": 201, "market_id": 20, "name": "Lyon"},
+                {"id": 101, "market_id": 10, "name": "Arsenal"},
+            ]}
+        return {
+            "101": {"bids": [{"price": 4000, "quantity": 1}],
+                    "offers": [{"price": 4100, "quantity": 1}]},
+            "201": {"bids": [{"price": 5000, "quantity": 1}],
+                    "offers": [{"price": 5100, "quantity": 1}]},
+        }
+
+    qs = list(iter_all_quotes_fast(_scraper_with(_get), "soccer"))
+    assert len(qs) == 2
+    by_key = {q.event_key: q for q in qs}
+    assert len(by_key) == 2, "deux événements distincts attendus"
+    # Arsenal (contrat 101, prob ~0.405) doit porter la cote ~2.47, et Lyon
+    # (contrat 201, prob ~0.505) la cote ~1.98. Un croisement les échangerait.
+    arsenal = [q for q in qs if "arsenal" in q.event_key][0]
+    lyon = [q for q in qs if "lyon" in q.event_key][0]
+    assert arsenal.decimal_odd == pytest.approx(1 / 0.4050, abs=1e-3)
+    assert lyon.decimal_odd == pytest.approx(1 / 0.5050, abs=1e-3)

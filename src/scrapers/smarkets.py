@@ -3,7 +3,7 @@ from __future__ import annotations
 import os
 import re
 import time
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from typing import Iterator
 
 import httpx
@@ -92,10 +92,16 @@ class SmarketsScraper:
         return r.json()
 
     def fetch_upcoming_events(
-        self, sport: str, *, limit: int = 200, max_events: int = 600
+        self, sport: str, *, limit: int = 200, max_events: int = 600,
+        within_hours: float | None = None,
     ) -> list[dict]:
         """Paginate over upcoming single-event matches of a sport and return
-        every event whose start time is in the future."""
+        every event whose start time is in the future.
+
+        `within_hours` borne l'horizon. Une référence sharp ne sert qu'à
+        valoriser ce qu'on peut jouer : au-delà de 48 h, la ligne bouge
+        encore beaucoup et le volume de requêtes croît pour rien. C'est le
+        levier n°2 du §5."""
         domain = SPORT_DOMAINS.get(sport)
         if domain is None:
             return []
@@ -122,7 +128,18 @@ class SmarketsScraper:
             if m is None:
                 break
             last_id = m.group(1)
-        return events[:max_events]
+        events = events[:max_events]
+        if within_hours is None:
+            return events
+        # Un événement sans horaire lisible est GARDÉ : l'écarter ici le
+        # rendrait invisible alors que le rapprochement sait encore le traiter.
+        horizon = datetime.now(timezone.utc) + timedelta(hours=within_hours)
+        kept = []
+        for e in events:
+            st = _parse_event_time(e.get("start_datetime"))
+            if st is None or st <= horizon:
+                kept.append(e)
+        return kept
 
     def fetch_event_markets(self, event_id: int) -> list[dict]:
         data = self._get(
@@ -134,6 +151,83 @@ class SmarketsScraper:
     def fetch_market_contracts(self, market_id: int) -> list[dict]:
         data = self._get(f"/markets/{market_id}/contracts/")
         return data.get("contracts") or []
+
+    # ---------------------------------------------------------------- groupés
+    #
+    # Les deux méthodes ci-dessus font UNE requête par événement et par marché.
+    # C'est ce qui portait un rafraîchissement complet à ~26 minutes et a fait
+    # retirer Smarkets (§5) : ~1 000 requêtes à 0,5 s d'intervalle.
+    #
+    # `fetch_quotes` groupait pourtant déjà ses identifiants par virgule. Les
+    # deux méthodes suivantes appliquent la même syntaxe aux marchés et aux
+    # contrats, ce qui ramène le cycle à ~100 requêtes.
+    #
+    # ⚠️ ATTRIBUTION — c'est le piège du §10, qui a cassé le pont Circus trois
+    # fois : une réponse groupée ne rappelle PAS quelle requête elle sert. On
+    # n'attribue donc jamais par ordre d'arrivée, toujours par l'identifiant
+    # que chaque objet porte (`event_id` sur un marché, `market_id` sur un
+    # contrat). Si ce champ manque, on ne devine pas : on retombe sur les
+    # appels unitaires, qui sont lents mais jamais faux.
+
+    def fetch_markets_for_events(self, event_ids: list[int]) -> dict[int, list[dict]]:
+        """Marchés de plusieurs événements en une requête, indexés par event_id."""
+        if not event_ids:
+            return {}
+        joined = ",".join(str(i) for i in event_ids)
+        try:
+            data = self._get(
+                f"/events/{joined}/markets/",
+                params={"market_types": MAIN_MARKET_TYPES},
+            )
+            markets = data.get("markets") or []
+        except httpx.HTTPError:
+            markets = None                      # l'API refuse le lot
+        if markets is None or (markets and not any(m.get("event_id") for m in markets)):
+            # Soit le groupage est refusé, soit la réponse ne permet pas
+            # d'attribuer : dans les deux cas, repli unitaire.
+            out: dict[int, list[dict]] = {}
+            for eid in event_ids:
+                try:
+                    out[eid] = self.fetch_event_markets(eid)
+                except httpx.HTTPError:
+                    out[eid] = []
+            return out
+        by_event: dict[int, list[dict]] = {eid: [] for eid in event_ids}
+        for m in markets:
+            eid = m.get("event_id")
+            if eid is None:
+                continue
+            by_event.setdefault(int(eid), []).append(m)
+        return by_event
+
+    def fetch_contracts_for_markets(self, market_ids: list[int]) -> dict[int, list[dict]]:
+        """Contrats de plusieurs marchés en une requête, indexés par market_id.
+
+        C'est LE goulot d'étranglement du scraper d'origine : un appel par
+        marché, soit la grande majorité des requêtes d'un rafraîchissement."""
+        if not market_ids:
+            return {}
+        joined = ",".join(str(i) for i in market_ids)
+        try:
+            data = self._get(f"/markets/{joined}/contracts/")
+            contracts = data.get("contracts") or []
+        except httpx.HTTPError:
+            contracts = None
+        if contracts is None or (contracts and not any(c.get("market_id") for c in contracts)):
+            out: dict[int, list[dict]] = {}
+            for mid in market_ids:
+                try:
+                    out[mid] = self.fetch_market_contracts(mid)
+                except httpx.HTTPError:
+                    out[mid] = []
+            return out
+        by_market: dict[int, list[dict]] = {mid: [] for mid in market_ids}
+        for c in contracts:
+            mid = c.get("market_id")
+            if mid is None:
+                continue
+            by_market.setdefault(int(mid), []).append(c)
+        return by_market
 
     def fetch_quotes(self, market_ids: list[int]) -> dict:
         """Batch-fetch best-bid / best-offer for many markets at once."""
@@ -285,7 +379,112 @@ def iter_quotes_for_event(
 def iter_all_quotes(
     scraper: SmarketsScraper, sport: str, *, max_events: int = 200,
 ) -> Iterator[OddQuote]:
-    """Walk every upcoming event for a sport and yield their OddQuotes."""
+    """Walk every upcoming event for a sport and yield their OddQuotes.
+
+    Conservé pour les appels unitaires et les tests : une requête par
+    événement, une par marché. Pour la production, voir `iter_all_quotes_fast`,
+    qui fait le même travail en dix fois moins de requêtes."""
     events = scraper.fetch_upcoming_events(sport, max_events=max_events)
     for ev in events:
         yield from iter_quotes_for_event(scraper, ev)
+
+
+def iter_all_quotes_fast(
+    scraper: SmarketsScraper,
+    sport: str,
+    *,
+    max_events: int = 200,
+    within_hours: float | None = 48.0,
+    batch: int = 50,
+) -> Iterator[OddQuote]:
+    """Même résultat qu'`iter_all_quotes`, en appels groupés.
+
+    Trois passes au lieu d'une boucle imbriquée : les marchés de tous les
+    événements, puis les contrats de tous les marchés, puis les cotes. Chaque
+    passe groupe ses identifiants par virgule.
+
+    Le §5 chiffrait le coût d'origine à ~26 minutes pour un rafraîchissement,
+    ce qui bloquait le cycle de scan et silenciait un sport entier. C'est la
+    seule raison pour laquelle Smarkets avait été retiré."""
+    events = scraper.fetch_upcoming_events(
+        sport, max_events=max_events, within_hours=within_hours
+    )
+    if not events:
+        return
+
+    # Index des événements exploitables, par id.
+    meta: dict[int, tuple[str, str, datetime, str]] = {}
+    for e in events:
+        home, away = _split_event_name(e.get("name") or "")
+        start = _parse_event_time(e.get("start_datetime"))
+        eid = e.get("id")
+        if not (home and away and start and eid is not None):
+            continue
+        meta[int(eid)] = (home, away, start, str(eid))
+    if not meta:
+        return
+
+    # Passe 1 — marchés de tous les événements.
+    markets_by_event: dict[int, list[dict]] = {}
+    ids = list(meta)
+    for i in range(0, len(ids), batch):
+        markets_by_event.update(scraper.fetch_markets_for_events(ids[i:i + batch]))
+
+    usable: dict[int, list[dict]] = {}
+    all_market_ids: list[int] = []
+    for eid, markets in markets_by_event.items():
+        keep = [
+            m for m in markets
+            if m.get("state") == "open"
+            and _MARKET_TYPE_MAP.get((m.get("market_type") or {}).get("name")) is not None
+        ]
+        if keep:
+            usable[eid] = keep
+            all_market_ids.extend(int(m["id"]) for m in keep)
+    if not all_market_ids:
+        return
+
+    # Passe 2 — contrats de tous les marchés (le gros du gain).
+    contracts_by_market: dict[int, list[dict]] = {}
+    for i in range(0, len(all_market_ids), batch):
+        contracts_by_market.update(
+            scraper.fetch_contracts_for_markets(all_market_ids[i:i + batch])
+        )
+
+    # Passe 3 — cotes, déjà groupées dans le code d'origine.
+    quotes_by_contract: dict[str, dict] = {}
+    for i in range(0, len(all_market_ids), batch):
+        quotes_by_contract.update(scraper.fetch_quotes(all_market_ids[i:i + batch]))
+
+    now = datetime.now(timezone.utc)
+    for eid, markets in usable.items():
+        home, away, start, source_id = meta[eid]
+        record_pair(home, away)
+        ek = event_key(home, away, start)
+        for m in markets:
+            market_type = _MARKET_TYPE_MAP[(m["market_type"])["name"]]
+            line = (
+                _parse_line_from_market_name(m.get("name") or "")
+                if market_type == MarketType.TOTALS else None
+            )
+            for c in contracts_by_market.get(int(m["id"]), []):
+                quote = quotes_by_contract.get(str(c.get("id")))
+                if quote is None:
+                    continue
+                decimal_odd = _mid_decimal_odd(
+                    quote.get("bids") or [], quote.get("offers") or []
+                )
+                if decimal_odd is None or decimal_odd <= 1.0:
+                    continue
+                label = _outcome_label(c.get("name") or "", home, away, market_type)
+                if label is None:
+                    continue
+                yield OddQuote(
+                    event_key=ek,
+                    book=Book.SMARKETS,
+                    market=market_type,
+                    outcome=Outcome(label=label, line=line),
+                    decimal_odd=decimal_odd,
+                    fetched_at=now,
+                    source_event_id=source_id,
+                )

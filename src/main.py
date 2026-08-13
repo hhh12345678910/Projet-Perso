@@ -34,6 +34,11 @@ from .scrapers.betano import (
 )
 from .scrapers.betcenter import BetCenterScraper
 from .scrapers.betfirst import BetFirstScraper, parse_events_table as betfirst_parse_events_table
+from .scrapers.smarkets import (
+    SPORT_DOMAINS as SMARKETS_SPORT_DOMAINS,
+    SmarketsScraper,
+    iter_all_quotes_fast as smarkets_iter_all_quotes_fast,
+)
 from .scrapers.goldenpalace import GoldenPalaceScraper, parse_get_events as goldenpalace_parse_get_events
 from .scrapers.ladbrokes import LadbrokesScraper, parse_prematch as ladbrokes_parse_prematch
 from .scrapers.circus import load_pushed_quotes as circus_load_pushed
@@ -1262,6 +1267,73 @@ def fetch_betfirst_quotes(sport: str) -> list[OddQuote]:
     return quotes
 
 
+# --------------------------------------------------------------- Smarkets ----
+#
+# Seconde référence sharp, en repli strict derrière Pinnacle (voir
+# `build_fair_lines`). Retirée en juillet parce qu'un rafraîchissement prenait
+# ~26 minutes DANS le cycle de scan, silenciant un sport entier (§5).
+#
+# Deux choses ont changé :
+#   1. le scraper groupe désormais ses identifiants par virgule sur les trois
+#      passes (marchés, contrats, cotes) — mesuré sur l'API le 13/08 : les lots
+#      de 50 passent, et 426 événements coûtent ~150 requêtes au lieu de ~1 000 ;
+#   2. il est servi depuis un cache de fond, comme BetFirst : le cycle lit le
+#      cache et repart aussitôt, il n'attend JAMAIS Smarkets.
+#
+# Ces deux points visent la seule raison du retrait. La juridiction n'en était
+# pas une : l'API est publique, sans authentification, et sert de source de
+# données — on ne parie pas dessus.
+_SMARKETS_ENABLED = os.getenv("SMARKETS_ENABLED", "1") not in ("0", "false", "False")
+_SMARKETS_TTL = float(os.getenv("SMARKETS_REFRESH_SEC", "300"))
+# Une référence périmée est pire que pas de référence : elle fabriquerait des
+# value bets contre une ligne juste qui n'existe plus. Même leçon que la garde
+# de fraîcheur des ponts navigateur (§5).
+_SMARKETS_MAX_AGE = float(os.getenv("SMARKETS_MAX_AGE_SEC", "1800"))
+_SMARKETS_HOURS = float(os.getenv("SMARKETS_HOURS", "48"))
+_SMARKETS_CACHE: dict[str, tuple[float, list[OddQuote]]] = {}
+_SMARKETS_REFRESHING: set[str] = set()
+_SMARKETS_LOCK = threading.Lock()
+
+
+def _smarkets_refresh(sport: str) -> None:
+    """Recharge Smarkets en fond. Ne lève jamais — thread détaché."""
+    try:
+        t0 = time.monotonic()
+        with SmarketsScraper() as sm:
+            quotes = list(smarkets_iter_all_quotes_fast(
+                sm, sport, within_hours=_SMARKETS_HOURS
+            ))
+        with _SMARKETS_LOCK:
+            _SMARKETS_CACHE[sport] = (time.monotonic(), quotes)
+        console.print(
+            f"\\[{sport}]   Smarkets rafraîchi : {len(quotes)} cotes "
+            f"en {time.monotonic() - t0:.0f} s"
+        )
+    except Exception as e:                                          # noqa: BLE001
+        console.print(f"[yellow]Smarkets refresh échoué : {e}[/yellow]")
+    finally:
+        with _SMARKETS_LOCK:
+            _SMARKETS_REFRESHING.discard(sport)
+
+
+def fetch_smarkets_quotes(sport: str) -> list[OddQuote]:
+    """Cotes Smarkets en cache. Ne bloque jamais le cycle."""
+    if not _SMARKETS_ENABLED or sport not in SMARKETS_SPORT_DOMAINS:
+        return []
+    now = time.monotonic()
+    with _SMARKETS_LOCK:
+        ts, quotes = _SMARKETS_CACHE.get(sport, (0.0, []))
+        age = now - ts if ts else float("inf")
+        launch = age > _SMARKETS_TTL and sport not in _SMARKETS_REFRESHING
+        if launch:
+            _SMARKETS_REFRESHING.add(sport)
+    if launch:
+        threading.Thread(target=_smarkets_refresh, args=(sport,), daemon=True).start()
+    if age > _SMARKETS_MAX_AGE:
+        return []
+    return quotes
+
+
 def fetch_ladbrokes_quotes(sport: str) -> list[OddQuote]:
     """Fetch + parse every Ladbrokes meeting of a sport via the detail-service."""
     try:
@@ -1713,10 +1785,26 @@ def scan(
         )
 
         quotes         = [q for q in all_quotes if q.book == Book.PINNACLE]
-        raw_soft       = [q for q in all_quotes if q.book != Book.PINNACLE]
+        # Filtrer sur SHARP_BOOKS, pas sur « != Pinnacle » : une source de
+        # référence n'est jamais un book où l'on chasse une erreur de prix.
+        raw_soft       = [q for q in all_quotes if q.book not in SHARP_BOOKS]
 
-        fair = build_fair_lines(quotes, cfg.devig_method)
-        console.print(f"  → {len(fair)} fair lines (devig={cfg.devig_method}, sharp=Pinnacle)")
+        # Seconde référence sharp, servie par le cache de fond — le cycle ne
+        # l'attend jamais. Repli STRICT : elle ne sert que là où Pinnacle ne
+        # price rien, et n'est jamais moyennée avec lui.
+        secondary = fetch_smarkets_quotes(current_sport)
+
+        fair = build_fair_lines(quotes, cfg.devig_method, secondary_quotes=secondary)
+        _from_secondary = sum(1 for f in fair.values() if f.reference_book != Book.PINNACLE)
+        _sharp_label = "Pinnacle"
+        if secondary:
+            # Compter ce qui SORT de la source, jamais se contenter de l'avoir
+            # appelée : c'est le mode de défaillance dominant du projet (§11).
+            _sharp_label = (
+                f"Pinnacle + Smarkets ({len(secondary)} cotes, "
+                f"{_from_secondary} lignes en repli)"
+            )
+        console.print(f"  → {len(fair)} fair lines (devig={cfg.devig_method}, sharp={_sharp_label})")
 
         # Ne pas réenregistrer un instantané servi par le cache : il est déjà
         # en base, et le dupliquer fausserait le groupe de clôture.
