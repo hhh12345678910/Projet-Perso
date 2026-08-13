@@ -12,16 +12,19 @@ BetFirst perdaient tout leur tennis en écrivant « Nom, Prénom ».
 
 Cet outil ne modifie rien.
 
-⚠️ Coût des requêtes. `quotes` pèse des dizaines de Go et grossit de ~80 M de
-lignes par jour. Les clés Pinnacle sont donc lues dans `events` (petite, clée
-en primaire) et non dans `quotes` ; seules les clés Smarkets s'y lisent, sur
-une fenêtre étroite et via l'index `fetched_at`. Chaque étape s'annonce avant
-de partir : une sonde muette pendant deux minutes est indiscernable d'une
-sonde plantée.
+⚠️ `quotes` n'est jamais interrogée. Elle pèse des dizaines de Go et grossit de
+~80 M de lignes par jour : même bornée par l'index `fetched_at`, une requête y
+déclenche des centaines de milliers de lectures aléatoires. Les clés Pinnacle
+viennent donc d'`events` (petite, clée en primaire) et celles de Smarkets sont
+relues depuis l'API, ce qui prend une quinzaine de secondes et vérifie au
+passage que le scraper fonctionne.
+
+Chaque étape s'annonce avant de partir : une sonde muette pendant deux minutes
+est indiscernable d'une sonde plantée.
 
 Usage :
     .venv/bin/python tools/smarkets_match_check.py
-    .venv/bin/python tools/smarkets_match_check.py --sport tennis --minutes 10
+    .venv/bin/python tools/smarkets_match_check.py --sport tennis
 """
 from __future__ import annotations
 
@@ -30,7 +33,7 @@ import sqlite3
 import subprocess
 import sys
 import time
-from datetime import datetime, timedelta, timezone
+from datetime import datetime, timezone
 
 sys.path.insert(0, ".")
 
@@ -54,8 +57,6 @@ def _teams(key: str) -> str:
 
 def main() -> int:
     ap = argparse.ArgumentParser()
-    ap.add_argument("--minutes", type=float, default=5.0,
-                    help="fenêtre de lecture des cotes Smarkets (défaut 5)")
     ap.add_argument("--sport", default="soccer", choices=("soccer", "tennis"))
     ap.add_argument("--show", type=int, default=10)
     ap.add_argument("--max-near", type=int, default=120,
@@ -73,7 +74,6 @@ def main() -> int:
 
     conn = sqlite3.connect(DB)
     now = datetime.now(timezone.utc)
-    cut = (now - timedelta(minutes=args.minutes)).isoformat()
 
     # --- Pinnacle : lu dans `events`, pas dans `quotes` -------------------
     p(f"\n[1/4] Événements Pinnacle du sport ({args.sport})…")
@@ -86,20 +86,26 @@ def main() -> int:
     }
     p(f"      {len(pin)} événements à venir  ({time.monotonic() - t0:.1f} s)")
 
-    # --- Smarkets : fenêtre étroite sur `quotes` --------------------------
-    p(f"\n[2/4] Clés Smarkets des {args.minutes:g} dernières minutes…")
+    # --- Smarkets : relu depuis l'API, JAMAIS depuis `quotes` -------------
+    #
+    # Lire `quotes` ici était une fausse bonne idée : l'index sur fetched_at
+    # rend les identifiants de ligne, mais il faut ensuite aller chercher
+    # chaque ligne dans une table de plusieurs dizaines de Go pour tester le
+    # book — ~290 000 lectures aléatoires sur cinq minutes, dont 2 % seulement
+    # concernent Smarkets. L'API rend la même information en une quinzaine de
+    # secondes, et vérifie en prime que le scraper fonctionne.
+    p("\n[2/4] Clés Smarkets, relues depuis l'API…")
     t0 = time.monotonic()
-    sm = {
-        r[0] for r in conn.execute(
-            "SELECT DISTINCT event_key FROM quotes "
-            "WHERE fetched_at > ? AND book = 'smarkets'", (cut,)
-        )
-    }
+    from src.scrapers.smarkets import SmarketsScraper, iter_all_quotes_fast
+    try:
+        with SmarketsScraper() as _sm:
+            sm = {q.event_key for q in iter_all_quotes_fast(_sm, args.sport)}
+    except Exception as e:                                         # noqa: BLE001
+        p(f"      ÉCHEC — {e}")
+        return 1
     p(f"      {len(sm)} événements distincts  ({time.monotonic() - t0:.1f} s)")
     if not sm:
-        p("\n      Aucune cote Smarkets sur la fenêtre. Élargis --minutes,")
-        p("      ou vérifie que le rafraîchissement tourne :")
-        p("        grep -i 'Smarkets rafraîchi' valuebet.log | tail -3")
+        p("\n      L'API n'a rien rendu pour ce sport.")
         return 1
 
     # Un événement Smarkets peut porter un sport que l'on ne scanne pas ici ;
