@@ -79,13 +79,36 @@ def main() -> int:
     # --- Pinnacle : lu dans `events`, pas dans `quotes` -------------------
     p(f"\n[1/4] Événements Pinnacle du sport ({args.sport})…")
     t0 = time.monotonic()
-    pin = {
-        r[0] for r in conn.execute(
-            "SELECT event_key FROM events WHERE sport = ? AND start_time > ?",
-            (args.sport, now.isoformat()),
-        )
-    }
+    rows = list(conn.execute(
+        "SELECT event_key, start_time FROM events WHERE sport = ? AND start_time > ?",
+        (args.sport, now.isoformat()),
+    ))
+    # ⚠️ `events` accumule sans expiration, et Pinnacle RÉVISE l'heure estimée
+    # d'un match de tennis par pas de 15 min à mesure que les courts se
+    # libèrent. Chaque révision crée une nouvelle clé sans effacer l'ancienne :
+    # mesuré, jusqu'à CINQ entrées pour un même match. Toutes marquent 100 au
+    # rapprochement, la garde d'ambiguïté se déclenche, et le candidat est
+    # rejeté alors qu'il devrait s'apparier.
+    #
+    # Le daemon ne voit jamais ça : il construit ses clés depuis pinnacle_q,
+    # les cotes du cycle courant, où chaque match figure une seule fois. Ne
+    # garder ici que la clé la plus récente par (équipes, jour) reconstitue
+    # donc ce que la production voit — sans quoi la sonde décrit un système
+    # qui n'existe pas.
+    latest: dict[tuple, tuple[str, str]] = {}
+    for ek, st in rows:
+        parsed = parse_event_key(ek)
+        if parsed is None:
+            continue
+        sig = (parsed[1], parsed[2], parsed[0].date())
+        if sig not in latest or st > latest[sig][1]:
+            latest[sig] = (ek, st)
+    pin = {ek for ek, _ in latest.values()}
+    dropped = len(rows) - len(pin)
     p(f"      {len(pin)} événements à venir  ({time.monotonic() - t0:.1f} s)")
+    if dropped:
+        p(f"      ({dropped} clés périmées écartées — mêmes équipes, "
+          f"horaire révisé par Pinnacle)")
 
     # --- Smarkets : relu depuis l'API, JAMAIS depuis `quotes` -------------
     #
