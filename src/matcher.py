@@ -181,6 +181,22 @@ def tolerance_for(sport: str | None) -> int:
     return TIME_TOLERANCE_BY_SPORT.get(sport or "", DEFAULT_TIME_TOLERANCE_MIN)
 
 
+# Fenêtre de la seconde passe, réservée aux noms quasi parfaits (voir
+# `reconcile_event_keys`). Le tennis seul en a besoin : l'horaire n'y est
+# qu'une estimation, un match commençant quand le précédent libère le court.
+# Le football garde des horaires fermes — lui accorder douze heures ne pourrait
+# qu'apparier des matchs différents.
+#
+# Vit ici, à côté de sa sœur, pour que la production et les outils de
+# diagnostic lisent la MÊME valeur : une sonde qui mesure d'autres réglages que
+# le daemon dit forcément autre chose que lui.
+WIDE_TOLERANCE_BY_SPORT: dict[str, int] = {"tennis": 12 * 60}
+
+
+def wide_tolerance_for(sport: str | None) -> int | None:
+    return WIDE_TOLERANCE_BY_SPORT.get(sport or "")
+
+
 def reconcile_event_keys(
     reference_keys: Iterable[str],
     candidate_keys: Iterable[str],

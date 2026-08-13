@@ -42,6 +42,7 @@ from src.matcher import (  # noqa: E402
     reconcile_event_keys,
     team_similarity,
     tolerance_for,
+    wide_tolerance_for,
 )
 
 DB = "data/valuebet.db"
@@ -118,15 +119,24 @@ def main() -> int:
     t0 = time.monotonic()
     exact = pin & sm
     scores: dict[str, float] = {}
-    mapping = reconcile_event_keys(
-        reference_keys=list(pin),
-        candidate_keys=sm,
+    wide = wide_tolerance_for(args.sport)
+    strict = reconcile_event_keys(
+        reference_keys=list(pin), candidate_keys=sm,
         time_tolerance_minutes=tolerance_for(args.sport),
-        scores=scores,
+    )
+    # Les mêmes réglages que le daemon, sans quoi la sonde décrit un autre
+    # système que celui qui tourne — l'erreur qui a coûté un aller-retour.
+    mapping = reconcile_event_keys(
+        reference_keys=list(pin), candidate_keys=sm,
+        time_tolerance_minutes=tolerance_for(args.sport),
+        scores=scores, wide_tolerance_minutes=wide,
     )
     p(f"      identiques au caractère près : {len(exact)}")
-    p(f"      appariés par rapprochement   : {len(mapping)}"
-      f"  ({time.monotonic() - t0:.1f} s)")
+    p(f"      passe standard (tol. {tolerance_for(args.sport)} min) : {len(strict)}")
+    if wide:
+        p(f"      + passe élargie ({wide // 60} h, nom >= 98) : "
+          f"{len(mapping) - len(strict)} de plus")
+    p(f"      TOTAL apparié : {len(mapping)}  ({time.monotonic() - t0:.1f} s)")
     if sm:
         p(f"      → taux d'appariement : {100 * len(mapping) / len(sm):.1f} %")
     if len(mapping) > len(exact):
@@ -158,7 +168,10 @@ def main() -> int:
             if s > best_s:
                 best, best_s = r, s
         if best is not None and best_s >= 60:
-            near.append((best_s, k, best))
+            bp = parse_event_key(best)
+            dh = (bp[0] - pk[0]).total_seconds() / 3600 if bp else 0.0
+            same_day = bool(bp) and bp[0].date() == pk[0].date()
+            near.append((best_s, k, best, dh, same_day))
     p(f"      {len(unmatched[:args.max_near])} examinés "
       f"({time.monotonic() - t0:.1f} s)")
 
@@ -170,9 +183,16 @@ def main() -> int:
         return 0
 
     p(f"\n      {len(near)} quasi-appariements (score ≥ 60), les plus proches :\n")
-    for s, k, r in near[: args.show]:
-        verdict = "REJETÉ" if s < 85 else "?? devrait passer"
-        p(f"       {s:5.1f}  {verdict}")
+    for s, k, r, dh, same_day in near[: args.show]:
+        if s >= 98 and wide and abs(dh) * 60 <= wide and same_day:
+            verdict = "?? devrait passer — À CREUSER"
+        elif s >= 98 and not same_day:
+            verdict = "hors jour civil"
+        elif s >= 98:
+            verdict = f"écart {abs(dh):.1f} h > fenêtre {(wide or 0)//60} h"
+        else:
+            verdict = "nom trop éloigné"
+        p(f"       {s:5.1f}  écart {dh:+.1f} h  — {verdict}")
         p(f"              smarkets : {_teams(k)}")
         p(f"              pinnacle : {_teams(r)}")
     p("\n      Un score élevé et pourtant rejeté = piège de clé, comme le")

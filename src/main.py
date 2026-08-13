@@ -22,7 +22,8 @@ from .devig import devig, overround as _overround
 from .live_consensus import consensus_probs, edge_pct
 from .ev import ev_pct, fair_odd, kelly_fraction, kelly_stake
 from .leagues import categorize as _league_category
-from .matcher import parse_event_key, reconcile_event_keys, tolerance_for
+from .matcher import (parse_event_key, reconcile_event_keys, tolerance_for,
+                      wide_tolerance_for)
 from .models import Book, FairLine, MarketType, OddQuote, Outcome, ValueBet
 from .scrapers.betano import (
     BetanoAuthError,
@@ -977,13 +978,6 @@ def remap_to_reference(
     return out
 
 
-# Fenêtre élargie de la seconde passe de rapprochement, par sport. Le tennis
-# seul en a besoin : l'horaire n'y est qu'une estimation, un match commençant
-# quand le précédent libère le court. Le football garde des horaires fermes, et
-# lui accorder douze heures ne pourrait qu'apparier des matchs différents.
-_WIDE_TOLERANCE_BY_SPORT = {"tennis": 12 * 60}
-
-
 def align_reference_source(
     quotes: list[OddQuote],
     reference_keys: Iterable[str],
@@ -1016,7 +1010,7 @@ def align_reference_source(
         # un match que Pinnacle price — l'inverse exact de la règle « Pinnacle
         # d'abord ». Le rapprochement des books soft n'est pas touché : il est
         # mesuré, il fonctionne, et l'élargir serait une décision séparée.
-        wide_tolerance_minutes=_WIDE_TOLERANCE_BY_SPORT.get(sport or ""),
+        wide_tolerance_minutes=wide_tolerance_for(sport),
     )
     matched_src = {(q.book_event_key or q.event_key) for q in aligned}
     unmatched = [q for q in quotes if q.event_key not in matched_src]
