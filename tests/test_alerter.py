@@ -935,3 +935,45 @@ def test_format_omits_league_line_when_absent():
     empty row."""
     msg = format_value_bet(_bet())
     assert "🏆" not in msg
+
+
+# ------------------------------------------------- référence non-Pinnacle ----
+#
+# Une fair odd calculée sur Smarkets vaut moins qu'une fair odd Pinnacle : la
+# source est plus mince. Présenter les deux à l'identique est la façon la plus
+# sûre de faire traiter un chiffre fragile comme une certitude.
+
+
+def _bet_ref(ref):
+    b = _bet(ev_pct=12.5)
+    object.__setattr__(b, "reference_book", ref) if hasattr(b, "__dataclass_fields__") \
+        else setattr(b, "reference_book", ref)
+    return b
+
+
+def test_smarkets_reference_is_marked_next_to_the_fair_odd():
+    msg = format_value_bet(_bet_ref(Book.SMARKETS))
+    # Collé à la fair odd : on sait d'où sort le chiffre en le lisant.
+    assert "(fair 1.77 · réf. <b>Smarkets</b>)" in msg
+
+
+def test_smarkets_reference_also_gets_its_own_visible_line():
+    msg = format_value_bet(_bet_ref(Book.SMARKETS))
+    assert "🔵" in msg
+    assert "Fair odd calculée sur Smarkets" in msg
+    # Le repli se décide au marché, pas au match — le texte doit le dire.
+    assert "ce marché" in msg
+    assert "ce match" not in msg
+
+
+def test_pinnacle_reference_adds_no_marker_at_all():
+    """Le cas normal ne doit pas être alourdi : 99 % des alertes sont Pinnacle."""
+    msg = format_value_bet(_bet_ref(Book.PINNACLE))
+    assert "réf." not in msg
+    assert "🔵" not in msg
+    assert "(fair 1.77)" in msg
+
+
+def test_missing_reference_book_is_treated_as_pinnacle():
+    msg = format_value_bet(_bet_ref(None))
+    assert "réf." not in msg and "🔵" not in msg

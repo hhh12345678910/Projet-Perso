@@ -520,20 +520,31 @@ def format_value_bet(bet: ValueBet, sport: str | None = None,
     # Only flagged when it isn't Pinnacle. A fallback reference is thinner, so
     # the same EV% deserves less confidence — and silently presenting the two
     # as equivalent is how a shaky number gets treated as a sure thing.
+    # Marqué à DEUX endroits quand la référence n'est pas Pinnacle : collé à la
+    # fair odd, pour qu'on sache d'où sort ce chiffre au moment où on le lit, et
+    # sur sa propre ligne, pour que ce soit visible d'un coup d'œil sans lire.
+    #
+    # Le repli se décide au niveau du MARCHÉ, pas du match : Pinnacle peut très
+    # bien pricer le 1X2 de cette rencontre sans pricer son over/under. Dire
+    # « ne price pas ce match » serait donc faux une fois sur deux.
+    ref_suffix = ""
     ref_line = ""
     if bet.reference_book is not None and bet.reference_book is not Book.PINNACLE:
+        ref_name = _BOOK_NAMES.get(bet.reference_book, bet.reference_book.value)
+        ref_suffix = f" · réf. <b>{ref_name}</b>"
         ref_line = (
-            f"⚠️ référence : {_BOOK_NAMES.get(bet.reference_book, bet.reference_book.value)}"
-            f" (Pinnacle ne price pas ce match)\n"
+            f"🔵 <b>Fair odd calculée sur {ref_name}</b> — Pinnacle ne price pas "
+            f"ce marché. EV à prendre avec plus de prudence.\n"
         )
 
     return (
         f"🎯 <b>+{bet.ev_pct:.2f}% EV</b> — {book_name}\n"
         f"{_sport_prefix(sport)}{matchup}\n"
         f"{league_line}"
-        f"{ref_line}"
         f"{when_line}"
-        f"Pari : <b>{bet.outcome.label}{line_suffix}</b> @ {bet.odd_taken:.2f} (fair {bet.fair_odd:.2f})\n"
+        f"Pari : <b>{bet.outcome.label}{line_suffix}</b> @ {bet.odd_taken:.2f} "
+        f"(fair {bet.fair_odd:.2f}{ref_suffix})\n"
+        f"{ref_line}"
         f"{_advised_stake_line(bet.ev_pct, bet.kelly_stake_pct, bankroll)}"
     )
 
