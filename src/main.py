@@ -974,6 +974,36 @@ def remap_to_reference(
     return out
 
 
+def align_reference_source(
+    quotes: list[OddQuote],
+    reference_keys: Iterable[str],
+    sport: str | None = None,
+) -> list[OddQuote]:
+    """Aligner une source sharp SECONDAIRE sur les clés de la référence, sans
+    jamais rien perdre.
+
+    `remap_to_reference` **jette** ce qu'elle n'apparie pas, ce qui convient à
+    un book soft : une cote qu'on ne sait pas rattacher à une ligne juste ne
+    peut servir à rien. Pour une source de repli c'est exactement l'inverse —
+    les non-appariés sont les matchs que la référence principale ne price pas,
+    c'est-à-dire toute sa raison d'être.
+
+    Les deux moitiés ont donc chacune leur usage :
+      - appariés   -> re-clés sur l'événement Pinnacle, donc comparables dans
+                      `odds_history` et couverts par la ligne Pinnacle ;
+      - autres     -> gardés tels quels, et c'est d'eux que naissent les
+                      lignes de référence en repli.
+
+    Sans cet alignement, une cote Smarkets porte la clé issue de SES noms et de
+    SON horaire ; sur un match que Pinnacle price aussi, les deux clés diffèrent
+    et les courbes ne se rejoignent jamais. Mesuré avant correctif : 5 points
+    d'historique pour Smarkets contre 1 200 à 2 900 pour les autres books."""
+    aligned = remap_to_reference(quotes, reference_keys, sport)
+    matched_src = {(q.book_event_key or q.event_key) for q in aligned}
+    unmatched = [q for q in quotes if q.event_key not in matched_src]
+    return aligned + unmatched
+
+
 def _kickoff(q: OddQuote) -> datetime | None:
     """Heure de coup d'envoi la plus précoce parmi celles connues.
 
@@ -2113,6 +2143,15 @@ def _daemon_scan_sport(
         # l'attend jamais. Repli STRICT : elle ne sert que là où Pinnacle ne
         # price rien, et n'est jamais moyennée avec lui.
         secondary = fetch_smarkets_quotes(current_sport)
+        if secondary:
+            # AVANT de construire les lignes justes : une cote Smarkets sur un
+            # match que Pinnacle price doit porter la clé de Pinnacle, sinon
+            # elle fabriquerait une ligne de repli en doublon d'un marché déjà
+            # couvert — et sa courbe ne rejoindrait jamais celle des autres
+            # books dans odds_history.
+            secondary = align_reference_source(
+                secondary, {q.event_key for q in pinnacle_q}, current_sport
+            )
         fair = build_fair_lines(pinnacle_q, cfg.devig_method, secondary_quotes=secondary)
         if _SMARKETS_ENABLED and current_sport in SMARKETS_SPORT_DOMAINS:
             # Compter ce qui SORT de la source, jamais se contenter de l'avoir

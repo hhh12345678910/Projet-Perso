@@ -374,3 +374,32 @@ def test_smarkets_traces_its_curve_but_never_closes_a_soft_window():
     assert {"unibet_be", "pinnacle"} <= books
     # La cote basse de Smarkets ne doit pas déclarer la fenêtre fermée.
     assert corr == [], "une référence ne ferme jamais la fenêtre d'un book soft"
+
+
+def test_alignment_rekeys_shared_matches_and_keeps_the_rest():
+    """Le correctif des 5 points d'historique.
+
+    Une cote Smarkets sur un match que Pinnacle price doit adopter la clé de
+    Pinnacle — sinon sa courbe ne rejoint jamais celle des autres books. Et une
+    cote sur un match que Pinnacle ignore doit être GARDÉE : c'est toute la
+    raison d'être d'une source de repli, et remap_to_reference la jetterait."""
+    from datetime import datetime as _dt, timezone as _tz
+    from src.main import align_reference_source
+    from src.models import Book as _B, MarketType as _MT, OddQuote as _Q, Outcome as _O
+
+    now = _dt(2026, 8, 14, 12, tzinfo=_tz.utc)
+    pin_key = "202608142000::arsenal__vs__chelsea"
+    # Même match, nom écrit autrement par Smarkets.
+    sm_shared = "202608142000::arsenalfc__vs__chelseafc"
+    sm_own = "202608142100::viking__vs__brann"      # absent de Pinnacle
+
+    def q(ek):
+        return _Q(event_key=ek, book=_B.SMARKETS, market=_MT.H2H,
+                  outcome=_O(label="home"), decimal_odd=2.0,
+                  fetched_at=now, source_event_id="x")
+
+    out = align_reference_source([q(sm_shared), q(sm_own)], {pin_key}, "soccer")
+    keys = {x.event_key for x in out}
+    assert pin_key in keys, "le match partagé doit adopter la clé Pinnacle"
+    assert sm_own in keys, "le match propre à Smarkets ne doit jamais être jeté"
+    assert len(out) == 2, "aucune cote perdue, aucune dupliquée"
