@@ -940,6 +940,8 @@ def remap_to_reference(
     soft_quotes: list[OddQuote],
     reference_keys: Iterable[str],
     sport: str | None = None,
+    *,
+    wide_tolerance_minutes: int | None = None,
 ) -> list[OddQuote]:
     """Re-key soft-book quotes onto the matching Pinnacle event_key via fuzzy
     matching, so they line up with the fair lines. When the matcher detects
@@ -953,6 +955,7 @@ def remap_to_reference(
         candidate_keys={q.event_key for q in soft_quotes},
         time_tolerance_minutes=tolerance_for(sport),
         scores=scores,
+        wide_tolerance_minutes=wide_tolerance_minutes,
     )
     out: list[OddQuote] = []
     for q in soft_quotes:
@@ -972,6 +975,13 @@ def remap_to_reference(
                                book_event_key=q.book_event_key or q.event_key,
                                match_score=score))
     return out
+
+
+# Fenêtre élargie de la seconde passe de rapprochement, par sport. Le tennis
+# seul en a besoin : l'horaire n'y est qu'une estimation, un match commençant
+# quand le précédent libère le court. Le football garde des horaires fermes, et
+# lui accorder douze heures ne pourrait qu'apparier des matchs différents.
+_WIDE_TOLERANCE_BY_SPORT = {"tennis": 12 * 60}
 
 
 def align_reference_source(
@@ -998,7 +1008,16 @@ def align_reference_source(
     SON horaire ; sur un match que Pinnacle price aussi, les deux clés diffèrent
     et les courbes ne se rejoignent jamais. Mesuré avant correctif : 5 points
     d'historique pour Smarkets contre 1 200 à 2 900 pour les autres books."""
-    aligned = remap_to_reference(quotes, reference_keys, sport)
+    aligned = remap_to_reference(
+        quotes, reference_keys, sport,
+        # Fenêtre élargie réservée à ce chemin. Mesuré sur Smarkets : six
+        # matchs de tennis aux noms STRICTEMENT identiques étaient rejetés sur
+        # le seul horaire, et chacun fabriquait ensuite une ligne de repli sur
+        # un match que Pinnacle price — l'inverse exact de la règle « Pinnacle
+        # d'abord ». Le rapprochement des books soft n'est pas touché : il est
+        # mesuré, il fonctionne, et l'élargir serait une décision séparée.
+        wide_tolerance_minutes=_WIDE_TOLERANCE_BY_SPORT.get(sport or ""),
+    )
     matched_src = {(q.book_event_key or q.event_key) for q in aligned}
     unmatched = [q for q in quotes if q.event_key not in matched_src]
     return aligned + unmatched

@@ -403,3 +403,50 @@ def test_alignment_rekeys_shared_matches_and_keeps_the_rest():
     assert pin_key in keys, "le match partagé doit adopter la clé Pinnacle"
     assert sm_own in keys, "le match propre à Smarkets ne doit jamais être jeté"
     assert len(out) == 2, "aucune cote perdue, aucune dupliquée"
+
+
+def test_wide_pass_recovers_identical_names_far_apart_in_time():
+    """Le cas mesuré : `carlostaberner__vs__jankumstat` des deux côtés, rejeté
+    sur le seul horaire. Sans ce rattrapage, Smarkets fabrique une ligne de
+    repli sur un match que Pinnacle price — l'inverse de la règle voulue."""
+    from src.matcher import reconcile_event_keys
+
+    pin = "202608141800::carlostaberner__vs__jankumstat"
+    sm = "202608142230::carlostaberner__vs__jankumstat"   # 4 h 30 plus tard
+
+    # Tolérance tennis standard (180 min) : rejeté.
+    assert reconcile_event_keys([pin], {sm}, time_tolerance_minutes=180) == {}
+    # Passe élargie : rattrapé.
+    got = reconcile_event_keys([pin], {sm}, time_tolerance_minutes=180,
+                               wide_tolerance_minutes=12 * 60)
+    assert got == {sm: (pin, False)}
+
+
+def test_wide_pass_refuses_a_merely_similar_name():
+    """Élargir l'horaire ne doit JAMAIS relâcher l'exigence sur le nom : c'est
+    la quasi-perfection du nom qui autorise l'écart d'horaire, pas l'inverse."""
+    from src.matcher import reconcile_event_keys
+
+    pin = "202608141800::carlostaberner__vs__jankumstat"
+    sm = "202608142230::carlosalcaraz__vs__jannikbrown"
+    assert reconcile_event_keys([pin], {sm}, time_tolerance_minutes=180,
+                                wide_tolerance_minutes=12 * 60) == {}
+
+
+def test_wide_pass_never_crosses_a_calendar_day():
+    from src.matcher import reconcile_event_keys
+
+    pin = "202608142300::carlostaberner__vs__jankumstat"
+    sm = "202608150100::carlostaberner__vs__jankumstat"   # 2 h après, mais J+1
+    assert reconcile_event_keys([pin], {sm}, time_tolerance_minutes=1,
+                                wide_tolerance_minutes=12 * 60) == {}
+
+
+def test_wide_pass_is_off_by_default():
+    """Le rapprochement des books soft est mesuré et fonctionne — il ne doit
+    pas changer de comportement parce qu'on a corrigé la source secondaire."""
+    from src.matcher import reconcile_event_keys
+
+    pin = "202608141800::carlostaberner__vs__jankumstat"
+    sm = "202608142230::carlostaberner__vs__jankumstat"
+    assert reconcile_event_keys([pin], {sm}, time_tolerance_minutes=180) == {}

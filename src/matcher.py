@@ -189,6 +189,8 @@ def reconcile_event_keys(
     min_score: float = 85.0,
     ambiguity_margin: float = 4.0,
     scores: Optional[dict[str, float]] = None,
+    wide_tolerance_minutes: Optional[int] = None,
+    wide_min_score: float = 98.0,
 ) -> dict[str, tuple[str, bool]]:
     """Map each candidate (soft-book) event_key onto the best reference
     (Pinnacle) event_key via fuzzy team matching within a time window.
@@ -256,6 +258,52 @@ def reconcile_event_keys(
         if second_score >= min_score and (best_score - second_score) < ambiguity_margin:
             continue
         if best_key is not None and best_score >= min_score:
+            mapping[ck] = (best_key, best_swap)
+            if scores is not None:
+                scores[ck] = best_score
+
+    # ------------------------------------------------ seconde passe, élargie
+    #
+    # Au tennis, l'horaire annoncé n'est qu'une estimation : un match commence
+    # quand le précédent libère le court. La tolérance de 180 min du §11 a déjà
+    # porté la couverture de 72 à 90 %, mais certaines sources annoncent des
+    # écarts bien plus grands. Mesuré sur Smarkets : six matchs aux noms
+    # STRICTEMENT identiques rejetés sur le seul horaire, chacun fabriquant
+    # ensuite une ligne de repli sur un match que Pinnacle price pourtant.
+    #
+    # Cette passe rattrape ce cas précis, et lui seul :
+    #   - noms quasi parfaits (`wide_min_score`, 98 par défaut) ;
+    #   - même jour civil, jamais au-delà ;
+    #   - garde d'ambiguïté inchangée.
+    #
+    # C'est l'argument du §11 poussé d'un cran : deux joueurs ne se rencontrent
+    # qu'une fois par tournoi, donc deux noms identiques le même jour désignent
+    # le même match — mais on exige la quasi-perfection du nom AVANT de relâcher
+    # l'horaire, jamais l'inverse.
+    if wide_tolerance_minutes is None:
+        return mapping
+    wide = timedelta(minutes=wide_tolerance_minutes)
+    for ck in candidate_keys:
+        if ck in mapping:
+            continue
+        parsed = parse_event_key(ck)
+        if parsed is None:
+            continue
+        c_start, c_home, c_away = parsed
+        best_key, best_score, best_swap, second_score = None, 0.0, False, 0.0
+        for rk, r_start, r_home, r_away in refs:
+            if abs(r_start - c_start) > wide or r_start.date() != c_start.date():
+                continue
+            s_direct = (team_similarity(c_home, r_home) + team_similarity(c_away, r_away)) / 2
+            s_swap = (team_similarity(c_home, r_away) + team_similarity(c_away, r_home)) / 2
+            score, swap = (s_direct, False) if s_direct >= s_swap else (s_swap, True)
+            if score > best_score:
+                second_score, best_score, best_key, best_swap = best_score, score, rk, swap
+            elif score > second_score:
+                second_score = score
+        if second_score >= wide_min_score and (best_score - second_score) < ambiguity_margin:
+            continue
+        if best_key is not None and best_score >= wide_min_score:
             mapping[ck] = (best_key, best_swap)
             if scores is not None:
                 scores[ck] = best_score
