@@ -1,16 +1,20 @@
 # Valuebet — état du projet
 
 Document de reprise. À lire en premier pour reprendre le travail sans
-redécouvrir le contexte. Dernière mise à jour : 11/08/2026.
+redécouvrir le contexte. Dernière mise à jour : 13/08/2026.
 
-**Si tu ne lis que trois choses :** §16.1 pour la mesure qui fait autorité
-(+10,40 % de CLV sur 1 397 opportunités premium, 22,9 σ — elle remplace §14.1),
+**Si tu ne lis que trois choses :** §17.2 pour la mesure qui fait autorité
+(+10,13 % de CLV sur 1 726 opportunités premium, 23,0 σ — elle remplace §16.1),
 §11 pour le mode de défaillance dominant du projet (la panne silencieuse), et
-§16.8 pour la liste de travail à jour.
+§17.10 pour la liste de travail à jour.
 
-État du code : **§15 décrit ce qui tourne aujourd'hui.** La §16 n'a modifié
-aucun code — c'est une session de mesure, et ses conclusions sont des décisions
-en attente, pas des changements déjà appliqués.
+État du code : **§15 et §17 décrivent ce qui tourne aujourd'hui.** La §16 n'a
+modifié aucun code — c'était une session de mesure. La §17, elle, a modifié le
+code : Smarkets est en production comme seconde référence sharp.
+
+⚠️ **Le dépôt n'a plus qu'UNE branche**, `claude/resume-clarification-1541xa`,
+qui est aussi la branche par défaut. Le piège de branche des §13 et §14 ne peut
+plus se produire — voir §17.1.
 
 Rapport visuel de l'analyse du 11/08 (courbes d'alignement, CLV découpée) :
 https://claude.ai/code/artifact/255c254a-32e3-4dfc-b275-03b8a7cd961e
@@ -146,7 +150,7 @@ scrapers, pas réécrire le moteur.
 | MeridianBet | ❌ | token anti-bot — répond, 0 cote |
 | Bet777 | ❌ | Gaming1/Ardent, aucun scraper. Écarté par l'utilisateur le 06/08 |
 | MagicBetting | ❌ | **Digitain**, pas Gaming1 (§15.6). Payloads chiffrés |
-| Smarkets | ❌ retiré | voir §5 — reste le plus gros levier ouvert |
+| **Smarkets** | ✅ **2ᵉ référence sharp** | exchange, API publique. Repli STRICT derrière Pinnacle — voir §17.5 |
 
 ⚠️ `tools/book_revive_check.py` sonde les books désactivés et dit lesquels
 répondent encore. Leurs motifs vieillissent : « compte limité » pour Golden
@@ -362,7 +366,12 @@ repli strict** (jamais de mélange — Pinnacle seul quand il price), et lit la
 référence dans les cotes au lieu de nommer un book. Une future source
 (Matchbook répond 200 depuis la VM) ne demandera aucune modification ici.
 
-⚠️ **À reconsidérer — c'est devenu la priorité n°1 (voir §6).** Le retrait
+✅ **FAIT le 13/08 — voir §17.5.** Les trois leviers ci-dessous ont été
+appliqués : appels groupés (mesurés jusqu'à 50 identifiants), horizon borné à
+48 h, et sortie du cycle par cache de fond. Rafraîchissement mesuré à 14 s en
+football et 5 s en tennis, contre les 26 minutes qui avaient motivé le retrait.
+
+⚠️ **Texte historique ci-dessous, conservé pour la trace du raisonnement.** Le retrait
 était motivé par la lenteur, pas par la juridiction : l'API Smarkets est
 **publique et sans authentification**, donc utilisable depuis la Belgique comme
 source de données (on ne parie pas dessus). Les 26 minutes viennent d'une
@@ -390,7 +399,12 @@ rafraîchissement du cycle de scan comme pour Circus et Betano.
 4. ✅ **Segmentation** — faite, résultats en §9. Reste à refaire sur ~2 semaines
    de mesures propres, et sur les paris **joués** plutôt que les détections.
 
-### Priorité 1 bis — une seconde référence sharp (le plus gros levier)
+### Priorité 1 bis — une seconde référence sharp ✅ FAITE LE 13/08
+
+⚠️ **Cette section est résolue — voir §17.5.** Smarkets tourne en production
+depuis le 13/08, en repli strict derrière Pinnacle. Gain mesuré : +19 matchs de
+tennis sur 57 pricés par Pinnacle, et 7 en football. Le raisonnement ci-dessous
+reste valable et explique pourquoi c'était le bon candidat.
 
 Tout le système dépend de **Pinnacle seul**. Trois conséquences, toutes
 observées :
@@ -1807,6 +1821,10 @@ positif-négatif par book, le trou de routage et la tendance quotidienne.
 
 ### 16.1 La mesure qui fait autorité — remplace §14.1
 
+⚠️ **PÉRIMÉE — voir §17.2.** Refaite le 13/08 sur 5 093 opportunités : le canal
+premium y fait +10,13 % à 23,0 σ. Les chiffres ci-dessous restent lisibles
+comme point de comparaison.
+
 ⚠️ **§14.1 est périmé.** Elle portait sur 2 612 opportunités du 21/06 → 04/08.
 Cette section porte sur **4 365 opportunités** du 21/06 → 10/08. Toute
 affirmation chiffrée doit venir d'ici.
@@ -1841,6 +1859,11 @@ réel. Coupé en deux : +9,23 % avant les 14 derniers jours (204 opportunités),
 juillet → +11,5 % le 08/08, sans un seul jour négatif.
 
 ### 16.2 Le trou de routage, enfin chiffré — remplace §14.3
+
+⚠️ **Conclusion révisée le 13/08 — voir §17.4.** L'élargissement du premium
+n'apporte plus qu'un gain de taux de +0,08 point, contre +0,40 annoncé ici. Il
+reste bon pour le VOLUME (+39 %), pas pour le taux. Et une case franchement
+négative est apparue : cote > 6 à EV 5-10 %, −2,30 % sur 175.
 
 §14.3 annonçait « 45 opportunités à +15 % ». Le vrai chiffre est bien plus
 gros. En rejouant les seuils de production (premium : cote 1,5–4 EV ≥ 8 et
@@ -2043,6 +2066,11 @@ gzip -c ~/Projet-Perso/data/tracking.db > tracking.db.gz
 Règles à ne jamais relâcher :
 1. **Dédupliquer par `event_key + Marché + Pari`**, meilleure cote gardée.
    Sans ça tout est faux de +83 %.
+   ⚠️ **CORRIGÉ au 13/08 — voir §17.8.** Au TENNIS, `event_key` n'identifie pas
+   un match : Pinnacle révise son horaire par pas de 15 min et chaque révision
+   crée une clé, jusqu'à onze pour un seul match. 13,5 % des matchs de tennis
+   sont concernés. La bonne clé est **équipes + jour + marché + pari**. Le
+   football n'est pas touché (0,5 %).
 2. **Ne garder que le prématch** (`Délai (h) > 0`).
 3. **Mesurer contre la clôture dévigée**, jamais la cote affichée.
 4. **Porter le σ sur chaque découpe** et signaler tout sous-groupe < 50.
@@ -2054,6 +2082,10 @@ Règles à ne jamais relâcher :
    artificiellement.
 
 ### 16.8 À faire au prochain démarrage — remplace §15.8
+
+⚠️ **PÉRIMÉE — voir §17.10.** Le point 3 (Smarkets) est fait, le point 1
+(élargissement) a vu sa justification changer, et le point 2 (table `results`)
+repose sur un inventaire faux — tout existe sauf le branchement, voir §17.9.
 
 Par ordre de rapport sur effort :
 
@@ -2076,3 +2108,316 @@ Par ordre de rapport sur effort :
 8. Reliquats d'outillage inchangés : découpage en runs du `pinnacle_doctor`,
    noms de books dédoublés dans `paris_track.csv` (§14.10), test d'IP
    Pinnacle en attente d'un vrai 403 (§14.7).
+
+---
+
+## 17. Session du 13/08 — Smarkets en production, et quatre pannes silencieuses
+
+Branche **`claude/resume-clarification-1541xa`**, de `c9e42d4` à `1e054d9`.
+Quatre chantiers : le ménage du dépôt, une mesure complète sur export frais,
+la remise en service de Smarkets, et les défauts trouvés en la vérifiant.
+
+⚠️ **Cette session a produit quatre pannes silencieuses de mon propre fait**,
+toutes du type décrit au §11 : du code déployé, aucune erreur nulle part, et
+rien qui sorte. Elles sont documentées en §17.5 parce que le mode de
+défaillance compte plus que les correctifs.
+
+### 17.1 Le dépôt — une seule branche désormais
+
+Neuf branches, dont la **branche par défaut figée au 14/05** sur l'état initial
+à trois commits. Toute nouvelle session démarrait donc sur du code mort — c'est
+exactement ce qui s'est produit au début de celle-ci.
+
+État final : **`claude/resume-clarification-1541xa` seule**, et branche par
+défaut du dépôt. Les huit autres sont supprimées ; aucune ne portait de commit
+absent d'ailleurs, sauf `crossfit-hyrox-back-workout` dont le fichier
+`seance_dos_crossfit_hyrox.md` a été rapatrié à la racine avant suppression.
+
+⚠️ **La suppression de branches est impossible depuis une session Claude Code**
+(accès git en écriture seule, pas d'outil API). Elle se fait dans le navigateur,
+et la branche par défaut se change dans **Settings → General**, pas dans
+Settings → Branches.
+
+### 17.2 La mesure du 13/08 — remplace §16.1
+
+Export de 23 614 lignes, 21/06 → 13/08. Méthode du §16.7 appliquée sans écart.
+
+| | n |
+|---|---|
+| Lignes du fichier | 23 614 |
+| … avec une clôture Pinnacle dévigée | 10 406 (44 %) |
+| … prématch (délai > 0) | 9 420 |
+| **→ opportunités dédupliquées** | **5 093** |
+
+| Périmètre | n | CLV | σ | % pos |
+|---|---|---|---|---|
+| Toutes opportunités | 5 093 | +6,36 % | 26,5 | 74 % |
+| **Canal premium** | **1 726** | **+10,13 %** | **23,0** | 79 % |
+| … voie 1,5–4 (EV ≥ 8) | 1 558 | +8,69 % | 21,6 | 78 % |
+| … voie 4–6 (EV ≥ 20) | 182 | +24,14 % | 11,1 | 87 % |
+| Canal critique | 63 | +33,99 % | 6,7 | 81 % |
+| Aucun canal | 3 304 | +3,86 % | 15,0 | 71 % |
+
+**L'edge tient** : +10,40 % sur 1 397 le 11/08, +10,13 % sur 1 726 le 13/08.
+
+**L'EV reste monotone sur sept tranches** : +2,62 % à 5-8 % d'EV jusqu'à
++35,54 % au-delà de 30 %. Le refus de plafonner l'EV reste validé.
+
+**Le tennis explose : +15,39 % sur 341 opportunités, 92 % de positives**, contre
++9,49 % au 11/08. Le correctif des noms inversés du 06/08 (§15.4) porte
+pleinement. Football : +8,84 % sur 1 383.
+
+⚠️ **Le creux 24-48 h est confirmé une quatrième fois** : +5,41 % (n=157) et
+surtout **62 % de positives** contre 81-87 % ailleurs.
+
+**Par book, canal premium** : Unibet +11,67 % (556, 84 % pos) · StarCasino
++10,22 % (568) · Ladbrokes +10,45 % (120) · Betano +8,83 % (210) · **Napoleon
++5,98 % (176, 62 % pos)**. Circus (44), Golden Palace (46) et BetFirst (6)
+restent sous 50, donc non classables.
+
+**Les totals se rapprochent** : +7,34 % contre +10,45 % au h2h, soit 70 % du
+h2h au lieu de la moitié au 11/08. Le durcissement du §16.8 point 6 est moins
+urgent qu'annoncé.
+
+**Sélection manuelle, troisième mesure** : joués +10,73 % (528) contre non
+joués +9,87 % (1 198), **t = +0,90, non significatif**. Inchangé.
+
+### 17.3 La cote 1,50–2,00 — question posée, réponse chiffrée
+
+| Vue | n | CLV | σ | % pos |
+|---|---|---|---|---|
+| Toutes détections 1,5–2 | 935 | +5,01 % | 16,1 | 79 % |
+| **Dans le canal premium** | **287** | **+8,08 %** | **12,7** | **85 %** |
+
+Le +5,01 % brut ne mesure pas une faiblesse de la cote basse : **648 des 935
+détections de cette tranche sont des EV 5-8 %**, que le filtre premium écarte
+déjà. Une fois ce bruit retiré, +8,08 % — et **le meilleur taux de réussite du
+système, 85 %**, devant la voie 4-6.
+
+À edge égal, préférer les cotes basses reste juste, et pour une raison
+pratique : moins de variance autorise des mises plus grosses, ce qui est
+exactement la contrainte du §7 (capacité en euros, pas nombre de paris).
+
+### 17.4 L'élargissement du premium — la conclusion du §16.2 ne tient plus
+
+| | n | CLV | σ | annoncé le 11/08 |
+|---|---|---|---|---|
+| Premium actuel | 1 726 | +10,13 % | 23,0 | +10,40 % |
+| Premium élargi | 2 396 | +10,21 % | 25,1 | +10,80 % |
+
+**Le gain de taux tombe de +0,40 point à +0,08 point** — c'est-à-dire à rien.
+Le gain de volume tient (+39 %) et le σ monte. L'élargissement reste à faire,
+mais pour ce qu'il est : **plus de volume au même taux**, pas un meilleur taux.
+
+Les deux poches, jugées séparément :
+
+| Poche muette | n | CLV | σ | verdict |
+|---|---|---|---|---|
+| cote > 6, EV 20–35 | 100 | **+15,54 %** | 5,9 | **à ouvrir** |
+| cote 4–6, EV 8–20 | 507 | +6,48 % | 8,2 | dilue le premium |
+| cote > 6, EV 8–20 | 231 | +5,01 % | 2,9 | laisser dehors |
+
+⚠️ **Une case franchement négative apparaît** : **cote > 6 à EV 5-10 %,
+−2,30 % sur 175 opportunités** (−1,3 σ, donc non significativement différente
+de zéro). C'est le seul segment sans edge du système, et précisément celui
+qu'un élargissement ne doit pas toucher.
+
+**Décision toujours en attente.** Si une seule poche devait être ouverte, c'est
+cote > 6 / EV 20-35.
+
+### 17.5 Smarkets — remis en service
+
+Le §5 l'avait retiré pour une seule raison mesurée : un rafraîchissement de
+~26 minutes DANS le cycle, silenciant un sport entier. La juridiction n'était
+pas en cause — API publique, sans authentification, source de données et non
+lieu de pari.
+
+**Sonde d'abord** (`tools/smarkets_probe.py`), selon la règle du §15.7. Verdict :
+les deux endpoints acceptent des identifiants **groupés par virgule jusqu'à
+50**, alors que le scraper faisait une requête par événement ET une par marché.
+Coût mesuré de l'ancien chemin : 1,61 s par événement, soit **11,4 minutes**
+pour 426 événements.
+
+Les trois leviers du §5, tous appliqués :
+
+1. **Appels groupés** — `fetch_markets_for_events` et `fetch_contracts_for_markets`
+   groupent comme `fetch_quotes` le faisait déjà. ~1 000 requêtes → ~150.
+   Attribution par l'identifiant porté par chaque objet (`event_id`,
+   `market_id`), jamais par ordre d'arrivée — la règle du §10. Si le champ
+   manque ou si l'API refuse le lot : repli sur les appels unitaires.
+2. **Horizon borné** — `SMARKETS_HOURS=48`.
+3. **Sorti du cycle** — cache de fond calqué sur BetFirst (§15.2). Le cycle lit
+   le cache et repart. Rafraîchissement mesuré : **14 s en football, 5 s en
+   tennis**.
+
+**Statut : identique à tous les autres books.** Cotes persistées, clôture
+capturée sur sa propre référence, CLV calculable, courbes dans `odds_history`,
+colonne `Référence` dans l'export, marquage 🔵 dans l'alerte.
+
+⚠️ **Pinnacle reste la référence numéro 1**, sans exception ni mélange. Quatre
+tests le verrouillent, dont `test_pinnacle_line_is_untouched_by_the_secondary`.
+Smarkets ne sert que là où Pinnacle ne price pas le marché.
+
+**Ce que Smarkets apporte réellement**, mesuré en production :
+
+| Sport | matchs absents de Pinnacle | taux d'appariement |
+|---|---|---|
+| Tennis | **19** sur 57 pricés | 67,2 % |
+| Football | **7** | 98,1 % |
+
+**Le football ne le justifie pas** — 7 matchs pour 15 s de rafraîchissement.
+**Le tennis oui** : +30 % de gisement dans le sport au meilleur CLV, ce que le
+§6 réclamait depuis juillet.
+
+Cycles : 27 s avant, 32 s au pic, **29 s après stabilisation**.
+
+### 17.6 Les quatre pannes silencieuses de la session
+
+Toutes de mon fait, toutes du type §11 — déployé, sans erreur, et sans effet.
+
+| Panne | Symptôme | Cause |
+|---|---|---|
+| Mauvais point de branchement | 8 books répondent, 33 value bets, zéro ligne Smarkets | `scan()` câblé au lieu de `_daemon_scan_sport()`. Le service passe par `daemon()`. |
+| Cotes jamais persistées | aurait donné 0 CLV pour tout pari Smarkets, à jamais | le daemon persiste `pinnacle_q` et `soft_q` ; la secondaire ne passait par aucun des deux |
+| Clôture cherchée chez Pinnacle | idem | `_closing_prices` codait `book='pinnacle'` en dur. Un pari de repli ne PEUT pas y être mesuré : si Pinnacle pricait ce marché, il n'y aurait pas eu de repli. |
+| Clés non alignées | 7 175 cotes/cycle, **5 points** dans `odds_history` contre 800-1 700 par book | les cotes Smarkets gardaient la clé issue de LEURS noms et horaires. `remap_to_reference` ne pouvait pas être appelée telle quelle : elle **jette** les non-appariés, qui sont ici toute la raison d'être du repli. D'où `align_reference_source`. |
+
+⚠️ **Un compteur conditionné à la présence de données ne prouve rien.** Le
+premier compteur Smarkets ne s'imprimait que `si secondary`, rendant « pas
+branché » et « branché mais vide » indiscernables. Il s'imprime désormais même
+à zéro. C'est la règle du §13.12, qu'il a fallu réapprendre.
+
+### 17.7 Deux règles d'outillage, apprises à mes dépens
+
+⚠️ **`quotes` ne se consulte JAMAIS par balayage temporel large.** Deux
+blocages dans la session. `SELECT ... WHERE fetched_at > ?` paraît borné, mais
+l'index ne rend que des identifiants de ligne : il faut ensuite lire chaque
+ligne dans une table de dizaines de Go — ~290 000 lectures aléatoires pour
+cinq minutes de données. Et `COUNT(*) WHERE book = ?` sans borne ne rend jamais
+la main. Les deux seuls accès sûrs : par `event_key` (indexé), ou pas du tout.
+Pour compter, passer par `events`, `odds_history` ou l'API.
+
+⚠️ **Une sonde doit lire la même source que le code qu'elle mesure.** Trois
+faux diagnostics dans la session, tous parce que la sonde regardait autre chose
+que le daemon :
+- elle appelait le rapprochement sans les réglages de production, et affichait
+  huit échecs pendant que le correctif fonctionnait ;
+- elle lisait les clés Pinnacle dans `events`, qui **accumule sans expiration**,
+  au lieu des cotes du cycle courant.
+
+Corollaire : **toute source qui accumule sans expiration ment sur le présent.**
+Les réglages partagés vivent désormais dans `src/matcher`
+(`WIDE_TOLERANCE_BY_SPORT`, `wide_tolerance_for`) pour que production et
+diagnostic ne puissent plus diverger.
+
+### 17.8 Le tennis a plusieurs clés pour un même match
+
+**Pinnacle révise l'heure estimée d'un match de tennis par pas de 15 minutes**
+à mesure que les courts se libèrent — 19:30, 19:45, 20:35, 20:50 pour un seul
+match. Chaque révision crée une `event_key` nouvelle sans effacer l'ancienne.
+
+Mesuré sur l'export du 13/08 :
+
+| | matchs sous plusieurs clés | lignes touchées |
+|---|---|---|
+| **Tennis** | **13,5 %** (jusqu'à 11 clés) | **25,1 %** |
+| Football | 0,5 % | 0,8 % |
+
+⚠️ **Conséquence sur la méthode d'analyse — corrige la règle 1 du §16.7.**
+Dédupliquer sur `event_key` ne rassemble PAS ces doublons. Sur la bonne clé —
+**équipes + jour + marché + pari** — le tennis premium passe de 341 à 323
+opportunités et de +15,39 % à **+15,00 %**, et le premium total de +10,13 % à
++10,00 %. L'effet est modeste mais réel, et il ne concerne que le tennis.
+
+**Conséquence sur les alertes, non corrigée par décision utilisateur** : la
+suppression au niveau du marché étant clée sur `event_key`, elle ne traverse
+pas une révision d'horaire. Mesuré : **57 alertes premium dupliquées** sur sept
+semaines, soit environ une par jour, et jouer un pari ne fait pas taire son
+jumeau. Le correctif consisterait à clé la suppression sur
+`(équipes, jour, marché, sélection)` — une vingtaine de lignes, mais sur le
+chemin le plus sensible du système.
+
+⚠️ **Une hypothèse testée et RÉFUTÉE, à ne pas ressortir.** On pouvait craindre
+qu'un pari détecté sous une clé ensuite révisée voie sa clôture capturée trop
+tôt. La donnée dit non : couverture de clôture identique (34,8 % contre
+36,4 %), CLV même supérieure (+8,35 % contre +10,78 %), aucune dégradation
+selon l'ancienneté de la clé.
+
+### 17.9 P&L réel — l'inventaire, avant de construire
+
+⚠️ **Le §16.8 point 2 est inexact.** Il annonce « aucune source de scores
+identifiée à ce jour — c'est un vrai chantier ». En réalité tout existe sauf le
+branchement :
+
+| Brique | État |
+|---|---|
+| Table `results` | ✅ (`winner`, `home_score`, `away_score`, `source`) |
+| `record_result()` | ✅ |
+| `settle()` — note gagné/perdu/annulé | ✅ h2h **et** totaux |
+| `pnl()` | ✅ |
+| Source de score | ✅ `_LIVE_SCORES`, alimenté chaque cycle par Betano |
+| **Écriture automatique dans `results`** | ❌ rien |
+
+**Le point d'accroche** : `forget_finished_scores()` supprime les scores des
+matchs vieux de plus de 6 h — exactement l'instant où le score final est jeté.
+Il suffit de l'écrire avant. Le tuple stocké est `(domicile, extérieur,
+minute)`, et **la minute est la garde décisive** : un flux interrompu à la 10ᵉ
+ne doit jamais être enregistré comme un 0-0 final. Seuil ~85 min.
+
+⚠️ **Un défaut à corriger en même temps** : `all_closed_bets` ne remonte que
+`winner`, et `export-history` passe `None, None` comme scores à `settle()`.
+Conséquence : **les paris sur les totaux ne pourront jamais être notés**, même
+avec des résultats en base.
+
+Limites à assumer : **football uniquement** (au tennis le champ `score` porte
+les points du jeu), seuls les matchs que Betano price en direct, et seulement
+si l'onglet est resté ouvert. P&L partiel — mais partiel vaut mieux que la
+table à zéro ligne d'aujourd'hui. Le complément propre reste l'import HAR via
+`settle --from`, qui avait déjà produit le P&L de 767 paris du §1.
+
+**Non commencé, par décision utilisateur** : « on essaiera de faire quelque
+chose propre par la suite ».
+
+### 17.10 À faire au prochain démarrage — remplace §16.8
+
+1. **Juger Smarkets sur sa CLV.** Un `export-history` postérieur au 15/08
+   contiendra assez de paris valorisés sur lui. Découper par la colonne
+   **`Référence`**, et déduplíquer sur **équipes + jour**, pas sur `event_key`
+   (§17.8). C'est ce chiffre qui dira s'il faut le garder partout, au tennis
+   seulement, ou nulle part.
+2. **Élargir le premium** (§17.4) — mais pour le volume, pas pour le taux. Si
+   une seule poche : cote > 6 / EV 20-35 (+15,54 %, 5,9 σ). Ne jamais toucher
+   cote > 6 / EV 5-10, qui est négative.
+3. **Remplir `results`** (§17.9) — l'inventaire est fait, il reste ~30 lignes.
+4. **Couper la tranche 24-48 h** du premium — quatrième mesure concordante,
+   62 % de positives contre 81-87 %.
+5. **Durcir Napoleon** : +5,98 % et 62 % de positives, le plus mauvais du panel.
+6. Reliquats inchangés : découpage en runs du `pinnacle_doctor`, noms de books
+   dédoublés dans `paris_track.csv` (§14.10), test d'IP Pinnacle (§14.7).
+7. **Optionnel** : suppression d'alerte clée sur équipes+jour (§17.8), et
+   appariement des doubles au tennis — Smarkets abrège « Arevalo M/Pavic M »
+   là où Pinnacle écrit les noms complets. Trois matchs concernés, marché peu
+   liquide : rapport effort/gain faible.
+
+### 17.11 Nouveaux outils et réglages
+
+| Fichier | Rôle |
+|---|---|
+| `tools/smarkets_probe.py` | Mesure le coût de l'API et si les appels groupés passent |
+| `tools/smarkets_match_check.py` | Pourquoi une source ne s'apparie pas — taux, écarts d'horaire, ambiguïtés |
+
+```
+SMARKETS_ENABLED=1            # coupe-circuit sans déploiement
+SMARKETS_REFRESH_SEC=300      # âge déclenchant un rafraîchissement en fond
+SMARKETS_MAX_AGE_SEC=1800     # au-delà, le cache rend RIEN plutôt que du périmé
+SMARKETS_HOURS=48             # horizon
+SMARKETS_REQUEST_DELAY=0.5    # espacement des requêtes
+```
+
+⚠️ **`export-history` a changé de forme** : colonne **`Référence`** insérée en
+15ᵉ position, et `Clôture brute (Pinnacle)` renommée `Clôture brute
+(référence)`. Un script lisant par numéro de colonne doit être repris ; par
+nom, rien à faire.
+
+⚠️ **`export-history` n'accepte PAS `--days`** — seulement `--out`. Le §16.7
+donne une commande qui échoue. `--days` n'existe que sur `export-curves`.
