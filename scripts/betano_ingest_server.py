@@ -78,6 +78,18 @@ PREMATCH_DIR = Path(
 CIRCUS_DIR = Path(
     os.getenv("CIRCUS_INGEST_DIR", str(_project_dir() / "data" / "circus"))
 )
+# MagicBetting (plateforme Digitain). Le userscript pousse la réponse CHIFFRÉE
+# telle quelle ; le déchiffrement se fait ici, côté serveur, avec leur propre
+# module WebAssembly (src/scrapers/digitain_crypto).
+#
+# Pourquoi déchiffrer ici plutôt que dans le navigateur : le userscript reste
+# alors totalement bête — il relaie, il ne comprend rien. Tout ce qui peut se
+# tromper vit en Python, là où sont les tests. C'est la leçon du §10, où le
+# JavaScript du pont Circus devait attribuer les réponses et s'est cassé trois
+# fois de suite.
+MAGIC_DIR = Path(
+    os.getenv("MAGIC_INGEST_DIR", str(_project_dir() / "data" / "magicbetting"))
+)
 # SportId Gaming1 attendus par sport, pour refuser un push mal routé. Doit
 # rester aligné sur CIRCUS_SPORTS dans src/main.py. Un sport absent d'ici est
 # accepté sans vérification, pour qu'ajouter un sport ne casse rien.
@@ -105,6 +117,23 @@ def circus_sport_mismatch(blocks, sport: str) -> set | None:
 HOST = os.getenv("BETANO_INGEST_HOST", "0.0.0.0")
 PORT = int(os.getenv("BETANO_INGEST_PORT", "8787"))
 MAX_BYTES = int(float(os.getenv("BETANO_INGEST_MAX_MB", "32")) * 1024 * 1024)
+
+
+_MAGIC_DEC = None
+
+
+def _magic_decryptor():
+    """Le déchiffreur Digitain, instancié une seule fois.
+
+    Le chargement du WASM coûte quelques dizaines de millisecondes ; le refaire
+    à chaque push serait gâché. Import différé pour que le serveur démarre même
+    si `wasmtime` n'est pas installé — seule cette route en dépend."""
+    global _MAGIC_DEC
+    if _MAGIC_DEC is None:
+        sys.path.insert(0, str(_project_dir()))
+        from src.scrapers.digitain_crypto import DigitainDecryptor
+        _MAGIC_DEC = DigitainDecryptor()
+    return _MAGIC_DEC
 
 
 def _log(msg: str) -> None:
@@ -328,6 +357,72 @@ class Handler(BaseHTTPRequestHandler):
         self._send(200, {"ok": True, "bytes": len(raw), "sport": sport,
                          "blocks": len(blocks), "events": n_events})
 
+    def _handle_magicbetting(self, raw: bytes) -> None:
+        """Déchiffrer une réponse Digitain et la stocker en clair.
+
+        Le corps reçu est la réponse brute du site : `{"payload": "...",
+        "timestamp": ...}`. On la déchiffre avec LEUR module WebAssembly, ce
+        qui évite d'avoir à extraire leur clé — et permet au daemon de lire un
+        simple fichier JSON, comme pour Circus et Betano."""
+        from urllib.parse import parse_qs, urlparse
+
+        qs = parse_qs(urlparse(self.path).query)
+        raw_sport = (qs.get("sport") or [""])[0]
+        sport = "".join(c for c in raw_sport if c.isalnum() or c in "-_")[:32]
+        if not sport:
+            self._send(400, {"error": "missing 'sport' query parameter"})
+            return
+        try:
+            body = json.loads(raw)
+        except ValueError as e:
+            self._send(400, {"error": f"invalid JSON: {e}"})
+            return
+
+        try:
+            clear = _magic_decryptor().decrypt_response(body)
+        except FileNotFoundError as e:
+            # Le .wasm n'est pas déposé sur la VM : dire quoi faire, plutôt
+            # que de laisser une 500 opaque.
+            _log(f"503 magicbetting: {e}")
+            self._send(503, {"error": str(e)})
+            return
+        except Exception as e:                                      # noqa: BLE001
+            # « Authentication failed » sur TOUT veut dire que le site a changé
+            # de version et donc de binaire — c'est écrit dans digitain_crypto.
+            _log(f"422 magicbetting decrypt failed: {e}")
+            self._send(422, {"error": f"decrypt failed: {e}"})
+            return
+
+        if not isinstance(clear, list) or not clear:
+            _log("422 magicbetting push has no events — not overwriting")
+            self._send(422, {"error": "no events in decrypted payload"})
+            return
+        # Refuser un push vide PLUTÔT QUE d'écraser le dernier bon fichier :
+        # sans ça, un appel qui échoue côté site ferait disparaître le book
+        # jusqu'au cycle suivant, en silence.
+        n_stakes = sum(
+            len(st.get("Stakes") or [])
+            for ev in clear if isinstance(ev, dict)
+            for st in (ev.get("StakeTypes") or []) if isinstance(st, dict)
+        )
+        if not n_stakes:
+            _log("422 magicbetting push has events but no stakes")
+            self._send(422, {"error": "no stakes in decrypted payload"})
+            return
+
+        payload = json.dumps(clear, ensure_ascii=False).encode()
+        try:
+            MAGIC_DIR.mkdir(parents=True, exist_ok=True)
+            _atomic_write(MAGIC_DIR / f"{sport}.json", payload)
+        except OSError as e:
+            _log(f"500 magicbetting write failed: {e}")
+            self._send(500, {"error": f"write failed: {e}"})
+            return
+        _log(f"200 magicbetting {len(raw)} B chiffres -> {len(payload)} B clairs "
+             f"-> magicbetting/{sport}.json (events={len(clear)} stakes={n_stakes})")
+        self._send(200, {"ok": True, "events": len(clear), "stakes": n_stakes,
+                         "sport": sport})
+
     def _handle_prematch(self, raw: bytes) -> None:
         """Store the prematch offer for one sport.
 
@@ -370,7 +465,8 @@ class Handler(BaseHTTPRequestHandler):
     def do_POST(self) -> None:  # noqa: N802
         route = self.path.split("?", 1)[0]
         if route not in ("/ingest", "/ingest-cookie", "/discover", "/sample",
-                         "/ingest-prematch", "/ingest-circus"):
+                         "/ingest-prematch", "/ingest-circus",
+                         "/ingest-magicbetting"):
             self._send(404, {"error": "not found"})
             return
         if not self._authorized():
@@ -398,6 +494,9 @@ class Handler(BaseHTTPRequestHandler):
             return
         if route == "/ingest-prematch":
             self._handle_prematch(raw)
+            return
+        if route == "/ingest-magicbetting":
+            self._handle_magicbetting(raw)
             return
         if route == "/ingest-circus":
             self._handle_circus(raw)

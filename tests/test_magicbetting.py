@@ -84,3 +84,27 @@ def test_garbage_never_raises():
     assert list(parse_events(None)) == []
     assert list(parse_events([{"SId": 999}])) == []
     assert list(parse_events([_event(D="pas une date")])) == []
+
+
+def test_a_stale_dump_is_refused(tmp_path):
+    """Un onglet fermé laisse le fichier intact : sans borne d'âge, ses cotes
+    mortes passeraient pour fraîches, en silence (§5)."""
+    import json, os, time
+    from src.scrapers.magicbetting import load_pushed_quotes
+
+    f = tmp_path / "soccer.json"
+    f.write_text(json.dumps([_event()]), encoding="utf-8")
+    assert load_pushed_quotes(str(f), print_fn=lambda *_: None)
+
+    old = time.time() - 3600
+    os.utime(f, (old, old))
+    said = []
+    assert load_pushed_quotes(str(f), print_fn=said.append) == []
+    assert any("vieux de" in s for s in said), "le rejet doit être signalé"
+
+
+def test_a_missing_or_broken_dump_never_raises(tmp_path):
+    from src.scrapers.magicbetting import load_pushed_quotes
+    assert load_pushed_quotes(str(tmp_path / "absent.json")) == []
+    bad = tmp_path / "bad.json"; bad.write_text("{pas du json", encoding="utf-8")
+    assert load_pushed_quotes(str(bad), print_fn=lambda *_: None) == []

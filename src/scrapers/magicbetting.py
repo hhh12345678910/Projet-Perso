@@ -178,3 +178,35 @@ def parse_events(payload: Any) -> Iterator[OddQuote]:
                     fetched_at=now,
                     source_event_id=source_id,
                 )
+
+
+def load_pushed_quotes(path: str, max_age_minutes: float = 10.0,
+                       *, print_fn=print) -> list[OddQuote]:
+    """Lit le dump DÉCHIFFRÉ déposé par le serveur d'ingestion.
+
+    ⚠️ Garde de fraîcheur, la même que Betano et Circus : un onglet fermé
+    laisse un fichier intact, dont les cotes deviennent silencieusement
+    mortes. Sans cette borne d'âge, le daemon les traiterait comme fraîches et
+    fabriquerait des value bets contre des prix qui n'existent plus (§5).
+
+    Dix minutes seulement, contre trente pour Circus : le userscript pousse
+    toutes les minutes, donc dix cycles manqués signalent déjà un problème."""
+    from pathlib import Path
+
+    p = Path(path)
+    if not p.exists():
+        return []
+    age_min = (datetime.now(timezone.utc).timestamp() - p.stat().st_mtime) / 60.0
+    if age_min > max_age_minutes:
+        print_fn(
+            f"MagicBetting ignoré : dump vieux de {age_min:.0f} min "
+            f"(limite {max_age_minutes:.0f}) — l'onglet est-il encore ouvert ?"
+        )
+        return []
+    try:
+        import json as _json
+        data = _json.loads(p.read_text(encoding="utf-8"))
+    except (OSError, ValueError) as e:
+        print_fn(f"MagicBetting illisible : {e}")
+        return []
+    return list(parse_events(data))
