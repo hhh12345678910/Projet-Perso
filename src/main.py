@@ -43,6 +43,7 @@ from .scrapers.smarkets import (
 from .scrapers.goldenpalace import GoldenPalaceScraper, parse_get_events as goldenpalace_parse_get_events
 from .scrapers.ladbrokes import LadbrokesScraper, parse_prematch as ladbrokes_parse_prematch
 from .scrapers.circus import load_pushed_quotes as circus_load_pushed
+from .scrapers.magicbetting import load_pushed_quotes as magic_load_pushed
 from .scrapers.pinnacle import PinnacleScraper
 from .scrapers.sevenelevenbe import SevenElevenScraper, parse_listview as sevenelevenbe_parse_listview
 from .scrapers.bingoal import BingoalScraper, parse_listview as bingoal_parse_listview
@@ -1436,6 +1437,27 @@ CIRCUS_SPORTS = {"soccer": 844, "tennis": 848}
 _CIRCUS_SEEN_TYPES: set[tuple[str, str]] = set()
 
 
+# MagicBetting (Digitain) : poussé par le navigateur comme Betano et Circus.
+# Cloudflare y sert un défi à toute IP de datacenter — mesuré, la VM reçoit 403
+# là où le navigateur reçoit 200. Le serveur d'ingestion déchiffre le payload
+# avec le WebAssembly du site lui-même et dépose un JSON ordinaire.
+MAGIC_SPORTS = {"soccer"}
+
+
+def fetch_magicbetting_quotes(sport: str) -> list[OddQuote]:
+    """Lit le dump MagicBetting déjà déchiffré par le serveur d'ingestion.
+
+    Silencieux tant que rien n'a été poussé : installer le pont ne doit avoir
+    aucun effet de bord. La garde de fraîcheur, elle, parle — un onglet fermé
+    doit se voir."""
+    directory = os.getenv("MAGIC_INGEST_DIR", "data/magicbetting")
+    max_age = float(os.getenv("MAGIC_MAX_AGE_MIN", "10"))
+    return magic_load_pushed(
+        f"{directory}/{sport}.json", max_age,
+        print_fn=lambda s: console.print(f"[yellow]{s}[/yellow]"),
+    )
+
+
 def fetch_circus_quotes(sport: str) -> list[OddQuote]:
     """Lit le prématch Circus poussé par le navigateur, pour un sport.
 
@@ -1759,6 +1781,8 @@ def _fetch_all_parallel(
     # poussé, pour qu'installer le pont soit sans effet de bord.
     if sport in CIRCUS_SPORTS:
         tasks["Circus"] = lambda: fetch_circus_quotes(sport)
+    if sport in MAGIC_SPORTS:
+        tasks["MagicBetting"] = lambda: fetch_magicbetting_quotes(sport)
 
     # Coupe-circuit par book, sans déploiement. Les motifs de désactivation
     # vivent dans les commentaires du registre ci-dessus et y restent — ceci

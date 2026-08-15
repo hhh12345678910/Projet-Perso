@@ -45,12 +45,24 @@
 
   const log = (...a) => console.log('[valuebet-mb]', ...a);
 
+  // ⚠️ UN SEUL contexte doit pousser. La partie sport est une IFRAME servie par
+  // bldiframe.com, donc sans cette garde le script tourne DEUX fois — mesuré :
+  // chaque envoi arrivait en double sur la VM. C'est la version « deux frames »
+  // du piège du §7 (un seul onglet par book).
+  //
+  // On ne garde que le contexte dont l'URL porte l'identifiant de session de
+  // 36 caractères : c'est celui qui peut construire l'URL de l'API, et il n'y
+  // en a qu'un.
+  if (!location.pathname.split('/').some((s) => s.length === 36)) {
+    return;   // page enveloppe, ou sport pas encore ouvert
+  }
+
   // Le chemin de l'API porte un identifiant de session de 36 caractères, pris
   // dans l'URL de la page — request.js fait exactement pareil. Le coder en dur
   // le ferait expirer sans prévenir.
   function pathPrefix() {
-    const seg = location.pathname.split('/').find((s) => s.length === 36);
-    return seg ? `/${seg}` : '';
+    // Garanti présent : la garde d'entrée l'a vérifié.
+    return `/${location.pathname.split('/').find((s) => s.length === 36)}`;
   }
 
   function apiUrl(sportId) {
