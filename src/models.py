@@ -29,6 +29,8 @@ class Book(str, Enum):
     NAPOLEON_BE = "napoleon_be"          # Napoleonsports.be — Superbet platform, independent odds
     BETCENTER = "betcenter"              # Betcenter.be - Cashpoint/Merkur, cotes independantes
     SMARKETS = "smarkets"        # London exchange, used as a secondary sharp reference
+    MAGICBETTING = "magicbetting"  # Magicbetting.be — plateforme Digitain, prix
+                                   # réellement indépendants des Kambi et Altenar
 
 
 BETANO_OPERATOR_ID = "22"
