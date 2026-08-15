@@ -298,6 +298,13 @@ MIGRATIONS = [
     # Une opportunité n'a qu'UNE ligne, écrite à la première détection. Sans
     # ces colonnes, rien ne distingue un pari encore vivant d'un pari détecté
     # il y a trois heures et mort depuis : detected_at ne bouge jamais.
+    # La référence sharp qui a produit la fair line de CE pari. Elle n'existait
+    # que dans bet_features, donc invisible à close_lines et à export-history :
+    # un pari valorisé sur un repli cherchait sa clôture chez Pinnacle, ne la
+    # trouvait jamais (s'il la pricait, il n'y aurait pas eu de repli), et
+    # disparaissait de toute mesure. L'alerte, elle, lit l'objet en mémoire et
+    # affichait donc correctement sa référence — d'où un symptôme trompeur.
+    ("value_bets", "reference_book", "TEXT"),
     ("value_bets", "last_seen_at", "TEXT"),
     ("value_bets", "last_odd", "REAL"),
     ("value_bets", "last_ev", "REAL"),
@@ -710,8 +717,8 @@ class Storage:
             cur = c.execute(
                 "INSERT INTO value_bets(event_key, book, market, outcome_label, line, odd_taken, "
                 "fair_prob, fair_odd, ev_pct, kelly_pct, stake, detected_at, "
-                "last_seen_at, last_odd, last_ev) "
-                "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+                "reference_book, last_seen_at, last_odd, last_ev) "
+                "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
                 (
                     vb.event_key,
                     vb.book.value,
@@ -725,6 +732,12 @@ class Storage:
                     vb.kelly_stake_pct,
                     stake,
                     vb.detected_at.isoformat(),
+                    # None quand la référence est Pinnacle : c'est le cas de
+                    # l'écrasante majorité, et NULL se lit « pinnacle » partout
+                    # en aval, ce qui garde l'historique antérieur cohérent.
+                    (vb.reference_book.value
+                     if getattr(vb, "reference_book", None) is not None
+                     and vb.reference_book is not Book.PINNACLE else None),
                     vb.detected_at.isoformat(),
                     vb.odd_taken,
                     vb.ev_pct,
@@ -1309,8 +1322,12 @@ class Storage:
         retention window can be recovered — the rest are gone for good."""
         with self._conn() as c:
             return list(c.execute(
+                # reference_book fait partie des « bet details needed » :
+                # `_closing_prices` cherche la clôture chez la référence qui a
+                # valorisé le pari, et l'omettre ici faisait échouer le
+                # backfill sur tout pari de repli.
                 "SELECT cs.id AS snapshot_id, vb.id AS value_bet_id, vb.event_key, "
-                "vb.market, vb.outcome_label, vb.line "
+                "vb.market, vb.outcome_label, vb.line, vb.reference_book "
                 "FROM clv_snapshots cs JOIN value_bets vb ON vb.id = cs.value_bet_id "
                 "WHERE cs.closing = 1 AND cs.fair_odd IS NULL"
             ))

@@ -450,3 +450,32 @@ def test_wide_pass_is_off_by_default():
     pin = "202608141800::carlostaberner__vs__jankumstat"
     sm = "202608142230::carlostaberner__vs__jankumstat"
     assert reconcile_event_keys([pin], {sm}, time_tolerance_minutes=180) == {}
+
+
+def test_reference_book_is_persisted_on_the_value_bet(tmp_path):
+    """La panne du 15/08 : `reference_book` n'existait que sur bet_features.
+    close_lines et export-history lisent value_bets, retombaient sur
+    « pinnacle », et tout pari de repli disparaissait de la mesure."""
+    from datetime import datetime as _dt, timezone as _tz
+    from src.storage import Storage
+    from src.models import Book as _B, MarketType as _MT, Outcome as _O, ValueBet
+
+    st = Storage(str(tmp_path / "r.db"))
+
+    def bet(ref, label):
+        v = ValueBet(
+            event_key="202608141900::alpha__vs__beta", book=_B.UNIBET_BE,
+            market=_MT.H2H, outcome=_O(label=label), odd_taken=2.5,
+            fair_prob=0.43, fair_odd=2.32, ev_pct=9.9, kelly_stake_pct=1.8,
+            detected_at=_dt(2026, 8, 14, 12, tzinfo=_tz.utc),
+        )
+        object.__setattr__(v, "reference_book", ref)
+        return v
+
+    sid = st.insert_value_bet(bet(_B.SMARKETS, "home"))
+    pid = st.insert_value_bet(bet(_B.PINNACLE, "away"))
+    rows = {r["id"]: r for r in st.open_value_bets()}
+    assert rows[sid]["reference_book"] == "smarkets"
+    # Pinnacle reste NULL : l'écrasante majorité des paris, et NULL se lit
+    # « pinnacle » partout en aval, donc l'historique antérieur reste juste.
+    assert rows[pid]["reference_book"] is None

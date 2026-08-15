@@ -2707,10 +2707,15 @@ def _closing_prices(storage: Storage, cfg: ScanConfig, bet) -> tuple | None:
     # Pinnacle pricait ce marché, il n'y aurait pas eu de repli. Le laisser
     # sans clôture le rendrait invisible à `export-history`, à `clv-report` et
     # à toute analyse — une source neuve qu'on ne peut pas juger ne sert à rien.
-    try:
-        ref_book = bet["reference_book"] or "pinnacle"
-    except (KeyError, IndexError):
-        ref_book = "pinnacle"
+    # NULL = Pinnacle, y compris pour tout l'historique antérieur à la colonne.
+    #
+    # ⚠️ Pas de try/except ici. La première version en avait un, et quand la
+    # colonne n'existait pas encore sur `value_bets` il avalait le KeyError et
+    # retombait sur « pinnacle » : les paris de repli cherchaient leur clôture
+    # chez Pinnacle, ne la trouvaient jamais, et disparaissaient de
+    # export-history comme de clv-report. Le correctif était inerte ET masquait
+    # ce qu'il devait corriger. Une colonne manquante doit crier.
+    ref_book = bet["reference_book"] or "pinnacle"
     group = storage.closing_group(
         event_key=bet["event_key"], market=bet["market"],
         line=bet["line"], before=kickoff, book=ref_book,
@@ -3634,7 +3639,12 @@ def export_history(
                 # Quelle source sharp a produit la fair odd ci-dessus. Sans
                 # cette colonne, les paris valorisés sur une référence de repli
                 # sont mélangés aux autres et leur CLV propre est indécelable.
-                (r["reference_book"] if "reference_book" in r.keys() else None) or "pinnacle",
+                # Même remarque qu'en §_closing_prices : pas de garde
+                # défensive. `in r.keys()` renvoyait faux tant que la colonne
+                # n'existait pas, et écrivait « pinnacle » sur TOUTES les
+                # lignes — y compris celles valorisées sur un repli. Le fichier
+                # paraissait sain et disait le contraire de la réalité.
+                r["reference_book"] or "pinnacle",
                 f"{float(r['ev_pct']):.2f}",
                 f"{raw:.2f}" if raw else "",
                 f"{fair_close:.2f}" if fair_close else "",
