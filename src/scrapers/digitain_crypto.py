@@ -25,6 +25,11 @@ complète est donc :
 D'où l'échec du §15.6 : gzip/zlib étaient testés sur le CHIFFRÉ, alors que la
 compression est à l'intérieur.
 
+✅ VALIDÉ EN PRODUCTION le 15/08 sur une vraie réponse `gettopeventslist`
+(80 Ko chiffrés) : le clair est un tableau d'événements JSON lisible, avec
+`HT`/`AT` pour les équipes, `D` pour le coup d'envoi et `CN` pour le
+championnat. Le module tourne sur la VM, sans navigateur.
+
 Pourquoi on n'extrait pas la clé
 --------------------------------
 Inutile. Le module est autonome — mesuré : aucun de ses cinq imports n'est
