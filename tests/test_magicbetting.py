@@ -108,3 +108,23 @@ def test_a_missing_or_broken_dump_never_raises(tmp_path):
     assert load_pushed_quotes(str(tmp_path / "absent.json")) == []
     bad = tmp_path / "bad.json"; bad.write_text("{pas du json", encoding="utf-8")
     assert load_pushed_quotes(str(bad), print_fn=lambda *_: None) == []
+
+
+def test_a_two_way_market_never_invents_a_draw():
+    """Le tennis n'a pas de nul. Un nom de joueur mal orthographié doit être
+    ÉCARTÉ, jamais étiqueté « draw » : cela fabriquerait une troisième issue,
+    et la ligne juste serait dévigée sur une somme fausse — sans qu'aucune
+    erreur n'apparaisse nulle part."""
+    ev = _event(SId=1, HT="Sinner J.", AT="Alcaraz C.", StakeTypes=[
+        {"Id": 1, "N": "Winner", "Stakes": [
+            {"N": "Sinner J.", "F": 1.80, "A": None},
+            {"N": "Alcaraz  C.", "F": 2.05, "A": None},   # espace en trop
+        ]}])
+    labels = [q.outcome.label for q in parse_events([ev])]
+    assert labels == ["home"], f"attendu ['home'], obtenu {labels}"
+
+
+def test_a_three_way_market_still_finds_the_draw():
+    labels = sorted(q.outcome.label for q in parse_events([_event()])
+                    if q.market is MarketType.H2H)
+    assert labels == ["away", "draw", "home"]

@@ -81,19 +81,29 @@ def _parse_start(raw: str | None) -> datetime | None:
     return dt if dt.tzinfo else dt.replace(tzinfo=timezone.utc)
 
 
-def _label(stake: dict, market: MarketType, home: str, away: str) -> str | None:
+def _label(stake: dict, market: MarketType, home: str, away: str,
+           n_outcomes: int = 3) -> str | None:
     """Étiquette normalisée d'une issue, ou None si elle n'est pas reconnue."""
     name = str(stake.get("N") or "").strip()
     if not name:
         return None
     if market is MarketType.H2H:
         # Comparer aux noms d'équipe de l'événement lui-même : c'est la seule
-        # méthode indépendante de la langue. Ce qui n'est ni l'un ni l'autre
-        # sur un marché à trois issues est le nul.
+        # méthode indépendante de la langue.
         if name == home:
             return "home"
         if name == away:
             return "away"
+        # ⚠️ « Ni l'un ni l'autre » ne veut dire « nul » que sur un marché à
+        # TROIS issues. Sur un marché à deux — le tennis, le basket — il n'y a
+        # pas de nul : un nom non reconnu est une orthographe qui diffère, et
+        # l'étiqueter « draw » fabriquerait une issue qui n'existe pas, puis
+        # une ligne juste à trois termes dont la somme serait fausse. Le devig
+        # s'en trouverait faussé sans qu'aucune erreur n'apparaisse.
+        if n_outcomes != 3:
+            _warn_once(("h2h2", name), f"MagicBetting : issue {name!r} non "
+                                       f"reconnue sur un marché à {n_outcomes} issues")
+            return None
         return "draw"
     if market is MarketType.TOTALS:
         low = name.casefold()
@@ -149,7 +159,13 @@ def parse_events(payload: Any) -> Iterator[OddQuote]:
                                f"({st.get('N')!r}) non mappé")
                 continue
 
-            for stake in st.get("Stakes") or []:
+            stakes = st.get("Stakes") or []
+            # Nombre d'issues DISTINCTES du marché : sur un total, la même
+            # paire over/under se répète pour chaque ligne, donc compter les
+            # entrées surestimerait.
+            n_out = len({str(x.get("N") or "") for x in stakes
+                         if isinstance(x, dict)}) if market is MarketType.H2H else 3
+            for stake in stakes:
                 if not isinstance(stake, dict):
                     continue
                 try:
@@ -158,7 +174,7 @@ def parse_events(payload: Any) -> Iterator[OddQuote]:
                     continue
                 if odd <= 1.0:
                     continue
-                label = _label(stake, market, home, away)
+                label = _label(stake, market, home, away, n_out)
                 if label is None:
                     continue
                 line = None
