@@ -2209,8 +2209,15 @@ def _daemon_scan_sport(
                 event_rows.append((ek, current_sport, league_by_event.get(ek, ""),
                                    home_norm, away_norm, start.isoformat()))
         storage.upsert_events(event_rows)
+        # Écriture parcimonieuse : seuls les marchés qui ont bougé sont écrits.
+        # 99,6 % des cotes Pinnacle sont identiques d'un cycle à l'autre, donc
+        # l'essentiel de ce qu'on écrivait répétait la base. Le marché est
+        # réécrit ENTIER dès qu'une issue bouge, pour que les clôtures gardent
+        # un instant de capture unique — l'invariant du devig.
+        _offered = _written = 0
         if not pinnacle_was_cached(current_sport):
-            storage.insert_quotes(pinnacle_q)
+            _offered += len(pinnacle_q)
+            _written += storage.insert_quotes_sparse(pinnacle_q)
 
         # Persister Smarkets EST la condition pour pouvoir le juger plus tard.
         # Le prix de clôture n'existe que dans notre propre capture : Pinnacle
@@ -2220,11 +2227,19 @@ def _daemon_scan_sport(
         # toute analyse. Une source neuve qu'on ne peut pas mesurer ne sert à
         # rien, et l'absence ne se verrait nulle part.
         if secondary:
-            storage.insert_quotes(secondary)
+            _offered += len(secondary)
+            _written += storage.insert_quotes_sparse(secondary)
 
         ref_keys = {fl.event_key for fl in fair.values()}
         soft_q = remap_to_reference(soft_raw, ref_keys, current_sport)
-        storage.insert_quotes(soft_q)
+        _offered += len(soft_q)
+        _written += storage.insert_quotes_sparse(soft_q)
+        # Compter ce qui est écrit ET ce qui est proposé : « compression qui
+        # marche » et « plus rien ne s'écrit » donnent le même silence (§11).
+        console.print(
+            f"\[{current_sport}]   cotes : {_written} écrites / {_offered} "
+            f"({100 * _written / _offered if _offered else 0:.1f} %)"
+        )
 
         # ── CLV pre-kickoff alerts ────────────────────────────────────
         if tg_cfg is not None and tg_cfg.clv_window_minutes > 0:
@@ -4500,6 +4515,14 @@ def doctor(hours: int = typer.Option(24, "--hours", help="Lookback window.")):
             # which is exactly what it did. Reading the most recent slice via
             # the fetched_at index answers "is this book producing?" just as
             # well, in constant time.
+            #
+            # ⚠️ Depuis l'écriture parcimonieuse, ce compte ne mesure PLUS le
+            # débit d'un book mais son ACTIVITÉ — le nombre de marchés qui ont
+            # bougé. Un book aux cotes stables écrit peu sans être en panne. La
+            # fenêtre doit donc couvrir au moins un battement de cœur
+            # (QUOTES_HEARTBEAT_SEC, 30 min par défaut), sans quoi un book sain
+            # peut afficher zéro. Un zéro sur une fenêtre plus longue que le
+            # battement reste, lui, un vrai signal d'alarme.
             quotes = {r["book"]: r["n"] for r in _rows(
                 "SELECT book, COUNT(*) n FROM ("
                 "  SELECT book FROM quotes WHERE fetched_at >= ?"

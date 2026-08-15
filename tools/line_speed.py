@@ -2,6 +2,21 @@
 
     .venv/bin/python tools/line_speed.py --hours 6 --sport soccer
 
+⚠️ FAUSSÉ DEPUIS L'ÉCRITURE PARCIMONIEUSE — à repenser avant de s'y fier.
+
+`quotes` ne reçoit plus que les marchés qui ont BOUGÉ : une cote inchangée
+n'y laisse plus de ligne. Or c'est exactement ce que cet outil comptait pour
+établir ses « 99,6 % de cotes identiques ». Il ne voit donc plus que les
+changements, et surestimera massivement la vitesse de dérive.
+
+La mesure reste faisable, mais autrement : le taux d'inchangé se déduit
+désormais de l'intervalle ENTRE deux écritures d'un même marché, et non du
+nombre de lignes identiques. Le battement de cœur (QUOTES_HEARTBEAT_SEC)
+fixe la borne supérieure de cet intervalle et doit être retiré du calcul.
+
+En attendant, `odds_history` porte la même information sous une forme déjà
+correcte — une ligne par changement — et `export-curves` la sort.
+
 Pourquoi cet outil
 ------------------
 Espacer les appels à Pinnacle soulage son quota mais périme la ligne de

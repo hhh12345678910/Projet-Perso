@@ -326,7 +326,16 @@ MIGRATIONS = [
 
 
 class Storage:
-    def __init__(self, path: str | Path = "data/valuebet.db"):
+    def __init__(self, path: str | Path = "data/valuebet.db",
+                 quote_heartbeat_sec: float | None = None):
+        # Dernière signature écrite par marché : {clé: (signature, instant)}.
+        # En mémoire seulement — un redémarrage repart d'un instantané complet,
+        # ce qui est correct et sans conséquence.
+        self._quote_sig: dict[tuple, tuple[tuple, datetime]] = {}
+        self._heartbeat = (
+            quote_heartbeat_sec if quote_heartbeat_sec is not None
+            else float(os.getenv("QUOTES_HEARTBEAT_SEC", "1800"))
+        )
         self.path = Path(path)
         self.path.parent.mkdir(parents=True, exist_ok=True)
         with self._conn() as c:
@@ -384,6 +393,64 @@ class Storage:
                     q.source_event_id,
                 ),
             )
+
+    # ------------------------------------------------ écriture parcimonieuse
+    #
+    # `quotes` pesait 34 Go pour deux jours de rétention, la purge nocturne
+    # mettait plus d'une heure et n'arrivait plus à suivre le rythme
+    # d'écriture. Or `line_speed` mesure 99,6 % de cotes Pinnacle IDENTIQUES
+    # d'un cycle à l'autre : plus de 99 % de ce qu'on écrivait répétait ce qui
+    # était déjà en base.
+    #
+    # On n'écrit donc plus qu'un marché qui a BOUGÉ. C'est le raisonnement qui
+    # a rendu `odds_history` possible (§15.1) — entre deux points, une cote
+    # n'est pas inconnue, elle est constante.
+    #
+    # ⚠️ Le marché est réécrit ENTIER dès qu'une seule de ses issues change.
+    # C'est délibéré et c'est tout le design : `closing_group` exige que les
+    # issues d'une clôture partagent le même `fetched_at`, parce que le devig
+    # retire la marge en normalisant les issues les unes contre les autres.
+    # Mélanger deux instants y laisserait une marge parasite, donc une CLV
+    # fausse. On perd un peu de compression, on garde l'invariant dont dépend
+    # toute la mesure.
+    #
+    # ⚠️ Le battement de cœur existe pour une raison de fond : un book dont les
+    # cotes ne bougent pas n'écrirait plus rien et deviendrait indiscernable
+    # d'un book en panne — le mode de défaillance dominant du projet (§11).
+    # Réécrire périodiquement garantit qu'un book qui répond laisse une trace.
+
+    def _market_key(self, q: "OddQuote") -> tuple:
+        return (q.book.value, q.event_key, q.market.value, q.outcome.line)
+
+    def insert_quotes_sparse(self, quotes: "Iterable[OddQuote]") -> int:
+        """Comme `insert_quotes`, mais n'écrit que les marchés qui ont changé.
+
+        Renvoie le nombre de lignes réellement écrites. L'état est en mémoire :
+        au redémarrage il est vide, donc le premier cycle réécrit tout — ce qui
+        est correct (c'est un instantané complet) et se répare tout seul."""
+        by_market: dict[tuple, list[OddQuote]] = {}
+        for q in quotes:
+            by_market.setdefault(self._market_key(q), []).append(q)
+        if not by_market:
+            return 0
+
+        to_write: list[OddQuote] = []
+        for key, group in by_market.items():
+            # Signature indépendante de l'ordre de collecte : deux cycles qui
+            # rendent les mêmes issues dans un ordre différent sont identiques.
+            sig = tuple(sorted((g.outcome.label, round(g.decimal_odd, 4))
+                               for g in group))
+            seen_at = max(g.fetched_at for g in group)
+            prev = self._quote_sig.get(key)
+            if prev is not None:
+                prev_sig, prev_at = prev
+                unchanged = prev_sig == sig
+                fresh = (seen_at - prev_at).total_seconds() < self._heartbeat
+                if unchanged and fresh:
+                    continue
+            self._quote_sig[key] = (sig, seen_at)
+            to_write.extend(group)
+        return self.insert_quotes(to_write)
 
     def insert_quotes(self, quotes: "Iterable[OddQuote]") -> int:
         """Batch-insert quotes in a SINGLE transaction. The per-quote insert_quote
