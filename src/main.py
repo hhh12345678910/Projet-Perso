@@ -2962,25 +2962,43 @@ def prune(
             f"({rate:,.0f}/s)…[/dim]"
         )
 
+    _t0 = time.monotonic()
     q = storage.prune_quotes(
         retention_days,
         max_seconds=max_seconds if max_seconds > 0 else None,
         progress=_tick,
     )
+    _elapsed = time.monotonic() - _t0
     n = storage.prune_notifications()
     console.print(f"Deleted {q} quote rows (> {retention_days}d) and {n} stale dedup rows.")
 
     # Un arrêt sur budget doit se voir : sans ça, une purge qui n'arrive jamais
     # au bout ressemble trait pour trait à une purge qui a réussi, et la base
     # grossit pendant qu'on la croit maîtrisée.
+    #
+    # ⚠️ Mais il ne faut pas crier au loup dans l'autre sens. Ce message se
+    # déclenchait dès qu'il RESTAIT des lignes, sans regarder la durée écoulée.
+    # Or il en reste toujours : pendant qu'on purge, des lignes franchissent le
+    # seuil de rétention. Une purge terminée en 3 958 s sur un budget de 10 800
+    # annonçait donc « budget atteint » et faisait conclure à un échec alors
+    # qu'elle était à l'équilibre. Deux situations opposées, un seul message.
     left = storage.count_quotes_older_than(retention_days)
-    if left:
+    budget_hit = max_seconds > 0 and _elapsed >= max_seconds * 0.98
+    if left and budget_hit:
         console.print(
             f"[yellow]Budget de {max_seconds:.0f}s atteint : il reste "
             f"{left:,} lignes à supprimer.[/yellow]\n"
             "[dim]  La purge suivante reprendra là où celle-ci s'arrête. "
             "Si ce nombre ne baisse pas d'une nuit à l'autre, le budget est "
             "trop court pour le rythme d'écriture.[/dim]"
+        )
+    elif left:
+        console.print(
+            f"[green]Purge terminée en {_elapsed:.0f}s "
+            f"(budget {max_seconds:.0f}s).[/green]\n"
+            f"[dim]  {left:,} lignes restantes : elles ont franchi le seuil de "
+            f"rétention PENDANT la purge. C'est le régime normal, pas un "
+            f"retard.[/dim]"
         )
     if vacuum:
         # VACUUM rebuilds the database into a temporary copy alongside it, so
