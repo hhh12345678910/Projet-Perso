@@ -1,14 +1,14 @@
 # Valuebet — état du projet
 
 Document de reprise. À lire en premier pour reprendre le travail sans
-redécouvrir le contexte. Dernière mise à jour : 13/08/2026.
+redécouvrir le contexte. Dernière mise à jour : 15/08/2026.
 
-**Si tu ne lis que trois choses :** §17.2 pour la mesure qui fait autorité
-(+10,13 % de CLV sur 1 726 opportunités premium, 23,0 σ — elle remplace §16.1),
+**Si tu ne lis que trois choses :** §18.1 pour la mesure qui fait autorité
+(+9,49 % de CLV sur 2 025 opportunités premium, 23,8 σ — elle remplace §17.2),
 §11 pour le mode de défaillance dominant du projet (la panne silencieuse), et
-§17.10 pour la liste de travail à jour.
+§18.8 pour la liste de travail à jour.
 
-État du code : **§15 et §17 décrivent ce qui tourne aujourd'hui.** La §16 n'a
+État du code : **§15, §17 et §18 décrivent ce qui tourne aujourd'hui.** La §16 n'a
 modifié aucun code — c'était une session de mesure. La §17, elle, a modifié le
 code : Smarkets est en production comme seconde référence sharp.
 
@@ -149,8 +149,8 @@ scrapers, pas réécrire le moteur.
 | 711 / Bingoal / Scooore | ❌ | jumeaux Kambi d'Unibet, prix identiques. Répondent tous les trois |
 | MeridianBet | ❌ | token anti-bot — répond, 0 cote |
 | Bet777 | ❌ | Gaming1/Ardent, aucun scraper. Écarté par l'utilisateur le 06/08 |
-| MagicBetting | ❌ | **Digitain**, pas Gaming1 (§15.6). Payloads chiffrés |
 | **Smarkets** | ✅ **2ᵉ référence sharp** | exchange, API publique. Repli STRICT derrière Pinnacle — voir §17.5 |
+| **MagicBetting** | ✅ via navigateur | **Digitain**, payloads chiffrés déchiffrés par leur propre WASM — §18.6. Football seul, 27 matchs |
 
 ⚠️ `tools/book_revive_check.py` sonde les books désactivés et dit lesquels
 répondent encore. Leurs motifs vieillissent : « compte limité » pour Golden
@@ -1740,6 +1740,10 @@ dernière qui doit absorber les anciens faux positifs.
 
 ### 15.6 MagicBetting — Digitain, pas Gaming1
 
+⚠️ **PÉRIMÉE — voir §18.6.** Le chiffrement est levé : c'est un module
+WebAssembly, qu'on exécute au lieu de le casser. MagicBetting est en
+production depuis le 15/08.
+
 Le §6 annonce « Bet777 et Magic Betting : même plateforme Gaming1, seul `ROOM`
 change ». **C'est faux pour MagicBetting.** Les HAR montrent
 `sport-ak.bldiframe.com` et `sentry.digitain.tools` : c'est **Digitain**.
@@ -2140,6 +2144,9 @@ Settings → Branches.
 
 ### 17.2 La mesure du 13/08 — remplace §16.1
 
+⚠️ **PÉRIMÉE — voir §18.1.** Refaite le 15/08 sur 5 764 opportunités, avec la
+clé de déduplication corrigée du §17.8.
+
 Export de 23 614 lignes, 21/06 → 13/08. Méthode du §16.7 appliquée sans écart.
 
 | | n |
@@ -2380,6 +2387,8 @@ chose propre par la suite ».
 
 ### 17.10 À faire au prochain démarrage — remplace §16.8
 
+⚠️ **PÉRIMÉE — voir §18.8.**
+
 1. **Juger Smarkets sur sa CLV.** Un `export-history` postérieur au 15/08
    contiendra assez de paris valorisés sur lui. Découper par la colonne
    **`Référence`**, et déduplíquer sur **équipes + jour**, pas sur `event_key`
@@ -2421,3 +2430,300 @@ nom, rien à faire.
 
 ⚠️ **`export-history` n'accepte PAS `--days`** — seulement `--out`. Le §16.7
 donne une commande qui échoue. `--days` n'existe que sur `export-curves`.
+
+---
+
+## 18. Session du 15/08 — mesure, volume, et MagicBetting débloqué
+
+Branche **`claude/resume-clarification-1541xa`**, de `1c06c67` à la fin.
+Cinq chantiers : une mesure sur export frais, un correctif qui était resté
+inerte, une crise de volume de base, l'écriture parcimonieuse des cotes, et
+MagicBetting passé d'« inexploitable » à collecté.
+
+### 18.1 La mesure du 15/08 — remplace §17.2
+
+Export de 25 452 lignes. **Déduplication sur `équipes + jour + marché + pari`**
+et non sur `event_key` — voir §17.8, le tennis a jusqu'à onze clés par match.
+
+| Périmètre | n | CLV | σ | % pos |
+|---|---|---|---|---|
+| Toutes opportunités | 5 764 | +6,16 % | 27,3 | 72 % |
+| **Canal premium** | **2 025** | **+9,49 %** | **23,8** | 77 % |
+| … voie 1,5–4 (EV ≥ 8) | 1 843 | +8,29 % | 22,2 | 76 % |
+| … voie 4–6 (EV ≥ 20) | 197 | +22,41 % | 11,0 | 84 % |
+| — premium tennis | 342 | **+15,01 %** | 17,1 | **92 %** |
+| — premium football | 1 681 | +8,38 % | 19,0 | 74 % |
+
+L'edge tient. Le tennis reste, et de loin, le meilleur sport.
+
+### 18.2 La CLV par book — et le cas Golden Palace
+
+Déduplication **par book**, de sorte qu'une re-détection ne compte qu'une fois.
+
+| Book | n | CLV | % pos | écart apparié | meilleur prix |
+|---|---|---|---|---|---|
+| Unibet | 764 | +10,38 % | 80 % | +0,48 % | 47 % |
+| Circus | 159 | +8,35 % | 69 % | **−1,26 %** | 25 % |
+| StarCasino | 949 | +8,24 % | 74 % | **+1,90 %** | **57 %** |
+| Betano | 392 | +8,19 % | 73 % | −0,22 % | 43 % |
+| Ladbrokes | 303 | +7,34 % | 71 % | −0,53 % | 30 % |
+| Golden Palace | 253 | +5,97 % | 65 % | −0,77 % | 33 % |
+| Napoleon | 465 | +5,24 % | 68 % | −1,81 % | 33 % |
+
+⚠️ **La vue brute et la vue appariée se contredisent pour Circus.** Il paraît
+bon (+8,35 %) mais donne le **pire prix du panel après BetFirst** à sélection
+identique. Son score vient de son portefeuille de détections, pas de ses prix.
+C'est le piège du §9, déjà vu sur StarCasino en sens inverse.
+
+**L'exclusivité est la mesure qui décide** — combien d'opportunités premium ce
+book est le SEUL à offrir :
+
+| Book | exclusives | CLV des exclusives |
+|---|---|---|
+| Unibet | **65 %** | +10,63 % |
+| StarCasino | 42 % | +8,40 % |
+| Betano | 34 % | +6,91 % |
+| Napoleon | 31 % | +5,86 % |
+| Circus | 16 % | +5,19 % |
+| **Golden Palace** | **6 %** | **+1,69 %** |
+
+**94 % de ce que Golden Palace offre est disponible ailleurs, à meilleur prix.**
+
+⚠️ **Mais la bonne réponse n'est PAS de couper un book.** Contrefactuels :
+
+| Politique | paris | CLV |
+|---|---|---|
+| Tout jouer, book indifférent | 3 307 | +8,06 % |
+| **1× par sélection, au meilleur prix** | **2 071** | **+9,57 %** |
+| Tout sauf Golden Palace | 3 054 | +8,23 % |
+| Sans Golden Palace ni Napoleon | 2 589 | +8,77 % |
+
+Couper Golden Palace rapporte +0,17 point. **La règle du meilleur prix en
+rapporte +1,5, avec 37 % de paris en moins** — exactement ce que réclame la
+contrainte de capacité du §6. Et elle ne demande de renoncer à aucun book,
+donc à aucune capacité en euros.
+
+Décision retenue : **garder tous les books**, mais ne jouer qu'une seule fois
+par sélection, sur le mieux placé. StarCasino d'abord (meilleur prix 57 % du
+temps), puis Unibet. Golden Palace reste comme soupape de capacité.
+
+### 18.3 `reference_book` — un correctif resté inerte deux jours
+
+⚠️ **La panne la plus instructive de la session.** Symptôme : des alertes
+« Fair odd calculée sur Smarkets » reçues et jouées, et pourtant
+`export-history` rendait `pinnacle` sur ses 25 452 lignes, sans exception.
+
+Cause : **`value_bets` n'a jamais eu de colonne `reference_book`**. Elle
+n'existait que sur `bet_features`. L'alerte affichait donc juste — elle lit
+l'objet en mémoire — pendant que tout ce qui relit la base était faux.
+
+Et les deux correctifs du 13/08 lisaient précisément la base. Chacun portait
+une **garde défensive** qui a transformé une erreur franche en mensonge :
+
+- `_closing_prices` : `try/except KeyError` → repli sur « pinnacle ». Les paris
+  Smarkets cherchaient leur clôture chez Pinnacle, ne la trouvaient jamais, et
+  n'obtenaient aucun snapshot. Or `export-history` joint sur `closing = 1` :
+  ils disparaissaient du fichier entier.
+- `export-history` : `"reference_book" in r.keys()` toujours faux, donc
+  « pinnacle » écrit partout.
+
+**La leçon : une garde défensive sur une colonne manquante est un piège.** Elle
+ne protège de rien et transforme un plantage franc en donnée fausse. Les deux
+ont été supprimées : une colonne absente doit crier.
+
+Corrigé par migration `ALTER TABLE`. Résultat immédiat : **9 détections avec
+référence `smarkets` en 24 h**, mesurables pour la première fois.
+
+⚠️ Les paris Smarkets détectés AVANT le correctif gardent `reference_book` à
+NULL et sont perdus pour la mesure.
+
+### 18.4 La purge ne suivait plus
+
+Cycles montés à **41 s de médiane, avec des pointes à 971 s**. Ni les books ni
+le volume n'étaient en cause — 64 000 cotes par cycle, identique à l'avant-veille.
+
+Le journal de la purge disait tout : *« Budget de 1800s atteint : il reste
+27 840 090 lignes à supprimer. »* Elle supprimait 19,4 M de lignes par nuit
+pour ~47 M écrites, et reconduisait le retard. Disque à **85 %**, base à
+**34 Go**, `VACUUM` impossible (il faudrait 37,1 Go libres, il en restait 5,3).
+
+Rattrapage manuel : 31,5 M de lignes en 66 minutes. Budget porté à **7 200 s**
+(la purge tourne à ~8 000 lignes/s et doit absorber ~52 M par jour, soit
+~6 500 s — 1 800 s ne pouvait pas tenir).
+
+⚠️ **Pendant une purge, les cycles passent de 32 s à 9-24 minutes.** Les books
+corrigeant en 4 à 38 minutes (§16.3), c'est une fenêtre aveugle. Elle tombe à
+04:00 UTC, où le calendrier est creux — assumé.
+
+⚠️ **Un message qui ne peut qu'alarmer n'informe pas.** L'avertissement de
+budget se déclenchait dès qu'il RESTAIT des lignes, sans regarder la durée
+écoulée. Une purge terminée en 3 958 s sur 10 800 annonçait donc « budget
+atteint » alors qu'elle était à l'équilibre — les lignes restantes avaient
+franchi le seuil PENDANT la purge. Corrigé : les deux cas sont distingués.
+
+### 18.5 Écriture parcimonieuse de `quotes` — le correctif de fond
+
+La cause du problème précédent : on écrivait **toutes** les cotes de tous les
+books à chaque cycle, ~52 M de lignes par jour, alors que `line_speed` mesure
+**99,6 % de cotes Pinnacle identiques** d'un cycle à l'autre.
+
+**Design B retenu** : un marché n'est écrit que s'il a bougé, et il est réécrit
+**ENTIER** dès qu'une seule de ses issues change.
+
+⚠️ Cette réécriture intégrale est le cœur du design, pas un détail.
+`closing_group` exige que les issues d'une clôture partagent le même
+`fetched_at`, parce que le devig retire la marge en normalisant les issues les
+unes contre les autres. Mélanger deux instants y laisserait une marge parasite,
+donc une **CLV fausse**. On perd un peu de compression, on garde l'invariant
+dont dépend toute la mesure — et `closing_group`, la purge et le calcul de CLV
+ne changent pas d'une ligne.
+
+**Résultat mesuré : 0,1 à 0,2 % en football, 0,5 % en tennis.** 46 lignes
+écrites sur 19 265 proposées. Le volume est divisé par cinq cents.
+
+Le filet de sécurité a été écrit AVANT l'implémentation : un test rejoue la
+même séquence de cotes en écriture dense puis parcimonieuse et exige des
+clôtures **rigoureusement identiques**.
+
+⚠️ **Battement de cœur** (`QUOTES_HEARTBEAT_SEC`, 30 min) : un book aux cotes
+stables n'écrirait plus rien et deviendrait indiscernable d'un book en panne.
+Une réécriture périodique garantit qu'un book qui répond laisse une trace.
+
+⚠️ L'état est **en mémoire** : après un redémarrage, le premier cycle réécrit
+tout et affiche 100 %. C'est correct et se répare seul.
+
+⚠️ **`tools/line_speed.py` est faussé** par ce changement — il comptait
+précisément les lignes identiques qu'on cesse d'écrire. Marqué en tête de
+fichier, à repenser. `books-coverage` ne mesure plus un débit mais une
+activité ; sa fenêtre de 24 h dépasse le battement, donc il reste juste.
+
+### 18.6 MagicBetting — de « inexploitable » à collecté
+
+⚠️ **Le §15.6 est périmé.** Il concluait que les payloads chiffrés rendaient ce
+book hors d'atteinte. Il est en production.
+
+**Ce que `request.js` a révélé.** Le déchiffrement n'est ni du JavaScript ni un
+XOR : c'est un module **WebAssembly** obtenu par `window.createDecryptor()`.
+Ses codes d'erreur décrivent l'algorithme — « Authentication failed » (donc
+AEAD), « Decompression failed » (donc clair compressé). Les chaînes du binaire
+portent les messages d'erreur d'inflate. La chaîne est :
+
+```
+base64  ->  AEAD (nonce 12 + tag 16)  ->  inflate  ->  JSON
+```
+
+D'où l'échec du §15.6 : gzip et zlib étaient testés **sur le chiffré**, alors
+que la compression est à l'intérieur.
+
+**On n'extrait pas la clé — on exécute leur déchiffreur.** Le module est
+autonome (aucun de ses cinq imports n'est appelé) et tourne sous `wasmtime` en
+Python. Le mapping de ses exports minifiés (`f` à `q`) est déduit des
+signatures puis CONFIRMÉ par ses codes d'erreur : des octets aléatoires rendent
+« Data too short » sous 29 octets et « Authentication failed » au-delà.
+
+**Architecture.** Cloudflare sert un défi à toute IP de datacenter — mesuré, la
+VM reçoit 403 là où le navigateur reçoit 200. Un pont est donc nécessaire, mais
+il est **bête par construction** :
+
+```
+Onglet magicbetting.be  →  userscript : appelle l'API, POSTe le payload BRUT
+                        →  /ingest-magicbetting : déchiffre côté serveur
+                        →  data/magicbetting/soccer.json  →  daemon
+```
+
+Le userscript ne déchiffre rien, ne parse rien, n'attribue rien. Tout ce qui
+peut se tromper est en Python, testé. C'est l'inverse du pont Circus, dont le
+JavaScript devait attribuer les réponses et s'est cassé trois fois (§10).
+
+**Marchés, reconnus par leur Id et jamais par leur nom** (celui-ci dépend du
+`langId` et arrive en néerlandais) :
+
+| Id | Marché |
+|---|---|
+| 1 | résultat du match → H2H |
+| 3 | total de buts, toutes lignes → TOTALS |
+
+Les Id **négatifs** (−2, −3, −2532, −2533) sont les lignes « vedettes » : le
+même marché réduit à une seule ligne, en doublon. Les prendre écrirait deux
+fois la même cote. Exclus par ailleurs : handicaps (2, 2532), double chance
+(37), totaux asiatiques (2533).
+
+**Vérifié en production** : 20 Ko chiffrés → 415 Ko clairs, 27 événements,
+637 cotes, **612 en base et 1 détection** — ce dernier chiffre prouve que le
+rapprochement des noms avec Pinnacle fonctionne.
+
+⚠️ **La couverture est minuscule et c'est structurel.** `gettopeventslist` rend
+27 matchs — c'est la liste des événements *phares*, pas l'offre complète.
+612 cotes contre 7 478 pour StarCasino. Le prochain chantier est de trouver
+l'endpoint de l'offre entière, exactement comme le balayage des compétitions
+qu'il a fallu découvrir pour Betano (§3). Les préfixes existent dans
+`request.js` : `/prematch/`, `/sportsbook/`, `/schedule/`.
+
+⚠️ **Le tennis n'est PAS raccordé.** Il manque trois identifiants à capturer :
+le `sportId` du tennis, l'Id du marché vainqueur, l'Id des totaux de jeux. Ne
+pas les deviner — c'est le piège du §10, où Napoleon utilise 547 en football et
+521 en tennis.
+
+⚠️ **Le `.wasm` est servi sous un chemin versionné.** Si le déchiffrement se met
+à rendre « Authentication failed » sur tout, c'est le binaire qu'il faut
+re-télécharger depuis l'onglet Network (filtre Wasm).
+
+### 18.7 Pièges de la session
+
+- **Une garde défensive sur une colonne manquante est un piège** (§18.3). Elle
+  ne protège de rien et transforme un plantage franc en donnée fausse.
+- **`quotes` ne se consulte JAMAIS par balayage temporel large.** Deux blocages
+  de console. `WHERE fetched_at > ?` paraît borné mais l'index ne rend que des
+  identifiants de ligne : il faut ensuite lire chaque ligne dans une table de
+  dizaines de Go. `COUNT(*) WHERE book = ?` sans borne ne rend jamais la main.
+  Passer par `events`, `odds_history`, `value_bets` ou l'API.
+- **Un userscript vit dans Tampermonkey, pas dans le dépôt.** Un `git pull` sur
+  la VM ne le met pas à jour ; il faut recopier le contenu dans l'éditeur, puis
+  recharger l'onglet.
+- **Un même userscript peut tourner dans DEUX contextes.** La partie sport de
+  magicbetting.be est une iframe : sans garde, chaque envoi partait en double.
+  C'est la version « deux frames » du piège du §7.
+- **Ne jamais inventer une issue.** Le parseur MagicBetting étiquetait « nul »
+  tout nom non reconnu — vrai sur un 1X2, faux au tennis, où cela aurait
+  fabriqué une troisième issue et faussé le devig en silence.
+
+### 18.8 À faire au prochain démarrage — remplace §17.10
+
+1. **Vérifier la purge de 04:00** avec son budget de 7 200 s, et la taille de
+   la base. Avec l'écriture parcimonieuse, `quotes` doit fondre sous le Go en
+   48 h. Une fois la place libre, un `VACUUM` rendra les 34 Go du fichier.
+   ```bash
+   sudo journalctl -u valuebet-prune --since "06:00" --no-pager | tail -6
+   ls -lh data/valuebet.db && df -h .
+   ```
+2. **Poser le plafond d'EV de sécurité** que le §8 réclame depuis juillet.
+   Mesuré ce jour : maxima à 133, 136 et 160 % sur 24 h, et un +82,32 % sur
+   Dundee United où DEUX books indépendants cotaient 3,50-3,65 contre une
+   « juste » à 2,00. Quand plusieurs books s'accordent et que la référence
+   s'en écarte de 75 %, c'est la référence qui est fausse.
+3. **Mesurer la CLV de Smarkets et de MagicBetting** séparément, via la
+   colonne `Référence` de `export-history`. C'est ce qui dira s'il faut les
+   garder, et sur quels sports.
+4. **L'offre complète MagicBetting** (§18.6) — 27 matchs aujourd'hui.
+5. **Le tennis MagicBetting** — trois identifiants à capturer.
+6. **Élargir le premium** (§17.4) : +39 % de volume au même taux. Si une seule
+   poche, cote > 6 / EV 20-35 (+15,54 %, 5,9 σ). Jamais cote > 6 / EV 5-10,
+   qui est négative.
+7. **Remplir `results`** (§17.9) — l'inventaire est fait, ~30 lignes à écrire.
+8. Reliquats : `line_speed` à repenser (§18.5), découpage en runs du
+   `pinnacle_doctor`, noms de books dédoublés dans `paris_track.csv` (§14.10).
+
+### 18.9 Réglages ajoutés
+
+```
+QUOTES_HEARTBEAT_SEC=1800     # réécriture périodique d'un marché stable
+DIGITAIN_WASM=data/digitain_decrypt.wasm
+MAGIC_INGEST_DIR=data/magicbetting
+MAGIC_MAX_AGE_MIN=10          # garde de fraîcheur du pont
+```
+
+| Fichier | Rôle |
+|---|---|
+| `src/scrapers/digitain_crypto.py` | Déchiffre via le WASM du site |
+| `src/scrapers/magicbetting.py` | Parseur + lecture du dump |
+| `tools/magicbetting-ingest.user.js` | Pont navigateur |
