@@ -80,10 +80,34 @@ def verdict(own: float, peers: dict[str, float], fair: float) -> tuple[str, str]
 def main() -> int:
     book = sys.argv[1] if len(sys.argv) > 1 else None
     c = sqlite3.connect(f"file:{DB}?mode=ro", uri=True)
+    # Répartition par seuil AVANT le détail : c'est elle qui dit si les EV
+    # extrêmes viennent d'une source en particulier. `reference_book` vaut NULL
+    # quand la juste est calculée sur Pinnacle — la colonne n'existe que pour
+    # distinguer les replis, donc l'absence de valeur EST l'information.
+    print(f"=== EV extrêmes par seuil et par référence, {HOURS} h ===")
+    seuils = c.execute(f"""
+        SELECT CASE WHEN ev_pct >= 130 THEN '>= 130%'
+                    WHEN ev_pct >= 120 THEN '120-130%'
+                    WHEN ev_pct >= 100 THEN '100-120%'
+                    ELSE  '{EV_MIN:.0f}-100%' END        AS tranche,
+               COALESCE(reference_book, 'pinnacle')      AS reference,
+               COUNT(*)
+        FROM value_bets
+        WHERE ev_pct >= ? AND detected_at >= datetime('now', '-{HOURS} hours')
+              {"AND book = ?" if book else ""}
+        GROUP BY tranche, reference ORDER BY 1 DESC, 3 DESC
+    """, (EV_MIN, book) if book else (EV_MIN,)).fetchall()
+    if seuils:
+        print(f"\n{'tranche':12} {'référence':14} {'n':>5}")
+        for t, r, n in seuils:
+            print(f"{t:12} {r:14} {n:>5}")
+    print()
+
     rows = c.execute(f"""
         SELECT v.id, v.book, v.market, v.outcome_label, v.line, v.odd_taken,
                v.fair_odd, v.ev_pct, v.detected_at,
-               e.home, e.away, e.league, e.start_time
+               e.home, e.away, e.league, e.start_time,
+               COALESCE(v.reference_book, 'pinnacle')
         FROM value_bets v LEFT JOIN events e ON e.event_key = v.event_key
         WHERE v.ev_pct >= ? AND v.detected_at >= datetime('now', '-{HOURS} hours')
               {"AND v.book = ?" if book else ""}
@@ -97,7 +121,7 @@ def main() -> int:
 
     tally: dict[str, int] = {}
     for (vid, b, market, label, line, odd, fair, ev, at,
-         home, away, league, start) in rows:
+         home, away, league, start, ref) in rows:
         # Le PREMIER point de chaque book après la détection : c'est l'instant
         # où la comparaison a du sens. Un point plus tardif décrirait un marché
         # qui a déjà bougé.
@@ -113,7 +137,8 @@ def main() -> int:
         ligne = f" {line:+g}" if line is not None else ""
         print(f"\n{ev:+7.1f}%  [{tag}]  {b}")
         print(f"   {home} — {away}   ({league or '?'}, {str(start)[:16]})")
-        print(f"   {market}/{label}{ligne} @ {odd:.2f}   juste {fair or 0:.2f}")
+        print(f"   {market}/{label}{ligne} @ {odd:.2f}   juste {fair or 0:.2f}"
+              f"   [réf. {ref}]")
         if peers:
             vue = "  ".join(f"{pb}:{po:.2f}" for pb, po in sorted(peers.items()))
             print(f"   marché : {vue}")

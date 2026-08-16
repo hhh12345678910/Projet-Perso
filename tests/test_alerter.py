@@ -977,3 +977,30 @@ def test_pinnacle_reference_adds_no_marker_at_all():
 def test_missing_reference_book_is_treated_as_pinnacle():
     msg = format_value_bet(_bet_ref(None))
     assert "réf." not in msg and "🔵" not in msg
+
+
+# --- Bandeau d'EV extrême ---------------------------------------------------
+
+
+def _extreme_bet(ev: float):
+    """Un pari identique au précédent, à l'EV près."""
+    from dataclasses import replace as _replace
+    return _replace(_bet(), ev_pct=ev)
+
+
+def test_extreme_ev_carries_a_warning_band():
+    """Au-delà de 100 %, la cause la plus fréquente n'est pas un cadeau.
+
+    Mesuré le 16/08 : cinq détections entre +146 % et +260 %, toutes calculées
+    sur une ligne Smarkets à 144 % de marge. L'alerte doit le dire — mais pas
+    disparaître, sinon on masque le défaut au lieu de le corriger, et on
+    supprime aussi les vraies."""
+    for ev, seuil in ((105.0, "100"), (125.0, "120"), (260.0, "130")):
+        msg = format_value_bet(_extreme_bet(ev), "soccer")
+        assert "vérifier avant de miser" in msg
+        assert f"EV &gt; {seuil} %" in msg
+        assert f"+{ev:.2f}% EV" in msg          # l'alerte reste entière
+
+
+def test_normal_ev_has_no_band():
+    assert "vérifier avant de miser" not in format_value_bet(_extreme_bet(12.0), "soccer")

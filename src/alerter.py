@@ -538,7 +538,32 @@ def format_value_bet(bet: ValueBet, sport: str | None = None,
             f"ce marché. EV à prendre avec plus de prudence.\n"
         )
 
+    # Bandeau d'EV extrême. Ces alertes ne sont PAS supprimées — elles sont les
+    # plus rentables quand elles sont vraies, et les plus coûteuses quand elles
+    # ne le sont pas. Mais au-delà de 100 % d'EV, la cause la plus fréquente
+    # n'est pas un cadeau du book : c'est la référence qui déraille.
+    #
+    # Mesuré le 16/08 : cinq détections entre +146 % et +260 %, toutes des
+    # totaux over 6,5 calculés sur une ligne Smarkets à 144 % de marge, elle-
+    # même contredite par la ligne 5,5 du même carnet. Le contrôle de marge
+    # empêche désormais ce cas précis, mais il ne peut pas tout attraper — une
+    # référence peut être fausse en restant cohérente.
+    #
+    # D'où ce bandeau plutôt qu'un plafond : couper ces alertes masquerait le
+    # défaut sans le corriger, et supprimerait aussi les vraies.
+    extreme = ""
+    if bet.ev_pct >= 100:
+        seuil = 130 if bet.ev_pct >= 130 else (120 if bet.ev_pct >= 120 else 100)
+        extreme = (
+            f"🛑 <b>EV &gt; {seuil} % — vérifier avant de miser.</b> À ce niveau, "
+            f"c'est presque toujours la ligne de référence qui est fausse, pas "
+            f"le book qui est généreux. Compare la cote aux autres softbooks : "
+            f"s'ils sont tous d'accord entre eux et loin de la « juste », "
+            f"n'y va pas.\n"
+        )
+
     return (
+        f"{extreme}"
         f"🎯 <b>+{bet.ev_pct:.2f}% EV</b> — {book_name}\n"
         f"{_sport_prefix(sport)}{matchup}\n"
         f"{league_line}"
