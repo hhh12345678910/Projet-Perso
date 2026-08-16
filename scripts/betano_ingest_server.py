@@ -112,7 +112,15 @@ SCORES_DIR = Path(
 # Nombre de journées ACHEVÉES que le plan garde à l'œil. La journée courante
 # n'y est jamais : ses matchs ne sont pas finis, et la redemander à chaque tour
 # brûlerait le quota pour des scores partiels.
-SCORES_BRIDGE_DAYS = int(os.getenv("SCORES_BRIDGE_DAYS", "3"))
+#
+# Par défaut 2, et non 3, parce que le plan GRATUIT d'API-Football ne sert
+# qu'une fenêtre de trois jours autour d'aujourd'hui — mesuré le 16/08 :
+# « Free plans do not have access to this date, try from 2026-08-15 to
+# 2026-08-17 ». Viser plus loin ne produit que des refus. Conséquence à
+# assumer : aucun rattrapage historique n'est possible en gratuit, le pont ne
+# collecte qu'au fil de l'eau. Un abonnement payant lève la fenêtre, et c'est
+# le seul chemin vers un P&L sur les paris de juin et juillet.
+SCORES_BRIDGE_DAYS = int(os.getenv("SCORES_BRIDGE_DAYS", "2"))
 # Une journée n'est déclarée DÉFINITIVE que six heures après sa fin : les
 # derniers matchs d'Amérique du Sud se terminent après minuit UTC, et un
 # fichier capturé trop tôt les porterait encore « en cours ». Passé ce délai,
@@ -474,6 +482,12 @@ class Handler(BaseHTTPRequestHandler):
         for back in range(1, SCORES_BRIDGE_DAYS + 1):
             day: _date = today - _td(days=back)
             path = SCORES_DIR / "soccer" / f"{day.isoformat()}.json"
+            # Journée que la source a refusée DÉFINITIVEMENT (hors fenêtre de
+            # l'abonnement). La redemander ne peut qu'échouer et consommer du
+            # quota — le plan gratuit d'API-Football ne sert que trois jours
+            # autour d'aujourd'hui.
+            if (SCORES_DIR / "soccer" / f"{day.isoformat()}.refused").exists():
+                continue
             if path.exists():
                 day_end = _dt.combine(
                     day + _td(days=1), _dt.min.time(), tzinfo=_tz.utc).timestamp()
@@ -520,8 +534,25 @@ class Handler(BaseHTTPRequestHandler):
         # `errors` porte le refus d'API-Sports. L'enregistrer produirait un
         # fichier lisible et vide, indiscernable d'une journée sans match.
         if data.get("errors"):
-            _log(f"422 scores {day} refusé par la source : {data['errors']}")
-            self._send(422, {"error": f"source: {data['errors']}"})
+            errs = data["errors"]
+            # Deux refus très différents se ressemblent dans le journal.
+            #
+            # « plan » = cette DATE est hors de l'abonnement (le gratuit ne sert
+            # qu'une fenêtre de trois jours). C'est DÉFINITIF : redemander la
+            # même journée à chaque tour brûlerait du quota pour toujours, sans
+            # aucune chance d'aboutir. On pose une pierre tombale et le plan
+            # cesse de la réclamer.
+            #
+            # « access » / suspension = temporaire ou lié à l'origine. Le
+            # marquer condamnerait une journée parfaitement récupérable plus
+            # tard, et le pont deviendrait faux en silence.
+            permanent = "plan" in (errs if isinstance(errs, dict) else {})
+            if permanent:
+                _atomic_write(SCORES_DIR / sport / f"{day}.refused",
+                              json.dumps(errs).encode("utf-8"))
+            _log(f"422 scores {day} refusé par la source "
+                 f"({'définitif' if permanent else 'temporaire'}) : {errs}")
+            self._send(422, {"error": f"source: {errs}", "permanent": permanent})
             return
 
         n = len(data.get("response") or [])
