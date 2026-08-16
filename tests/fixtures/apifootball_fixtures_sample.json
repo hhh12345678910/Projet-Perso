@@ -1,0 +1,501 @@
+{
+ "get": "fixtures",
+ "errors": [],
+ "results": 7,
+ "paging": {
+  "current": 1,
+  "total": 1
+ },
+ "response": [
+  {
+   "fixture": {
+    "id": 1508503,
+    "referee": "Muhammad Hassan, USA",
+    "timezone": "UTC",
+    "date": "2026-08-15T00:00:00+00:00",
+    "timestamp": 1786752000,
+    "periods": {
+     "first": 1786752000,
+     "second": 1786755600
+    },
+    "venue": {
+     "id": null,
+     "name": "Sports Illustrated Stadium",
+     "city": "Harrison"
+    },
+    "status": {
+     "long": "Match Finished",
+     "short": "FT",
+     "elapsed": 90,
+     "extra": 11
+    }
+   },
+   "league": {
+    "id": 254,
+    "name": "NWSL Women",
+    "country": "USA",
+    "logo": "https://media.api-sports.io/football/leagues/254.png",
+    "flag": "https://media.api-sports.io/flags/us.svg",
+    "season": 2026,
+    "round": "Group Stage",
+    "standings": true
+   },
+   "teams": {
+    "home": {
+     "id": 3003,
+     "name": "NJ/NY Gotham FC W",
+     "logo": "https://media.api-sports.io/football/teams/3003.png",
+     "winner": true
+    },
+    "away": {
+     "id": 16487,
+     "name": "Kansas City W",
+     "logo": "https://media.api-sports.io/football/teams/16487.png",
+     "winner": false
+    }
+   },
+   "goals": {
+    "home": 2,
+    "away": 1
+   },
+   "score": {
+    "halftime": {
+     "home": 2,
+     "away": 1
+    },
+    "fulltime": {
+     "home": 2,
+     "away": 1
+    },
+    "extratime": {
+     "home": null,
+     "away": null
+    },
+    "penalty": {
+     "home": null,
+     "away": null
+    }
+   }
+  },
+  {
+   "fixture": {
+    "id": 1517325,
+    "referee": null,
+    "timezone": "UTC",
+    "date": "2026-08-15T01:00:00+00:00",
+    "timestamp": 1786755600,
+    "periods": {
+     "first": 1786755600,
+     "second": 1786759200
+    },
+    "venue": {
+     "id": null,
+     "name": "Willoughby Community Park Stadium",
+     "city": null
+    },
+    "status": {
+     "long": "Match Finished",
+     "short": "FT",
+     "elapsed": 90,
+     "extra": 8
+    }
+   },
+   "league": {
+    "id": 479,
+    "name": "Canadian Premier League",
+    "country": "Canada",
+    "logo": "https://media.api-sports.io/football/leagues/479.png",
+    "flag": "https://media.api-sports.io/flags/ca.svg",
+    "season": 2026,
+    "round": "Group Stage",
+    "standings": true
+   },
+   "teams": {
+    "home": {
+     "id": 20881,
+     "name": "Vancouver FC",
+     "logo": "https://media.api-sports.io/football/teams/20881.png",
+     "winner": null
+    },
+    "away": {
+     "id": 2622,
+     "name": "Pacific FC",
+     "logo": "https://media.api-sports.io/football/teams/2622.png",
+     "winner": null
+    }
+   },
+   "goals": {
+    "home": 1,
+    "away": 1
+   },
+   "score": {
+    "halftime": {
+     "home": 0,
+     "away": 1
+    },
+    "fulltime": {
+     "home": 1,
+     "away": 1
+    },
+    "extratime": {
+     "home": null,
+     "away": null
+    },
+    "penalty": {
+     "home": null,
+     "away": null
+    }
+   }
+  },
+  {
+   "fixture": {
+    "id": 1526953,
+    "referee": null,
+    "timezone": "UTC",
+    "date": "2026-08-15T00:00:00+00:00",
+    "timestamp": 1786752000,
+    "periods": {
+     "first": 1786752000,
+     "second": 1786755600
+    },
+    "venue": {
+     "id": null,
+     "name": "Govind Park",
+     "city": "Ba"
+    },
+    "status": {
+     "long": "Match Finished",
+     "short": "FT",
+     "elapsed": 90,
+     "extra": null
+    }
+   },
+   "league": {
+    "id": 27,
+    "name": "OFC Champions League",
+    "country": "World",
+    "logo": "https://media.api-sports.io/football/leagues/27.png",
+    "flag": null,
+    "season": 2026,
+    "round": "Ofc Champions League - 3",
+    "standings": false
+   },
+   "teams": {
+    "home": {
+     "id": 8130,
+     "name": "Tupapa Maraerenga",
+     "logo": "https://media.api-sports.io/football/teams/8130.png",
+     "winner": false
+    },
+    "away": {
+     "id": 9566,
+     "name": "ABM Galaxy",
+     "logo": "https://media.api-sports.io/football/teams/9566.png",
+     "winner": true
+    }
+   },
+   "goals": {
+    "home": 1,
+    "away": 7
+   },
+   "score": {
+    "halftime": {
+     "home": 0,
+     "away": 2
+    },
+    "fulltime": {
+     "home": 1,
+     "away": 7
+    },
+    "extratime": {
+     "home": null,
+     "away": null
+    },
+    "penalty": {
+     "home": null,
+     "away": null
+    }
+   }
+  },
+  {
+   "fixture": {
+    "id": 1607639,
+    "referee": null,
+    "timezone": "UTC",
+    "date": "2026-08-15T01:10:00+00:00",
+    "timestamp": 1786756200,
+    "periods": {
+     "first": null,
+     "second": null
+    },
+    "venue": {
+     "id": null,
+     "name": "Estadio Romelio Martinez",
+     "city": "Barranquilla"
+    },
+    "status": {
+     "long": "Match Postponed",
+     "short": "PST",
+     "elapsed": null,
+     "extra": null
+    }
+   },
+   "league": {
+    "id": 241,
+    "name": "Copa Colombia",
+    "country": "Colombia",
+    "logo": "https://media.api-sports.io/football/leagues/241.png",
+    "flag": "https://media.api-sports.io/flags/co.svg",
+    "season": 2026,
+    "round": "Round of 16",
+    "standings": true
+   },
+   "teams": {
+    "home": {
+     "id": 1125,
+     "name": "Millonarios",
+     "logo": "https://media.api-sports.io/football/teams/1125.png",
+     "winner": null
+    },
+    "away": {
+     "id": 1466,
+     "name": "Barranquilla",
+     "logo": "https://media.api-sports.io/football/teams/1466.png",
+     "winner": null
+    }
+   },
+   "goals": {
+    "home": null,
+    "away": null
+   },
+   "score": {
+    "halftime": {
+     "home": null,
+     "away": null
+    },
+    "fulltime": {
+     "home": null,
+     "away": null
+    },
+    "extratime": {
+     "home": null,
+     "away": null
+    },
+    "penalty": {
+     "home": null,
+     "away": null
+    }
+   }
+  },
+  {
+   "fixture": {
+    "id": 1582238,
+    "referee": null,
+    "timezone": "UTC",
+    "date": "2026-08-15T14:00:00+00:00",
+    "timestamp": 1786802400,
+    "periods": {
+     "first": null,
+     "second": null
+    },
+    "venue": {
+     "id": null,
+     "name": null,
+     "city": null
+    },
+    "status": {
+     "long": "Match Finished",
+     "short": "AET",
+     "elapsed": 120,
+     "extra": null
+    }
+   },
+   "league": {
+    "id": 209,
+    "name": "Schweizer Cup",
+    "country": "Switzerland",
+    "logo": "https://media.api-sports.io/football/leagues/209.png",
+    "flag": "https://media.api-sports.io/flags/ch.svg",
+    "season": 2026,
+    "round": "Round of 64",
+    "standings": false
+   },
+   "teams": {
+    "home": {
+     "id": 6633,
+     "name": "Mutschellen",
+     "logo": "https://media.api-sports.io/football/teams/6633.png",
+     "winner": false
+    },
+    "away": {
+     "id": 17424,
+     "name": "Winkeln St. Gallen",
+     "logo": "https://media.api-sports.io/football/teams/17424.png",
+     "winner": true
+    }
+   },
+   "goals": {
+    "home": 3,
+    "away": 4
+   },
+   "score": {
+    "halftime": {
+     "home": 1,
+     "away": 2
+    },
+    "fulltime": {
+     "home": 3,
+     "away": 4
+    },
+    "extratime": {
+     "home": 0,
+     "away": 1
+    },
+    "penalty": {
+     "home": null,
+     "away": null
+    }
+   }
+  },
+  {
+   "fixture": {
+    "id": 1620983,
+    "referee": null,
+    "timezone": "UTC",
+    "date": "2026-08-15T06:45:00+00:00",
+    "timestamp": 1786776300,
+    "periods": {
+     "first": 1786776300,
+     "second": 1786779900
+    },
+    "venue": {
+     "id": null,
+     "name": "Prospect Park",
+     "city": null
+    },
+    "status": {
+     "long": "Match Finished",
+     "short": "PEN",
+     "elapsed": 120,
+     "extra": null
+    }
+   },
+   "league": {
+    "id": 648,
+    "name": "Tasmania NPL",
+    "country": "Australia",
+    "logo": "https://media.api-sports.io/football/leagues/648.png",
+    "flag": "https://media.api-sports.io/flags/au.svg",
+    "season": 2026,
+    "round": "Quarter-finals",
+    "standings": true
+   },
+   "teams": {
+    "home": {
+     "id": 14103,
+     "name": "Launceston City",
+     "logo": "https://media.api-sports.io/football/teams/14103.png",
+     "winner": true
+    },
+    "away": {
+     "id": 14099,
+     "name": "Clarence Zebras",
+     "logo": "https://media.api-sports.io/football/teams/14099.png",
+     "winner": false
+    }
+   },
+   "goals": {
+    "home": 1,
+    "away": 1
+   },
+   "score": {
+    "halftime": {
+     "home": 0,
+     "away": 0
+    },
+    "fulltime": {
+     "home": 1,
+     "away": 1
+    },
+    "extratime": {
+     "home": 0,
+     "away": 0
+    },
+    "penalty": {
+     "home": 5,
+     "away": 3
+    }
+   }
+  },
+  {
+   "fixture": {
+    "id": 1562232,
+    "referee": null,
+    "timezone": "UTC",
+    "date": "2026-08-15T08:30:00+00:00",
+    "timestamp": 1786782600,
+    "periods": {
+     "first": null,
+     "second": null
+    },
+    "venue": {
+     "id": null,
+     "name": "SCM Sloziste",
+     "city": null
+    },
+    "status": {
+     "long": "Not Started",
+     "short": "NS",
+     "elapsed": null,
+     "extra": null
+    }
+   },
+   "league": {
+    "id": 350,
+    "name": "4. liga - Divizie A",
+    "country": "Czech-Republic",
+    "logo": "https://media.api-sports.io/football/leagues/350.png",
+    "flag": "https://media.api-sports.io/flags/cz.svg",
+    "season": 2026,
+    "round": "Group A - 2",
+    "standings": false
+   },
+   "teams": {
+    "home": {
+     "id": 8629,
+     "name": "České Budějovice II",
+     "logo": "https://media.api-sports.io/football/teams/8629.png",
+     "winner": null
+    },
+    "away": {
+     "id": 19639,
+     "name": "Jiskra Domažlice II",
+     "logo": "https://media.api-sports.io/football/teams/19639.png",
+     "winner": null
+    }
+   },
+   "goals": {
+    "home": null,
+    "away": null
+   },
+   "score": {
+    "halftime": {
+     "home": null,
+     "away": null
+    },
+    "fulltime": {
+     "home": null,
+     "away": null
+    },
+    "extratime": {
+     "home": null,
+     "away": null
+    },
+    "penalty": {
+     "home": null,
+     "away": null
+    }
+   }
+  }
+ ]
+}

@@ -1,0 +1,496 @@
+{
+ "data": [
+  {
+   "event_status": null,
+   "format": "BO3",
+   "id": 174540,
+   "indoor": false,
+   "is_doubles": false,
+   "is_qualifying": false,
+   "players": {
+    "p1": {
+     "backhand": null,
+     "birthday": "2006-09-17",
+     "country": "esp",
+     "data_completeness": {
+      "known": 3,
+      "missing": [
+       "backhand",
+       "hand"
+      ],
+      "of": 5
+     },
+     "hand": null,
+     "id": 23,
+     "is_doubles_team": false,
+     "name": "Rafael Jodar",
+     "ranking": 11,
+     "ranking_movement": "up",
+     "ranking_points": 2621,
+     "tour": "atp"
+    },
+    "p2": {
+     "backhand": null,
+     "birthday": "1999-04-15",
+     "country": "can",
+     "data_completeness": {
+      "known": 4,
+      "missing": [
+       "backhand"
+      ],
+      "of": 5
+     },
+     "hand": "L",
+     "id": 651,
+     "is_doubles_team": false,
+     "name": "Denis Shapovalov",
+     "ranking": 43,
+     "ranking_movement": "up",
+     "ranking_points": 1045,
+     "tour": "atp"
+    }
+   },
+   "round": "ATP Cincinnati - 1/32-finals",
+   "round_code": "R64",
+   "scheduled_time": "2026-08-15T23:10:00Z",
+   "score": {
+    "age_seconds": 56709,
+    "games": [
+     [
+      7,
+      4,
+      7
+     ],
+     [
+      5,
+      6,
+      5
+     ]
+    ],
+    "is_tiebreak": false,
+    "points": [
+     "0",
+     "0"
+    ],
+    "sequence": 182,
+    "server": 2,
+    "sets": [
+     2,
+     1
+    ],
+    "stale": false,
+    "timestamp": "2026-08-16T02:03:58.758890Z"
+   },
+   "status": "completed",
+   "surface": "hard",
+   "tape": {
+    "completeness": 1.0,
+    "coverage": "from_start",
+    "model_rows": 182,
+    "points_complete": false,
+    "reconstructed_rows": 0,
+    "rows": 182
+   },
+   "tour": "atp",
+   "tournament": "Cincinnati",
+   "tournament_id": "1210",
+   "updated_at": "2026-08-16T17:40:38.353418Z",
+   "winner": 1
+  },
+  {
+   "event_status": null,
+   "format": "BO3",
+   "id": 174523,
+   "indoor": false,
+   "is_doubles": false,
+   "is_qualifying": false,
+   "players": {
+    "p1": {
+     "backhand": null,
+     "birthday": "1995-11-17",
+     "country": "bel",
+     "data_completeness": {
+      "known": 4,
+      "missing": [
+       "backhand"
+      ],
+      "of": 5
+     },
+     "hand": "R",
+     "id": 769,
+     "is_doubles_team": false,
+     "name": "Elise Mertens",
+     "ranking": 24,
+     "ranking_movement": "up",
+     "ranking_points": 1948,
+     "tour": "wta"
+    },
+    "p2": {
+     "backhand": null,
+     "birthday": "2002-09-01",
+     "country": "fra",
+     "data_completeness": {
+      "known": 4,
+      "missing": [
+       "backhand"
+      ],
+      "of": 5
+     },
+     "hand": "R",
+     "id": 854,
+     "is_doubles_team": false,
+     "name": "Diane Parry",
+     "ranking": 66,
+     "ranking_movement": "up",
+     "ranking_points": 1006,
+     "tour": "wta"
+    }
+   },
+   "round": "WTA Cincinnati - 1/32-finals",
+   "round_code": "R64",
+   "scheduled_time": "2026-08-15T23:00:00Z",
+   "score": {
+    "age_seconds": 59392,
+    "games": [
+     [
+      6,
+      2,
+      2
+     ],
+     [
+      2,
+      6,
+      6
+     ]
+    ],
+    "is_tiebreak": false,
+    "points": [
+     "0",
+     "0"
+    ],
+    "sequence": 128,
+    "server": 1,
+    "sets": [
+     1,
+     2
+    ],
+    "stale": false,
+    "timestamp": "2026-08-16T01:19:15.262075Z"
+   },
+   "status": "completed",
+   "surface": "hard",
+   "tape": {
+    "completeness": 1.0,
+    "coverage": "from_start",
+    "model_rows": 128,
+    "points_complete": false,
+    "reconstructed_rows": 0,
+    "rows": 128
+   },
+   "tour": "wta",
+   "tournament": "Cincinnati",
+   "tournament_id": "1209",
+   "updated_at": "2026-08-16T17:40:37.878147Z",
+   "winner": 2
+  },
+  {
+   "event_status": null,
+   "format": "BO3",
+   "id": 174737,
+   "indoor": false,
+   "is_doubles": true,
+   "is_qualifying": false,
+   "players": {
+    "p1": {
+     "backhand": null,
+     "birthday": null,
+     "country": null,
+     "data_completeness": {
+      "known": null,
+      "missing": [],
+      "note": "doubles team — per-player profile fields do not apply",
+      "of": null
+     },
+     "hand": null,
+     "id": 32052,
+     "is_doubles_team": true,
+     "name": "Mi / Victoria Luiza Barros",
+     "ranking": null,
+     "ranking_movement": null,
+     "ranking_points": null,
+     "tour": "ITF"
+    },
+    "p2": {
+     "backhand": null,
+     "birthday": null,
+     "country": null,
+     "data_completeness": {
+      "known": null,
+      "missing": [],
+      "note": "doubles team — per-player profile fields do not apply",
+      "of": null
+     },
+     "hand": null,
+     "id": 32059,
+     "is_doubles_team": true,
+     "name": "- Bohrer Martins / Garcia Vidal",
+     "ranking": null,
+     "ranking_movement": null,
+     "ranking_points": null,
+     "tour": "ITF"
+    }
+   },
+   "round": "W15 Campos do Jordao - Final",
+   "round_code": "F",
+   "scheduled_time": "2026-08-15T22:00:00Z",
+   "score": {
+    "age_seconds": 64144,
+    "games": [
+     [
+      7,
+      7
+     ],
+     [
+      6,
+      6
+     ]
+    ],
+    "is_tiebreak": false,
+    "points": [
+     null,
+     null
+    ],
+    "sequence": null,
+    "server": null,
+    "sets": [
+     2,
+     0
+    ],
+    "stale": false,
+    "timestamp": "2026-08-16T00:00:03.080170Z"
+   },
+   "status": "completed",
+   "surface": "hard",
+   "tape": {
+    "completeness": 0.6818,
+    "coverage": "from_start",
+    "model_rows": 93,
+    "points_complete": false,
+    "reconstructed_rows": 0,
+    "rows": 94
+   },
+   "tour": "itf",
+   "tournament": "W15 Campos Do Jordao (Brazil)",
+   "tournament_id": "14174",
+   "updated_at": "2026-08-16T17:40:38.686957Z",
+   "winner": 1
+  },
+  {
+   "event_status": null,
+   "format": "BO3",
+   "id": 174826,
+   "indoor": false,
+   "is_doubles": false,
+   "is_qualifying": null,
+   "players": {
+    "p1": {
+     "backhand": null,
+     "birthday": "2001-02-01",
+     "country": "ned",
+     "data_completeness": {
+      "known": 3,
+      "missing": [
+       "backhand",
+       "hand"
+      ],
+      "of": 5
+     },
+     "hand": null,
+     "id": 2551,
+     "is_doubles_team": false,
+     "name": "Emma Van Poppel",
+     "ranking": 1135,
+     "ranking_movement": "up",
+     "ranking_points": 14,
+     "tour": "wta"
+    },
+    "p2": {
+     "backhand": null,
+     "birthday": null,
+     "country": "deu",
+     "data_completeness": {
+      "known": 1,
+      "missing": [
+       "backhand",
+       "birthday",
+       "hand",
+       "ranking"
+      ],
+      "of": 5
+     },
+     "hand": null,
+     "id": 30392,
+     "is_doubles_team": false,
+     "name": "Mia Keuler",
+     "ranking": null,
+     "ranking_movement": null,
+     "ranking_points": null,
+     "tour": "wta"
+    }
+   },
+   "round": "Semifinals",
+   "round_code": "SF",
+   "scheduled_time": "2026-08-15T15:30:00Z",
+   "score": {
+    "age_seconds": 83158,
+    "games": [
+     [
+      5,
+      6,
+      3
+     ],
+     [
+      7,
+      1,
+      5
+     ]
+    ],
+    "is_tiebreak": false,
+    "points": [
+     "0",
+     "0"
+    ],
+    "sequence": 141,
+    "server": 1,
+    "sets": [
+     1,
+     1
+    ],
+    "stale": false,
+    "timestamp": "2026-08-15T18:45:44.456012Z"
+   },
+   "status": "completed",
+   "surface": null,
+   "tape": {
+    "completeness": 1.0,
+    "coverage": "partial",
+    "model_rows": 141,
+    "points_complete": false,
+    "reconstructed_rows": 0,
+    "rows": 141
+   },
+   "tour": null,
+   "tournament": "UTR PTT Arnhem Women 04, 17-20 Playoff",
+   "tournament_id": null,
+   "updated_at": "2026-08-15T18:58:30.174411Z",
+   "winner": null
+  },
+  {
+   "event_status": null,
+   "format": "BO3",
+   "id": 174829,
+   "indoor": false,
+   "is_doubles": false,
+   "is_qualifying": null,
+   "players": {
+    "p1": {
+     "backhand": null,
+     "birthday": null,
+     "country": "gbr",
+     "data_completeness": {
+      "known": 1,
+      "missing": [
+       "backhand",
+       "birthday",
+       "hand",
+       "ranking"
+      ],
+      "of": 5
+     },
+     "hand": null,
+     "id": 26626,
+     "is_doubles_team": false,
+     "name": "Lucia Cassidy",
+     "ranking": null,
+     "ranking_movement": null,
+     "ranking_points": null,
+     "tour": "wta"
+    },
+    "p2": {
+     "backhand": null,
+     "birthday": null,
+     "country": "usa",
+     "data_completeness": {
+      "known": 1,
+      "missing": [
+       "backhand",
+       "birthday",
+       "hand",
+       "ranking"
+      ],
+      "of": 5
+     },
+     "hand": null,
+     "id": 31625,
+     "is_doubles_team": false,
+     "name": "Chloe Lomans",
+     "ranking": null,
+     "ranking_movement": null,
+     "ranking_points": null,
+     "tour": "wta"
+    }
+   },
+   "round": "Semifinals",
+   "round_code": "SF",
+   "scheduled_time": "2026-08-15T17:35:00Z",
+   "score": {
+    "age_seconds": 83158,
+    "games": [
+     [
+      6,
+      4
+     ],
+     [
+      4,
+      0
+     ]
+    ],
+    "is_tiebreak": false,
+    "points": [
+     "0",
+     "0"
+    ],
+    "sequence": 52,
+    "server": 1,
+    "sets": [
+     1,
+     0
+    ],
+    "stale": false,
+    "timestamp": "2026-08-15T18:46:10.003802Z"
+   },
+   "status": "completed",
+   "surface": null,
+   "tape": {
+    "completeness": 0.8214,
+    "coverage": "partial",
+    "model_rows": 52,
+    "points_complete": false,
+    "reconstructed_rows": 0,
+    "rows": 52
+   },
+   "tour": null,
+   "tournament": "UTR PTT Arnhem Women 04, 9-12 Playoff",
+   "tournament_id": null,
+   "updated_at": "2026-08-15T18:58:13.471921Z",
+   "winner": 1
+  }
+ ],
+ "meta": {
+  "count": 5,
+  "has_more": false,
+  "limit": 200,
+  "offset": 0,
+  "total": null
+ }
+}
