@@ -3006,3 +3006,36 @@ MAGIC_CATALOG_TTL_SEC=1800
 MAGIC_PART_MAX_AGE_MIN=20     # âge max d'un morceau dans l'assemblage
 MAGIC_REBUILD_SEC=10
 ```
+
+### 19.11 Le listener était absent du dépôt — et tournait sur du code périmé
+
+`/book` affichait « magicbetting » au lieu de « MagicBetting » alors que le
+libellé existait dans `_BOOK_NAMES` depuis le 15/08. Le fichier sur disque
+était à jour ; **le processus en mémoire ne l'était pas** — il avait démarré le
+11/08 et n'avait jamais été relancé.
+
+Cause : `valuebet-listener.service` existait sur la VM mais **pas dans le
+dépôt**. `setup.sh` ne le posait pas, aucune procédure ne rappelait de le
+redémarrer après un `git pull`, et les autres services — auxquels on pense —
+masquaient l'oubli.
+
+Deux corrections :
+
+- `scripts/valuebet-listener.service.in` versionné, et le listener ajouté à
+  `UNITS` et `ENABLE` de `setup.sh`.
+- `bash scripts/setup.sh --check` compare désormais l'heure de démarrage de
+  chaque service au dernier commit et signale ceux qui tournent sur du code
+  antérieur.
+
+⚠️ **La leçon dépasse le cas.** Un service `active (running)` peut servir du
+code vieux de plusieurs jours : Python charge tout en mémoire au démarrage. Ici
+le symptôme était une majuscule ; le même mécanisme aurait pu laisser hors
+service un correctif sur les alertes ou sur le bouton « Jouer », en affichant
+tout au vert. C'est le §11 appliqué au déploiement.
+
+**Après chaque `git pull`** :
+
+```bash
+sudo systemctl restart valuebet-daemon valuebet-listener betano-ingest
+bash scripts/setup.sh --check
+```

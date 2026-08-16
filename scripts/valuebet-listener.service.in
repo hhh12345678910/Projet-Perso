@@ -1,0 +1,34 @@
+### Gabarit — __USER__ et __PROJECT_DIR__ sont remplacés par scripts/setup.sh.
+### Ne pas copier ce fichier tel quel dans /etc/systemd/system.
+[Unit]
+Description=Telegram listener — commandes /book /scan et bouton « Jouer »
+Documentation=https://github.com/hhh12345678910/Projet-Perso
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=__USER__
+Group=__USER__
+WorkingDirectory=__PROJECT_DIR__
+# runscan.sh charge .env ; ici on lance le listener directement, donc il faut
+# le charger nous-mêmes — sinon le jeton Telegram manque et le service boucle
+# sur un démarrage raté.
+EnvironmentFile=-__PROJECT_DIR__/.env
+ExecStart=__PROJECT_DIR__/.venv/bin/python bot_listener.py
+
+# Le listener est un processus à longue vie qui parle à l'API Telegram : une
+# coupure réseau ou un 5xx prolongé peut le faire sortir. Sans redémarrage
+# automatique, les commandes cessent simplement de répondre — sans alerte,
+# puisque c'est justement le canal d'alerte qui est muet.
+Restart=always
+RestartSec=15
+
+# Sortie dans le journal, contrairement au daemon qui écrit dans valuebet.log :
+# ce service parle peu, et `journalctl -u valuebet-listener` est alors le
+# réflexe naturel quand une commande Telegram ne répond plus.
+StandardOutput=journal
+StandardError=journal
+
+[Install]
+WantedBy=multi-user.target

@@ -38,6 +38,7 @@ esac
 # déclenchés par leur timer : les activer les ferait tourner au démarrage.
 UNITS=(
     valuebet-daemon.service
+    valuebet-listener.service
     betano-ingest.service
     valuebet-prune.service
     valuebet-close-lines.service
@@ -46,6 +47,7 @@ UNITS=(
 )
 ENABLE=(
     valuebet-daemon.service
+    valuebet-listener.service
     betano-ingest.service
     valuebet-prune.timer
     valuebet-close-lines.timer
@@ -103,6 +105,34 @@ if [ "$MODE" = check ]; then
         printf "   %s %-30s %-9s %-8s%s\n" "$mark" "$unit" "$en" "$ac" "$extra"
     done
 
+    # Un service ACTIF peut tourner sur du code PÉRIMÉ : Python charge tout en
+    # mémoire au démarrage, donc un `git pull` sans redémarrage ne change rien
+    # au programme qui tourne. Constaté le 16/08 — le listener tournait depuis
+    # cinq jours sur le code du 11 et affichait « magicbetting » au lieu de
+    # « MagicBetting », sans que rien ne le signale. C'est le §11 appliqué au
+    # déploiement : tout est vert, et pourtant le correctif n'est pas en
+    # service.
+    echo ""
+    echo "==> Fraîcheur du code en service (démarré APRÈS le dernier commit ?)"
+    last_commit="$(git -C "$PROJECT_DIR" log -1 --format=%ct 2>/dev/null || echo 0)"
+    if [ "$last_commit" -gt 0 ]; then
+        for unit in "${ENABLE[@]}"; do
+            case "$unit" in *.timer) continue ;; esac
+            [ "$(systemctl is-active "$unit" 2>/dev/null)" = active ] || continue
+            started="$(systemctl show -p ActiveEnterTimestamp --value "$unit" 2>/dev/null)"
+            [ -n "$started" ] || continue
+            started_ts="$(date -d "$started" +%s 2>/dev/null || echo 0)"
+            [ "$started_ts" -gt 0 ] || continue
+            if [ "$started_ts" -lt "$last_commit" ]; then
+                age=$(( (last_commit - started_ts) / 3600 ))
+                printf "   ⚠ %-30s démarré %sh AVANT le dernier commit\n" "$unit" "$age"
+                drift=1
+            else
+                printf "   ✓ %-30s à jour\n" "$unit"
+            fi
+        done
+    fi
+
     echo ""
     [ "$drift" -eq 0 ] && echo "✅ Rien à signaler." \
         || echo "⚠️  À regarder ci-dessus. Pour aligner les FICHIERS : bash scripts/setup.sh --units"
@@ -141,7 +171,7 @@ done
 
 echo ""
 echo "✅ Unités installées et activées (pas démarrées — à toi de jouer)."
-echo "   sudo systemctl restart valuebet-daemon betano-ingest"
+echo "   sudo systemctl restart valuebet-daemon valuebet-listener betano-ingest"
 echo "   systemctl list-timers 'valuebet-*'"
 echo ""
 echo "   ⚠️  valuebet-close-lines.timer doit tourner plus souvent que la"
