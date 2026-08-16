@@ -72,6 +72,23 @@ def fair_from_group(rows, label, line, method: str) -> float | None:
     return None
 
 
+SHARP = {"pinnacle", "smarkets"}
+MIN_BOOKS = 3
+
+
+def consensus_fair(fairs: list[float]) -> float | None:
+    """La juste du consensus des softbooks : la MÉDIANE de leurs justes.
+
+    Médiane et non moyenne : un book qui déraille — c'est précisément ce qu'on
+    cherche — déplacerait la moyenne, alors qu'il laisse la médiane intacte.
+
+    Trois books minimum, et c'est une exigence de fond, pas de confort. Deux
+    books belges partagent souvent une plateforme (Unibet, 711, Bingoal et
+    Scooore sont tous Kambi) : leur accord ne prouve rien, il reflète une seule
+    source de prix. En dessous de trois, on ne juge pas."""
+    return median(fairs) if len(fairs) >= MIN_BOOKS else None
+
+
 def stats(v: list[float]) -> str:
     if not v:
         return "     0        —        —        —"
@@ -108,6 +125,10 @@ def main() -> int:
         return 1
 
     sur_ref, sur_pin, apparies = [], [], []
+    sur_cons, apparies_cons = [], []
+    trop_peu_de_books = 0
+    books_softs = [r[0] for r in c.execute(
+        "SELECT DISTINCT book FROM value_bets") if r[0] not in SHARP]
     # ⚠️ Trois causes d'absence, et il ne faut SURTOUT pas les additionner.
     # « Pinnacle ne price jamais ce marché » condamne le repli : il serait
     # structurellement invérifiable. « Les cotes sont purgées » ne condamne
@@ -139,23 +160,47 @@ def main() -> int:
                                      ko + timedelta(minutes=1), book="pinnacle")
         fair_pin = fair_from_group(rows, b["outcome_label"], b["line"],
                                    cfg.devig_method) if rows else None
-        if not fair_pin:
-            # Le coup d'envoi est-il antérieur à la rétention ? Alors les cotes
-            # de ce match ont été supprimées, et leur absence ne dit rien de ce
-            # que Pinnacle pricait.
-            if ko < limite:
-                purge += 1
-            else:
-                jamais_price += 1
+        if fair_pin:
+            clv_pin = (b["odd_taken"] / fair_pin - 1) * 100
+            sur_pin.append(clv_pin)
+            apparies.append((b, clv_ref, clv_pin, fair_pin))
             continue
-        clv_pin = (b["odd_taken"] / fair_pin - 1) * 100
-        sur_pin.append(clv_pin)
-        apparies.append((b, clv_ref, clv_pin, fair_pin))
+
+        # Le coup d'envoi est-il antérieur à la rétention ? Alors les cotes de
+        # ce match ont été supprimées, et leur absence ne dit rien de ce que
+        # Pinnacle pricait.
+        if ko < limite:
+            purge += 1
+            continue
+        jamais_price += 1
+
+        # Pas de Pinnacle — mais les softbooks, eux, pricent ces matchs : c'est
+        # bien sur l'un d'eux qu'on a détecté le pari. Leur consensus dévigé
+        # n'est pas Pinnacle, mais il est INDÉPENDANT de Smarkets, et c'est
+        # tout ce qu'on lui demande : sortir de la mesure de la référence par
+        # elle-même.
+        justes = []
+        for sb in books_softs:
+            g = storage.closing_group(b["event_key"], b["market"], b["line"],
+                                      ko + timedelta(minutes=1), book=sb)
+            f = fair_from_group(g, b["outcome_label"], b["line"],
+                                cfg.devig_method) if g else None
+            if f:
+                justes.append(f)
+        fair_cons = consensus_fair(justes)
+        if not fair_cons:
+            trop_peu_de_books += 1
+            continue
+        clv_cons = (b["odd_taken"] / fair_cons - 1) * 100
+        sur_cons.append(clv_cons)
+        apparies_cons.append((b, clv_ref, clv_cons, fair_cons, len(justes)))
 
     print(f"=== {len(bets)} paris référencés {ref}, clôturés ===")
     print(f"    {len(apparies):>3} comparables à Pinnacle")
     print(f"    {jamais_price:>3} sans ligne Pinnacle même près du coup d'envoi "
           f"— marché réellement ignoré")
+    print(f"        dont {len(apparies_cons)} jugeables au consensus des "
+          f"softbooks, {trop_peu_de_books} avec moins de {MIN_BOOKS} books")
     print(f"    {purge:>3} coup d'envoi antérieur à {RETENTION_DAYS} j : cotes "
           f"purgées, indécidable")
     print(f"    {sans_match:>3} sans match rattaché dans `events`\n")
@@ -166,6 +211,25 @@ def main() -> int:
     if apparies:
         print(f"{'  dont appariés':22} {stats([x[1] for x in apparies])}")
         print(f"{'clôture Pinnacle':22} {stats(sur_pin)}")
+    if apparies_cons:
+        print(f"{'  dont jugeables':22} {stats([x[1] for x in apparies_cons])}")
+        print(f"{'consensus softbooks':22} {stats(sur_cons)}")
+        ecart = mean(sur_cons) - mean([x[1] for x in apparies_cons])
+        print(f"\n{'écart consensus':22} {ecart:+.2f} points de CLV "
+              f"(softbooks − {ref}), sur {len(sur_cons)} paris")
+        print(f"Règle indépendante de {ref}, ce qui est le point : elle sort de "
+              f"la mesure\nde la référence par elle-même. Moins fine que "
+              f"Pinnacle — les softbooks\nportent une marge que le devig "
+              f"n'enlève jamais parfaitement — donc c'est\nL'ORDRE DE GRANDEUR "
+              f"qui compte, pas la décimale.")
+        print("\n--- consensus, écart le plus défavorable d'abord ---")
+        for b, cref, ccons, fcons, nb in sorted(
+                apparies_cons, key=lambda x: x[2] - x[1])[:10]:
+            ligne = f" {b['line']:+g}" if b["line"] is not None else ""
+            print(f"{cref:+8.2f}% -> {ccons:+8.2f}%   {b['home']} — {b['away']}")
+            print(f"     {b['market']}/{b['outcome_label']}{ligne} @ "
+                  f"{b['odd_taken']:.2f}   juste {ref} {b['ref_close']:.2f} "
+                  f"vs consensus {fcons:.2f} ({nb} books)")
 
     if len(apparies) < 30:
         print(f"\n⚠️ {len(apparies)} paris comparables : trop peu pour conclure, "
@@ -181,6 +245,7 @@ def main() -> int:
                   "structurellement\n   invérifiable — aucune règle fiable "
                   "n'existe pour le juger.")
     if not apparies:
+        c.close()
         return 0
 
     print(f"\n{'écart':22} {mean([x[2] for x in apparies]) - mean([x[1] for x in apparies]):+.2f} "

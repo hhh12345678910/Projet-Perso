@@ -46,3 +46,27 @@ def test_unknown_label_yields_nothing():
 
 def test_empty_group_yields_nothing():
     assert fair_from_group([], "over", 2.5, "shin") is None
+
+
+# --- Consensus des softbooks, la seule règle indépendante qui reste ----------
+
+consensus_fair = mod.consensus_fair
+
+
+def test_consensus_needs_three_books():
+    """Deux books belges partagent souvent une plateforme — Unibet, 711,
+    Bingoal et Scooore sont tous Kambi. Leur accord ne prouve rien : il reflète
+    une seule source de prix."""
+    assert consensus_fair([2.00, 2.02]) is None
+    assert consensus_fair([2.00, 2.02, 1.98]) is not None
+
+
+def test_consensus_is_the_median_not_the_mean():
+    """Un book qui déraille — c'est précisément ce qu'on cherche — déplacerait
+    la moyenne, alors qu'il laisse la médiane intacte."""
+    assert consensus_fair([2.00, 2.05, 2.02, 12.00]) == 2.035
+    assert consensus_fair([2.00, 2.05, 2.02]) == 2.02
+
+
+def test_consensus_of_nothing():
+    assert consensus_fair([]) is None
