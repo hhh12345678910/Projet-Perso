@@ -218,3 +218,68 @@ def test_foreign_sport_is_set_aside_and_reported():
 def test_no_filter_keeps_both_sports():
     qs = list(parse_events([_tennis(), _event()]))
     assert len(qs) == 9        # 4 tennis + 5 football
+
+
+# --- Catalogue : sports -> pays -> compétitions ------------------------------
+
+from src.scrapers.magicbetting import parse_catalog, select_within_budget  # noqa: E402
+
+
+def test_catalog_reads_the_country_list():
+    """Forme relevée sur la sonde : liste nue de pays."""
+    payload = [
+        {"Id": -1, "Fid": 0, "N": None, "EC": 40, "EventIds": [1, 2]},
+        {"Id": 1295, "N": "Pays-Bas", "EC": 25, "EventIds": []},
+        {"Id": 1225, "N": "Angleterre", "EC": 11, "EventIds": []},
+    ]
+    assert parse_catalog(payload) == [
+        {"id": 1295, "name": "Pays-Bas", "events": 25},
+        {"id": 1225, "name": "Angleterre", "events": 11},
+    ]
+
+
+def test_catalog_skips_the_popular_pseudo_group():
+    """`Id=-1` est le groupe « populaires », une sélection transversale.
+
+    Ses matchs appartiennent déjà à un vrai pays : le balayer redemanderait
+    les mêmes événements sous un autre identifiant."""
+    assert parse_catalog([{"Id": -1, "N": None, "EC": 40}]) == []
+    assert parse_catalog([{"Id": -3, "N": None, "EC": 40}]) == []
+
+
+def test_catalog_reads_the_tournament_envelope():
+    """Les compétitions arrivent sous `TL`, pas en liste nue.
+
+    Chercher par forme et non par chemin : le même parseur doit lire les trois
+    niveaux, dont les enveloppes diffèrent."""
+    payload = {
+        "SID": 1, "CtId": 1295, "CtN": "Pays-Bas",
+        "TL": [
+            {"Id": 4535, "EC": 11, "N": "Pays-bas. Eredivisie"},
+            {"Id": 5926, "EC": 1, "N": "Angleterre. Super Cup"},
+        ],
+    }
+    assert parse_catalog(payload) == [
+        {"id": 4535, "name": "Pays-bas. Eredivisie", "events": 11},
+        {"id": 5926, "name": "Angleterre. Super Cup", "events": 1},
+    ]
+
+
+def test_catalog_drops_empty_competitions():
+    """Une compétition sans match coûte un appel et ne rend rien."""
+    payload = [{"Id": 7, "N": "vide", "EC": 0}, {"Id": 8, "N": "pleine", "EC": 3}]
+    assert [d["id"] for d in parse_catalog(payload)] == [8]
+
+
+def test_budget_caps_on_events_and_on_calls():
+    items = [{"id": i, "name": str(i), "events": n}
+             for i, n in enumerate([25, 11, 5, 1, 1, 1, 1, 1])]
+    # Le budget en événements s'épuise avant le plafond d'appels.
+    assert [d["events"] for d in select_within_budget(items, budget=30, max_items=99)] \
+        == [25, 11]
+    # Et l'inverse : la longue traîne épuise le plafond d'appels.
+    assert len(select_within_budget(items, budget=999, max_items=4)) == 4
+
+
+def test_budget_takes_nothing_from_nothing():
+    assert select_within_budget([], budget=100, max_items=10) == []

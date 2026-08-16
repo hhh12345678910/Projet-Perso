@@ -85,3 +85,85 @@ def test_magic_unknown_sport_passes():
     """Ajouter un sport ne doit rien casser, et un oubli ici ne doit jamais
     rendre un book muet."""
     assert magic_sport_mismatch([_mev(9)], "basket") is None
+
+
+# --- Balayage MagicBetting : le plan, la rotation, l'assemblage --------------
+
+
+def test_magic_event_url_carries_the_right_stake_types():
+    """Les marchés demandés diffèrent par sport, et s'y tromper est muet."""
+    soccer = server.magic_event_url("soccer", 4535)
+    tennis = server.magic_event_url("tennis", 1135)
+    assert "tournamentId=4535" in soccer
+    assert "stakeTypes=1" in soccer and "stakeTypes=3" in soccer
+    assert "stakeTypes=702" in tennis and "stakeTypes=3" in tennis
+    assert "702" not in soccer
+
+
+def test_magic_urls_stay_relative():
+    """Aucune URL construite ici ne doit porter d'origine ni de session.
+
+    L'identifiant de session de 36 caractères n'est connu que du navigateur et
+    expire. Le coder côté VM le ferait périmer sans prévenir."""
+    for u in (server.magic_countries_url(1), server.magic_tournaments_url(1225),
+              server.magic_event_url("soccer", 4535)):
+        assert u.startswith("/common/")
+        assert "http" not in u
+
+
+def test_magic_plan_rotates_over_the_long_tail(monkeypatch):
+    """Les grosses compétitions reviennent à chaque tour, la traîne défile.
+
+    Sans rotation, les dernières ne seraient jamais rafraîchies et serviraient
+    des cotes mortes ; en tout rafraîchir, le budget d'appels exploserait."""
+    monkeypatch.setattr(server, "MAGIC_MAX_CALLS", 4)
+    monkeypatch.setattr(server, "MAGIC_BUDGET_EVENTS", 10_000)
+    tours = [{"id": i, "name": str(i), "events": 20 - i} for i in range(10)]
+    monkeypatch.setitem(server.MAGIC_CATALOG, "soccer",
+                        {"tournaments": tours, "at": 0, "cursor": 0})
+
+    first = [p["part"] for p in server.magic_plan("soccer", 0)]
+    second = [p["part"] for p in server.magic_plan("soccer", 0)]
+    # Les deux plus grosses (la moitié du plafond) reviennent toujours.
+    assert first[:2] == [0, 1] and second[:2] == [0, 1]
+    # La traîne, elle, a avancé.
+    assert first[2:] != second[2:]
+
+
+def test_magic_plan_is_empty_without_catalog():
+    server.MAGIC_CATALOG.pop("hockey", None)
+    assert server.magic_plan("hockey", 0) == []
+
+
+def test_magic_rebuild_merges_and_drops_stale(tmp_path, monkeypatch):
+    """Un morceau périmé sort de l'assemblage ; les Id se dédoublonnent."""
+    import json as _json
+    import os as _os
+    import time as _time
+
+    monkeypatch.setattr(server, "MAGIC_DIR", tmp_path)
+    monkeypatch.setattr(server, "MAGIC_PARTS_DIR", tmp_path / "parts")
+    monkeypatch.setattr(server, "MAGIC_PART_MAX_AGE", 600)
+    d = tmp_path / "parts" / "soccer"
+    d.mkdir(parents=True)
+    (d / "1.json").write_text(_json.dumps([{"Id": 10}, {"Id": 11}]))
+    (d / "2.json").write_text(_json.dumps([{"Id": 11}, {"Id": 12}]))
+    vieux = d / "3.json"
+    vieux.write_text(_json.dumps([{"Id": 99}]))
+    old = _time.time() - 1200
+    _os.utime(vieux, (old, old))
+
+    n_ev, n_parts = server.magic_rebuild("soccer", force=True)
+    assert (n_ev, n_parts) == (3, 2)          # 10, 11, 12 — jamais 99
+    merged = _json.loads((tmp_path / "soccer.json").read_text())
+    assert sorted(e["Id"] for e in merged) == [10, 11, 12]
+
+
+def test_magic_rebuild_is_throttled(tmp_path, monkeypatch):
+    """Réécrire plusieurs mégaoctets à chaque morceau userait le disque."""
+    monkeypatch.setattr(server, "MAGIC_DIR", tmp_path)
+    monkeypatch.setattr(server, "MAGIC_PARTS_DIR", tmp_path / "parts")
+    monkeypatch.setattr(server, "MAGIC_REBUILD_EVERY", 999)
+    server._MAGIC_LAST_REBUILD.pop("soccer", None)
+    assert server.magic_rebuild("soccer") == (0, 0)     # premier passage
+    assert server.magic_rebuild("soccer") == (-1, -1)   # différé, pas échoué

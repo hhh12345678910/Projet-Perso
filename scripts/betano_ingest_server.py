@@ -96,6 +96,20 @@ MAGIC_DIR = Path(
 # daemon, sinon explorer le site en direct empoisonnerait les cotes de
 # production sans qu'on s'en aperçoive.
 MAGIC_PROBE_DIR = MAGIC_DIR / "probes"
+# Un fichier par compétition balayée, réassemblés en <sport>.json.
+#
+# Pourquoi par morceaux plutôt qu'un seul fichier réécrit : un balayage
+# interrompu — onglet fermé, réseau coupé, budget épuisé — ne doit pas vider
+# l'offre. Chaque morceau porte sa propre date, donc une compétition qui cesse
+# d'être rafraîchie disparaît toute seule de l'assemblage au lieu de servir des
+# cotes mortes. C'est la garde de fraîcheur du §5, appliquée par morceau.
+MAGIC_PARTS_DIR = MAGIC_DIR / "parts"
+MAGIC_PART_MAX_AGE = float(os.getenv("MAGIC_PART_MAX_AGE_MIN", "20")) * 60
+# L'assemblage coûte une réécriture du fichier entier. À trente morceaux par
+# minute et plusieurs mégaoctets, réécrire à chaque morceau userait le disque
+# pour rien — le daemon ne lit qu'une fois par cycle.
+MAGIC_REBUILD_EVERY = float(os.getenv("MAGIC_REBUILD_SEC", "10"))
+_MAGIC_LAST_REBUILD: dict = {}
 # SportId Gaming1 attendus par sport, pour refuser un push mal routé. Doit
 # rester aligné sur CIRCUS_SPORTS dans src/main.py. Un sport absent d'ici est
 # accepté sans vérification, pour qu'ajouter un sport ne casse rien.
@@ -148,6 +162,177 @@ def circus_sport_mismatch(blocks, sport: str) -> set | None:
     if not seen or seen == {expect}:
         return None
     return seen
+
+
+# --- Balayage MagicBetting ---------------------------------------------------
+# Le pont demandait `gettopeventslist`, qui rend 27 matchs. Le catalogue en
+# annonce 1173 en football : on collectait 2 % de l'offre. Le balayage consiste
+# à demander les matchs COMPÉTITION PAR COMPÉTITION.
+#
+# Tout le raisonnement — quoi balayer, dans quel ordre, à quelle cadence — vit
+# ICI, en Python. Le userscript reçoit une liste d'URL et les appelle, sans
+# jamais rien interpréter. C'est la règle du §10 : le pont Circus devait
+# attribuer ses réponses en JavaScript et s'est cassé trois fois.
+MAGIC_STAKE_TYPES = {"soccer": [1, 3], "tennis": [702, 3]}
+# Budget par sport et par tour : combien d'événements viser, et surtout combien
+# d'appels réseau y consacrer. Le second plafond est le vrai garde-fou — la
+# longue traîne des compétitions à un match coûte un appel chacune.
+MAGIC_BUDGET_EVENTS = int(os.getenv("MAGIC_BUDGET_EVENTS", "500"))
+MAGIC_MAX_CALLS = int(os.getenv("MAGIC_MAX_CALLS", "30"))
+# Catalogue en mémoire : sport -> {"tournaments": [...], "at": timestamp,
+# "cursor": int}. Volatile exprès — un redémarrage le reconstruit au premier
+# tour, et le persister exposerait à servir un catalogue périmé sans le savoir.
+MAGIC_CATALOG: dict = {}
+
+
+MAGIC_MAX_COUNTRIES = int(os.getenv("MAGIC_MAX_COUNTRIES", "25"))
+# Le catalogue se reconstruit à cet intervalle. Une compétition qui se termine
+# ou qui commence n'apparaît pas plus vite que ça — c'est sans conséquence, les
+# calendriers ne changent pas à la minute.
+MAGIC_CATALOG_TTL = float(os.getenv("MAGIC_CATALOG_TTL_SEC", "1800"))
+
+
+def _magic_params(extra: list[tuple[str, str]]) -> str:
+    from urllib.parse import urlencode
+
+    base = [("period", "0"), ("langId", "62"),
+            ("partnerId", "3000270"), ("countryCode", "BE")]
+    return urlencode(base + extra)
+
+
+def magic_countries_url(sport_id: int) -> str:
+    return ("/common/getmixedchampionshiplistbyperiod?" + _magic_params([
+        ("sportId", str(sport_id)), ("isTournament", "false"),
+        ("eventFilterType", "0"), ("includeLiveSports", "false"),
+    ]))
+
+
+def magic_tournaments_url(country_id: int) -> str:
+    return ("/common/getmixedtournamentsbyperiod?" + _magic_params([
+        ("championshipId", str(country_id)), ("isTournament", "false"),
+        ("includeLiveTournaments", "false"),
+    ]))
+
+
+def magic_event_url(sport: str, tournament_id: int) -> str:
+    """Le chemin RELATIF de la liste d'événements d'une compétition.
+
+    Relatif, et c'est essentiel : l'URL réelle porte un identifiant de session
+    de 36 caractères que seul le navigateur connaît, et qui expire. La VM n'a
+    pas à le connaître — le userscript préfixe. Le coder ici le ferait périmer
+    sans prévenir."""
+    from urllib.parse import urlencode
+
+    params = [
+        ("period", "0"),
+        ("tournamentId", str(tournament_id)),
+        ("isTournament", "false"),
+        ("eventFilterType", "false"),
+        ("includeLiveEvents", "false"),
+        ("langId", "62"),
+        ("partnerId", "3000270"),
+        ("countryCode", "BE"),
+    ]
+    params += [("stakeTypes", str(s)) for s in MAGIC_STAKE_TYPES.get(sport, [])]
+    return f"/common/getmixedsportandeventslistwithoutright?{urlencode(params)}"
+
+
+def magic_rebuild(sport: str, *, force: bool = False) -> tuple[int, int]:
+    """Réassembler <sport>.json à partir des morceaux encore frais.
+
+    Rend (événements, morceaux retenus). Les morceaux périmés sont ignorés ET
+    supprimés au-delà du double de leur durée de vie : sans ça, une
+    compétition terminée laisserait son fichier pour toujours.
+
+    Dédoublonnage par Id d'événement : un même match peut apparaître dans deux
+    compétitions (une phase de qualification listée sous deux libellés), et le
+    compter deux fois gonflerait l'offre sans ajouter une cote."""
+    import time as _time
+
+    now = _time.time()
+    if not force and now - _MAGIC_LAST_REBUILD.get(sport, 0) < MAGIC_REBUILD_EVERY:
+        return (-1, -1)
+    _MAGIC_LAST_REBUILD[sport] = now
+
+    d = MAGIC_PARTS_DIR / sport
+    if not d.is_dir():
+        return (0, 0)
+    merged: dict = {}
+    kept = 0
+    for f in sorted(d.glob("*.json")):
+        try:
+            age = now - f.stat().st_mtime
+        except OSError:
+            continue
+        if age > MAGIC_PART_MAX_AGE:
+            if age > MAGIC_PART_MAX_AGE * 2:
+                try:
+                    f.unlink()
+                except OSError:
+                    pass
+            continue
+        try:
+            evs = json.loads(f.read_text(encoding="utf-8"))
+        except (OSError, ValueError):
+            continue
+        if not isinstance(evs, list):
+            continue
+        kept += 1
+        for ev in evs:
+            if isinstance(ev, dict) and ev.get("Id") is not None:
+                merged[ev["Id"]] = ev
+
+    payload = json.dumps(list(merged.values()), ensure_ascii=False).encode()
+    _atomic_write(MAGIC_DIR / f"{sport}.json", payload)
+    return (len(merged), kept)
+
+
+def _magic_catalog_fns():
+    """Les parseurs de catalogue, importés à la demande.
+
+    Ils vivent dans `src/scrapers/magicbetting.py` avec leurs tests, et non
+    ici : le serveur d'ingestion n'a pas de suite de tests, donc tout ce qui
+    peut se tromper doit être ailleurs."""
+    if str(_project_dir()) not in sys.path:
+        sys.path.insert(0, str(_project_dir()))
+    from src.scrapers.magicbetting import parse_catalog, select_within_budget
+    return parse_catalog, select_within_budget
+
+
+def magic_plan(sport: str, now: float) -> list[dict]:
+    """Les compétitions à rafraîchir MAINTENANT, sous budget.
+
+    Deux rythmes, parce que les compétitions n'ont pas le même poids. Les plus
+    grosses reviennent à chaque tour ; la longue traîne défile par tranches, un
+    curseur avançant d'un tour à l'autre. Tout rafraîchir chaque minute
+    coûterait des centaines d'appels pour des matchs dont la cote ne bouge
+    pas ; ne jamais rafraîchir la traîne la laisserait périmer sans que rien ne
+    le signale."""
+    cat = MAGIC_CATALOG.get(sport)
+    if not cat or not cat.get("tournaments"):
+        return []
+    tours = cat["tournaments"]
+    head = tours[:MAGIC_MAX_CALLS // 2]
+    tail = tours[len(head):]
+    picked = list(head)
+    if tail:
+        room = MAGIC_MAX_CALLS - len(picked)
+        cur = cat.get("cursor", 0) % len(tail)
+        # Tranche circulaire : on repart du début quand on atteint la fin, donc
+        # aucune compétition n'est oubliée indéfiniment.
+        picked += (tail + tail)[cur:cur + room]
+        cat["cursor"] = (cur + room) % len(tail)
+    total = 0
+    out = []
+    for t in picked:
+        if total >= MAGIC_BUDGET_EVENTS:
+            break
+        total += t["events"]
+        out.append({"part": t["id"], "name": t["name"],
+                    "path": magic_event_url(sport, t["id"])})
+    return out
+
+
 HOST = os.getenv("BETANO_INGEST_HOST", "0.0.0.0")
 PORT = int(os.getenv("BETANO_INGEST_PORT", "8787"))
 MAX_BYTES = int(float(os.getenv("BETANO_INGEST_MAX_MB", "32")) * 1024 * 1024)
@@ -224,10 +409,20 @@ class Handler(BaseHTTPRequestHandler):
         self._send(204, "")
 
     def do_GET(self) -> None:  # noqa: N802
-        if self.path.split("?", 1)[0] == "/health":
+        route = self.path.split("?", 1)[0]
+        if route == "/health":
             self._send(200, "ok")
-        else:
-            self._send(404, {"error": "not found"})
+            return
+        if route == "/magic-plan":
+            # Le plan dit quelles compétitions balayer : c'est de la
+            # configuration de collecte, pas une donnée publique. Même jeton
+            # que les écritures.
+            if not self._authorized():
+                self._send(401, {"error": "bad or missing token"})
+                return
+            self._handle_magic_plan()
+            return
+        self._send(404, {"error": "not found"})
 
     def _handle_cookie(self, raw: bytes) -> None:
         """Store a cookie + User-Agent pushed by the userscript.
@@ -406,6 +601,11 @@ class Handler(BaseHTTPRequestHandler):
         if not sport:
             self._send(400, {"error": "missing 'sport' query parameter"})
             return
+        # `part` = une compétition du balayage. Sans lui, c'est l'ancien push
+        # d'un seul bloc (la vitrine), qu'on garde pour ne pas casser un pont
+        # resté sur l'ancienne version.
+        raw_part = (qs.get("part") or [""])[0]
+        part = "".join(c for c in raw_part if c.isalnum() or c in "-_")[:24]
         try:
             body = json.loads(raw)
         except ValueError as e:
@@ -454,16 +654,131 @@ class Handler(BaseHTTPRequestHandler):
 
         payload = json.dumps(clear, ensure_ascii=False).encode()
         try:
-            MAGIC_DIR.mkdir(parents=True, exist_ok=True)
-            _atomic_write(MAGIC_DIR / f"{sport}.json", payload)
+            if part:
+                # Balayage : un morceau par compétition, puis réassemblage.
+                _atomic_write(MAGIC_PARTS_DIR / sport / f"{part}.json", payload)
+                n_ev, n_parts = magic_rebuild(sport)
+            else:
+                # Ancien push d'un bloc unique. Il écrase le fichier assemblé,
+                # ce qui est voulu : les deux modes ne doivent pas coexister,
+                # sinon l'offre dépendrait de qui a écrit en dernier.
+                MAGIC_DIR.mkdir(parents=True, exist_ok=True)
+                _atomic_write(MAGIC_DIR / f"{sport}.json", payload)
+                n_ev, n_parts = len(clear), 0
         except OSError as e:
             _log(f"500 magicbetting write failed: {e}")
             self._send(500, {"error": f"write failed: {e}"})
+            return
+
+        if part:
+            # n_ev == -1 : réassemblage sauté par la limitation de cadence, ce
+            # qui est le cas NORMAL au milieu d'un balayage. Le dire autrement
+            # ferait lire un échec là où il n'y en a pas.
+            etat = (f"assemblé: {n_ev} événements / {n_parts} compétitions"
+                    if n_ev >= 0 else "assemblage différé")
+            _log(f"200 magicbetting {sport} part={part} "
+                 f"({len(clear)} événements, {n_stakes} cotes) — {etat}")
+            self._send(200, {"ok": True, "sport": sport, "part": part,
+                             "events": len(clear), "stakes": n_stakes,
+                             "merged_events": n_ev, "parts": n_parts})
             return
         _log(f"200 magicbetting {len(raw)} B chiffres -> {len(payload)} B clairs "
              f"-> magicbetting/{sport}.json (events={len(clear)} stakes={n_stakes})")
         self._send(200, {"ok": True, "events": len(clear), "stakes": n_stakes,
                          "sport": sport})
+
+    def _handle_magic_plan(self) -> None:
+        """Dire au pont quoi appeler MAINTENANT.
+
+        Le contrat est volontairement minuscule et générique :
+
+            {"fetch": [{"path": "/common/…", "post_to": "/ingest-…"}]}
+
+        Le userscript préfixe `path` de l'origine et de l'identifiant de
+        session — le seul élément qu'il connaît et que la VM ignore — appelle,
+        et reposte le corps brut à `post_to`. Si CETTE réponse est elle-même un
+        `{"fetch": …}`, il recommence. Il ne lit rien d'autre, ne décide rien.
+
+        Deux étages en découlent sans que le pont le sache : tant que le
+        catalogue manque, le plan demande le catalogue ; une fois qu'il est là,
+        le plan demande les cotes."""
+        from urllib.parse import parse_qs, urlparse
+        import time as _time
+
+        qs = parse_qs(urlparse(self.path).query)
+        sport = (qs.get("sport") or [""])[0]
+        sport_id = MAGIC_SPORT_IDS.get(sport)
+        if sport_id is None:
+            self._send(400, {"error": f"sport inconnu: {sport!r}"})
+            return
+
+        now = _time.time()
+        cat = MAGIC_CATALOG.get(sport)
+        if not cat or (now - cat.get("at", 0)) > MAGIC_CATALOG_TTL:
+            # Le catalogue est absent ou périmé : on le redemande. On NE VIDE
+            # PAS l'ancien — le balayage continue de tourner sur les
+            # compétitions connues pendant la reconstruction, au lieu de
+            # laisser un trou.
+            MAGIC_CATALOG.setdefault(sport, {"tournaments": [], "cursor": 0})
+            MAGIC_CATALOG[sport]["at"] = now
+            self._send(200, {"fetch": [{
+                "path": magic_countries_url(sport_id),
+                "post_to": f"/magic-catalog?sport={sport}&level=countries",
+            }]})
+            return
+
+        plan = magic_plan(sport, now)
+        self._send(200, {"fetch": [{
+            "path": p["path"],
+            "post_to": f"/ingest-magicbetting?sport={sport}&part={p['part']}",
+        } for p in plan]})
+
+    def _handle_magic_catalog(self, raw: bytes) -> None:
+        """Ranger un étage du catalogue, et demander le suivant s'il y en a un."""
+        from urllib.parse import parse_qs, urlparse
+
+        qs = parse_qs(urlparse(self.path).query)
+        sport = (qs.get("sport") or [""])[0]
+        level = (qs.get("level") or [""])[0]
+        if sport not in MAGIC_SPORT_IDS or level not in ("countries", "tournaments"):
+            self._send(400, {"error": "sport ou level invalide"})
+            return
+        try:
+            clear = _magic_decryptor().decrypt_response(json.loads(raw))
+        except FileNotFoundError as e:
+            self._send(503, {"error": str(e)})
+            return
+        except Exception as e:                                      # noqa: BLE001
+            _log(f"422 magic-catalog {sport}/{level} : {e}")
+            self._send(422, {"error": f"decrypt failed: {e}"})
+            return
+
+        parse_catalog, select_within_budget = _magic_catalog_fns()
+        items = parse_catalog(clear)
+        cat = MAGIC_CATALOG.setdefault(sport, {"tournaments": [], "cursor": 0})
+
+        if level == "countries":
+            # On ne balaie pas les 90 pays : le budget en appels ferait
+            # exploser le trafic pour des championnats à un match. Les plus
+            # fournis d'abord, le reste attend le tour suivant du catalogue.
+            picked = select_within_budget(
+                items, budget=MAGIC_BUDGET_EVENTS * 3, max_items=MAGIC_MAX_COUNTRIES)
+            _log(f"200 magic-catalog {sport} : {len(items)} pays, "
+                 f"{len(picked)} retenus ({sum(p['events'] for p in picked)} événements)")
+            self._send(200, {"fetch": [{
+                "path": magic_tournaments_url(p["id"]),
+                "post_to": f"/magic-catalog?sport={sport}&level=tournaments",
+            } for p in picked]})
+            return
+
+        # level == "tournaments" : fusionner, en gardant le compteur le plus
+        # récent pour chaque compétition déjà connue.
+        by_id = {t["id"]: t for t in cat["tournaments"]}
+        for t in items:
+            by_id[t["id"]] = t
+        cat["tournaments"] = sorted(by_id.values(),
+                                    key=lambda d: (-d["events"], d["id"]))
+        self._send(200, {"ok": True, "tournois": len(cat["tournaments"])})
 
     def _handle_magic_probe(self, raw: bytes) -> None:
         """Ranger une réponse Digitain capturée au vol, pour DÉCOUVERTE.
@@ -578,7 +893,8 @@ class Handler(BaseHTTPRequestHandler):
         route = self.path.split("?", 1)[0]
         if route not in ("/ingest", "/ingest-cookie", "/discover", "/sample",
                          "/ingest-prematch", "/ingest-circus",
-                         "/ingest-magicbetting", "/probe-magicbetting"):
+                         "/ingest-magicbetting", "/probe-magicbetting",
+                         "/magic-catalog"):
             self._send(404, {"error": "not found"})
             return
         if not self._authorized():
@@ -612,6 +928,9 @@ class Handler(BaseHTTPRequestHandler):
             return
         if route == "/probe-magicbetting":
             self._handle_magic_probe(raw)
+            return
+        if route == "/magic-catalog":
+            self._handle_magic_catalog(raw)
             return
         if route == "/ingest-circus":
             self._handle_circus(raw)

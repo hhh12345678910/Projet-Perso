@@ -38,22 +38,16 @@
   const TOKEN   = 'REMPLACE_PAR_BETANO_INGEST_TOKEN';
   const PERIOD  = 60_000;   // un appel par minute et par sport
 
-  // Notre nom -> SportId Digitain et marchés demandés. Les stakeTypes sont
-  // exactement ceux que src/scrapers/magicbetting.py sait lire ; en demander
-  // d'autres ferait grossir la réponse pour rien.
-  //
-  // ⚠️ Les marchés diffèrent PAR SPORT, ce n'est pas une liste commune : le
-  // football écrit son 1X2 sous l'Id 1, le tennis son vainqueur sous l'Id 702.
-  // Demander [1,3] au tennis rendrait des totaux sans aucun vainqueur — un
+  // Les sports à balayer — rien d'autre. Les SportId Digitain et les marchés
+  // demandés vivent sur la VM (MAGIC_SPORT_IDS, MAGIC_STAKE_TYPES), parce
+  // qu'ils diffèrent PAR SPORT et que s'y tromper ne lève aucune erreur : le
+  // football écrit son 1X2 sous l'Id 1, le tennis son vainqueur sous 702, et
+  // demander [1,3] au tennis rendrait des totaux sans aucun vainqueur — un
   // sport à moitié collecté, ce qui ne ressemble pas à une panne.
   //
-  // Confirmé sur capture du 16/08 (SId 3, ATP Cincinnati) : 702 rend 2 issues
-  // par match, toutes des noms de joueur ; 3 rend des totaux de JEUX (lignes
-  // 16,5 à 28 — un total de sets vaudrait 2,5).
-  const SPORTS = {
-    soccer: { id: 1, stakeTypes: [1, 3] },
-    tennis: { id: 3, stakeTypes: [702, 3] },
-  };
+  // Les tenir ici obligerait à recoller ce script dans Tampermonkey à chaque
+  // ajustement, alors qu'un `git pull` suffit côté VM.
+  const SPORTS = { soccer: 1, tennis: 1 };
 
   const log = (...a) => console.log('[valuebet-mb]', ...a);
 
@@ -77,48 +71,81 @@
     return `/${location.pathname.split('/').find((s) => s.length === 36)}`;
   }
 
-  function apiUrl(cfg) {
-    const p = new URLSearchParams({
-      sportId: String(cfg.id),
-      langId: '62',
-      partnerId: '3000270',
-      countryCode: 'BE',
+  // --- Le pont suit un plan, il n'en fabrique aucun ------------------------
+  //
+  // `gettopeventslist` rendait 27 matchs : la vitrine, pas l'offre. Le
+  // catalogue du site en annonce 1173 en football — on en collectait 2 %.
+  // L'offre entière se demande compétition par compétition, ce qui suppose de
+  // savoir LESQUELLES et DANS QUEL ORDRE.
+  //
+  // Cette décision est prise sur la VM, en Python, là où vivent les tests. Ici
+  // on se contente de demander « quoi appeler maintenant », d'appeler, et de
+  // reposter le corps brut à l'adresse indiquée. Le contrat tient en une ligne :
+  //
+  //     {"fetch": [{"path": "/common/…", "post_to": "/ingest-…"}]}
+  //
+  // Si la réponse d'un `post_to` est elle-même un plan, on l'exécute aussi —
+  // c'est ainsi que le catalogue se construit sans que ce script sache ce
+  // qu'est un catalogue.
+  //
+  // C'est la leçon du §10 : le pont Circus devait attribuer ses réponses en
+  // JavaScript et s'est cassé trois fois.
+  const MAX_DEPTH = 3;
+
+  function vm(method, route, data) {
+    return new Promise((resolve) => {
+      GM_xmlhttpRequest({
+        method, url: `${VM}${route}`, data,
+        headers: { 'Content-Type': 'application/json', 'X-Ingest-Token': TOKEN },
+        onload: (r) => {
+          try { resolve(JSON.parse(r.responseText)); }
+          catch { resolve(null); }
+        },
+        onerror: () => { log('VM injoignable :', route); resolve(null); },
+      });
     });
-    for (const st of cfg.stakeTypes) p.append('stakeTypes', String(st));
-    return `${location.origin}${pathPrefix()}/prematch/gettopeventslist?${p}`;
   }
 
-  async function pushOne(sport, cfg) {
-    let body;
+  async function fetchSite(path) {
     try {
       // Appel depuis la page : même origine, donc les cookies Cloudflare
       // partent tout seuls. C'est toute la raison d'être de ce pont.
-      const r = await fetch(apiUrl(cfg), {
-        credentials: 'include',
-        headers: { accept: '*/*' },
+      const r = await fetch(`${location.origin}${pathPrefix()}${path}`, {
+        credentials: 'include', headers: { accept: '*/*' },
       });
-      if (!r.ok) { log(`API ${sport} -> HTTP ${r.status}`); return; }
-      body = await r.text();
+      if (!r.ok) { log(`site -> HTTP ${r.status}`, path); return null; }
+      const body = await r.text();
+      return body && body.length >= 100 ? body : null;
     } catch (e) {
-      log(`API ${sport} injoignable :`, e.message);
-      return;
+      log('site injoignable :', e.message);
+      return null;
     }
-    if (!body || body.length < 100) { log(`réponse ${sport} vide, ignorée`); return; }
+  }
 
-    // GM_xmlhttpRequest et non fetch : la VM est sur une autre origine, et
-    // seul GM_* franchit le CORS.
-    GM_xmlhttpRequest({
-      method: 'POST',
-      url: `${VM}/ingest-magicbetting?sport=${encodeURIComponent(sport)}`,
-      headers: { 'Content-Type': 'application/json', 'X-Ingest-Token': TOKEN },
-      data: body,
-      onload: (res) => log(`${sport} -> ${res.status} ${res.responseText.slice(0, 160)}`),
-      onerror: () => log(`${sport} -> VM injoignable`),
-    });
+  async function follow(plan, depth) {
+    if (!plan || !Array.isArray(plan.fetch) || depth > MAX_DEPTH) return 0;
+    let done = 0;
+    for (const item of plan.fetch) {
+      if (!item || !item.path || !item.post_to) continue;
+      const body = await fetchSite(item.path);
+      if (!body) continue;
+      const res = await vm('POST', item.post_to, body);
+      done += 1;
+      // La réponse peut être un plan à son tour (catalogue -> compétitions).
+      done += await follow(res, depth + 1);
+      // Une petite pause : un balayage qui part en rafale ressemble à un
+      // robot, alors qu'étalé il ressemble à quelqu'un qui navigue.
+      await new Promise((r) => setTimeout(r, 250));
+    }
+    return done;
   }
 
   async function tick() {
-    for (const [sport, cfg] of Object.entries(SPORTS)) await pushOne(sport, cfg);
+    for (const sport of Object.keys(SPORTS)) {
+      const plan = await vm('GET', `/magic-plan?sport=${encodeURIComponent(sport)}`);
+      const n = await follow(plan, 0);
+      log(`${sport} : ${n} appels relayés`);
+    }
   }
 
   // Cadencé par un Worker, pas par setInterval : Chrome ralentit fortement les

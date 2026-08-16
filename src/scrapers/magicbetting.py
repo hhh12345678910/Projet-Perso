@@ -243,6 +243,102 @@ def parse_events(payload: Any, *, expect_sport: str | None = None,
             yield from produced
 
 
+# ---------------------------------------------------------------------------
+# Le catalogue : sports -> pays -> compétitions. Sert à BALAYER l'offre plutôt
+# qu'à en lire la vitrine.
+#
+# `gettopeventslist` rend 27 matchs. Ce n'est pas une limite d'API, c'est la
+# page d'accueil : le compteur `EC` du catalogue annonce 1173 événements en
+# football. On collectait donc 2 % de l'offre.
+#
+# Trois niveaux, dont les noms de paramètres se contredisent d'un endpoint à
+# l'autre — `champId` chez `geteventslist` désigne la même chose que
+# `tournamentId` chez `getmixedsportandeventslistwithoutright`, alors qu'un
+# `championshipId` distinct désigne un PAYS. On s'en tient donc à la structure
+# observée, jamais aux noms :
+#
+#   getmixedsportlistbyperiod              -> [{Id, N, EC}]           sports
+#   getmixedchampionshiplistbyperiod?sportId -> [{Id, N, EC}]         pays
+#   getmixedtournamentsbyperiod?championshipId -> {TL: [{Id, N, EC}]} compétitions
+# ---------------------------------------------------------------------------
+
+
+def _entries(node: Any, keys: tuple[str, ...] = ("Id", "EC")) -> list[dict]:
+    """Les dicts portant toutes ces clés, où qu'ils soient dans la réponse.
+
+    Les trois endpoints du catalogue n'ont pas la même enveloppe — deux
+    rendent une liste nue, le troisième un objet dont les compétitions vivent
+    sous `TL`. Chercher par forme plutôt que par chemin évite d'écrire trois
+    fois la même chose, et surtout de casser si l'enveloppe change."""
+    out: list[dict] = []
+    seen: set = set()
+
+    def walk(n) -> None:
+        if isinstance(n, dict):
+            if all(k in n for k in keys):
+                if n.get("Id") not in seen:
+                    seen.add(n.get("Id"))
+                    out.append(n)
+                return
+            for v in n.values():
+                walk(v)
+        elif isinstance(n, list):
+            for v in n:
+                walk(v)
+
+    walk(node)
+    return out
+
+
+def parse_catalog(payload: Any, *, min_events: int = 1) -> list[dict]:
+    """Rendre [{id, name, events}] trié par nombre d'événements décroissant.
+
+    Marche pour les trois niveaux, qui partagent la même forme d'entrée.
+
+    ⚠️ Les Id NÉGATIFS sont écartés. Le premier élément de la liste des pays
+    porte `Id=-1`, `N=None` et 40 `EventIds` : c'est le groupe « populaires »,
+    une sélection transversale dont les matchs appartiennent déjà à un vrai
+    pays. Le balayer ferait redemander les mêmes événements sous un autre
+    identifiant, donc doubler le trafic pour rien.
+
+    `min_events` écarte les entrées vides : une compétition sans match coûte
+    un appel réseau et ne rend rien."""
+    out = []
+    for e in _entries(payload):
+        try:
+            eid = int(e.get("Id"))
+            n_ev = int(e.get("EC") or 0)
+        except (TypeError, ValueError):
+            continue
+        if eid < 0 or n_ev < min_events:
+            continue
+        out.append({
+            "id": eid,
+            "name": str(e.get("N") or e.get("EGN") or eid),
+            "events": n_ev,
+        })
+    out.sort(key=lambda d: (-d["events"], d["id"]))
+    return out
+
+
+def select_within_budget(items: list[dict], budget: int,
+                         max_items: int) -> list[dict]:
+    """Les entrées à balayer maintenant, sous double plafond.
+
+    Deux plafonds et pas un seul : le budget en ÉVÉNEMENTS dit combien de
+    cotes on rapporte, le plafond en ENTRÉES dit combien d'appels réseau ça
+    coûte. Une longue traîne de compétitions à un match épuiserait le second
+    sans entamer le premier — c'est justement elle qu'il faut borner, parce
+    qu'elle coûte un appel par match pour presque rien."""
+    picked, total = [], 0
+    for it in items:
+        if len(picked) >= max_items or total >= budget:
+            break
+        picked.append(it)
+        total += it["events"]
+    return picked
+
+
 def load_pushed_quotes(path: str, max_age_minutes: float = 10.0,
                        *, print_fn=print,
                        expect_sport: str | None = None) -> list[OddQuote]:
