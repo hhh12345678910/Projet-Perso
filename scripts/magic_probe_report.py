@@ -17,7 +17,7 @@ la structure : combien d'issues, est-ce que leurs noms sont ceux des deux
 joueurs, y a-t-il une ligne `A`. C'est ça qui identifie un marché, pas son
 libellé.
 
-Usage :  python3 scripts/magic_probe_report.py
+Usage :  .venv/bin/python scripts/magic_probe_report.py
 """
 from __future__ import annotations
 

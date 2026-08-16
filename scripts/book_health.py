@@ -12,8 +12,8 @@ qu'il est suivi comme les autres ? » autrement qu'en relisant le code. Vaut
 pour n'importe quel book qu'on vient de brancher.
 
 Usage :
-    python3 scripts/book_health.py magicbetting
-    python3 scripts/book_health.py            # tous les books, vue d'ensemble
+    .venv/bin/python scripts/book_health.py magicbetting
+    .venv/bin/python scripts/book_health.py            # tous les books, vue d'ensemble
 """
 from __future__ import annotations
 

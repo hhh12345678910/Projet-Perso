@@ -28,8 +28,8 @@ est à 2 jours : au-delà, la clôture Pinnacle est purgée et le pari sort de
 l'échantillon sans être un échec.
 
 Usage :
-    python3 scripts/crossclose.py             # smarkets
-    python3 scripts/crossclose.py magicbetting
+    .venv/bin/python scripts/crossclose.py             # smarkets
+    .venv/bin/python scripts/crossclose.py magicbetting
 """
 from __future__ import annotations
 

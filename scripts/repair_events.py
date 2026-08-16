@@ -18,8 +18,8 @@ par sport de clv-report sans que rien ne le signale, ce qui est pire que de ne
 pas savoir. Les nouvelles lignes, elles, portent le bon sport.
 
 Usage :
-    python3 scripts/repair_events.py           # simulation, n'écrit rien
-    python3 scripts/repair_events.py --apply
+    .venv/bin/python scripts/repair_events.py           # simulation, n'écrit rien
+    .venv/bin/python scripts/repair_events.py --apply
 """
 from __future__ import annotations
 

@@ -23,9 +23,9 @@ TOUS les books au même instant. Le verdict se lit alors sans interprétation :
            inventé sur deux points.
 
 Usage :
-    python3 scripts/ev_outliers.py                 # EV >= 30 %, 48 h
-    python3 scripts/ev_outliers.py magicbetting    # un book en particulier
-    EV_MIN=60 EV_HOURS=24 python3 scripts/ev_outliers.py
+    .venv/bin/python scripts/ev_outliers.py                 # EV >= 30 %, 48 h
+    .venv/bin/python scripts/ev_outliers.py magicbetting    # un book en particulier
+    EV_MIN=60 EV_HOURS=24 .venv/bin/python scripts/ev_outliers.py
 """
 from __future__ import annotations
 

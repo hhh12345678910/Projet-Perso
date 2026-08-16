@@ -9,9 +9,9 @@ d'un endpoint à l'autre : `champId=1135` chez `geteventslist` désigne la même
 chose que `tournamentId=1135` chez `getmixedsportandeventslistwithoutright`.
 
 Usage :
-    python3 scripts/magic_probe_show.py championshiplist
-    python3 scripts/magic_probe_show.py getmixedtournaments
-    python3 scripts/magic_probe_show.py sportlist
+    .venv/bin/python scripts/magic_probe_show.py championshiplist
+    .venv/bin/python scripts/magic_probe_show.py getmixedtournaments
+    .venv/bin/python scripts/magic_probe_show.py sportlist
 """
 from __future__ import annotations
 
