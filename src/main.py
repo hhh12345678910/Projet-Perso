@@ -77,6 +77,29 @@ app = typer.Typer(add_completion=False)
 console = Console()
 
 
+@app.callback()
+def _load_project_env() -> None:
+    """Charger `.env` AVANT toute commande, quelle qu'elle soit.
+
+    Le daemon reçoit sa configuration par `scan-daemon.sh`, qui source `.env`
+    avant de lancer Python. Une commande tapée à la main, elle, ne reçoit rien
+    et croit le projet non configuré — un réglage posé dans `.env` reste alors
+    sans effet, et le symptôme n'a aucun rapport visible avec sa cause.
+
+    Le piège s'est produit quatre fois : `doctor` annonçant « Telegram non
+    configuré » sur une installation qui marchait, `/scan` n'acceptant aucun
+    chat (§14.11), puis `results-update` appelant la route directe malgré
+    `SCORES_FOOTBALL_BRIDGE=1` et envoyant un `Bearer` vide au tennis. Les
+    trois premiers ont été corrigés un par un, à leur point d'usage ; ce
+    quatrième montre que le bon endroit est ici, une fois pour toutes.
+
+    Sans effet de bord : `load_env_file` fait un `setdefault`, donc
+    l'environnement déjà posé par systemd ou par un export explicite gagne
+    toujours sur le fichier.
+    """
+    load_env_file()
+
+
 def _group_quotes(quotes: Iterable[OddQuote]) -> dict[tuple[str, MarketType, float | None], list[OddQuote]]:
     """Group Pinnacle quotes into competing-outcome sets per (event, market, line)."""
     groups: dict[tuple[str, MarketType, float | None], list[OddQuote]] = defaultdict(list)

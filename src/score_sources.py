@@ -47,6 +47,22 @@ _RETRY = retry(
 )
 
 
+def _require_key(value: str, env_name: str) -> str:
+    """Refuser tôt une clé absente, et dire laquelle.
+
+    Sans ce contrôle, une clé vide part dans l'en-tête et httpx lève
+    « Illegal header value b'Bearer ' » — un message qui ne nomme ni le
+    réglage, ni le fichier, ni le sport. Vu en production le 16/08 : la
+    commande ne chargeait pas `.env`, et ce message était le seul indice.
+    """
+    if not value.strip():
+        raise RuntimeError(
+            f"{env_name} est vide ou absent. Pose-le dans .env "
+            f"(et vérifie que la commande charge bien .env)."
+        )
+    return value.strip()
+
+
 def _parse_dt(raw: Any) -> datetime | None:
     if not isinstance(raw, str) or not raw:
         return None
@@ -178,13 +194,17 @@ class ApiFootballScores:
         if self.rapidapi_key:
             base = API_FOOTBALL_RAPIDAPI_BASE
             headers = {
-                "X-RapidAPI-Key": self.rapidapi_key,
+                "X-RapidAPI-Key": _require_key(
+                    self.rapidapi_key, "SCORES_FOOTBALL_RAPIDAPI_KEY"),
                 "X-RapidAPI-Host": API_FOOTBALL_RAPIDAPI_HOST,
                 "Accept": "application/json",
             }
         else:
             base = API_FOOTBALL_BASE
-            headers = {"x-apisports-key": self.api_key, "Accept": "application/json"}
+            headers = {
+                "x-apisports-key": _require_key(self.api_key, "SCORES_FOOTBALL_KEY"),
+                "Accept": "application/json",
+            }
         self.route = "rapidapi" if self.rapidapi_key else "direct"
         self._client = httpx.Client(base_url=base, timeout=_TIMEOUT, headers=headers)
 
@@ -327,8 +347,11 @@ class LiveTennisScores:
         self.api_key = api_key or os.getenv("SCORES_TENNIS_KEY", "")
         self._client = httpx.Client(
             base_url=LIVE_TENNIS_BASE, timeout=_TIMEOUT,
-            headers={"Authorization": f"Bearer {self.api_key}",
-                     "Accept": "application/json"},
+            headers={
+                "Authorization":
+                    f"Bearer {_require_key(self.api_key, 'SCORES_TENNIS_KEY')}",
+                "Accept": "application/json",
+            },
         )
 
     def __enter__(self) -> "LiveTennisScores":

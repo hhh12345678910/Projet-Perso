@@ -240,3 +240,31 @@ def test_route_is_decided_at_call_time_not_at_import(monkeypatch):
 
     assert provider_for("tennis") is LiveTennisScores
     assert provider_for("basketball") is None
+
+
+def test_missing_key_names_the_setting_instead_of_crashing_in_httpx(monkeypatch):
+    """Une clé vide partait dans l'en-tête et httpx levait « Illegal header
+    value b'Bearer ' » — un message qui ne nomme ni le réglage, ni le fichier,
+    ni le sport. C'était le seul indice en production le 16/08."""
+    import pytest
+
+    from src.score_sources import ApiFootballScores, LiveTennisScores
+
+    monkeypatch.delenv("SCORES_FOOTBALL_RAPIDAPI_KEY", raising=False)
+    monkeypatch.setenv("SCORES_FOOTBALL_KEY", "")
+    monkeypatch.setenv("SCORES_TENNIS_KEY", "   ")
+
+    with pytest.raises(RuntimeError, match="SCORES_FOOTBALL_KEY"):
+        ApiFootballScores()
+    with pytest.raises(RuntimeError, match="SCORES_TENNIS_KEY"):
+        LiveTennisScores()
+
+
+def test_bridge_needs_no_key_at_all(monkeypatch, tmp_path):
+    """Le pont lit des fichiers : exiger une clé le rendrait inutilisable sur
+    la VM, qui est précisément la machine qui n'a pas d'IP acceptée."""
+    monkeypatch.delenv("SCORES_FOOTBALL_KEY", raising=False)
+    from src.score_sources import BridgedFootballScores
+
+    with BridgedFootballScores(directory=str(tmp_path)) as p:
+        assert p.sports == ("soccer",)
