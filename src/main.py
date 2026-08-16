@@ -155,6 +155,24 @@ def _devig_group(group: list[OddQuote], method: str) -> dict[str, float] | None:
     return {q.outcome.label: p for q, p in zip(group, probs)}
 
 
+def build_event_rows(event_keys: Iterable[str], sport: str,
+                     league_by_event: dict[str, str]) -> list[tuple]:
+    """Les lignes `events` d'un cadre de référence.
+
+    Extrait de la boucle du daemon pour être testable : la règle qu'elle porte
+    — un pari ne doit jamais exister sans son match — s'était perdue en
+    silence, et rien ne l'aurait rattrapée."""
+    rows = []
+    for ek in event_keys:
+        parsed = parse_event_key(ek)
+        if parsed is None:
+            continue
+        start, home_norm, away_norm = parsed
+        rows.append((ek, sport, league_by_event.get(ek, ""),
+                     home_norm, away_norm, start.isoformat()))
+    return rows
+
+
 def build_fair_lines(
     pinnacle_quotes: list[OddQuote],
     method: str,
@@ -2282,16 +2300,27 @@ def _daemon_scan_sport(
         # TOUS les événements de la référence. Elle était écrite vide ici, donc
         # aucune analyse par championnat n'était possible, même a posteriori.
         league_by_event: dict[str, str] = {}
-        for q in pinnacle_q:
+        for q in (*pinnacle_q, *(secondary or [])):
             if q.league and q.event_key not in league_by_event:
                 league_by_event[q.event_key] = q.league
-        event_rows = []
-        for ek in {q.event_key for q in pinnacle_q}:
-            parsed = parse_event_key(ek)
-            if parsed is not None:
-                start, home_norm, away_norm = parsed
-                event_rows.append((ek, current_sport, league_by_event.get(ek, ""),
-                                   home_norm, away_norm, start.isoformat()))
+        # ⚠️ La source est le CADRE DE RÉFÉRENCE ENTIER, pas les seuls
+        # événements de Pinnacle.
+        #
+        # Ne prendre que `pinnacle_q` laissait sans ligne `events` tout match
+        # que Pinnacle ne price pas — c'est-à-dire précisément ceux où le repli
+        # secondaire se déclenche. Ces paris-là sortaient donc sans nom
+        # d'équipe, sans ligue et sans heure de coup d'envoi : invérifiables,
+        # inclassables par sport, et comptés quand même dans les moyennes. Vu
+        # le 16/08 : une détection à +90 % affichée « None — None ».
+        #
+        # Les clés de `fair` sont la bonne source parce que TOUT value bet est
+        # adossé à une ligne juste : partir de là garantit qu'aucun pari ne
+        # peut exister sans son match. Prendre les cotes des softbooks à la
+        # place remplirait la table d'événements jamais appariés.
+        event_rows = build_event_rows(
+            {k[0] for k in fair} | {q.event_key for q in pinnacle_q},
+            current_sport, league_by_event,
+        )
         storage.upsert_events(event_rows)
         # Écriture parcimonieuse : seuls les marchés qui ont bougé sont écrits.
         # 99,6 % des cotes Pinnacle sont identiques d'un cycle à l'autre, donc
