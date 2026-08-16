@@ -2844,14 +2844,22 @@ traîne défile par tranches avec un curseur circulaire. L'offre est assemblée
 depuis **un fichier par compétition** — un balayage interrompu ne vide plus
 l'offre, et un morceau qui cesse d'être rafraîchi en sort tout seul.
 
-**Résultat mesuré** :
+**Résultat mesuré** — et il a continué de monter après le déploiement, la
+longue traîne se remplissant tranche par tranche à chaque tour :
 
-| Sport | Avant | Après | |
-|---|---|---|---|
-| Football | 519 | **3 845** | ×7,4 |
-| Tennis | 216 | **728** | ×3,4 |
+| Sport | Avant | +1 h | +2 h | |
+|---|---|---|---|---|
+| Football | 519 | 3 845 | **17 297** | ×33 |
+| Tennis | 216 | 728 | **1 016** | ×4,7 |
 
-Le tennis dépasse désormais Pinnacle lui-même (636). Coût : +2 s par cycle.
+MagicBetting est devenu la **deuxième source du portefeuille en football**,
+derrière Pinnacle (30 708) et devant StarCasino (5 244). Le tennis dépasse
+Pinnacle lui-même (530). Coût mesuré : +2 s par cycle.
+
+⚠️ Ce n'est plus un complément, c'est un pilier — ce qui rend deux choses plus
+urgentes : mesurer sa CLV dès que les clôtures tomberont, et surveiller les
+`BOOK SUSPECT` d'`ev_outliers`, puisque trente fois plus de matchs signifie
+autant d'occasions supplémentaires de mal apparier un nom d'équipe.
 
 ### 19.4 La référence à la marge aberrante
 
@@ -2961,12 +2969,24 @@ extraite pour être testable — la règle s'était perdue en silence.
 - **Ne jamais additionner « jamais pricé » et « cotes purgées ».** Le premier
   condamne un mécanisme, le second demande juste d'allonger la rétention. Les
   confondre fait conclure au pire sur une limite d'outillage.
+- **Un redémarrage ne se détecte pas à la durée.** La mesure des cycles
+  excluait les écarts de plus de 600 s, mais un `systemctl restart` a laissé
+  **2 s** entre le cycle interrompu (CYCLE 19) et le premier du nouveau
+  processus (CYCLE 1). Ces faux cycles courts passaient et tiraient le minimum
+  vers le bas. C'est le compteur qui repart à 1 qui est le signal fiable.
 - **`python3` du système n'a pas les dépendances** : utiliser `.venv/bin/python`.
 - **La sortie du daemon va dans `valuebet.log`, pas dans `journalctl`** — celui
   du serveur d'ingestion, si.
 
 ### 19.9 À faire au prochain démarrage — remplace §18.8
 
+0. **Vérifier que l'onglet Betano est ouvert.** Mesuré le 16/08 en fin de
+   journée : quatre heures sans une seule cote, la garde de fraîcheur refusant
+   des prix de 216 minutes. Betano produisait 3 520 cotes en football. Le
+   symptôme n'apparaît que dans `valuebet.log`, jamais en alerte.
+   ```bash
+   grep -c "Betano.*périmé" valuebet.log
+   ```
 1. **Le `VACUUM`** le 18/08 au matin, selon la procédure du §19.1. Puis monter
    `PRUNE_DAYS` à 7-14 : le risque §7 (CLV perdue sur un match reporté)
    disparaît, et `crossclose` cesse d'être bridé par la rétention.
@@ -2994,6 +3014,7 @@ extraite pour être testable — la règle s'était perdue en silence.
 | `scripts/repair_events.py` | recrée les lignes `events` manquantes |
 | `scripts/magic_probe_report.py` | quels sports et marchés dans les sondes ? |
 | `scripts/magic_probe_show.py` | quelle FORME a la réponse d'un endpoint ? |
+| `scripts/cycle_speed.py` | les cycles ralentissent-ils ? |
 | `tools/magicbetting-discover.user.js` | capture les appels que le site fait |
 
 ```
@@ -3032,6 +3053,60 @@ code vieux de plusieurs jours : Python charge tout en mémoire au démarrage. Ic
 le symptôme était une majuscule ; le même mécanisme aurait pu laisser hors
 service un correctif sur les alertes ou sur le bouton « Jouer », en affichant
 tout au vert. C'est le §11 appliqué au déploiement.
+
+**Après chaque `git pull`** :
+
+```bash
+sudo systemctl restart valuebet-daemon valuebet-listener betano-ingest
+bash scripts/setup.sh --check
+```
+
+### 19.12 Mises relevées à 35 € / 45 €
+
+Demandé en fin de session, après la mesure : 15 % des détections franchissent le
+palier d'EV, donc la mise moyenne réelle passe de 25,8 € à **36,5 €** — +41 %
+d'exposition par pari.
+
+```
+STAKE_MODE=flat
+STAKE_PCT=0            # 0 => pilotage en euros, pas en % de bankroll
+STAKE_BASE_EUR=35
+STAKE_EV_TIER=15
+STAKE_EV_MULT=1.25     # 35 x 1,25 = 43,75 -> arrondi a 45
+```
+
+Pilotage en **euros** et non en pourcentage d'une bankroll relevée à 1 750 € :
+les deux donnent 35 / 45, mais afficher « 2.0 % de 1750€ » sur chaque alerte
+serait faux si le capital n'a pas suivi. Un chiffre rassurant et faux, lu à
+chaque pari, finit par tromper. Si le capital est réellement à 1 750 €,
+`STAKE_PCT=2.0` + `TELEGRAM_BANKROLL=1750` redonne l'affichage du risque.
+
+**45 € reste sous 50 €**, et c'est heureux : l'arrondi passe de paliers de 5 €
+à des paliers de 10 € au-delà, ce qui rend les mises plus visibles pour un book
+qui surveille les comptes gagnants.
+
+⚠️ **Ce que ce niveau de mise engage.** À 2,8 % du capital si la bankroll est
+restée à 1 250 €, une série de 15 pertes — occurrence attendue sur quelques
+centaines de paris à cote 2,50 — coûte 42 % du capital. Et surtout : `results`
+est toujours vide, donc **aucun gain réel n'est mesuré**, seulement la CLV, qui
+est un indicateur avancé. Deux défauts qui faisaient perdre de l'argent en
+silence ont été trouvés ce seul 16/08 ; il peut en rester. Remplir `results`
+n'est plus une amélioration, c'est une condition.
+
+### 19.13 État des lieux au moment de la passation
+
+| | |
+|---|---|
+| Cycles | 46 s de médiane (24 s le matin — dérive non expliquée, §19.9 point 4) |
+| Base | 34 Go dont 17,9 Go vivants ; `VACUUM` possible le 18/08 |
+| Books actifs | Pinnacle, MagicBetting, StarCasino, GoldenPalace, Unibet, Circus, Napoleon, Ladbrokes, Betano |
+| Éteints | Smarkets (§19.6), BetFirst (`BOOKS_DISABLED`) |
+| Mises | 35 € / 45 € au-dessus de 15 % d'EV |
+| Tests | 622, tous verts |
+
+**Trois ponts navigateur doivent rester ouverts** : Betano, Circus et
+MagicBetting. Chacun a sa garde de fraîcheur, et chacune ne parle que dans
+`valuebet.log`.
 
 **Après chaque `git pull`** :
 
