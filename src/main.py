@@ -3040,14 +3040,38 @@ def prune(
             f"retard.[/dim]"
         )
     if vacuum:
-        # VACUUM rebuilds the database into a temporary copy alongside it, so
-        # it needs free space of roughly the file's own size. On a DB that has
-        # outgrown the disk — the exact situation that makes pruning urgent —
-        # running it blind fills the disk and takes the daemon down with it.
+        # VACUUM reconstruit la base dans une copie compactée, puis la remet en
+        # place. L'espace à prévoir est donc celui de la base COMPACTÉE, pas
+        # celui du fichier actuel.
+        #
+        # ⚠️ La première version estimait « taille du fichier × 1,1 », ce qui
+        # est très au-dessus de la réalité dès que la purge a supprimé
+        # l'essentiel des lignes : mesuré le 16/08, un fichier de 34 Go dont
+        # les pages libres représentaient la quasi-totalité réclamait « 37,1 Go
+        # libres » alors que la base compactée en fait moins d'un. Le VACUUM
+        # était donc refusé exactement quand il devenait utile — et le fichier
+        # restait gonflé pour toujours.
+        #
+        # L'estimation correcte se lit dans SQLite : (page_count - freelist)
+        # × page_size donne la taille des données VIVANTES.
         import shutil as _shutil
+        import sqlite3 as _sq
 
         free_mb = _shutil.disk_usage(os.path.dirname(os.path.abspath(db_path)) or ".").free / (1024 * 1024)
-        need_mb = _size_mb(db_path) * 1.1
+        try:
+            with _sq.connect(db_path) as _c:
+                _pages = _c.execute("PRAGMA page_count").fetchone()[0]
+                _free = _c.execute("PRAGMA freelist_count").fetchone()[0]
+                _psize = _c.execute("PRAGMA page_size").fetchone()[0]
+            live_mb = max(0, _pages - _free) * _psize / (1024 * 1024)
+            console.print(
+                f"[dim]  données vivantes : {live_mb/1024:.2f} Go sur "
+                f"{_size_mb(db_path)/1024:.1f} Go de fichier "
+                f"({100*_free/max(_pages,1):.0f} % de pages libres)[/dim]"
+            )
+        except Exception:                                           # noqa: BLE001
+            live_mb = _size_mb(db_path)      # au pire, l'ancienne hypothèse
+        need_mb = live_mb * 1.3
         if free_mb < need_mb:
             console.print(
                 f"[yellow]VACUUM ignoré : il faudrait ~{need_mb/1024:.1f} Go libres, "

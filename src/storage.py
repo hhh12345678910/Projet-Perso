@@ -746,13 +746,29 @@ class Storage:
 
     def vacuum(self) -> None:
         """Rebuild the database file to reclaim space freed by deletes. Must run
-        outside a transaction, so it uses its own autocommit connection."""
+        outside a transaction, so it uses its own autocommit connection.
+
+        ⚠️ VACUUM écrit sa copie compactée dans un fichier TEMPORAIRE avant de
+        la remettre en place, et SQLite choisit cet emplacement dans
+        SQLITE_TMPDIR / TMPDIR / /var/tmp / /tmp — PAS à côté de la base. Sur
+        cette VM /tmp est petit : la place vérifiée en amont était donc celle
+        d'un disque, et la copie partait sur un autre. On force l'emplacement
+        sur le répertoire de la base, celui-là même dont on a mesuré l'espace,
+        pour que la garde porte sur le bon disque."""
+        import os as _os
+
+        _prev = _os.environ.get("SQLITE_TMPDIR")
+        _os.environ["SQLITE_TMPDIR"] = str(self.path.parent)
         conn = sqlite3.connect(str(self.path), timeout=60)
         conn.isolation_level = None  # autocommit — VACUUM can't run in a tx
         try:
             conn.execute("VACUUM")
         finally:
             conn.close()
+            if _prev is None:
+                _os.environ.pop("SQLITE_TMPDIR", None)
+            else:
+                _os.environ["SQLITE_TMPDIR"] = _prev
 
     def insert_value_bet(self, vb: ValueBet, stake: Optional[float] = None) -> int:
         """Persist a detected value bet. Returns the new row id, or the
