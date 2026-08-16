@@ -1417,7 +1417,26 @@ def fetch_betfirst_quotes(sport: str) -> list[OddQuote]:
 # Ces deux points visent la seule raison du retrait. La juridiction n'en était
 # pas une : l'API est publique, sans authentification, et sert de source de
 # données — on ne parie pas dessus.
-_SMARKETS_ENABLED = os.getenv("SMARKETS_ENABLED", "1") not in ("0", "false", "False")
+# ⛔ ÉTEINT depuis le 16/08. Plus aucun appel, aucun cache, aucune cote stockée.
+#
+# Le repli Smarkets a été mesuré contre la seule règle indépendante disponible
+# — le consensus dévigé des softbooks, Pinnacle ne priçant jamais ces marchés :
+# sur 24 paris, CLV moyenne −20,6 %, médiane −21,7 %, et **0 % de positifs**.
+# Zéro sur vingt-quatre, soit environ une chance sur seize millions que ce soit
+# le hasard. Contre sa PROPRE clôture, le même échantillon affichait +32,8 % —
+# 53 points d'écart, qui mesurent exactement ce que vaut une référence jugée
+# par elle-même.
+#
+# Le défaut est structurel : le repli ne se déclenche que sur les marchés que
+# Pinnacle ignore, donc sur les compétitions confidentielles, donc là où le
+# carnet d'un exchange est vide. Il va chercher sa référence précisément où
+# elle est la moins fiable. Vu sur radualbot — viktorfrydrych : juste Smarkets
+# à 3,71 quand SIX books s'accordent sur 10,22.
+#
+# Le code du scraper et ses tests restent en place — rallumer demande
+# SMARKETS_ENABLED=1, et la mesure se refera si sa liquidité change. Mais tant
+# que ce drapeau vaut 0, rien ne tourne et le cycle ne paie rien.
+_SMARKETS_ENABLED = os.getenv("SMARKETS_ENABLED", "0") not in ("0", "false", "False", "")
 # Smarkets sert-il de RÉFÉRENCE de repli, ou seulement d'observateur ?
 #
 # ⛔ Par défaut NON, et c'est une décision prise sur mesure, le 16/08.

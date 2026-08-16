@@ -40,9 +40,19 @@ def test_without_a_secondary_no_fallback_line_exists():
     assert fair == {}
 
 
-def test_smarkets_is_still_collected_as_an_observer():
-    """Rien n'est perdu : la collecte reste, seule la fabrication de lignes
-    justes lui est retirée. C'est ce qui permettra de refaire la mesure si sa
-    liquidité s'améliore."""
-    assert m._SMARKETS_ENABLED is True
-    assert Book.SMARKETS in m.SHARP_BOOKS      # jamais un book où l'on parie
+def test_smarkets_is_off_entirely():
+    """Éteint : plus aucun appel, aucun cache, aucune cote stockée.
+
+    `fetch_smarkets_quotes` rend une liste vide sans lancer de fil de
+    rafraîchissement, donc le cycle ne paie plus rien pour lui."""
+    assert m._SMARKETS_ENABLED is False
+    assert m.fetch_smarkets_quotes("tennis") == []
+
+
+def test_smarkets_stays_a_sharp_book():
+    """Invariant de sécurité, à tenir même éteint.
+
+    Le retirer de SHARP_BOOKS en ferait un book SOFT — donc un book où l'on
+    chasse une erreur de prix. Si quelqu'un rallume la collecte un jour, on
+    parierait sur l'exchange qu'on vient de juger inexploitable."""
+    assert Book.SMARKETS in m.SHARP_BOOKS
