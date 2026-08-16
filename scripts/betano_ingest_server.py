@@ -90,6 +90,12 @@ CIRCUS_DIR = Path(
 MAGIC_DIR = Path(
     os.getenv("MAGIC_INGEST_DIR", str(_project_dir() / "data" / "magicbetting"))
 )
+# Sondes de découverte : réponses capturées au vol pendant qu'on navigue sur le
+# site, déchiffrées et rangées ICI et pas dans MAGIC_DIR. La séparation est
+# volontaire — une sonde ne doit JAMAIS pouvoir écraser le fichier que lit le
+# daemon, sinon explorer le site en direct empoisonnerait les cotes de
+# production sans qu'on s'en aperçoive.
+MAGIC_PROBE_DIR = MAGIC_DIR / "probes"
 # SportId Gaming1 attendus par sport, pour refuser un push mal routé. Doit
 # rester aligné sur CIRCUS_SPORTS dans src/main.py. Un sport absent d'ici est
 # accepté sans vérification, pour qu'ajouter un sport ne casse rien.
@@ -423,6 +429,76 @@ class Handler(BaseHTTPRequestHandler):
         self._send(200, {"ok": True, "events": len(clear), "stakes": n_stakes,
                          "sport": sport})
 
+    def _handle_magic_probe(self, raw: bytes) -> None:
+        """Ranger une réponse Digitain capturée au vol, pour DÉCOUVERTE.
+
+        Deux inconnues bloquent MagicBetting (§18.6) : l'endpoint de l'offre
+        complète — `gettopeventslist` ne rend que 27 matchs vedettes — et les
+        trois identifiants du tennis. Le §10 interdit de les deviner : Napoleon
+        utilise 547 en football et 521 en tennis, et une supposition qui tombe
+        à côté fabrique des cotes muettes sans jamais lever d'erreur.
+
+        Donc on ne devine pas : on laisse le SITE faire ses propres appels
+        pendant qu'on navigue, et on les recopie. Le userscript de découverte
+        n'interprète rien, il relaie `{url, body}` ; ici on déchiffre et on
+        range. `scripts/magic_probe_report.py` lit ensuite le tout et énumère
+        les sports et les marchés réellement présents.
+
+        ⚠️ Écrit dans MAGIC_PROBE_DIR, jamais dans MAGIC_DIR : une exploration
+        ne doit pas pouvoir toucher aux cotes que sert le daemon."""
+        import hashlib
+        from urllib.parse import urlparse as _urlparse
+
+        try:
+            env = json.loads(raw)
+            url = str(env["url"])
+            body_text = env["body"]
+        except (ValueError, KeyError, TypeError) as e:
+            self._send(400, {"error": f"expected {{url, body}}: {e}"})
+            return
+
+        parts = _urlparse(url)
+        # Le nom de fichier vient de l'endpoint, plus une empreinte courte de la
+        # requête : deux appels au même endpoint avec des paramètres différents
+        # (deux sports, par exemple) sont deux découvertes distinctes.
+        leaf = (parts.path.rstrip("/").rsplit("/", 1)[-1] or "root")[:48]
+        leaf = "".join(c for c in leaf if c.isalnum() or c in "-_") or "root"
+        sig = hashlib.sha1(f"{parts.path}?{parts.query}".encode()).hexdigest()[:8]
+
+        note = None
+        try:
+            clear = _magic_decryptor().decrypt_response(json.loads(body_text))
+        except FileNotFoundError as e:
+            self._send(503, {"error": str(e)})
+            return
+        except Exception as e:                                      # noqa: BLE001
+            # Une sonde qu'on ne sait pas lire reste une information : on la
+            # garde telle quelle plutôt que de la jeter, parce qu'elle dit
+            # qu'un endroit du site parle un autre dialecte.
+            clear, note = None, f"{type(e).__name__}: {e}"
+
+        record = {
+            "url": url, "query": parts.query,
+            "captured_at": datetime.now(timezone.utc).isoformat(),
+            "bytes_in": len(raw),
+            "clear": clear,
+            "raw": None if clear is not None else body_text[:20000],
+            "note": note,
+        }
+        try:
+            MAGIC_PROBE_DIR.mkdir(parents=True, exist_ok=True)
+            _atomic_write(MAGIC_PROBE_DIR / f"{leaf}-{sig}.json",
+                          json.dumps(record, ensure_ascii=False).encode())
+        except OSError as e:
+            self._send(500, {"error": f"write failed: {e}"})
+            return
+
+        n = len(clear) if isinstance(clear, (list, dict)) else 0
+        _log(f"200 sonde {leaf}-{sig} ({len(raw)} B) "
+             f"{'illisible: ' + note if note else f'-> {n} entrees'}")
+        self._send(200, {"ok": True, "file": f"{leaf}-{sig}.json",
+                         "entries": n, "note": note})
+
     def _handle_prematch(self, raw: bytes) -> None:
         """Store the prematch offer for one sport.
 
@@ -466,7 +542,7 @@ class Handler(BaseHTTPRequestHandler):
         route = self.path.split("?", 1)[0]
         if route not in ("/ingest", "/ingest-cookie", "/discover", "/sample",
                          "/ingest-prematch", "/ingest-circus",
-                         "/ingest-magicbetting"):
+                         "/ingest-magicbetting", "/probe-magicbetting"):
             self._send(404, {"error": "not found"})
             return
         if not self._authorized():
@@ -497,6 +573,9 @@ class Handler(BaseHTTPRequestHandler):
             return
         if route == "/ingest-magicbetting":
             self._handle_magicbetting(raw)
+            return
+        if route == "/probe-magicbetting":
+            self._handle_magic_probe(raw)
             return
         if route == "/ingest-circus":
             self._handle_circus(raw)
