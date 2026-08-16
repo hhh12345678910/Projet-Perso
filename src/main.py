@@ -2408,7 +2408,7 @@ def _daemon_scan_sport(
         # Compter ce qui est écrit ET ce qui est proposé : « compression qui
         # marche » et « plus rien ne s'écrit » donnent le même silence (§11).
         console.print(
-            f"\[{current_sport}]   cotes : {_written} écrites / {_offered} "
+            rf"\[{current_sport}]   cotes : {_written} écrites / {_offered} "
             f"({100 * _written / _offered if _offered else 0:.1f} %)"
         )
 

@@ -6,9 +6,13 @@ marché. Un cycle qui s'allonge ne lève aucune erreur : les cotes arrivent
 simplement plus vieilles, et les value bets se détectent après que le prix a
 bougé — la panne est invisible dans les logs et coûteuse en CLV.
 
-⚠️ Les redémarrages sont EXCLUS. Un `systemctl restart` laisse un intervalle de
-plusieurs minutes entre deux en-têtes de cycle ; le compter ferait passer une
-journée saine pour une dérive, ou l'inverse.
+⚠️ Les redémarrages sont EXCLUS, et par le NUMÉRO de cycle, pas par la durée.
+Un `systemctl restart` laisse souvent plusieurs minutes entre deux en-têtes —
+mais pas toujours : mesuré, un redémarrage a produit un écart de 2 s entre le
+cycle interrompu et le premier du nouveau processus. Un simple plafond de durée
+laissait donc passer ces faux cycles courts, qui tiraient le minimum vers le
+bas et faisaient croire à des cycles éclair. Le compteur repart à 1 : c'est ce
+signal-là qui est fiable.
 
 ⚠️ La sortie du daemon va dans `valuebet.log`, PAS dans journalctl — c'est
 `scan-daemon.sh` qui redirige. Seuls l'ingestion et le listener écrivent au
@@ -32,15 +36,18 @@ MAX_CYCLE_SEC = 600
 
 
 def durations() -> list[float]:
-    pat = re.compile(r"^══ CYCLE \d+ — (\d{2}:\d{2}:\d{2}) UTC")
-    ts: list[datetime] = []
+    pat = re.compile(r"^══ CYCLE (\d+) — (\d{2}:\d{2}:\d{2}) UTC")
+    ts: list[tuple[int, datetime]] = []
     with LOG.open(errors="ignore") as f:
         for line in f:
             m = pat.match(line)
             if m:
-                ts.append(datetime.strptime(m.group(1), "%H:%M:%S"))
+                ts.append((int(m.group(1)),
+                           datetime.strptime(m.group(2), "%H:%M:%S")))
     out = []
-    for a, b in zip(ts, ts[1:]):
+    for (na, a), (nb, b) in zip(ts, ts[1:]):
+        if nb <= na:                    # le compteur repart : redémarrage
+            continue
         if b < a:                       # passage de minuit
             b += timedelta(days=1)
         s = (b - a).total_seconds()

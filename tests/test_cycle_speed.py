@@ -53,3 +53,18 @@ def test_other_lines_are_ignored(tmp_path):
                  "══ CYCLE 2 — 10:00:45 UTC ══\n")
     m = _module(p)
     assert m.durations() == [45.0]
+
+
+def test_a_restart_with_a_SHORT_gap_is_excluded(tmp_path):
+    """Le cas réel du 16/08 : cycle interrompu à 13:30:44, nouveau processus à
+    13:30:46. Deux secondes d'écart — sous le plafond de durée, donc compté
+    comme un cycle éclair. C'est le NUMÉRO qui trahit le redémarrage."""
+    p = tmp_path / "v.log"
+    p.write_text(
+        "══ CYCLE 18 — 13:29:58 UTC ══\n"
+        "══ CYCLE 19 — 13:30:44 UTC ══\n"
+        "══ CYCLE 1 — 13:30:46 UTC ══\n"
+        "══ CYCLE 2 — 13:31:34 UTC ══\n"
+    )
+    m = _module(p)
+    assert m.durations() == [46.0, 48.0]     # jamais le 2 s du redémarrage
