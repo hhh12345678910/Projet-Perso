@@ -382,11 +382,27 @@ class LiveTennisScores:
         # `meta.total` vaut toujours None : on ne peut pas savoir d'avance
         # combien de pages il y a, seulement suivre `has_more`. La borne dure
         # évite qu'une pagination qui ne se termine jamais vide le quota.
-        for _ in range(10):
-            payload = self._get("/history/matches", {
-                "from": day.isoformat(), "to": day.isoformat(),
-                "limit": self.page_size, "offset": offset,
-            })
+        for page_no in range(10):
+            try:
+                payload = self._get("/history/matches", {
+                    "from": day.isoformat(), "to": day.isoformat(),
+                    "limit": self.page_size, "offset": offset,
+                })
+            except Exception:
+                # ⚠️ Une page de SUITE qui échoue ne doit pas emporter celles
+                # déjà obtenues. Le palier gratuit ne donne que 20 appels
+                # d'historique par MOIS et répond 403 au-delà : la première
+                # page de chaque journée arrivait, puis la seconde levait, et
+                # l'exception jetait tout — le sport entier affichait « panne »
+                # alors qu'on tenait déjà l'essentiel de la journée.
+                #
+                # La première page, elle, remonte : si même elle échoue, il n'y
+                # a rien à sauver et le problème doit se voir franchement.
+                if page_no == 0:
+                    raise
+                counters["pages_refusees"] = counters.get("pages_refusees", 0) + 1
+                break
+
             page, page_counters = parse_livetennis_results(payload)
             results.extend(page)
             for k, v in page_counters.items():

@@ -268,3 +268,53 @@ def test_bridge_needs_no_key_at_all(monkeypatch, tmp_path):
 
     with BridgedFootballScores(directory=str(tmp_path)) as p:
         assert p.sports == ("soccer",)
+
+
+def test_a_refused_continuation_page_keeps_what_was_already_fetched(monkeypatch):
+    """Le palier gratuit de Live Tennis ne donne que 20 appels d'historique par
+    MOIS et répond 403 au-delà. La première page de chaque journée arrivait,
+    la seconde levait, et l'exception jetait tout : le sport affichait
+    « panne » alors qu'on tenait déjà l'essentiel de la journée."""
+    from datetime import date
+
+    from src.score_sources import LiveTennisScores
+
+    monkeypatch.setenv("SCORES_TENNIS_KEY", "x")
+    payload = _load("livetennis_history_sample.json")
+    first = {"data": payload["data"], "meta": {"has_more": True, "limit": 200}}
+
+    calls = {"n": 0}
+
+    def fake_get(self, path, params):
+        calls["n"] += 1
+        if calls["n"] == 1:
+            return first
+        raise RuntimeError("403 Forbidden — quota d'historique épuisé")
+
+    monkeypatch.setattr(LiveTennisScores, "_get", fake_get)
+    with LiveTennisScores() as p:
+        results, counters = p.fetch_with_counters("tennis", date(2026, 8, 15))
+
+    assert len(results) == 2                      # la page 1 est conservée
+    assert counters["pages_refusees"] == 1
+    assert counters["retenus"] == 2
+
+
+def test_a_refused_first_page_still_surfaces_as_a_failure(monkeypatch):
+    """S'il n'y a rien à sauver, le problème doit se voir franchement plutôt
+    que de passer pour une journée sans match."""
+    from datetime import date
+
+    import pytest
+
+    from src.score_sources import LiveTennisScores
+
+    monkeypatch.setenv("SCORES_TENNIS_KEY", "x")
+
+    def fake_get(self, path, params):
+        raise RuntimeError("403 Forbidden")
+
+    monkeypatch.setattr(LiveTennisScores, "_get", fake_get)
+    with LiveTennisScores() as p:
+        with pytest.raises(RuntimeError, match="403"):
+            p.fetch_with_counters("tennis", date(2026, 8, 15))
