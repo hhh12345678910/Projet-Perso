@@ -1497,6 +1497,36 @@ class Storage:
                 (event_key, winner, home_score, away_score, source, settled_at.isoformat()),
             )
 
+    def events_awaiting_result(
+        self, since: datetime, until: datetime,
+    ) -> list[sqlite3.Row]:
+        """Événements déjà joués sur lesquels on a parié, et sans résultat connu.
+
+        Restreint aux événements portant au moins un value bet : un résultat
+        n'a d'utilité que là où il y a quelque chose à noter, et `events`
+        contient depuis le §19.7 tout le cadre de référence, pas seulement ce
+        qu'on a détecté.
+
+        La population volontairement retenue est celle des DÉTECTIONS, pas des
+        paris joués. Le projet mesure depuis juillet toutes les opportunités
+        éligibles, jouées ou non, précisément pour supprimer le biais de
+        sélection manuelle — noter seulement les paris cliqués rétablirait ce
+        biais dans le P&L.
+
+        `until` borne le haut pour ne pas réclamer le résultat d'un match qui
+        vient de commencer : il n'existe pas encore, et l'appel serait perdu.
+        """
+        with self._conn() as c:
+            return list(c.execute(
+                "SELECT e.event_key, e.sport, e.league, e.home, e.away, e.start_time "
+                "FROM events e "
+                "WHERE e.start_time >= ? AND e.start_time < ? "
+                "  AND EXISTS (SELECT 1 FROM value_bets vb WHERE vb.event_key = e.event_key) "
+                "  AND NOT EXISTS (SELECT 1 FROM results r WHERE r.event_key = e.event_key) "
+                "ORDER BY e.start_time",
+                (since.isoformat(), until.isoformat()),
+            ))
+
     def recent_value_bets(self, limit: int = 50) -> list[sqlite3.Row]:
         with self._conn() as c:
             return list(c.execute(

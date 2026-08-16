@@ -138,3 +138,51 @@ def test_tennis_empty_payload_is_not_an_error():
     results, counters = parse_livetennis_results({"data": []})
     assert results == []
     assert counters["retenus"] == 0
+
+
+# =============================================================== routes ====
+
+def test_direct_route_is_used_when_only_the_plain_key_is_set(monkeypatch):
+    from src.score_sources import API_FOOTBALL_BASE, ApiFootballScores
+
+    monkeypatch.delenv("SCORES_FOOTBALL_RAPIDAPI_KEY", raising=False)
+    monkeypatch.setenv("SCORES_FOOTBALL_KEY", "plain")
+    with ApiFootballScores() as p:
+        assert p.route == "direct"
+        assert str(p._client.base_url).startswith(API_FOOTBALL_BASE)
+        assert p._client.headers["x-apisports-key"] == "plain"
+
+
+def test_rapidapi_route_wins_when_its_key_is_present(monkeypatch):
+    """API-Sports refuse les IP de datacenter — mesuré le 16/08, 200 depuis une
+    IP résidentielle et « account suspended » depuis la VM avec la MÊME clé.
+    RapidAPI relaie depuis sa propre infrastructure, donc l'origine refusée
+    n'est jamais vue."""
+    from src.score_sources import API_FOOTBALL_RAPIDAPI_HOST, ApiFootballScores
+
+    monkeypatch.setenv("SCORES_FOOTBALL_KEY", "plain")
+    monkeypatch.setenv("SCORES_FOOTBALL_RAPIDAPI_KEY", "relayed")
+    with ApiFootballScores() as p:
+        assert p.route == "rapidapi"
+        assert p._client.headers["X-RapidAPI-Key"] == "relayed"
+        assert p._client.headers["X-RapidAPI-Host"] == API_FOOTBALL_RAPIDAPI_HOST
+        assert "x-apisports-key" not in p._client.headers
+
+
+def test_suspended_message_points_at_the_ip_not_the_account():
+    """Le message brut envoie chercher un problème de compte alors que le
+    compte est actif. Il a déjà coûté un aller-retour."""
+    from src.score_sources import _football_error_message
+
+    msg = _football_error_message({"access": "Your account is suspended"}, "direct")
+    assert "datacenter" in msg
+    assert "RAPIDAPI" in msg.upper()
+
+
+def test_suspended_message_is_not_reinterpreted_on_the_relayed_route():
+    """Sur RapidAPI l'origine n'est plus en cause : réinterpréter y ferait
+    chercher un problème d'IP inexistant."""
+    from src.score_sources import _football_error_message
+
+    msg = _football_error_message({"access": "Your account is suspended"}, "rapidapi")
+    assert "datacenter" not in msg

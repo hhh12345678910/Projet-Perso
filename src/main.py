@@ -52,6 +52,8 @@ from .scrapers.meridianbet import MeridianScraper, parse_offer as meridian_parse
 from .scrapers.napoleon import NapoleonScraper, parse_by_date as napoleon_parse_by_date
 from .scrapers.starcasinosport import StarCasinoSportScraper, parse_get_events as starcasinosport_parse_get_events
 from .scrapers.unibet import UnibetScraper, parse_listview as unibet_parse_listview
+from .score_sources import PROVIDERS as SCORE_PROVIDERS
+from .scores import OurEvent, bind_results
 from .storage import Storage
 from .surebet import find_surebets, Surebet
 from .middle import find_middles, Middle
@@ -4084,6 +4086,133 @@ def settle_results(
     )
     if imported:
         console.print("[dim]Relance `track-update` pour recalculer les P&L.[/dim]")
+
+
+@app.command(name="results-update")
+def results_update(
+    days: int = typer.Option(3, "--days", help="Fenêtre de matchs à rattraper."),
+    sport: str = typer.Option("soccer,tennis", "--sport", help="Sports à traiter."),
+    dry_run: bool = typer.Option(
+        False, "--dry-run",
+        help="Ne rien écrire : mesure la couverture réelle des sources."),
+):
+    """Récupérer les résultats des matchs pariés et remplir la table `results`.
+
+    C'est le chaînon qui manquait au P&L réel : tout le reste — `settle()`,
+    `pnl()`, la jointure de `played_bets_with_clv` — existe depuis juillet et
+    attendait cette écriture.
+
+    `--dry-run` ne modifie rien et sert de SONDE : il dit quelle part de tes
+    matchs les sources savent réellement résoudre, sur ton univers et non sur
+    la plaquette du fournisseur. À lancer avant de croire qu'une source
+    convient — c'est la règle du §15.7, celle qui a évité de mettre BetFirst en
+    production avec ses 80 secondes de collecte.
+
+    Une requête par (sport, jour) : trois jours de football et de tennis
+    coûtent six appels sur les cent autorisés.
+    """
+    cfg = ScanConfig()
+    storage = Storage(cfg.db_path)
+    teams.init(storage)
+    sports = [s.strip() for s in sport.split(",") if s.strip()]
+
+    now = datetime.now(timezone.utc)
+    # Deux heures de grâce : un match qui vient de commencer n'a pas de
+    # résultat, et le réclamer ne ferait que consommer du quota.
+    until = now - timedelta(hours=2)
+    since = now - timedelta(days=days)
+
+    pending = storage.events_awaiting_result(since, until)
+    if not pending:
+        console.print("[bold]Aucun match en attente de résultat sur la fenêtre.[/bold]")
+        return
+
+    def _start_of(raw: str) -> datetime | None:
+        """L'heure de nos événements, toujours rendue en UTC conscient.
+
+        Une date naïve comparée à une date consciente lève un TypeError au
+        milieu du rapprochement, et l'exception emporterait le sport entier
+        sans dire lequel des milliers d'événements l'a déclenchée.
+        """
+        try:
+            dt = datetime.fromisoformat(raw)
+        except (TypeError, ValueError):
+            return None
+        return dt if dt.tzinfo else dt.replace(tzinfo=timezone.utc)
+
+    by_sport: dict[str, list[OurEvent]] = defaultdict(list)
+    for r in pending:
+        if r["sport"] not in sports:
+            continue
+        start = _start_of(r["start_time"])
+        if start is None:
+            continue
+        by_sport[r["sport"]].append(OurEvent(
+            event_key=r["event_key"], home=r["home"], away=r["away"],
+            start_time=start,
+        ))
+
+    table = Table(title="Résultats récupérés" + (" — DRY RUN" if dry_run else ""))
+    for col in ("Sport", "À noter", "Résolus", "%", "Sans résultat", "Écartés source"):
+        table.add_column(col, justify="right" if col != "Sport" else "left")
+
+    total_written = 0
+    for sp in sports:
+        events = by_sport.get(sp, [])
+        if not events:
+            table.add_row(sp, "0", "0", "—", "0", "—")
+            continue
+
+        provider_cls = SCORE_PROVIDERS.get(sp)
+        if provider_cls is None:
+            console.print(f"[yellow]{sp} : aucune source de scores configurée.[/yellow]")
+            continue
+
+        # Un appel par jour couvert par la fenêtre, jamais un par match.
+        days_needed = sorted({e.start_time.date() for e in events})
+        fetched: list = []
+        source_counters: Counter = Counter()
+        try:
+            with provider_cls() as provider:
+                for day in days_needed:
+                    res, counters = provider.fetch_with_counters(sp, day)
+                    fetched.extend(res)
+                    source_counters.update(counters)
+        except Exception as e:                                    # noqa: BLE001
+            # Une source injoignable ne doit pas emporter les autres sports :
+            # le tennis et le football ont des fournisseurs distincts, et la
+            # panne de l'un n'apprend rien sur l'autre.
+            console.print(f"[red]{sp} : source injoignable — {e}[/red]")
+            table.add_row(sp, str(len(events)), "0", "0 %", str(len(events)), "panne")
+            continue
+
+        bindings, match_counters = bind_results(events, fetched, sport=sp)
+        if not dry_run:
+            for event_key, result in bindings:
+                storage.record_result(
+                    event_key=event_key,
+                    winner=result.winner or "",
+                    settled_at=now,
+                    home_score=result.home_score,
+                    away_score=result.away_score,
+                    source=result.source,
+                )
+            total_written += len(bindings)
+
+        pct = 100.0 * len(bindings) / len(events) if events else 0.0
+        table.add_row(
+            sp, str(len(events)), str(len(bindings)), f"{pct:.0f} %",
+            str(match_counters["sans_candidat"]),
+            ", ".join(f"{k}={v}" for k, v in sorted(source_counters.items())
+                      if k != "retenus") or "—",
+        )
+
+    console.print(table)
+    if dry_run:
+        console.print("[dim]Sonde seule — rien n'a été écrit.[/dim]")
+    else:
+        console.print(f"[green]✓[/green] {total_written} résultats enregistrés. "
+                      "[dim]Relance `track-update` pour recalculer les P&L.[/dim]")
 
 
 @app.command(name="inspect-betano")

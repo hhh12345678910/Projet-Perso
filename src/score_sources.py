@@ -120,6 +120,31 @@ def parse_apifootball_results(payload: dict) -> tuple[list[MatchResult], dict[st
     return out, counters
 
 
+API_FOOTBALL_RAPIDAPI_BASE = "https://api-football-v1.p.rapidapi.com/v3"
+API_FOOTBALL_RAPIDAPI_HOST = "api-football-v1.p.rapidapi.com"
+
+
+def _football_error_message(errors: Any, route: str) -> str:
+    """Traduire l'erreur d'API-Sports en quelque chose qui n'égare pas.
+
+    « Your account is suspended » envoie chercher un problème de compte alors
+    que le compte est actif : c'est l'IP appelante qui est refusée. Sans cette
+    traduction, le message coûte un aller-retour sur le tableau de bord du
+    fournisseur — il l'a déjà coûté une fois le 16/08.
+    """
+    text = str(errors)
+    if "suspend" in text.lower() and route == "direct":
+        return (
+            "api-football: réponse « account suspended » sur la route DIRECTE. "
+            "Le compte n'est probablement pas en cause : cette API refuse les IP "
+            "de datacenter et le présente ainsi. Vérifie depuis une IP "
+            "résidentielle avant de toucher au compte, et pose "
+            "SCORES_FOOTBALL_RAPIDAPI_KEY pour passer par RapidAPI, qui relaie "
+            "depuis sa propre infrastructure."
+        )
+    return f"api-football ({route}): {errors}"
+
+
 class ApiFootballScores:
     """Résultats de football. 1 200+ ligues, une journée entière par requête.
 
@@ -127,17 +152,41 @@ class ApiFootballScores:
     pagination. Le palier gratuit (100 requêtes/jour) est donc très largement
     suffisant — le projet n'a besoin que des résultats finaux, une fois par
     jour, pas du direct.
+
+    ⚠️ **API-Sports refuse les IP de datacenter et le déguise en suspension de
+    compte.** Mesuré le 16/08 avec une seule et même clé : 200 depuis une IP
+    résidentielle, `{"access": "Your account is suspended"}` depuis la VM ET
+    depuis un conteneur cloud. Le message est trompeur — le compte est actif,
+    c'est l'origine qui est refusée. C'est le quatrième anti-bot du projet
+    après DataDome, Gaming1 et Cloudflare, et le premier à toucher la mesure
+    plutôt que la collecte.
+
+    D'où les deux routes. Si `SCORES_FOOTBALL_RAPIDAPI_KEY` est posée, l'appel
+    passe par RapidAPI, qui relaie depuis SA propre infrastructure : API-Sports
+    ne voit jamais l'IP de la VM. La réponse est identique au champ près, donc
+    le parseur ne change pas. Sinon on garde la route directe, valable partout
+    où l'IP est acceptée.
     """
 
     name = "api-football"
     sports = ("soccer",)
 
-    def __init__(self, api_key: str | None = None) -> None:
+    def __init__(self, api_key: str | None = None,
+                 rapidapi_key: str | None = None) -> None:
+        self.rapidapi_key = rapidapi_key or os.getenv("SCORES_FOOTBALL_RAPIDAPI_KEY", "")
         self.api_key = api_key or os.getenv("SCORES_FOOTBALL_KEY", "")
-        self._client = httpx.Client(
-            base_url=API_FOOTBALL_BASE, timeout=_TIMEOUT,
-            headers={"x-apisports-key": self.api_key, "Accept": "application/json"},
-        )
+        if self.rapidapi_key:
+            base = API_FOOTBALL_RAPIDAPI_BASE
+            headers = {
+                "X-RapidAPI-Key": self.rapidapi_key,
+                "X-RapidAPI-Host": API_FOOTBALL_RAPIDAPI_HOST,
+                "Accept": "application/json",
+            }
+        else:
+            base = API_FOOTBALL_BASE
+            headers = {"x-apisports-key": self.api_key, "Accept": "application/json"}
+        self.route = "rapidapi" if self.rapidapi_key else "direct"
+        self._client = httpx.Client(base_url=base, timeout=_TIMEOUT, headers=headers)
 
     def __enter__(self) -> "ApiFootballScores":
         return self
@@ -164,8 +213,9 @@ class ApiFootballScores:
         # fuseau du compte, et les matchs de fin de soirée basculeraient au
         # lendemain — donc absents du jour demandé, sans que rien ne le dise.
         payload = self._get("/fixtures", {"date": day.isoformat(), "timezone": "UTC"})
-        if payload.get("errors"):
-            raise RuntimeError(f"api-football: {payload['errors']}")
+        errors = payload.get("errors")
+        if errors:
+            raise RuntimeError(_football_error_message(errors, self.route))
         return parse_apifootball_results(payload)
 
 
