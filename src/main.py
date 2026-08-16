@@ -1441,7 +1441,7 @@ _CIRCUS_SEEN_TYPES: set[tuple[str, str]] = set()
 # Cloudflare y sert un défi à toute IP de datacenter — mesuré, la VM reçoit 403
 # là où le navigateur reçoit 200. Le serveur d'ingestion déchiffre le payload
 # avec le WebAssembly du site lui-même et dépose un JSON ordinaire.
-MAGIC_SPORTS = {"soccer"}
+MAGIC_SPORTS = {"soccer", "tennis"}
 
 
 def fetch_magicbetting_quotes(sport: str) -> list[OddQuote]:
@@ -1455,6 +1455,7 @@ def fetch_magicbetting_quotes(sport: str) -> list[OddQuote]:
     return magic_load_pushed(
         f"{directory}/{sport}.json", max_age,
         print_fn=lambda s: console.print(f"[yellow]{s}[/yellow]"),
+        expect_sport=sport,
     )
 
 

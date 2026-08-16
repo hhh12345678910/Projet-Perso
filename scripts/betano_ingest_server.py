@@ -102,6 +102,34 @@ MAGIC_PROBE_DIR = MAGIC_DIR / "probes"
 CIRCUS_SPORT_IDS = {"soccer": 844, "tennis": 848}
 
 
+# SId Digitain attendus par sport, pour refuser un push mal routé. Doit rester
+# aligné sur SPORT_IDS dans src/scrapers/magicbetting.py.
+MAGIC_SPORT_IDS = {"soccer": 1, "tennis": 3}
+
+
+def magic_sport_mismatch(events, sport: str) -> set | None:
+    """Les SId présents ne correspondent pas au sport annoncé ?
+
+    Même barrière que pour Circus, et pour la même raison : un onglet resté sur
+    une ancienne version du userscript a déjà écrit le tennis dans
+    `soccer.json`. Le daemon écarte maintenant les événements étrangers, mais
+    trop tard — le bon fichier a été écrasé et le sport disparaît jusqu'au
+    push suivant. La barrière utile est ici, avant l'écriture.
+
+    Un sport inconnu passe sans vérification : en ajouter un ne doit rien
+    casser, et l'oubli d'une ligne ici ne doit jamais rendre un book muet."""
+    expect = MAGIC_SPORT_IDS.get(sport)
+    if expect is None:
+        return None
+    seen = {
+        ev.get("SId") for ev in events
+        if isinstance(ev, dict) and ev.get("SId") is not None
+    }
+    if not seen or seen == {expect}:
+        return None
+    return seen
+
+
 def circus_sport_mismatch(blocks, sport: str) -> set | None:
     """Les SportId présents ne correspondent pas au sport annoncé ?
 
@@ -414,6 +442,14 @@ class Handler(BaseHTTPRequestHandler):
         if not n_stakes:
             _log("422 magicbetting push has events but no stakes")
             self._send(422, {"error": "no stakes in decrypted payload"})
+            return
+
+        wrong = magic_sport_mismatch(clear, sport)
+        if wrong is not None:
+            _log(f"422 magicbetting push annonce '{sport}' mais porte les "
+                 f"SId {sorted(wrong)} — fichier non écrasé")
+            self._send(422, {"error": f"sport mismatch: expected "
+                                      f"{MAGIC_SPORT_IDS.get(sport)}, got {sorted(wrong)}"})
             return
 
         payload = json.dumps(clear, ensure_ascii=False).encode()

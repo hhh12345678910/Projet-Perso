@@ -128,3 +128,93 @@ def test_a_three_way_market_still_finds_the_draw():
     labels = sorted(q.outcome.label for q in parse_events([_event()])
                     if q.market is MarketType.H2H)
     assert labels == ["away", "draw", "home"]
+
+
+# --- Tennis, raccordé le 16/08 sur capture réelle (SId 3, ATP Cincinnati) ----
+
+
+def _tennis(**over):
+    """Structure relevée sur la sonde : vainqueur sous 702, totaux sous 3.
+
+    Les libellés sont en français ici parce que la capture a été faite avec le
+    `langId` du site ; le pont de production demande du néerlandais. Le
+    parseur doit lire les deux, sans jamais dépendre de la langue pour le
+    vainqueur — celui-ci se reconnaît en comparant aux noms des joueurs."""
+    ev = {
+        "Id": 39959605, "SId": 3, "HT": "Brandon Nakashima",
+        "AT": "Aleksandar Kovacevic", "D": "2026-08-17T17:00:00Z",
+        "CN": "ATP Cincinnati", "HS": None, "AS": None,
+        "StakeTypes": [
+            {"Id": 702, "N": "Vainqueur.", "Stakes": [
+                {"N": "Brandon Nakashima", "F": 1.44, "A": None},
+                {"N": "Aleksandar Kovacevic", "F": 2.75, "A": None}]},
+            {"Id": 3, "N": "Total des matchs", "Stakes": [
+                {"N": "Au-dessus", "F": 1.90, "A": 22.5},
+                {"N": "Moins", "F": 1.90, "A": 22.5}]},
+        ],
+    }
+    ev.update(over)
+    return ev
+
+
+def test_tennis_winner_and_game_totals():
+    qs = list(parse_events([_tennis()]))
+    got = {(q.market.value, q.outcome.label, q.outcome.line): q.decimal_odd for q in qs}
+    assert got == {
+        ("h2h", "home", None): 1.44,
+        ("h2h", "away", None): 2.75,
+        ("totals", "over", 22.5): 1.90,
+        ("totals", "under", 22.5): 1.90,
+    }
+
+
+def test_football_id_1_is_mute_in_tennis():
+    """Le mapping est PAR SPORT, et c'est tout l'enjeu.
+
+    Le football écrit son 1X2 sous l'Id 1. Si ce code restait valide en
+    tennis, une réponse tennis contenant un Id 1 (« Total pair/impair », entre
+    autres) serait lue comme un vainqueur de match — trois issues fabriquées
+    sur un sport qui n'en a que deux, et un devig faux sans la moindre erreur."""
+    ev = _tennis(StakeTypes=[
+        {"Id": 1, "N": "quelque chose d'autre", "Stakes": [
+            {"N": "Brandon Nakashima", "F": 1.44, "A": None},
+            {"N": "Aleksandar Kovacevic", "F": 2.75, "A": None}]},
+    ])
+    assert list(parse_events([ev])) == []
+
+
+def test_tennis_id_702_is_mute_in_football():
+    """Et réciproquement : l'Id 702 ne veut rien dire en football."""
+    ev = _event(StakeTypes=[
+        {"Id": 702, "N": "?", "Stakes": [
+            {"N": "Orlando City SC", "F": 2.12, "A": None},
+            {"N": "FC Cincinnati", "F": 2.58, "A": None}]},
+    ])
+    assert list(parse_events([ev])) == []
+
+
+def test_tournament_winner_is_not_taken():
+    """Les « vainqueur » à 38 issues (401499) sont des vainqueurs de TOURNOI.
+
+    Rien chez Pinnacle en face, et les prendre pour un vainqueur de match
+    fabriquerait une ligne à 38 termes dont le devig n'aurait aucun sens."""
+    ev = _tennis(StakeTypes=[
+        {"Id": 401499, "N": "Vainqueur", "Stakes": [
+            {"N": "Alexander Zverev", "F": 4.5, "A": None},
+            {"N": "Ben Shelton", "F": 7.0, "A": None}]},
+    ])
+    assert list(parse_events([ev])) == []
+
+
+def test_foreign_sport_is_set_aside_and_reported():
+    """Le tennis poussé dans soccer.json : déjà arrivé sur Circus."""
+    foreign: list = []
+    qs = list(parse_events([_tennis(), _event()], expect_sport="soccer",
+                           foreign=foreign))
+    assert foreign == [3]
+    assert qs and all(q.outcome.line in (None, 2.5) for q in qs)
+
+
+def test_no_filter_keeps_both_sports():
+    qs = list(parse_events([_tennis(), _event()]))
+    assert len(qs) == 9        # 4 tennis + 5 football

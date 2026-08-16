@@ -59,3 +59,29 @@ def test_ids_stay_aligned_with_the_daemon():
     from src.main import CIRCUS_SPORTS
 
     assert server.CIRCUS_SPORT_IDS == dict(CIRCUS_SPORTS)
+
+
+# --- MagicBetting : même barrière, même raison -------------------------------
+
+magic_sport_mismatch = server.magic_sport_mismatch
+
+
+def _mev(sid: int) -> dict:
+    return {"Id": 1, "SId": sid, "HT": "A", "AT": "B", "StakeTypes": []}
+
+
+def test_magic_matching_sport_is_accepted():
+    assert magic_sport_mismatch([_mev(1), _mev(1)], "soccer") is None
+    assert magic_sport_mismatch([_mev(3)], "tennis") is None
+
+
+def test_magic_swapped_push_is_refused():
+    """Le tennis poussé vers soccer.json, exactement le cas Circus."""
+    assert magic_sport_mismatch([_mev(3)], "soccer") == {3}
+    assert magic_sport_mismatch([_mev(1)], "tennis") == {1}
+
+
+def test_magic_unknown_sport_passes():
+    """Ajouter un sport ne doit rien casser, et un oubli ici ne doit jamais
+    rendre un book muet."""
+    assert magic_sport_mismatch([_mev(9)], "basket") is None

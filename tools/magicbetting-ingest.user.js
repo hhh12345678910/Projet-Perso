@@ -37,12 +37,23 @@
   const VM      = 'http://34.59.193.111:8787';  // ton serveur d'ingestion
   const TOKEN   = 'REMPLACE_PAR_BETANO_INGEST_TOKEN';
   const PERIOD  = 60_000;   // un appel par minute et par sport
-  const SPORTS  = { soccer: 1 };   // notre nom -> SportId Digitain
 
-  // Les marchés demandés à l'API. 1 = résultat du match, 3 = total de buts.
-  // Ce sont exactement ceux que src/scrapers/magicbetting.py sait lire ; en
-  // demander d'autres ferait grossir la réponse pour rien.
-  const STAKE_TYPES = [1, 3];
+  // Notre nom -> SportId Digitain et marchés demandés. Les stakeTypes sont
+  // exactement ceux que src/scrapers/magicbetting.py sait lire ; en demander
+  // d'autres ferait grossir la réponse pour rien.
+  //
+  // ⚠️ Les marchés diffèrent PAR SPORT, ce n'est pas une liste commune : le
+  // football écrit son 1X2 sous l'Id 1, le tennis son vainqueur sous l'Id 702.
+  // Demander [1,3] au tennis rendrait des totaux sans aucun vainqueur — un
+  // sport à moitié collecté, ce qui ne ressemble pas à une panne.
+  //
+  // Confirmé sur capture du 16/08 (SId 3, ATP Cincinnati) : 702 rend 2 issues
+  // par match, toutes des noms de joueur ; 3 rend des totaux de JEUX (lignes
+  // 16,5 à 28 — un total de sets vaudrait 2,5).
+  const SPORTS = {
+    soccer: { id: 1, stakeTypes: [1, 3] },
+    tennis: { id: 3, stakeTypes: [702, 3] },
+  };
 
   const log = (...a) => console.log('[valuebet-mb]', ...a);
 
@@ -66,23 +77,23 @@
     return `/${location.pathname.split('/').find((s) => s.length === 36)}`;
   }
 
-  function apiUrl(sportId) {
+  function apiUrl(cfg) {
     const p = new URLSearchParams({
-      sportId: String(sportId),
+      sportId: String(cfg.id),
       langId: '62',
       partnerId: '3000270',
       countryCode: 'BE',
     });
-    for (const st of STAKE_TYPES) p.append('stakeTypes', String(st));
+    for (const st of cfg.stakeTypes) p.append('stakeTypes', String(st));
     return `${location.origin}${pathPrefix()}/prematch/gettopeventslist?${p}`;
   }
 
-  async function pushOne(sport, sportId) {
+  async function pushOne(sport, cfg) {
     let body;
     try {
       // Appel depuis la page : même origine, donc les cookies Cloudflare
       // partent tout seuls. C'est toute la raison d'être de ce pont.
-      const r = await fetch(apiUrl(sportId), {
+      const r = await fetch(apiUrl(cfg), {
         credentials: 'include',
         headers: { accept: '*/*' },
       });
@@ -107,7 +118,7 @@
   }
 
   async function tick() {
-    for (const [sport, id] of Object.entries(SPORTS)) await pushOne(sport, id);
+    for (const [sport, cfg] of Object.entries(SPORTS)) await pushOne(sport, cfg);
   }
 
   // Cadencé par un Worker, pas par setInterval : Chrome ralentit fortement les
