@@ -728,6 +728,13 @@ class Handler(BaseHTTPRequestHandler):
             return
 
         plan = magic_plan(sport, now)
+        # Un plan VIDE est le symptôme d'un catalogue qui ne s'est pas rempli,
+        # et il ne se voit nulle part ailleurs : le pont appellerait zéro URL
+        # et se tairait, exactement comme s'il n'y avait rien à faire.
+        if not plan:
+            _log(f"200 magic-plan {sport} : plan VIDE — "
+                 f"{len(MAGIC_CATALOG.get(sport, {}).get('tournaments', []))} "
+                 f"compétitions au catalogue")
         self._send(200, {"fetch": [{
             "path": p["path"],
             "post_to": f"/ingest-magicbetting?sport={sport}&part={p['part']}",
@@ -778,6 +785,12 @@ class Handler(BaseHTTPRequestHandler):
             by_id[t["id"]] = t
         cat["tournaments"] = sorted(by_id.values(),
                                     key=lambda d: (-d["events"], d["id"]))
+        # ⚠️ Cet étage se taisait. Entre « le pont ne l'a jamais appelé » et
+        # « il l'a appelé et rien n'en est sorti », le journal ne montrait
+        # aucune différence — alors que ce sont deux pannes opposées.
+        _log(f"200 magic-catalog {sport} : +{len(items)} compétitions "
+             f"({sum(t['events'] for t in items)} événements), "
+             f"catalogue = {len(cat['tournaments'])}")
         self._send(200, {"ok": True, "tournois": len(cat["tournaments"])})
 
     def _handle_magic_probe(self, raw: bytes) -> None:
