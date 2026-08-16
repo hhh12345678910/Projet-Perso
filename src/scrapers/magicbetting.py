@@ -140,6 +140,50 @@ def _label(stake: dict, market: MarketType, home: str, away: str,
     return None
 
 
+def _looks_like_event(x: Any) -> bool:
+    """Un événement se reconnaît à sa STRUCTURE, jamais à la clé qui le porte.
+
+    On exige `StakeTypes` : sans marchés, un objet peut bien nommer deux
+    équipes, il n'apprend rien sur l'offre — c'est ce qui écarte les entrées de
+    menu et de calendrier."""
+    return isinstance(x, dict) and "StakeTypes" in x and ("HT" in x or "AT" in x)
+
+
+def extract_events(payload: Any) -> list[dict]:
+    """Les événements d'une réponse, quelle que soit son enveloppe.
+
+    ⚠️ Les endpoints ne rendent PAS la même forme, et cela a coûté un
+    déploiement : `gettopeventslist` rend un tableau nu, alors que
+    `getmixedsportandeventslistwithoutright` — celui du balayage — enveloppe
+    dans un objet. Le serveur d'ingestion exigeait une liste et refusait donc
+    chaque récolte avec « push has no events », alors que les événements
+    étaient bien là, un cran plus bas.
+
+    On descend partout et on ramasse tout : s'arrêter au premier groupe
+    sous-compterait une réponse groupée par compétition. Dédoublonné par `Id`,
+    parce qu'une même liste peut être référencée deux fois et gonflerait
+    l'offre sans ajouter une seule cote."""
+    out: list[dict] = []
+    seen: set = set()
+
+    def walk(node) -> None:
+        if _looks_like_event(node):
+            key = node.get("Id", id(node))
+            if key not in seen:
+                seen.add(key)
+                out.append(node)
+            return
+        if isinstance(node, dict):
+            for v in node.values():
+                walk(v)
+        elif isinstance(node, list):
+            for v in node:
+                walk(v)
+
+    walk(payload)
+    return out
+
+
 def parse_events(payload: Any, *, expect_sport: str | None = None,
                  foreign: list | None = None) -> Iterator[OddQuote]:
     """Rendre les OddQuote d'une réponse déchiffrée.
@@ -150,13 +194,12 @@ def parse_events(payload: Any, *, expect_sport: str | None = None,
     dans `soccer.json`. Chaque événement porte son `SId` : on s'en sert plutôt
     que de faire confiance au nom du fichier. Les intrus vont dans `foreign`
     pour être signalés, jamais jetés en silence (§11)."""
-    if not isinstance(payload, list):
-        return
     now = datetime.now(timezone.utc)
 
-    for ev in payload:
-        if not isinstance(ev, dict):
-            continue
+    # `extract_events` et non une boucle sur `payload` : les endpoints ne
+    # rendent pas tous la même enveloppe, et exiger un tableau nu ferait
+    # ressortir zéro cote d'une réponse pleine.
+    for ev in extract_events(payload):
         sport = SPORT_IDS.get(ev.get("SId"))
         if sport is None:
             _warn_once(("sport", ev.get("SId")),

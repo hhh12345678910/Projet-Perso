@@ -283,3 +283,21 @@ def test_budget_caps_on_events_and_on_calls():
 
 def test_budget_takes_nothing_from_nothing():
     assert select_within_budget([], budget=100, max_items=10) == []
+
+
+def test_parse_events_reads_an_envelope():
+    """La panne du 16/08 : l'endpoint du balayage enveloppe ses événements.
+
+    `gettopeventslist` rend un tableau nu, `getmixedsportandeventslistwithoutright`
+    un objet. Le parseur bouclait sur `payload` et ressortait zéro cote d'une
+    réponse pleine — le serveur refusait alors chaque récolte avec « no
+    events », en accusant le site."""
+    enveloppe = {"SID": 1, "CtN": "Pays-Bas", "EL": [_event()]}
+    assert len(list(parse_events(enveloppe))) == 5
+
+
+def test_parse_events_reads_events_grouped_by_competition():
+    payload = {"TL": [{"Id": 4535, "EL": [_event()]},
+                      {"Id": 1135, "EL": [_tennis()]}]}
+    got = list(parse_events(payload))
+    assert len(got) == 9        # 5 football + 4 tennis

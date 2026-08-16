@@ -35,46 +35,12 @@ PROBE_DIR = Path(os.getenv(
 )) / "probes"
 
 
-def _looks_like_event(x) -> bool:
-    """Un événement se reconnaît à sa STRUCTURE, pas à la clé qui le porte.
-
-    On exige `StakeTypes` : sans marchés, un objet peut bien nommer deux
-    équipes, il ne nous apprend rien sur l'offre. C'est aussi ce qui évite de
-    compter comme « événements » les entrées d'un menu ou d'un calendrier."""
-    return isinstance(x, dict) and "StakeTypes" in x and ("HT" in x or "AT" in x)
-
-
-def _events(clear) -> list[dict]:
-    """TOUS les événements d'une réponse, quelle que soit son enveloppe.
-
-    `gettopeventslist` rend un tableau nu, mais rien ne dit que l'endpoint de
-    l'offre complète fasse pareil : il peut envelopper dans un objet, ou
-    grouper par compétition. On descend donc partout et on ramasse tout —
-    s'arrêter au premier groupe trouvé sous-compterait un endpoint groupé, et
-    ferait justement abandonner la piste qu'on cherche.
-
-    Dédoublonné par `Id` : la même liste peut être référencée deux fois dans
-    une réponse, et un endpoint gonflé par ses doublons paraîtrait plus riche
-    qu'il ne l'est."""
-    out: list[dict] = []
-    seen: set = set()
-
-    def walk(node) -> None:
-        if _looks_like_event(node):
-            key = node.get("Id", id(node))
-            if key not in seen:
-                seen.add(key)
-                out.append(node)
-            return
-        if isinstance(node, dict):
-            for v in node.values():
-                walk(v)
-        elif isinstance(node, list):
-            for v in node:
-                walk(v)
-
-    walk(clear)
-    return out
+# Le même extracteur que la production, et surtout PAS une copie. La première
+# version le dupliquait ici : le rapport comptait donc correctement 25
+# événements sur l'endpoint du balayage pendant que le serveur d'ingestion, qui
+# exigeait un tableau nu, les refusait tous. Deux lectures divergentes de la
+# même réponse, et le rapport donnait tort au serveur.
+from src.scrapers.magicbetting import extract_events as _events  # noqa: E402
 
 
 def main() -> int:

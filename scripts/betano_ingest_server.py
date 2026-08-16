@@ -627,8 +627,18 @@ class Handler(BaseHTTPRequestHandler):
             self._send(422, {"error": f"decrypt failed: {e}"})
             return
 
-        if not isinstance(clear, list) or not clear:
-            _log("422 magicbetting push has no events — not overwriting")
+        # ⚠️ Normaliser AVANT de juger. Les endpoints ne rendent pas la même
+        # forme : `gettopeventslist` un tableau nu, celui du balayage une
+        # enveloppe. Exiger une liste refusait donc chaque récolte du balayage
+        # avec « no events » alors que les événements étaient là, un cran plus
+        # bas — et le message accusait le site.
+        _, _ = _magic_catalog_fns()          # met src/ dans sys.path
+        from src.scrapers.magicbetting import extract_events
+        clear = extract_events(clear)
+        if not clear:
+            _log(f"422 magicbetting {sport}"
+                 f"{f' part={part}' if part else ''} : aucun événement "
+                 f"reconnaissable — fichier non écrasé")
             self._send(422, {"error": "no events in decrypted payload"})
             return
         # Refuser un push vide PLUTÔT QUE d'écraser le dernier bon fichier :
