@@ -83,11 +83,70 @@ def _group_quotes(quotes: Iterable[OddQuote]) -> dict[tuple[str, MarketType, flo
     return groups
 
 
+# Marge maximale tolérée sur une ligne de RÉFÉRENCE, par nombre d'issues.
+#
+# Une référence sharp cote serré : Pinnacle tourne autour de 2 à 3 % sur un
+# deux-voies, 5 à 7 % sur un 1X2, et un exchange encore moins. Bien au-delà,
+# ce n'est plus un prix de marché.
+#
+# ⚠️ Mesuré le 16/08 sur Hodd — Strommen : Smarkets cotait over 6,5 à 1,98 et
+# under 6,5 à 1,07, soit 144 % de marge, alors que sa propre ligne 5,5 donnait
+# over à 10,66. Une cote « over » qui REDESCEND en montant la ligne n'est pas
+# un prix : c'est une offre isolée que personne n'a prise, ce qu'un carnet
+# d'ordres affiche quand même. Pinnacle s'arrêtant à 4,5 sur ce match, le repli
+# secondaire s'est déclenché précisément là où l'exchange est illiquide, et a
+# pris la pire ligne du carnet pour référence — d'où une « juste » à 3,53 sur
+# un événement à 2 %, et des EV de +260 % sur cinq matchs.
+#
+# Le contrôle porte sur la MARGE et non sur la liquidité : le carnet ne nous
+# dit pas les volumes, mais une marge aberrante trahit la même chose, sans rien
+# demander de plus.
+_MAX_OVERROUND = {2: 1.20, 3: 1.30}
+_MAX_OVERROUND_DEFAULT = 1.40
+_thin_reference_seen: set = set()
+
+
+def _overround_ok(group: list[OddQuote]) -> bool:
+    """La somme des probabilités implicites est-elle celle d'un vrai marché ?"""
+    try:
+        book_sum = sum(1.0 / q.decimal_odd for q in group if q.decimal_odd > 1.0)
+    except ZeroDivisionError:
+        return False
+    if book_sum <= 1.0:
+        # Sous 100 %, c'est un surebet interne à la référence — anormal aussi,
+        # mais on laisse passer : c'est le signal que cherche find_surebets, et
+        # le couper ici le ferait disparaître ailleurs.
+        return True
+    return book_sum <= _MAX_OVERROUND.get(len(group), _MAX_OVERROUND_DEFAULT)
+
+
 def _devig_group(group: list[OddQuote], method: str) -> dict[str, float] | None:
     """Run a devig on one (event, market, line) group's odds. Returns the
     label -> fair probability map, or None if the group is too thin or
     numerically degenerate."""
     if len(group) < 2:
+        return None
+    # Écarter AVANT de déviger. Le devig normalise à 100 % quoi qu'on lui
+    # donne : nourri d'une ligne à 144 % de marge, il rend une probabilité
+    # d'apparence normale, et l'aberration devient indétectable en aval. C'est
+    # exactement la panne du §11 — une entrée fausse, une sortie plausible,
+    # aucune erreur.
+    if not _overround_ok(group):
+        # Signalé une fois par (book, marché, ligne) et non par événement : la
+        # clé reste minuscule sur un daemon qui tourne des semaines, et c'est
+        # le MOTIF qui intéresse — « Smarkets déraille sur les totaux 6,5 » se
+        # lit une fois, pas trois cents.
+        key = (group[0].book, group[0].market, group[0].outcome.line)
+        if key not in _thin_reference_seen:
+            _thin_reference_seen.add(key)
+            book_sum = sum(1.0 / q.decimal_odd for q in group if q.decimal_odd > 1.0)
+            console.print(
+                f"[yellow]Référence écartée : {group[0].book.value} "
+                f"{group[0].market.value} ligne {group[0].outcome.line} à "
+                f"{book_sum * 100:.0f}% de marge ("
+                + ", ".join(f"{q.outcome.label}@{q.decimal_odd:.2f}" for q in group)
+                + ")[/yellow]"
+            )
         return None
     try:
         probs = devig([q.decimal_odd for q in group], method=method)
