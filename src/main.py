@@ -1418,6 +1418,35 @@ def fetch_betfirst_quotes(sport: str) -> list[OddQuote]:
 # pas une : l'API est publique, sans authentification, et sert de source de
 # données — on ne parie pas dessus.
 _SMARKETS_ENABLED = os.getenv("SMARKETS_ENABLED", "1") not in ("0", "false", "False")
+# Smarkets sert-il de RÉFÉRENCE de repli, ou seulement d'observateur ?
+#
+# ⛔ Par défaut NON, et c'est une décision prise sur mesure, le 16/08.
+#
+# Sur 24 paris valorisés contre le repli Smarkets et jugés au consensus dévigé
+# des softbooks — règle indépendante de Smarkets, c'est tout son intérêt — la
+# CLV ressort à −20,6 % de moyenne, −21,7 % de médiane, et **0 % de positifs**.
+# Zéro sur vingt-quatre : environ une chance sur seize millions que ce soit le
+# hasard. L'écart avec la mesure faite contre Smarkets lui-même atteint 53
+# points de CLV, ce qui dit exactement à quel point mesurer une référence avec
+# elle-même trompe.
+#
+# Le mécanisme se lit sur un cas : radualbot — viktorfrydrych, juste Smarkets à
+# 3,71 quand SIX books s'accordent sur 10,22. Smarkets voit 27 % de chances là
+# où le marché en voit 10. Ce n'est pas un désaccord de pricing, c'est une
+# offre orpheline dans un carnet vide — et le repli va la chercher précisément
+# là où l'exchange est le plus creux, puisqu'il ne se déclenche que sur les
+# marchés que Pinnacle ignore.
+#
+# Le contrôle de marge posé le même jour ne suffit pas : il attrape les carnets
+# grossièrement incohérents (144 % de marge sur les totaux 6,5), pas une cote
+# isolée qui reste plausible à côté de sa contrepartie.
+#
+# ⚠️ Smarkets continue d'être collecté, stocké, tracé dans odds_history et
+# comparé : rien n'est perdu, et si sa liquidité s'améliore la mesure le dira.
+# Seule la fabrication de lignes JUSTES lui est retirée.
+_SMARKETS_AS_REFERENCE = os.getenv("SMARKETS_AS_REFERENCE", "0") not in (
+    "0", "false", "False", ""
+)
 _SMARKETS_TTL = float(os.getenv("SMARKETS_REFRESH_SEC", "300"))
 # Une référence périmée est pire que pas de référence : elle fabriquerait des
 # value bets contre une ligne juste qui n'existe plus. Même leçon que la garde
@@ -1952,7 +1981,14 @@ def scan(
         # price rien, et n'est jamais moyennée avec lui.
         secondary = fetch_smarkets_quotes(current_sport)
 
-        fair = build_fair_lines(quotes, cfg.devig_method, secondary_quotes=secondary)
+        # Repli retiré par défaut depuis le 16/08 : mesuré à 0 % de CLV
+        # positive sur 24 paris jugés au consensus des softbooks. Smarkets
+        # reste collecté et tracé — seule la fabrication de lignes justes
+        # lui est retirée.
+        fair = build_fair_lines(
+            quotes, cfg.devig_method,
+            secondary_quotes=secondary if _SMARKETS_AS_REFERENCE else None,
+        )
         _from_secondary = sum(1 for f in fair.values() if f.reference_book != Book.PINNACLE)
         _sharp_label = "Pinnacle"
         if secondary:
@@ -2267,7 +2303,10 @@ def _daemon_scan_sport(
             secondary = align_reference_source(
                 secondary, {q.event_key for q in pinnacle_q}, current_sport
             )
-        fair = build_fair_lines(pinnacle_q, cfg.devig_method, secondary_quotes=secondary)
+        fair = build_fair_lines(
+            pinnacle_q, cfg.devig_method,
+            secondary_quotes=secondary if _SMARKETS_AS_REFERENCE else None,
+        )
         if _SMARKETS_ENABLED and current_sport in SMARKETS_SPORT_DOMAINS:
             # Compter ce qui SORT de la source, jamais se contenter de l'avoir
             # appelée : c'est le mode de défaillance dominant du projet (§11).
