@@ -8,6 +8,7 @@
 // @match        https://magicbettingsports.be/*
 // @run-at       document-idle
 // @grant        GM_xmlhttpRequest
+// @connect      34.59.193.111
 // @connect      *
 // ==/UserScript==
 //

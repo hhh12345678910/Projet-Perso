@@ -9,8 +9,15 @@
 // @match        https://magicbettingsports.be/*
 // @run-at       document-start
 // @grant        GM_xmlhttpRequest
+// @connect      34.59.193.111
 // @connect      *
 // ==/UserScript==
+//
+// ⚠️ L'hôte de la VM est déclaré EXPLICITEMENT au-dessus du joker. Mesuré :
+// avec `@connect *` seul, Tampermonkey demande quand même confirmation à
+// chaque envoi, et un « Interdire » cliqué une fois est mémorisé — les envois
+// échouent ensuite en silence côté page (« blocked by the user ») pendant que
+// tout le reste paraît fonctionner. Un hôte nommé est autorisé d'office.
 //
 // À QUOI ÇA SERT
 // --------------
