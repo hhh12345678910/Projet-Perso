@@ -107,17 +107,35 @@ def main() -> int:
             by_sport_events[ev.get("SId")].append(ev)
         rows.append((
             f.name,
-            rec.get("url", "").split("?", 1)[0].rsplit("/", 2)[-2:],
-            rec.get("query", "")[:70],
+            rec.get("url", "").split("?", 1)[0],
+            rec.get("query", ""),
             len(evs),
             rec.get("note"),
         ))
 
-    print(f"{'endpoint':38} {'paramètres':70} {'événements':>10}")
-    print("-" * 122)
-    for name, path, query, n, note in sorted(rows, key=lambda r: -r[3]):
-        ep = "/".join(path)[:38]
-        print(f"{ep:38} {query:70} {n:>10,}" + (f"   ⚠ {note}" if note else ""))
+    # ⚠️ L'URL s'affiche ENTIÈRE, origine comprise. La première version la
+    # tronquait aux deux derniers segments : impossible alors de voir si un
+    # appel venait de magicbetting.be ou de l'iframe sport-ak.bldiframe.com,
+    # ni de repérer le préfixe de session de 36 caractères. Or c'est
+    # exactement ce qu'il faut savoir pour comprendre POURQUOI il manque des
+    # appels — un rapport qui cache la donnée qui explique le silence ne sert
+    # à rien.
+    for _, url, query, n, note in sorted(rows, key=lambda r: -r[3]):
+        mark = "⚠ " + note if note else f"{n:,} événements"
+        print(f"[{mark}]")
+        print(f"    {url}")
+        if query:
+            print(f"    ? {query}")
+
+    origins = Counter()
+    for _, url, _, _, _ in rows:
+        try:
+            from urllib.parse import urlparse as _up
+            origins[_up(url).netloc] += 1
+        except Exception:                                           # noqa: BLE001
+            pass
+    print("\norigines observées :",
+          ", ".join(f"{o} ({n})" for o, n in origins.most_common()) or "aucune")
 
     print("\n=== L'OFFRE COMPLÈTE ===")
     best = max(rows, key=lambda r: r[3]) if rows else None

@@ -52,33 +52,43 @@
 
   const MAX_CAPTURES = 120;    // borne dure : on explore, on n'inonde pas
   const MIN_BYTES    = 200;    // en dessous, c'est un ping ou une erreur
+  const MAX_WS_FRAMES = 12;    // par socket : les flux de cotes sont bavards
 
   const seen = new Set();
   let sent = 0;
+  const rejected = [];         // pour diagnostiquer un silence, cf. __vb
   const log = (...a) => console.log('[valuebet-decouverte]', ...a);
 
-  // On ne recopie QUE les appels d'API du site lui-même. Sans ce filtre on
-  // enverrait aussi la télémétrie Sentry et les traceurs publicitaires — du
-  // bruit, et des données qui ne nous regardent pas.
+  // ⚠️ PAS de filtre sur l'origine. La première version exigeait la même
+  // origine que la page, et n'a rien attrapé de sportif : la partie sport de
+  // magicbetting.be est une IFRAME servie par sport-ak.bldiframe.com, donc
+  // depuis le contexte parent tous les appels utiles sont cross-origin. Le
+  // filtre écartait précisément ce qu'on cherche.
+  //
+  // On exclut seulement ce qui n'est manifestement pas une API de cotes :
+  // ressources statiques et télémétrie.
   function interesting(url) {
     let u;
     try { u = new URL(url, location.href); } catch { return false; }
-    if (u.origin !== location.origin) return false;
-    if (/\.(js|css|png|jpe?g|svg|gif|woff2?|ico|mp4)(\?|$)/i.test(u.pathname)) return false;
-    if (/sentry|analytics|telemetry|gtm|hotjar/i.test(u.href)) return false;
+    if (/\.(js|css|png|jpe?g|svg|gif|woff2?|ico|mp4|map)(\?|$)/i.test(u.pathname)) return false;
+    if (/sentry|analytics|telemetry|gtm|hotjar|doubleclick|facebook/i.test(u.href)) return false;
     return true;
   }
 
-  function push(url, body) {
+  function push(url, body, key) {
+    key = key || url;
     if (sent >= MAX_CAPTURES) return;
     // Clé = URL complète : deux sports sur le même endpoint sont deux
     // découvertes différentes, et il faut les deux.
-    if (seen.has(url)) return;
-    if (!body || body.length < MIN_BYTES) return;
+    if (seen.has(key)) return;
+    if (!body || body.length < MIN_BYTES) { rejected.push(['court', url]); return; }
     const t = body.trimStart()[0];
-    if (t !== '{' && t !== '[') return;      // pas du JSON : pas notre affaire
+    if (t !== '{' && t !== '[') {            // pas du JSON : pas notre affaire
+      rejected.push(['pas JSON', url]);
+      return;
+    }
 
-    seen.add(url);
+    seen.add(key);
     sent += 1;
     GM_xmlhttpRequest({
       method: 'POST',
@@ -133,5 +143,44 @@
     return origSend.apply(this, args);
   };
 
-  log('écoute active sur', location.origin, '| navigue : football complet, puis tennis');
+  // --- WebSocket -----------------------------------------------------------
+  // Beaucoup de sportsbooks Digitain poussent les cotes par socket plutôt que
+  // par requête. Si l'offre complète arrive par là, aucun `fetch` ne la
+  // montrera jamais — et on chercherait un endpoint qui n'existe pas. Mieux
+  // vaut regarder que supposer.
+  const OrigWS = window.WebSocket;
+  if (OrigWS) {
+    window.WebSocket = function (url, protocols) {
+      const ws = protocols === undefined ? new OrigWS(url) : new OrigWS(url, protocols);
+      let n = 0;
+      try {
+        log('websocket ouvert :', String(url));
+        ws.addEventListener('message', (ev) => {
+          try {
+            if (typeof ev.data !== 'string' || n >= MAX_WS_FRAMES) return;
+            n += 1;
+            push(String(url), ev.data, `ws:${url}#${n}`);
+          } catch (e) { /* ignore */ }
+        });
+      } catch (e) { /* ignore */ }
+      return ws;
+    };
+    window.WebSocket.prototype = OrigWS.prototype;
+    Object.assign(window.WebSocket, OrigWS);
+  }
+
+  // Diagnostic à la demande. Un silence a plusieurs causes possibles — le
+  // script pas injecté dans l'iframe, les appels filtrés, les cotes en
+  // socket — et sans ça on ne peut pas les distinguer.
+  window.__vb = () => ({
+    contexte: window.top === window ? 'page principale' : 'IFRAME',
+    origine: location.origin,
+    chemin: location.pathname,
+    envoyes: sent,
+    urls: [...seen],
+    ecartes: rejected.slice(-40),
+  });
+
+  log(window.top === window ? 'PAGE PRINCIPALE' : 'IFRAME', location.origin,
+      '| navigue : football complet, puis tennis | bilan : __vb()');
 })();
