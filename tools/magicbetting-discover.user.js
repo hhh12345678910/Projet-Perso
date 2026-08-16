@@ -1,14 +1,16 @@
 // ==UserScript==
 // @name         MagicBetting DÉCOUVERTE -> Valuebet
 // @namespace    valuebet
-// @version      1.0
+// @version      1.2
 // @description  Recopie vers la VM les appels d'API que MagicBetting fait lui-même.
 // @match        https://sport-ak.bldiframe.com/*
 // @match        https://www.magicbetting.be/*
 // @match        https://magicbetting.be/*
 // @match        https://magicbettingsports.be/*
+// @match        https://www.magicbettingsports.be/*
 // @run-at       document-start
 // @grant        GM_xmlhttpRequest
+// @grant        unsafeWindow
 // @connect      34.59.193.111
 // @connect      *
 // ==/UserScript==
@@ -53,6 +55,19 @@
 //   5. DÉSACTIVER ce script.
 (function () {
   'use strict';
+
+  // ⚠️ TOUT se branche sur `unsafeWindow`, la vraie fenêtre de la page.
+  //
+  // Tampermonkey exécute le script dans un BAC À SABLE dont le `window` n'est
+  // pas celui du site. Mesuré : en patchant `window.fetch`, on remplace une
+  // copie que la page n'utilise jamais — 16 captures, toutes du CMS, aucune
+  // sportive. Le CMS passait par XMLHttpRequest, dont le `prototype` est un
+  // objet PARTAGÉ entre les deux mondes, donc ce hook-là fonctionnait ; le
+  // sportif passe par `fetch`, et lui échappait entièrement.
+  //
+  // C'est encore la panne du §11 : le script tournait, envoyait, répondait
+  // 200 — et ratait exactement ce qu'on cherchait, sans le moindre signe.
+  const W = (typeof unsafeWindow !== 'undefined' && unsafeWindow) || window;
 
   const VM     = 'http://34.59.193.111:8787';
   const TOKEN  = 'REMPLACE_PAR_BETANO_INGEST_TOKEN';
@@ -112,8 +127,8 @@
   // `res.clone()` est obligatoire : lire le corps de la réponse originale le
   // consommerait et le site n'aurait plus rien à parser. On casserait
   // exactement la page qu'on observe.
-  const origFetch = window.fetch;
-  window.fetch = function (...args) {
+  const origFetch = W.fetch;
+  W.fetch = function (...args) {
     const p = origFetch.apply(this, args);
     try {
       const url = (args[0] && args[0].url) || String(args[0]);
@@ -129,13 +144,14 @@
   // Les deux sont branchés parce que rien ne garantit lequel leur couche
   // réseau utilise, et n'en brancher qu'un rendrait un silence indiscernable
   // d'une absence d'appel.
-  const origOpen = XMLHttpRequest.prototype.open;
-  const origSend = XMLHttpRequest.prototype.send;
-  XMLHttpRequest.prototype.open = function (method, url, ...rest) {
+  const XHR = W.XMLHttpRequest;
+  const origOpen = XHR.prototype.open;
+  const origSend = XHR.prototype.send;
+  XHR.prototype.open = function (method, url, ...rest) {
     this.__vb_url = url;
     return origOpen.call(this, method, url, ...rest);
   };
-  XMLHttpRequest.prototype.send = function (...args) {
+  XHR.prototype.send = function (...args) {
     try {
       if (interesting(this.__vb_url)) {
         this.addEventListener('loadend', () => {
@@ -155,9 +171,9 @@
   // par requête. Si l'offre complète arrive par là, aucun `fetch` ne la
   // montrera jamais — et on chercherait un endpoint qui n'existe pas. Mieux
   // vaut regarder que supposer.
-  const OrigWS = window.WebSocket;
+  const OrigWS = W.WebSocket;
   if (OrigWS) {
-    window.WebSocket = function (url, protocols) {
+    W.WebSocket = function (url, protocols) {
       const ws = protocols === undefined ? new OrigWS(url) : new OrigWS(url, protocols);
       let n = 0;
       try {
@@ -172,22 +188,37 @@
       } catch (e) { /* ignore */ }
       return ws;
     };
-    window.WebSocket.prototype = OrigWS.prototype;
-    Object.assign(window.WebSocket, OrigWS);
+    W.WebSocket.prototype = OrigWS.prototype;
+    Object.assign(W.WebSocket, OrigWS);
   }
 
-  // Diagnostic à la demande. Un silence a plusieurs causes possibles — le
-  // script pas injecté dans l'iframe, les appels filtrés, les cotes en
-  // socket — et sans ça on ne peut pas les distinguer.
-  window.__vb = () => ({
-    contexte: window.top === window ? 'page principale' : 'IFRAME',
-    origine: location.origin,
-    chemin: location.pathname,
-    envoyes: sent,
-    urls: [...seen],
-    ecartes: rejected.slice(-40),
-  });
+  function bilan() {
+    return {
+      contexte: window.top === window ? 'page principale' : 'IFRAME',
+      origine: location.origin,
+      chemin: location.pathname,
+      envoyes: sent,
+      urls: [...seen],
+      ecartes: rejected.slice(-40),
+    };
+  }
+  W.__vb = bilan;
+
+  // ⚠️ Le bilan s'IMPRIME tout seul, il n'est pas seulement interrogeable.
+  // `__vb()` tapé dans la console visait le bac à sable et rendait « __vb is
+  // not defined » ; et même corrigé, il faut choisir le bon cadre dans le
+  // menu de la console, et Chrome refuse le collage. Trop de façons de croire
+  // à un silence qui n'en est pas un. Un récapitulatif périodique, imprimé là
+  // où le reste s'imprime, ne demande rien à personne.
+  let dernier = -1;
+  setInterval(() => {
+    if (sent === dernier) return;      // rien de neuf : on se tait
+    dernier = sent;
+    const b = bilan();
+    console.log(`[valuebet-decouverte] BILAN ${b.contexte} ${b.origine} — `
+                + `${b.envoyes} envois`, b.urls);
+  }, 15000);
 
   log(window.top === window ? 'PAGE PRINCIPALE' : 'IFRAME', location.origin,
-      '| navigue : football complet, puis tennis | bilan : __vb()');
+      '| navigue : football complet, puis tennis | bilan auto toutes les 15 s');
 })();
