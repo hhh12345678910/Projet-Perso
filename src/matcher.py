@@ -4,7 +4,7 @@ import re
 import unicodedata
 from datetime import datetime, timedelta, timezone
 from functools import lru_cache
-from typing import Iterable, Optional
+from typing import Iterable, Optional, Protocol, TypeVar
 
 from rapidfuzz import fuzz
 
@@ -326,14 +326,31 @@ def reconcile_event_keys(
     return mapping
 
 
+class HasTeamsAndTime(Protocol):
+    """Ce dont le rapprochement a réellement besoin : deux noms et un horaire.
+
+    `match_event` ne lit jamais rien d'autre. L'exprimer permet d'apparier autre
+    chose que des `Event` de books — un résultat de match, par exemple — sans
+    écrire un second rapprochement qui divergerait du premier. C'est la règle du
+    §17.7 : un diagnostic qui mesure d'autres réglages que la production dit
+    forcément autre chose qu'elle.
+    """
+    home: str
+    away: str
+    start_time: datetime
+
+
+_Matchable = TypeVar("_Matchable", bound=HasTeamsAndTime)
+
+
 def match_event(
-    target: Event,
-    candidates: Iterable[Event],
+    target: HasTeamsAndTime,
+    candidates: Iterable[_Matchable],
     *,
     time_tolerance_minutes: int = 10,
     min_score: float = 85.0,
     ambiguity_margin: float = 4.0,
-) -> Optional[Event]:
+) -> Optional[_Matchable]:
     tol = timedelta(minutes=time_tolerance_minutes)
     best: Optional[Event] = None
     best_score = 0.0
