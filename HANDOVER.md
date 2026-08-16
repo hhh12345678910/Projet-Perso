@@ -2234,6 +2234,10 @@ cote > 6 / EV 20-35.
 
 ### 17.5 Smarkets — remis en service
 
+⛔ **PÉRIMÉ — Smarkets est éteint depuis le 16/08 (§19.6).** Mesuré à 0 % de
+CLV positive sur 24 paris. La section reste pour le raisonnement, pas pour la
+conclusion.
+
 Le §5 l'avait retiré pour une seule raison mesurée : un rafraîchissement de
 ~26 minutes DANS le cycle, silenciant un sport entier. La juridiction n'était
 pas en cause — API publique, sans authentification, source de données et non
@@ -2599,6 +2603,9 @@ activité ; sa fenêtre de 24 h dépasse le battement, donc il reste juste.
 
 ### 18.6 MagicBetting — de « inexploitable » à collecté
 
+⚠️ **En partie périmé — voir §19.2 et §19.3.** Le tennis est raccordé et
+l'offre entière est balayée : 613 cotes football sont devenues 3 845.
+
 ⚠️ **Le §15.6 est périmé.** Il concluait que les payloads chiffrés rendaient ce
 book hors d'atteinte. Il est en production.
 
@@ -2689,6 +2696,9 @@ re-télécharger depuis l'onglet Network (filtre Wasm).
 
 ### 18.8 À faire au prochain démarrage — remplace §17.10
 
+⛔ **PÉRIMÉ — remplacé par §19.9.** Les points 3, 4 et 5 sont faits ; le 2 a
+changé de nature (§19.5).
+
 1. **Vérifier la purge de 04:00** avec son budget de 7 200 s, et la taille de
    la base. Avec l'écriture parcimonieuse, `quotes` doit fondre sous le Go en
    48 h. Une fois la place libre, un `VACUUM` rendra les 34 Go du fichier.
@@ -2727,3 +2737,272 @@ MAGIC_MAX_AGE_MIN=10          # garde de fraîcheur du pont
 | `src/scrapers/digitain_crypto.py` | Déchiffre via le WASM du site |
 | `src/scrapers/magicbetting.py` | Parseur + lecture du dump |
 | `tools/magicbetting-ingest.user.js` | Pont navigateur |
+
+---
+
+## 19. Session du 16/08 — MagicBetting à pleine offre, Smarkets retiré
+
+Journée à deux faces. Côté gain : MagicBetting passe de la vitrine à l'offre
+entière et gagne le tennis. Côté perte évitée : Smarkets, branché la veille,
+s'avère produire des lignes justes fausses et coûter de l'argent — il est
+éteint. Les deux découvertes viennent du même réflexe, mesurer au lieu de
+supposer.
+
+### 19.1 La base de données — le VACUUM se résoudra seul
+
+`data/valuebet.db` pèse 34 Go dont **17,9 Go de données vivantes**, pour 7,5 Go
+de disque libre. Le `VACUUM` reste donc impossible, mais **rien n'est cassé** :
+
+- la purge n'est PAS en retard — la plus ancienne cote datait de 2,1 jours pour
+  une rétention de 2 ;
+- ces 17,9 Go sont ce que pesaient deux jours sous l'ANCIEN régime d'écriture.
+
+Profil mesuré, par tranche d'une heure :
+
+```
+14/08 08h → 15/08 08h    ~2 500 000 lignes/h     ancien régime
+15/08 14h                   630 736              transition
+15/08 20h → 16/08 06h       ~63 000 lignes/h     écriture parcimonieuse
+```
+
+Facteur 40. La fenêtre de rétention sera **100 % parcimonieuse au matin du
+18/08**, les données vivantes tomberont sous le Go, et le `VACUUM` passera sans
+effort. Rien à faire d'ici là.
+
+⚠️ **L'estimation d'espace du `VACUUM` était fausse** et le refusait quand il
+devenait utile : elle valait `taille_du_fichier × 1,1`, ce qui suppose de
+recopier 34 Go alors que la base compactée en fait moins d'un. Elle lit
+maintenant `(page_count − freelist_count) × page_size`, la taille réelle des
+données vivantes. Corrigé au passage : `VACUUM` écrit sa copie temporaire dans
+`SQLITE_TMPDIR`, pas à côté de la base — la garde mesurait donc l'espace d'un
+disque pendant que la copie partait sur un autre.
+
+**Procédure quand ce sera possible** : `VACUUM INTO` un fichier neuf, vérifier
+que `value_bets` et `closing_snapshots` ont le même compte qu'avant, puis
+échanger **daemon arrêté**. Renommer sous un daemon qui tient le fichier ouvert
+le laisserait écrire dans l'ancien inode, et ces écritures disparaîtraient sans
+la moindre erreur.
+
+### 19.2 MagicBetting — le tennis raccordé
+
+Identifiants relevés sur capture réelle, jamais devinés (§10) :
+
+| | Football | Tennis |
+|---|---|---|
+| SId | 1 | **3** |
+| Vainqueur | Id 1 (1X2) | **Id 702** |
+| Totaux | Id 3 (buts) | **Id 3** (jeux, lignes 16,5 à 28) |
+
+Le mapping des marchés est devenu **par sport**, et c'était indispensable : le
+même Id 1 signifie 1X2 en football et « total pair/impair » en tennis. Un
+dictionnaire commun aurait lu ce dernier comme un vainqueur à trois issues sur
+un sport qui n'en a que deux — devig faux, aucune erreur levée. Deux tests
+tiennent la frontière dans les deux sens.
+
+**La ligne 16,5–28 est ce qui a permis de trancher** entre jeux et sets : les
+deux s'appellent « total », portent une ligne et affichent Au-dessus/Moins, et
+un total de sets vaudrait 2,5. Confondre les deux n'aurait levé aucune erreur.
+
+Écartés volontairement : les « vainqueur » à 38 issues (401499, 401522, 401523)
+sont des vainqueurs de **tournoi**, sans contrepartie chez Pinnacle.
+
+### 19.3 MagicBetting — le balayage de l'offre entière
+
+`gettopeventslist` rendait 27 matchs. Ce n'était pas une limite d'API mais la
+page d'accueil : le catalogue du site annonce `EC=1173` en football. On
+collectait 2 % de l'offre.
+
+Hiérarchie réelle, dont les noms de paramètres **se contredisent d'un endpoint
+à l'autre** — `champId` chez l'un désigne ce que `tournamentId` désigne chez
+l'autre, tandis que `championshipId` désigne un PAYS :
+
+```
+getmixedsportlistbyperiod                  -> sports, avec EC
+getmixedchampionshiplistbyperiod?sportId   -> 90 pays, avec EC
+getmixedtournamentsbyperiod?championshipId -> compétitions sous TL, avec EC
+…withoutright?tournamentId&stakeTypes      -> les matchs
+```
+
+Le compteur `EC` présent à chaque niveau permet de trier et de ne demander que
+ce qui pèse.
+
+**Le pont ne construit plus aucune URL.** Il demande à la VM « quoi appeler
+maintenant », appelle, et repose la réponse brute à l'adresse indiquée. Le
+contrat tient en une ligne :
+
+```json
+{"fetch": [{"path": "/common/…", "post_to": "/ingest-…"}]}
+```
+
+Une réponse peut être un plan à son tour — c'est ainsi que le catalogue se
+construit **sans que le script sache ce qu'est un catalogue**. Les URL rendues
+restent RELATIVES : l'identifiant de session de 36 caractères n'est connu que
+du navigateur et expire.
+
+Deux rythmes : les grosses compétitions reviennent chaque minute, la longue
+traîne défile par tranches avec un curseur circulaire. L'offre est assemblée
+depuis **un fichier par compétition** — un balayage interrompu ne vide plus
+l'offre, et un morceau qui cesse d'être rafraîchi en sort tout seul.
+
+**Résultat mesuré** :
+
+| Sport | Avant | Après | |
+|---|---|---|---|
+| Football | 519 | **3 845** | ×7,4 |
+| Tennis | 216 | **728** | ×3,4 |
+
+Le tennis dépasse désormais Pinnacle lui-même (636). Coût : +2 s par cycle.
+
+### 19.4 La référence à la marge aberrante
+
+Cinq détections entre +146 % et +260 % d'EV, toutes des totaux over 6,5. Cause,
+sur Hodd — Strommen :
+
+```
+Smarkets  4.5 over  5.13   5.5 over 10.66   6.5 over 1.98 / under 1.07
+```
+
+À 6,5 la cote « over » **redescend**, et la somme des probabilités atteint
+144 %. Ce n'est pas un prix mais une offre isolée que personne n'a prise — ce
+qu'un carnet d'ordres affiche quand même. Pinnacle s'arrêtant à 4,5 sur ce
+match, le repli s'est déclenché exactement là où l'exchange est vide.
+
+**MagicBetting était irréprochable** : son échelle 0,5 → 6,5 est monotone et
+son over 6,5 à 12,69 cohérent. Le book avait raison, la référence était fausse.
+
+Une ligne de référence dont la marge dépasse 120 % (deux issues) ou 130 %
+(trois) est désormais écartée. Le contrôle **doit précéder le devig**, qui
+normalise à 100 % quoi qu'on lui donne : nourri d'une ligne à 144 %, il rendait
+une probabilité d'apparence normale et l'aberration devenait indétectable en
+aval.
+
+### 19.5 Les EV extrêmes — signalées, jamais coupées
+
+Le §8 réclamait un plafond d'EV depuis juillet. **C'était le mauvais outil** :
+un plafond aurait masqué le défaut du §19.4 sans le corriger, et aurait
+supprimé aussi les vraies grosses EV.
+
+À la place, l'alerte porte un bandeau au-delà de 100 % (seuils 100/120/130)
+disant quoi vérifier — comparer aux autres softbooks, et renoncer s'ils
+s'accordent entre eux loin de la « juste ». L'alerte reste entière.
+
+Le bandeau et le contrôle de marge sont complémentaires : le second attrape une
+cause précise et automatique, le premier couvre le reste — une référence peut
+être fausse **en restant cohérente**, et alors seul l'œil décide.
+
+### 19.6 Smarkets — éteint, sur mesure
+
+Un pari valorisé sur la référence de repli est aussi **clôturé** sur elle : on
+mesurait Smarkets contre lui-même. Battre une ligne bruitée ne prouve rien.
+
+Pinnacle ne price JAMAIS ces marchés (26 paris sur 28, zéro purge) : impossible
+de juger par lui. La seule règle indépendante restante est le **consensus
+dévigé des softbooks** — médiane sur au moins trois books, parce qu'Unibet,
+711, Bingoal et Scooore sont tous Kambi et que leur accord ne reflète qu'une
+source.
+
+| Règle de mesure | n | moyenne | médiane | positifs |
+|---|---|---|---|---|
+| clôture Smarkets | 24 | +32,82 % | +8,95 % | 58,3 % |
+| **consensus softbooks** | 24 | **−20,58 %** | **−21,70 %** | **0,0 %** |
+
+**Zéro positif sur vingt-quatre** — environ une chance sur seize millions que
+ce soit le hasard. Et 53 points d'écart entre les deux règles, qui mesurent
+exactement ce que vaut une référence jugée par elle-même.
+
+Le mécanisme, sur un cas : `radualbot — viktorfrydrych`, juste Smarkets à 3,71
+quand **six books** s'accordent sur 10,22. Smarkets voit 27 % de chances là où
+le marché en voit 10.
+
+⚠️ **Le défaut est structurel, pas accidentel.** Le repli ne se déclenche que
+sur les marchés que Pinnacle ignore, donc sur les compétitions confidentielles,
+donc là où le carnet d'un exchange est vide. Il va chercher sa référence
+précisément où elle est la moins fiable.
+
+`SMARKETS_ENABLED=0` : plus d'appel, plus de cache, plus de cote stockée. Le
+scraper et ses tests restent en place, la mesure se refera si la liquidité
+change. **Le book reste dans `SHARP_BOOKS`, et c'est un invariant à tenir même
+éteint** — l'en retirer en ferait un book *soft*, donc un book où l'on chasse
+une erreur de prix.
+
+### 19.7 Le trou `events`
+
+`event_rows` était construit à partir des seuls événements Pinnacle. Tout match
+qu'il ne price pas restait sans ligne — donc précisément ceux où le repli se
+déclenche. Ces paris sortaient sans nom d'équipe, sans ligue et sans heure de
+coup d'envoi : **sans CLV possible**, faute de savoir quand relever la clôture,
+et comptés quand même dans les moyennes. Vu : une détection à +90 % affichée
+« None — None ».
+
+La source est maintenant l'ensemble des clés de `fair`. C'est la bonne borne
+parce que tout value bet est adossé à une ligne juste. `build_event_rows` est
+extraite pour être testable — la règle s'était perdue en silence.
+
+### 19.8 Pièges de la session
+
+- **Un userscript Tampermonkey tourne dans un BAC À SABLE.** Patcher
+  `window.fetch` remplace une copie que la page n'appelle jamais. Résultat
+  parfaitement trompeur : 16 captures, toutes du CMS, aucune sportive — parce
+  que le CMS passe par `XMLHttpRequest`, dont le prototype EST partagé. Il faut
+  `@grant unsafeWindow` et tout brancher sur `unsafeWindow`.
+- **`@connect *` ne suffit pas** à supprimer le dialogue de confirmation, et un
+  « Interdire » cliqué une fois est mémorisé : les envois échouent ensuite en
+  silence. Nommer l'hôte explicitement.
+- **Les endpoints d'une même API ne rendent pas la même enveloppe.**
+  `gettopeventslist` rend un tableau nu, celui du balayage un objet. Le serveur
+  exigeait une liste et refusait chaque récolte avec « no events » — en
+  accusant le site.
+- **Un extracteur dupliqué donne tort au bon code.** Le rapport de sondes avait
+  sa propre copie, récursive : il comptait correctement 25 événements pendant
+  que la production les refusait tous. On en concluait que l'endpoint était bon
+  alors que rien ne l'exploitait.
+- **Mesurer une référence avec elle-même ne dit rien** (§19.6), et l'écart avec
+  la vraie mesure atteignait 53 points de CLV.
+- **Ne jamais additionner « jamais pricé » et « cotes purgées ».** Le premier
+  condamne un mécanisme, le second demande juste d'allonger la rétention. Les
+  confondre fait conclure au pire sur une limite d'outillage.
+- **`python3` du système n'a pas les dépendances** : utiliser `.venv/bin/python`.
+- **La sortie du daemon va dans `valuebet.log`, pas dans `journalctl`** — celui
+  du serveur d'ingestion, si.
+
+### 19.9 À faire au prochain démarrage — remplace §18.8
+
+1. **Le `VACUUM`** le 18/08 au matin, selon la procédure du §19.1. Puis monter
+   `PRUNE_DAYS` à 7-14 : le risque §7 (CLV perdue sur un match reporté)
+   disparaît, et `crossclose` cesse d'être bridé par la rétention.
+2. **Mesurer la CLV de MagicBetting**, maintenant qu'il pèse. Les clôtures
+   n'étaient pas encore tombées le 16/08 (0 sur 21 détections).
+   `.venv/bin/python scripts/book_health.py magicbetting`
+3. **Surveiller les `BOOK SUSPECT`** de `ev_outliers` : le balayage a multiplié
+   les matchs par sept, donc les mauvais appariements aussi. Un cas mesuré le
+   16/08 (MagicBetting seul à 8,70 quand six books tiennent 5,67).
+4. **La dérive des cycles** : 24 s le matin, 47 s l'après-midi, sans lien avec
+   le balayage (+2 s seulement). Cause non identifiée.
+5. **Élargir le premium** (§17.4) : +39 % de volume au même taux.
+6. **Remplir `results`** (§17.9) — devenu plus important : c'est la seule règle
+   de jugement qui ne dépende d'aucune référence.
+7. Reliquats : `line_speed` à repenser (§18.5), découpage en runs du
+   `pinnacle_doctor`, noms de books dédoublés dans `paris_track.csv` (§14.10).
+
+### 19.10 Nouveaux outils et réglages
+
+| Outil | Répond à |
+|---|---|
+| `scripts/book_health.py` | un book est-il *traité*, ou seulement collecté ? |
+| `scripts/ev_outliers.py` | cette EV énorme, c'est le book ou la référence ? |
+| `scripts/crossclose.py` | rejuge un repli contre Pinnacle puis le consensus |
+| `scripts/repair_events.py` | recrée les lignes `events` manquantes |
+| `scripts/magic_probe_report.py` | quels sports et marchés dans les sondes ? |
+| `scripts/magic_probe_show.py` | quelle FORME a la réponse d'un endpoint ? |
+| `tools/magicbetting-discover.user.js` | capture les appels que le site fait |
+
+```
+SMARKETS_ENABLED=0            # éteint (§19.6)
+SMARKETS_AS_REFERENCE=0       # seconde barrière, même si la collecte revient
+MAGIC_BUDGET_EVENTS=500       # événements visés par tour et par sport
+MAGIC_MAX_CALLS=30            # appels par tour — le vrai garde-fou
+MAGIC_MAX_COUNTRIES=25
+MAGIC_CATALOG_TTL_SEC=1800
+MAGIC_PART_MAX_AGE_MIN=20     # âge max d'un morceau dans l'assemblage
+MAGIC_REBUILD_SEC=10
+```
