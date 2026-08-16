@@ -96,6 +96,28 @@ MAGIC_DIR = Path(
 # daemon, sinon explorer le site en direct empoisonnerait les cotes de
 # production sans qu'on s'en aperçoive.
 MAGIC_PROBE_DIR = MAGIC_DIR / "probes"
+# Résultats de matchs, un fichier par (sport, jour). Le pont existe pour une
+# seule raison : API-Sports REFUSE les IP de datacenter et le déguise en
+# « account suspended ». Mesuré le 16/08 avec la MÊME clé — 200 depuis une IP
+# résidentielle, suspension depuis la VM. Le navigateur de l'utilisateur, lui,
+# est sur une IP résidentielle.
+#
+# Contrairement aux trois autres ponts, celui-ci n'a pas besoin d'un onglet
+# permanent : un résultat de match ne bouge plus une fois le match fini, et le
+# plan ne réclame que les journées manquantes. Quelques appels par jour
+# suffisent, et un PC éteint 24 h ne perd rien — il prend du retard.
+SCORES_DIR = Path(
+    os.getenv("SCORES_INGEST_DIR", str(_project_dir() / "data" / "scores"))
+)
+# Nombre de journées ACHEVÉES que le plan garde à l'œil. La journée courante
+# n'y est jamais : ses matchs ne sont pas finis, et la redemander à chaque tour
+# brûlerait le quota pour des scores partiels.
+SCORES_BRIDGE_DAYS = int(os.getenv("SCORES_BRIDGE_DAYS", "3"))
+# Une journée n'est déclarée DÉFINITIVE que six heures après sa fin : les
+# derniers matchs d'Amérique du Sud se terminent après minuit UTC, et un
+# fichier capturé trop tôt les porterait encore « en cours ». Passé ce délai,
+# la journée n'est plus jamais redemandée.
+SCORES_FINAL_AFTER_SEC = int(os.getenv("SCORES_FINAL_AFTER_SEC", str(6 * 3600)))
 # Un fichier par compétition balayée, réassemblés en <sport>.json.
 #
 # Pourquoi par morceaux plutôt qu'un seul fichier réécrit : un balayage
@@ -422,7 +444,90 @@ class Handler(BaseHTTPRequestHandler):
                 return
             self._handle_magic_plan()
             return
+        if route == "/scores-plan":
+            if not self._authorized():
+                self._send(401, {"error": "bad or missing token"})
+                return
+            self._handle_scores_plan()
+            return
         self._send(404, {"error": "not found"})
+
+    def _handle_scores_plan(self) -> None:
+        """Dire au pont quelles journées de résultats manquent encore.
+
+        Même contrat que `/magic-plan`, et pour la même raison : le userscript
+        ne construit aucune URL, ne connaît aucune règle de fraîcheur et ne
+        décide de rien. Il appelle ce qu'on lui dit et repose la réponse brute.
+        Tout ce qui peut se tromper reste en Python (§18.6).
+
+        La règle de sélection tient en deux lignes, et c'est ce qui rend le
+        quota négligeable : on ne demande que des journées ACHEVÉES, et une
+        journée déjà capturée plus de six heures après sa fin ne sera plus
+        jamais redemandée — un score final ne change pas.
+        """
+        import time as _time
+        from datetime import date as _date, datetime as _dt, timedelta as _td, timezone as _tz
+
+        today = _dt.now(_tz.utc).date()
+        now = _time.time()
+        fetch = []
+        for back in range(1, SCORES_BRIDGE_DAYS + 1):
+            day: _date = today - _td(days=back)
+            path = SCORES_DIR / "soccer" / f"{day.isoformat()}.json"
+            if path.exists():
+                day_end = _dt.combine(
+                    day + _td(days=1), _dt.min.time(), tzinfo=_tz.utc).timestamp()
+                if path.stat().st_mtime >= day_end + SCORES_FINAL_AFTER_SEC:
+                    continue                      # journée définitive, on n'y revient pas
+            fetch.append({
+                "path": f"/fixtures?date={day.isoformat()}&timezone=UTC",
+                "post_to": f"/ingest-scores?sport=soccer&day={day.isoformat()}",
+            })
+
+        # Un plan vide est le cas NORMAL ici — tout est à jour. On le journalise
+        # quand même une fois de temps en temps, sinon « rien à faire » et
+        # « pont muet » restent indiscernables, ce qui est le mode de
+        # défaillance dominant du projet.
+        _log(f"200 scores-plan : {len(fetch)} journée(s) à récupérer")
+        self._send(200, {"fetch": fetch})
+
+    def _handle_scores_ingest(self, raw: bytes) -> None:
+        """Ranger la réponse BRUTE d'une journée de résultats.
+
+        Aucune analyse ici : le parseur vit dans `src/score_sources.py`, où il
+        est testé contre des échantillons réels. On vérifie seulement que la
+        réponse a la forme attendue, parce qu'un corps d'erreur enregistré à la
+        place des matchs se lirait plus tard comme une journée vide — donc
+        comme « ces matchs n'ont pas de résultat », ce qui est faux.
+        """
+        from urllib.parse import parse_qs, urlparse
+
+        qs = parse_qs(urlparse(self.path).query)
+        sport = (qs.get("sport") or [""])[0]
+        day = (qs.get("day") or [""])[0]
+        if sport != "soccer" or not day:
+            self._send(400, {"error": f"sport/day invalides: {sport!r}/{day!r}"})
+            return
+
+        try:
+            data = json.loads(raw)
+        except ValueError as e:
+            self._send(400, {"error": f"invalid JSON: {e}"})
+            return
+        if not isinstance(data, dict) or "response" not in data:
+            self._send(422, {"error": "réponse sans champ 'response'"})
+            return
+        # `errors` porte le refus d'API-Sports. L'enregistrer produirait un
+        # fichier lisible et vide, indiscernable d'une journée sans match.
+        if data.get("errors"):
+            _log(f"422 scores {day} refusé par la source : {data['errors']}")
+            self._send(422, {"error": f"source: {data['errors']}"})
+            return
+
+        n = len(data.get("response") or [])
+        _atomic_write(SCORES_DIR / sport / f"{day}.json", raw)
+        _log(f"200 scores {sport} {day} : {n} matchs -> {sport}/{day}.json")
+        self._send(200, {"ok": True, "sport": sport, "day": day, "fixtures": n})
 
     def _handle_cookie(self, raw: bytes) -> None:
         """Store a cookie + User-Agent pushed by the userscript.
@@ -917,7 +1022,7 @@ class Handler(BaseHTTPRequestHandler):
         if route not in ("/ingest", "/ingest-cookie", "/discover", "/sample",
                          "/ingest-prematch", "/ingest-circus",
                          "/ingest-magicbetting", "/probe-magicbetting",
-                         "/magic-catalog"):
+                         "/magic-catalog", "/ingest-scores"):
             self._send(404, {"error": "not found"})
             return
         if not self._authorized():
@@ -934,6 +1039,9 @@ class Handler(BaseHTTPRequestHandler):
             return
 
         raw = self.rfile.read(length)
+        if route == "/ingest-scores":
+            self._handle_scores_ingest(raw)
+            return
         if route == "/ingest-cookie":
             self._handle_cookie(raw)
             return

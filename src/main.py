@@ -52,7 +52,7 @@ from .scrapers.meridianbet import MeridianScraper, parse_offer as meridian_parse
 from .scrapers.napoleon import NapoleonScraper, parse_by_date as napoleon_parse_by_date
 from .scrapers.starcasinosport import StarCasinoSportScraper, parse_get_events as starcasinosport_parse_get_events
 from .scrapers.unibet import UnibetScraper, parse_listview as unibet_parse_listview
-from .score_sources import PROVIDERS as SCORE_PROVIDERS
+from .score_sources import provider_for as score_provider_for
 from .scores import OurEvent, bind_results
 from .storage import Storage
 from .surebet import find_surebets, Surebet
@@ -4163,7 +4163,7 @@ def results_update(
             table.add_row(sp, "0", "0", "—", "0", "—")
             continue
 
-        provider_cls = SCORE_PROVIDERS.get(sp)
+        provider_cls = score_provider_for(sp)
         if provider_cls is None:
             console.print(f"[yellow]{sp} : aucune source de scores configurée.[/yellow]")
             continue

@@ -376,4 +376,70 @@ class LiveTennisScores:
         return results, counters
 
 
-PROVIDERS = {"soccer": ApiFootballScores, "tennis": LiveTennisScores}
+class BridgedFootballScores:
+    """Résultats de football lus depuis le pont navigateur.
+
+    Même parseur que l'appel direct — c'est tout l'intérêt : le userscript
+    repose la réponse BRUTE d'API-Sports, donc `parse_apifootball_results`
+    n'a pas à savoir par où elle est arrivée, et les mesures faites sur la
+    route directe restent valables telles quelles.
+
+    Existe parce qu'API-Sports refuse les IP de datacenter (voir
+    `ApiFootballScores`). Le navigateur de l'utilisateur est sur une IP
+    résidentielle ; il appelle, la VM range et analyse.
+    """
+
+    name = "api-football (pont)"
+    sports = ("soccer",)
+
+    def __init__(self, directory: str | None = None) -> None:
+        from pathlib import Path
+        self.dir = Path(directory or os.getenv("SCORES_INGEST_DIR", "data/scores"))
+
+    def __enter__(self) -> "BridgedFootballScores":
+        return self
+
+    def __exit__(self, *exc: object) -> None:
+        return None
+
+    def fetch_results(self, sport: str, day: date) -> list[MatchResult]:
+        results, _ = self.fetch_with_counters(sport, day)
+        return results
+
+    def fetch_with_counters(
+        self, sport: str, day: date,
+    ) -> tuple[list[MatchResult], dict[str, int]]:
+        if sport != "soccer":
+            return [], {"sport_non_couvert": 1}
+        path = self.dir / sport / f"{day.isoformat()}.json"
+        if not path.exists():
+            # Distinct d'une journée sans match : le pont n'a pas encore posé
+            # ce fichier. Confondre les deux ferait conclure que ces matchs
+            # n'ont pas de résultat, alors qu'ils n'ont pas été demandés.
+            return [], {"journee_non_pontee": 1}
+        import json
+        try:
+            payload = json.loads(path.read_text(encoding="utf-8"))
+        except (OSError, ValueError) as e:
+            raise RuntimeError(f"pont scores: {path} illisible — {e}") from e
+        return parse_apifootball_results(payload)
+
+
+def provider_for(sport: str) -> type | None:
+    """La source à utiliser pour ce sport, décidée à l'APPEL et non à l'import.
+
+    Lire l'environnement au chargement du module figerait la route au démarrage
+    du process : poser `SCORES_FOOTBALL_BRIDGE=1` dans `.env` n'aurait alors
+    aucun effet visible, et rien ne dirait pourquoi. C'est le §19.11 — un
+    service actif qui sert du code, ou ici de la configuration, déjà périmée.
+
+    Le choix reste explicite : pas de repli automatique du direct vers le pont,
+    qui masquerait le refus d'IP qu'on veut précisément voir.
+    """
+    if sport == "soccer":
+        if os.getenv("SCORES_FOOTBALL_BRIDGE", "").strip().lower() in ("1", "true", "yes"):
+            return BridgedFootballScores
+        return ApiFootballScores
+    if sport == "tennis":
+        return LiveTennisScores
+    return None

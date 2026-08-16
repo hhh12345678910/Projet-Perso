@@ -186,3 +186,57 @@ def test_suspended_message_is_not_reinterpreted_on_the_relayed_route():
 
     msg = _football_error_message({"access": "Your account is suspended"}, "rapidapi")
     assert "datacenter" not in msg
+
+
+# ================================================================= pont ====
+
+def test_bridged_provider_parses_exactly_like_the_direct_route(tmp_path):
+    """Le userscript repose la réponse BRUTE, donc le même parseur s'applique —
+    et les mesures faites sur la route directe restent valables."""
+    import shutil
+    from datetime import date
+
+    from src.score_sources import BridgedFootballScores
+
+    day = date(2026, 8, 15)
+    d = tmp_path / "soccer"
+    d.mkdir(parents=True)
+    shutil.copy(FIXTURES / "apifootball_fixtures_sample.json", d / f"{day.isoformat()}.json")
+
+    with BridgedFootballScores(directory=str(tmp_path)) as p:
+        bridged, counters = p.fetch_with_counters("soccer", day)
+    direct, direct_counters = _football()
+
+    assert [r.source_id for r in bridged] == [r.source_id for r in direct]
+    assert counters == direct_counters
+
+
+def test_missing_day_is_distinct_from_a_day_without_matches(tmp_path):
+    """Confondre les deux ferait conclure que ces matchs n'ont pas de résultat,
+    alors qu'ils n'ont simplement pas encore été demandés au pont."""
+    from datetime import date
+
+    from src.score_sources import BridgedFootballScores
+
+    with BridgedFootballScores(directory=str(tmp_path)) as p:
+        results, counters = p.fetch_with_counters("soccer", date(2026, 8, 15))
+    assert results == []
+    assert counters == {"journee_non_pontee": 1}
+
+
+def test_route_is_decided_at_call_time_not_at_import(monkeypatch):
+    """Lire l'environnement à l'import figerait la route au démarrage du
+    process : poser SCORES_FOOTBALL_BRIDGE=1 n'aurait aucun effet et rien ne
+    dirait pourquoi. C'est le §19.11 appliqué à la configuration."""
+    from src.score_sources import (
+        ApiFootballScores, BridgedFootballScores, LiveTennisScores, provider_for,
+    )
+
+    monkeypatch.delenv("SCORES_FOOTBALL_BRIDGE", raising=False)
+    assert provider_for("soccer") is ApiFootballScores
+
+    monkeypatch.setenv("SCORES_FOOTBALL_BRIDGE", "1")
+    assert provider_for("soccer") is BridgedFootballScores
+
+    assert provider_for("tennis") is LiveTennisScores
+    assert provider_for("basketball") is None
