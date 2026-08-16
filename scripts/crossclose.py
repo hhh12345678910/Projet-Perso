@@ -40,6 +40,12 @@ from statistics import mean, median
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
+import os                                                # noqa: E402
+
+# La même valeur que la purge nocturne : au-delà, les cotes n'existent plus et
+# leur absence ne dit rien de ce que Pinnacle pricait.
+RETENTION_DAYS = float(os.getenv("PRUNE_DAYS", "2"))
+
 from src.config import ScanConfig                        # noqa: E402
 from src.devig import devig                              # noqa: E402
 from src.storage import Storage                          # noqa: E402
@@ -102,7 +108,13 @@ def main() -> int:
         return 1
 
     sur_ref, sur_pin, apparies = [], [], []
-    sans_contrepartie = 0
+    # ⚠️ Trois causes d'absence, et il ne faut SURTOUT pas les additionner.
+    # « Pinnacle ne price jamais ce marché » condamne le repli : il serait
+    # structurellement invérifiable. « Les cotes sont purgées » ne condamne
+    # rien du tout — il suffit d'allonger la rétention et de réessayer. Les
+    # confondre ferait conclure au pire sur une limite d'outillage.
+    jamais_price = purge = sans_match = 0
+    limite = datetime.now(timezone.utc) - timedelta(days=RETENTION_DAYS)
 
     for b in bets:
         clv_ref = (b["odd_taken"] / b["ref_close"] - 1) * 100
@@ -110,12 +122,12 @@ def main() -> int:
 
         start = b["start_time"]
         if not start:
-            sans_contrepartie += 1
+            sans_match += 1
             continue
         try:
             ko = datetime.fromisoformat(start)
         except ValueError:
-            sans_contrepartie += 1
+            sans_match += 1
             continue
         if ko.tzinfo is None:
             ko = ko.replace(tzinfo=timezone.utc)
@@ -128,15 +140,25 @@ def main() -> int:
         fair_pin = fair_from_group(rows, b["outcome_label"], b["line"],
                                    cfg.devig_method) if rows else None
         if not fair_pin:
-            sans_contrepartie += 1
+            # Le coup d'envoi est-il antérieur à la rétention ? Alors les cotes
+            # de ce match ont été supprimées, et leur absence ne dit rien de ce
+            # que Pinnacle pricait.
+            if ko < limite:
+                purge += 1
+            else:
+                jamais_price += 1
             continue
         clv_pin = (b["odd_taken"] / fair_pin - 1) * 100
         sur_pin.append(clv_pin)
         apparies.append((b, clv_ref, clv_pin, fair_pin))
 
     print(f"=== {len(bets)} paris référencés {ref}, clôturés ===")
-    print(f"    {sans_contrepartie} sans clôture Pinnacle exploitable "
-          f"(marché jamais pricé, ou cotes purgées)\n")
+    print(f"    {len(apparies):>3} comparables à Pinnacle")
+    print(f"    {jamais_price:>3} sans ligne Pinnacle même près du coup d'envoi "
+          f"— marché réellement ignoré")
+    print(f"    {purge:>3} coup d'envoi antérieur à {RETENTION_DAYS} j : cotes "
+          f"purgées, indécidable")
+    print(f"    {sans_match:>3} sans match rattaché dans `events`\n")
     print(f"{'règle de mesure':22} {'n':>6} {'moyenne':>9} {'médiane':>9} "
           f"{'positifs':>8} {'σ':>6}")
     print("-" * 66)
@@ -145,11 +167,20 @@ def main() -> int:
         print(f"{'  dont appariés':22} {stats([x[1] for x in apparies])}")
         print(f"{'clôture Pinnacle':22} {stats(sur_pin)}")
 
+    if len(apparies) < 30:
+        print(f"\n⚠️ {len(apparies)} paris comparables : trop peu pour conclure, "
+              f"dans un sens comme dans l'autre.")
+        if purge > jamais_price:
+            print("   La cause dominante est la PURGE, pas l'absence de ligne "
+                  "Pinnacle.\n   C'est une limite d'outillage, pas un verdict "
+                  "sur la référence :\n   allonger PRUNE_DAYS après le VACUUM "
+                  "et refaire tourner.")
+        elif jamais_price:
+            print("   La cause dominante est que Pinnacle ne price JAMAIS ces "
+                  "marchés,\n   même près du coup d'envoi. Le repli est alors "
+                  "structurellement\n   invérifiable — aucune règle fiable "
+                  "n'existe pour le juger.")
     if not apparies:
-        print("\nAucun pari n'a de contrepartie Pinnacle : rien à comparer.")
-        print("Soit ces marchés ne sont jamais pricés, soit la rétention de "
-              "2 jours\na purgé les clôtures. Refaire tourner en gardant les "
-              "cotes plus longtemps.")
         return 0
 
     print(f"\n{'écart':22} {mean([x[2] for x in apparies]) - mean([x[1] for x in apparies]):+.2f} "
