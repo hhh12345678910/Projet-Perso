@@ -175,7 +175,7 @@ def main() -> int:
                     continue
                 a = agg.setdefault(st.get("Id"), {
                     "name": st.get("N"), "events": 0, "stakes": 0,
-                    "labels": Counter(), "lines": 0,
+                    "labels": Counter(), "lines": 0, "vals": [],
                 })
                 a["events"] += 1
                 for s in st.get("Stakes") or []:
@@ -185,15 +185,32 @@ def main() -> int:
                     a["labels"][str(s.get("N") or "?")] += 1
                     if s.get("A") is not None:
                         a["lines"] += 1
+                        try:
+                            a["vals"].append(float(s["A"]))
+                        except (TypeError, ValueError):
+                            pass
 
-        print(f"   {'Id':>7} {'nom':28} {'évts':>5} {'cotes':>7} {'lignes':>7}  issues")
+        def _span(a) -> str:
+            """L'étendue des lignes, seule façon de savoir ce qu'on compte.
+
+            Un total de JEUX au tennis court de 18,5 à 24,5 ; un total de SETS
+            vaut 2,5. Les deux s'appellent « total », portent une ligne et
+            affichent Au-dessus/Moins : rien ne les distingue SAUF la valeur.
+            Comparer un total de sets au total de jeux de Pinnacle ne rendrait
+            aucune erreur, seulement des cotes absurdes — c'est déjà le piège
+            noté sur Circus."""
+            v = a["vals"]
+            return f"{min(v):g}…{max(v):g}" if v else ""
+
+        print(f"   {'Id':>7} {'nom':28} {'évts':>5} {'cotes':>7} {'lignes':>13}  issues")
         for mid, a in sorted(agg.items(), key=lambda kv: -kv[1]["stakes"]):
             mapped = MARKET_BY_STAKE_TYPE.get(mid)
             flag = f"[{mapped.value}]" if mapped else ("[doublon vedette]"
                                                        if isinstance(mid, int) and mid < 0 else "")
             labels = ", ".join(l for l, _ in a["labels"].most_common(4))
+            span = f"{a['lines']:>5} {_span(a):>7}" if a["lines"] else f"{'—':>13}"
             print(f"   {str(mid):>7} {str(a['name'])[:28]:28} {a['events']:>5} "
-                  f"{a['stakes']:>7} {a['lines']:>7}  {labels[:52]} {flag}")
+                  f"{a['stakes']:>7} {span}  {labels[:52]} {flag}")
 
         # Preuve structurelle, pas devinette de libellé.
         if not known:
@@ -203,13 +220,18 @@ def main() -> int:
                 if isinstance(mid, int) and mid < 0:
                     continue
                 lab = set(a["labels"])
-                if lab and lab <= noms:
-                    print(f"   Id {mid} : TOUTES les issues sont des noms "
-                          f"d'équipe/joueur → marché vainqueur, "
-                          f"{len(lab & noms)} issues distinctes")
-                elif a["lines"] and a["lines"] == a["stakes"]:
-                    print(f"   Id {mid} : toutes les cotes portent une ligne `A` "
-                          f"→ marché de totaux ({', '.join(sorted(lab)[:4])})")
+                # ⚠️ La PRÉSENCE D'UNE LIGNE se teste EN PREMIER. Un handicap
+                # nomme lui aussi ses issues d'après les équipes : la première
+                # version classait donc « marché vainqueur » les Id 2 et 2532,
+                # qui sont des handicaps. Ce qui sépare les deux n'est pas le
+                # nom des issues mais le fait de porter un seuil.
+                if a["lines"] and a["lines"] == a["stakes"]:
+                    kind = "handicap" if lab <= noms else "totaux"
+                    print(f"   Id {mid} : toutes les cotes portent une ligne "
+                          f"({_span(a)}) → {kind} ({', '.join(sorted(lab)[:3])})")
+                elif lab and lab <= noms:
+                    print(f"   Id {mid} : issues = noms de joueur/équipe, aucune "
+                          f"ligne → vainqueur, {len(lab & noms)} issues distinctes")
 
     print("\nRappel §10 : ne raccorder un Id qu'après l'avoir VU dans ce "
           "tableau. Un Id deviné rend un book muet sans lever d'erreur.")
