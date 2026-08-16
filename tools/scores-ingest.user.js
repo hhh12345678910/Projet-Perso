@@ -4,9 +4,12 @@
 // @version      1.0
 // @description  Relaie les résultats de football depuis une IP résidentielle vers la VM.
 // @match        https://www.betanosports.be/*
-// @match        https://www.circus.be/*
+// @match        https://betanosports.be/*
+// @match        *://*.circus-sport.be/*
 // @match        https://www.magicbetting.be/*
+// @match        https://magicbettingsports.be/*
 // @grant        GM_xmlhttpRequest
+// @grant        GM_registerMenuCommand
 // @connect      v3.football.api-sports.io
 // @connect      34.59.193.111
 // @run-at       document-idle
@@ -130,6 +133,19 @@
         log('échec sur ' + item.path + ': ' + e.message);
       }
     }
+  }
+
+  // Déclencheur manuel dans le menu Tampermonkey. Sans lui, vérifier une
+  // installation demande d'attendre le tour suivant, et un pont muet ressemble
+  // exactement à un pont qui n'a rien à faire — c'est le mode de défaillance
+  // dominant du projet. Ici on force le tour et on lit la console tout de
+  // suite. Il ignore le verrou : c'est une demande explicite de l'utilisateur.
+  if (typeof GM_registerMenuCommand === 'function') {
+    GM_registerMenuCommand('⚽ Récupérer les résultats maintenant', () => {
+      try { localStorage.removeItem(LOCK); } catch (e) { /* sans importance */ }
+      log('déclenchement manuel');
+      tick();
+    });
   }
 
   tick();
