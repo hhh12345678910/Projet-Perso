@@ -3377,18 +3377,77 @@ def _clv_breakdown(rows: list[dict], dim: str, title: str,
     console.print(t)
 
 
+def _parse_report_date(raw: str, *, end_of_day: bool) -> datetime:
+    """Accepte JJ/MM/AAAA, AAAA-MM-JJ et JJ/MM, en UTC.
+
+    Trois formats parce qu'on tape ces bornes à la main, entre deux commandes,
+    et qu'un format refusé au milieu d'une analyse coûte plus cher que
+    dix lignes de tolérance. `--until` porte sur la FIN du jour : sinon
+    `--until 17/08` exclurait le 17 août tout entier, ce qui est exactement
+    l'inverse de ce qu'on croit demander.
+    """
+    s = raw.strip()
+    for fmt in ("%d/%m/%Y", "%Y-%m-%d", "%d/%m"):
+        try:
+            d = datetime.strptime(s, fmt)
+        except ValueError:
+            continue
+        if fmt == "%d/%m":
+            d = d.replace(year=datetime.now(timezone.utc).year)
+        if end_of_day:
+            d = d.replace(hour=23, minute=59, second=59)
+        return d.replace(tzinfo=timezone.utc)
+    raise typer.BadParameter(
+        f"date illisible : {raw!r}. Formats acceptés : 17/08/2026, 2026-08-17, 17/08."
+    )
+
+
+def _within_window(raw: str | None, lo: datetime | None,
+                   hi: datetime | None) -> bool:
+    """Une détection sans horodatage lisible est ÉCARTÉE d'une fenêtre.
+
+    La garder reviendrait à la compter dans toutes les fenêtres à la fois, y
+    compris celles qui ne la contiennent pas — et une moyenne calculée sur des
+    paris qui n'appartiennent pas à la période ne mesure rien.
+    """
+    if not raw:
+        return False
+    try:
+        t = datetime.fromisoformat(str(raw))
+    except (TypeError, ValueError):
+        return False
+    if t.tzinfo is None:
+        t = t.replace(tzinfo=timezone.utc)
+    return (lo is None or t >= lo) and (hi is None or t <= hi)
+
+
 @app.command(name="clv-report")
 def clv_report(
     detected: bool = typer.Option(
         False, "--detected",
         help="Inclure aussi la population complète des détections (bruyante).",
     ),
+    since: str = typer.Option(
+        "", "--since", help="Ne garder que les détections à partir de cette date "
+                            "(JJ/MM/AAAA, AAAA-MM-JJ, ou JJ/MM)."),
+    until: str = typer.Option(
+        "", "--until", help="…et jusqu'à celle-ci, incluse."),
 ):
     """CLV mesuré contre la ligne de clôture DÉVIGÉE.
 
     Deux populations, et seule la première compte pour décider : les paris que
     tu as réellement joués, et l'ensemble des détections — dont l'immense
-    majorité n'a jamais été jouée."""
+    majorité n'a jamais été jouée.
+
+    `--since` / `--until` bornent sur la date de DÉTECTION. C'est ce qui permet
+    de répondre à la seule question qui vaille pendant une mauvaise série :
+    « mon edge a-t-il bougé, ou est-ce de la variance ? » La courbe de bankroll
+    ment dans les deux sens, le CLV sur la même fenêtre non.
+
+    ⚠️ Sur une fenêtre courte les effectifs s'effondrent, et un CLV moyen sur
+    quelques dizaines de paris ne distingue rien. Le taux de positives est plus
+    robuste que la moyenne : le CLV a des queues épaisses, et une poignée de
+    gros gagnants déplace la moyenne sans rien dire de la régularité."""
     cfg = ScanConfig()
     storage = Storage(cfg.db_path)
     teams.init(storage)
@@ -3411,6 +3470,18 @@ def clv_report(
             "Relance `close-lines` : les nouvelles captures en auront une."
         )
         return
+
+    if since or until:
+        lo = _parse_report_date(since, end_of_day=False) if since else None
+        hi = _parse_report_date(until, end_of_day=True) if until else None
+        before = len(rows)
+        rows = [r for r in rows if _within_window(r.get("detected_at"), lo, hi)]
+        label = (f"depuis {lo:%d/%m/%Y}" if lo else "") + \
+                (" " if lo and hi else "") + (f"jusqu'au {hi:%d/%m/%Y}" if hi else "")
+        console.print(f"[cyan]Fenêtre {label} — {len(rows)} paris sur {before}.[/cyan]")
+        if not rows:
+            console.print("[bold]Aucun pari détecté sur cette fenêtre.[/bold]")
+            return
 
     for r in rows:
         r["sport"] = r["sport"] or "unknown"
