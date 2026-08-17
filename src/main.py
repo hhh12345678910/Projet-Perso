@@ -320,6 +320,92 @@ def _pinnacle_health(sport: str, *, ok: bool, tg_cfg) -> None:
         )
 
 
+# Un softbook muet ne se voit NULLE PART aujourd'hui. Le 16/08, Betano est
+# resté quatre heures sans une seule cote — onglet fermé — et le seul symptôme
+# était une ligne dans `valuebet.log` que personne ne lisait. Pendant ce temps
+# le book continue d'exister dans les rapports, ses détections manquantes ne
+# manquent à personne, et la perte est invisible.
+#
+# Deux seuils, et il faut les DEUX. La durée seule se déclencherait sur un seul
+# cycle anormalement long — pendant une purge ils montent à 9-24 minutes
+# (§18.4). Le nombre de cycles seul ne veut rien dire non plus, puisqu'un cycle
+# dure de 24 s à 24 min selon le moment : cinq cycles valent deux minutes ou
+# deux heures.
+#
+# 15 minutes, et non les 20 de Pinnacle : les books les plus rapides corrigent
+# leur erreur en 4 à 6 minutes (§16.3), donc un quart d'heure d'aveuglement sur
+# un book coûte déjà des occasions entières. Et contrairement à Pinnacle, dont
+# la panne se voit à l'effondrement des détections, un seul book absent ne
+# change rien de visible.
+_BOOK_ALERT_AFTER_MIN = float(os.getenv("BOOK_ALERT_AFTER_MIN", "15"))
+_BOOK_ALERT_AFTER_CYCLES = int(os.getenv("BOOK_ALERT_AFTER_CYCLES", "5"))
+
+_BOOK_SEEN: set[tuple[str, str]] = set()
+_BOOK_FAILS: dict[tuple[str, str], int] = {}
+_BOOK_DOWN_SINCE: dict[tuple[str, str], float] = {}
+_BOOK_ALERTED: set[tuple[str, str]] = set()
+
+
+def _book_health(sport: str, quotes: Iterable[OddQuote], tg_cfg,
+                 now: float | None = None) -> None:
+    """Alerter quand un book qui produisait cesse de produire.
+
+    La liste des books surveillés se construit toute seule : un couple
+    (book, sport) y entre le jour où il rend sa première cote. Rien à
+    configurer, et surtout rien à maintenir — un book coupé par
+    `BOOKS_DISABLED`, ou qui ne couvre pas ce sport, n'y entre jamais et ne
+    peut donc pas alerter à vide. C'est ce qui distingue « ce book est absent »
+    de « ce book n'a jamais existé ici », les deux donnant zéro cote.
+    """
+    now = time.monotonic() if now is None else now
+    live: Counter = Counter()
+    for q in quotes:
+        live[q.book.value] += 1
+
+    for book in live:
+        _BOOK_SEEN.add((book, sport))
+
+    for key in [k for k in _BOOK_SEEN if k[1] == sport]:
+        book = key[0]
+        if live.get(book):
+            if key in _BOOK_ALERTED:
+                down = now - _BOOK_DOWN_SINCE.get(key, now)
+                send_system_alert(
+                    tg_cfg,
+                    f"✅ <b>{book} de retour</b> — {sport}\n"
+                    f"Absence de {_fmt_minutes(down)} "
+                    f"({_BOOK_FAILS.get(key, 0)} cycles). Les value bets de ce "
+                    f"book pendant ce temps sont perdus.",
+                    print_fn=lambda s: console.print(f"[yellow]{s}[/yellow]"),
+                )
+                _BOOK_ALERTED.discard(key)
+            _BOOK_FAILS[key] = 0
+            _BOOK_DOWN_SINCE.pop(key, None)
+            continue
+
+        _BOOK_FAILS[key] = _BOOK_FAILS.get(key, 0) + 1
+        _BOOK_DOWN_SINCE.setdefault(key, now)
+        down = now - _BOOK_DOWN_SINCE[key]
+        if (down >= _BOOK_ALERT_AFTER_MIN * 60
+                and _BOOK_FAILS[key] >= _BOOK_ALERT_AFTER_CYCLES
+                and key not in _BOOK_ALERTED):
+            _BOOK_ALERTED.add(key)
+            # Les trois books à pont navigateur sont la cause de loin la plus
+            # fréquente, et la seule que l'utilisateur peut corriger en dix
+            # secondes. Le message le dit plutôt que de laisser chercher.
+            hint = ("Vérifie que l'onglet est ouvert et que le pont pousse.\n"
+                    if book in ("betano_be", "circus_be", "magicbetting")
+                    else "")
+            send_system_alert(
+                tg_cfg,
+                f"🚨 <b>{book} muet</b> — {sport}\n"
+                f"{_fmt_minutes(down)} sans une seule cote "
+                f"({_BOOK_FAILS[key]} cycles).\n{hint}"
+                f"À vérifier : <code>./doctor.sh</code>",
+                print_fn=lambda s: console.print(f"[yellow]{s}[/yellow]"),
+            )
+
+
 def find_value_bets(
     candidate_quotes: list[OddQuote],
     fair_lines: dict[tuple[str, MarketType, float | None], FairLine],
@@ -2425,6 +2511,13 @@ def _daemon_scan_sport(
         if secondary:
             _offered += len(secondary)
             _written += storage.insert_quotes_sparse(secondary)
+
+        # Sur soft_raw et non soft_q : on demande « ce book répond-il ? », pas
+        # « ses cotes s'apparient-elles ? ». Un book qui répond mais dont rien
+        # ne s'apparie est un défaut de rapprochement, pas une absence — les
+        # confondre enverrait chercher un onglet fermé pendant que le vrai
+        # problème est ailleurs.
+        _book_health(current_sport, soft_raw, tg_cfg)
 
         ref_keys = {fl.event_key for fl in fair.values()}
         soft_q = remap_to_reference(soft_raw, ref_keys, current_sport)
