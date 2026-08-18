@@ -4204,7 +4204,9 @@ def track_update(
 
     track.write_all(out, rows)
 
-    i_clv, i_res, i_pnl = (TRACK_HEADERS.index(h) for h in ("CLV %", "Résultat", "P&L"))
+    i_clv, i_res, i_pnl, i_stake = (
+        TRACK_HEADERS.index(h)
+        for h in ("CLV %", "Résultat", "P&L", "Mise fictive"))
     clvs = [float(r[i_clv]) for r in rows if r[i_clv]]
     settled = [r for r in rows if r[i_res]]
     total = sum(float(r[i_pnl]) for r in settled if r[i_pnl])
@@ -4220,11 +4222,16 @@ def track_update(
         console.print("  [yellow]Aucune clôture dévigée encore rattachée — "
                       "lance `close-lines`.[/yellow]")
     if settled:
-        staked = len(settled) * TRACK_STAKE_EUR
+        # Somme des mises RÉELLEMENT enregistrées, jamais un forfait multiplié
+        # par le nombre de paris : depuis le 16/08 les mises valent 35 ou 45 €
+        # selon l'EV, et un dénominateur constant fausserait le ROI — le
+        # premier chiffre qu'on lit, et celui sur lequel on dimensionne.
+        staked = sum(float(r[i_stake]) for r in settled if r[i_stake])
         console.print(
             f"  Résultats connus : {len(settled)}/{len(rows)}  "
             f"P&L {total:+.2f}€ sur {staked:.0f}€ misés "
-            f"(ROI {total / staked * 100:+.2f}%)"
+            f"(ROI {total / staked * 100:+.2f}%)" if staked else
+            f"P&L {total:+.2f}€ — aucune mise enregistrée, ROI incalculable"
         )
     else:
         console.print(
