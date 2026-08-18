@@ -14,6 +14,18 @@ laissait donc passer ces faux cycles courts, qui tiraient le minimum vers le
 bas et faisaient croire à des cycles éclair. Le compteur repart à 1 : c'est ce
 signal-là qui est fiable.
 
+⚠️ DEUX mesures, et les confondre fait conclure de travers.
+
+    PÉRIODE = écart entre deux en-têtes de cycle. Elle contient le travail ET
+      le sommeil qui suit. C'est la fraîcheur réelle des cotes : le temps qui
+      sépare deux relevés d'un même book.
+    TRAVAIL = ce que le daemon annonce lui-même (`done in Xs`). C'est le coût
+      du cycle, celui qui monte quand la base ralentit ou qu'un book traîne.
+
+Période ≈ travail + 20 s. Cette version n'affichait que la période sous le nom
+« durée d'un cycle » : on lisait 47 s là où le cycle en coûtait 26, et toute
+comparaison avant/après une optimisation était faussée du même décalage.
+
 ⚠️ La sortie du daemon va dans `valuebet.log`, PAS dans journalctl — c'est
 `scan-daemon.sh` qui redirige. Seuls l'ingestion et le listener écrivent au
 journal.
@@ -56,6 +68,24 @@ def durations() -> list[float]:
     return out
 
 
+def work_durations() -> list[float]:
+    """Durée annoncée par le daemon lui-même, sommeil exclu.
+
+    Immunisée au piège des redémarrages : c'est le daemon qui chronomètre son
+    propre travail, donc aucun écart entre deux processus ne peut s'y glisser.
+    """
+    pat = re.compile(r"^Cycle (\d+) done in (\d+)s")
+    out = []
+    with LOG.open(errors="ignore") as f:
+        for line in f:
+            m = pat.match(line)
+            if m:
+                v = float(m.group(2))
+                if 0 < v < MAX_CYCLE_SEC:
+                    out.append(v)
+    return out
+
+
 def main() -> int:
     if not LOG.exists():
         print(f"{LOG} introuvable. Le daemon a-t-il déjà tourné ?")
@@ -65,6 +95,8 @@ def main() -> int:
         print("Aucun cycle exploitable dans le journal.")
         return 1
 
+    print("PÉRIODE — écart entre deux cycles (travail + sommeil). "
+          "C'est la fraîcheur des cotes.")
     print(f"{'fenêtre':16} {'n':>4} {'médiane':>9} {'p90':>7} {'min':>6} {'max':>6}")
     print("-" * 52)
     for label, n in (("200 derniers", 200), ("60 derniers", 60),
@@ -74,6 +106,20 @@ def main() -> int:
             continue
         print(f"{label:16} {len(x):>4} {x[len(x)//2]:>8.0f}s "
               f"{x[int(len(x)*0.9)]:>6.0f}s {x[0]:>5.0f}s {x[-1]:>5.0f}s")
+
+    w = work_durations()
+    if w:
+        print("\nTRAVAIL — ce que le daemon annonce (`done in`), sommeil exclu. "
+              "C'est le coût du cycle.")
+        print(f"{'fenêtre':16} {'n':>4} {'médiane':>9} {'p90':>7} {'min':>6} {'max':>6}")
+        print("-" * 52)
+        for label, n in (("200 derniers", 200), ("60 derniers", 60),
+                         ("20 derniers", 20)):
+            x = sorted(w[-n:])
+            if not x:
+                continue
+            print(f"{label:16} {len(x):>4} {x[len(x)//2]:>8.0f}s "
+                  f"{x[int(len(x)*0.9)]:>6.0f}s {x[0]:>5.0f}s {x[-1]:>5.0f}s")
 
     recent = sorted(d[-20:])[len(d[-20:])//2]
     ancien = sorted(d[-200:-20])[len(d[-200:-20])//2] if len(d) > 40 else recent
