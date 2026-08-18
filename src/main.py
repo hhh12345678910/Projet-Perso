@@ -2521,6 +2521,26 @@ def _daemon_scan_sport(
 
         ref_keys = {fl.event_key for fl in fair.values()}
         soft_q = remap_to_reference(soft_raw, ref_keys, current_sport)
+
+        # ⚠️ Ce que le rapprochement JETTE ne se voyait nulle part. Mesuré le
+        # 18/08 : le rendement du football alternait entre 59 % et 90 % d'un
+        # cycle à l'autre, soit ~14 000 cotes écartées un cycle sur deux — des
+        # books qui répondent, des cotes qui arrivent, et rien qui en sorte,
+        # sans une seule erreur au journal. Le mode de défaillance dominant du
+        # projet (§11), appliqué cette fois à l'appariement.
+        #
+        # Le nombre de lignes justes est imprimé avec : un rendement qui chute
+        # parce que la référence a rétréci et un rendement qui chute parce que
+        # les noms ne s'apparient plus demandent deux correctifs opposés, et
+        # sans ce chiffre ils sont indiscernables.
+        _kept = len(soft_q)
+        _raw = len(soft_raw)
+        console.print(
+            rf"\[{current_sport}]   rapprochement : {_kept}/{_raw} "
+            f"({100 * _kept / _raw if _raw else 0:.0f} %) sur "
+            f"{len(ref_keys)} lignes justes"
+        )
+
         _offered += len(soft_q)
         _written += storage.insert_quotes_sparse(soft_q)
         # Compter ce qui est écrit ET ce qui est proposé : « compression qui
