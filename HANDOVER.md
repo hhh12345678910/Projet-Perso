@@ -1,12 +1,15 @@
 # Valuebet — état du projet
 
 Document de reprise. À lire en premier pour reprendre le travail sans
-redécouvrir le contexte. Dernière mise à jour : 15/08/2026.
+redécouvrir le contexte. Dernière mise à jour : 18/08/2026.
 
-**Si tu ne lis que trois choses :** §18.1 pour la mesure qui fait autorité
-(+9,49 % de CLV sur 2 025 opportunités premium, 23,8 σ — elle remplace §17.2),
-§11 pour le mode de défaillance dominant du projet (la panne silencieuse), et
-§18.8 pour la liste de travail à jour.
+**Si tu ne lis que trois choses :** §20.4 pour le premier P&L réel du projet et
+la question qu'il ouvre (la CLV mesure-t-elle vraiment l'edge ?), §11 pour le
+mode de défaillance dominant (la panne silencieuse), et §20.15 pour la liste de
+travail à jour.
+
+La mesure de CLV qui fait autorité reste §18.1 (+9,49 % sur 2 025 opportunités
+premium, 23,8 σ), confirmée le 17/08 sur 6 486 opportunités — voir §20.8.
 
 État du code : **§15, §17 et §18 décrivent ce qui tourne aujourd'hui.** La §16 n'a
 modifié aucun code — c'était une session de mesure. La §17, elle, a modifié le
@@ -3114,3 +3117,450 @@ MagicBetting. Chacun a sa garde de fraîcheur, et chacune ne parle que dans
 sudo systemctl restart valuebet-daemon valuebet-listener betano-ingest
 bash scripts/setup.sh --check
 ```
+
+---
+
+## 20. Sessions des 17 et 18/08 — le P&L réel, enfin
+
+Branche **`claude/resume-clarification-1541xa`**, dix-sept commits de `fa748ec`
+à `2b1a1ae`. Le chantier central : `results` était vide depuis juillet, donc
+tout le projet mesurait une promesse de gain et jamais un euro. Elle est
+remplie. Autour : une alerte qui manquait, une base compactée de 34 Go à 1,9,
+et quatre outils de mesure.
+
+⚠️ **Quatre hypothèses ont été posées puis démenties par la mesure** au cours
+de ces sessions — un book qui décrocherait, la durée de cycle qui suivrait la
+charge, une alternance du rapprochement, et un plafond tennis qu'on croyait
+majeur. Elles sont conservées en §20.9 parce que le raisonnement qui les a
+tuées vaut mieux que les conclusions elles-mêmes.
+
+### 20.1 Le P&L réel — la chaîne complète
+
+Tout existait sauf l'écriture dans `results`. Vérifié brique par brique :
+`record_result` (`storage.py:1485`), `settle()` (`clv.py:28`, h2h **et**
+totaux, push = annulé), `pnl()` (`clv.py:54`, rend `None` si inconnu),
+`played_bets_with_clv` qui joignait déjà `results`, et `track-update` qui
+calcule le P&L par pari.
+
+Le chaînon manquant est `results-update`, et son `--dry-run` **EST** la sonde
+de couverture — il dit quelle part de nos matchs les sources savent résoudre,
+sur notre univers et non sur la plaquette du fournisseur.
+
+**La population notée est celle des DÉTECTIONS, pas des paris cliqués.** Le
+projet mesure depuis juillet toutes les opportunités éligibles, jouées ou non,
+précisément pour supprimer le biais de sélection manuelle. Ne noter que les
+paris cliqués le rétablirait dans le P&L.
+
+### 20.2 Deux sources, mesurées avant d'être crues
+
+Aucun fournisseur ne fait les deux sports : **API-Sports couvre 1 200+ ligues
+de football mais PAS le tennis**. D'où deux adaptateurs derrière
+`ScoreProvider`, chacun coupé en parsing pur (testé sur échantillons réels) et
+appel HTTP (qui ne décide de rien).
+
+Ce que la sonde a tranché, et qui aurait été faux en silence :
+
+| Piège | Ce que la mesure a dit |
+|---|---|
+| **Football, prolongations** | AET/PEN écartés : leur score à 90 min est AMBIGU — un AET rend `fulltime` 3-4 avec `extratime` 0-1, donc la prolongation est déjà dedans et le score réglementaire n'apparaît nulle part. Or 1X2 et totaux se règlent sur 90 min. Coût : 10 matchs sur 1 215 |
+| **Tennis, statut** | Les 149 matchs d'une journée sont TOUS « completed », dont 17 sans vainqueur et 28 dont le vainqueur n'a pas le compte de sets requis. S'y fier écrirait un résultat faux pour **30 %** des matchs. Remplacé par un invariant vérifiable : le vainqueur doit avoir exactement les sets que son format exige |
+| **Tennis, doubles** | Noms mutilés — « Mi / Victoria Luiza Barros », « - Bohrer Martins / Garcia Vidal ». 21 % des lignes, écartées |
+| **Tennis, filtre de date** | S'appelle `from`/`to`. Le paramètre `date` est accepté et **silencieusement ignoré** : une requête sur le 15/08 rendait des matchs du 24/06 au 17/08 |
+
+Sur les 1 177 matchs FT du football, `goals` et `score.fulltime` sont
+rigoureusement identiques et `teams.home.winner` n'est jamais contredit — la
+donnée y est irréprochable.
+
+⚠️ **Au tennis, `home_score` porte les JEUX et jamais les sets.** Médiane 22,
+plage 14-39 sur 104 matchs complets, ce qui recouvre les lignes 16,5-28 du
+§19.2. Des sets rendraient « under » gagnant partout, sans lever d'erreur.
+
+⚠️ **Et le vainqueur ne se déduit jamais des jeux** : 6-0 6-7 6-7 donne 18 jeux
+à celui qui perd le match.
+
+### 20.3 Le bug qui inventait 1 210 €
+
+⚠️ **La panne la plus instructive du projet à ce jour, parce qu'elle vivait
+dans la mesure censée détecter les pannes.**
+
+`match_event` apparie les deux orientations — « A vs B » et « B vs A » —, ce
+qui est indispensable au tennis où la notion de domicile n'existe pas. **Mais
+il ne dit pas laquelle il a retenue**, et l'adaptateur inscrivait
+`winner="home"` dès que le joueur 1 de la source gagnait.
+
+Sur un appariement inversé, le pari `home` était donc noté sur le joueur que
+NOUS appelons `away`. Rien ne pouvait le signaler : le score et le vainqueur
+restaient parfaitement cohérents entre eux, seul leur rattachement à nos noms
+était faux.
+
+| | Avant | Après |
+|---|---|---|
+| P&L | +2 062,44 € | **+852,78 €** |
+| ROI | +52,88 % | **+21,87 %** |
+
+**Ce qui a mis la puce à l'oreille, c'est l'écart avec la CLV**, pas une
+erreur. À +16,65 % de CLV sur des cotes à 3,09, la probabilité implicite est
+de 37,7 %, donc ~59 gagnants attendus sur 156. Il y en avait 82 — **3,8 σ**.
+Un P&L trop beau est un symptôme, exactement comme un P&L trop mauvais.
+
+Après correctif, le P&L reconstitué (+21,87 %) et la CLV (+16,65 %) s'écartent
+de **0,5 σ**. Pour la première fois du projet, l'indicateur avancé et l'argent
+disent la même chose.
+
+L'orientation est déduite en comparant la ressemblance de notre domicile avec
+chacun des deux camps. En cas d'égalité on ne touche à rien — inverser sur une
+hésitation créerait l'erreur qu'on évite. Le retournement porte sur les camps,
+les scores ET le vainqueur ensemble ; n'en bouger que deux laisserait un
+résultat cohérent en apparence et faux en profondeur.
+
+### 20.4 Ce que le P&L dit, et ce qu'il ne dira jamais
+
+⚠️ **C'est un P&L RECONSTITUÉ sur mises fictives**, pas un relevé bancaire.
+`played_bets.stake` est la mise recommandée par l'alerteur — la colonne
+s'appelle d'ailleurs « Mise fictive ».
+
+**Il détecte les catastrophes, pas les nuances.** Un écart de 20 points entre
+CLV et P&L fait ~9 σ sur 640 paris : impossible à rater. Un écart de 3 points
+fait 1,4 σ : indétectable. C'est un contrôle d'intégrité, et il a justifié son
+existence en trouvant 1 210 € qui n'existaient pas.
+
+**Premier résultat, sur le tennis seul :**
+
+| Population | n | ROI | σ | gagnés | cote moy |
+|---|---|---|---|---|---|
+| Toutes détections | 2 945 | **−0,34 %** | −0,1 | 44,3 % | 3,06 |
+| **Canal premium** | 1 119 | **+6,69 %** | 1,7 | 44,5 % | 2,68 |
+| Paris joués | 156 | +21,87 % | — | 52,6 % | 3,09 |
+
+**Le filtre premium est validé en euros** : sept points d'écart avec
+l'ensemble. Et joués contre tout le premium fait **1,3 σ** — cinquième mesure
+consécutive disant que la sélection manuelle n'apporte rien.
+
+⚠️ **Mais le ROI réalisé est très en dessous de la CLV.** Elle annonce +9 à
++10 % sur toutes les détections tennis ; le ROI sort à −0,34 %, soit **3,8 σ**
+d'écart sur 2 945 opportunités. Trois lectures, non tranchées :
+
+1. La CLV ne se convertit jamais en ROI à l'identique — mais 9 points, c'est
+   beaucoup ;
+2. 26 % des détections restent non résolues (doubles, abandons) et pourraient
+   différer systématiquement ;
+3. Le devig au tennis surestime peut-être l'outsider — le profil le suggère,
+   cote moyenne 3,06 pour 44,3 % de réussite.
+
+**C'est devenu la question la plus importante du projet : la CLV mesure-t-elle
+vraiment l'edge ?** Le football tranchera — il triplerait l'effectif et il est
+indépendant.
+
+### 20.5 Le pont résultats — un quatrième anti-bot
+
+API-Sports **refuse les IP de datacenter et le déguise en suspension de
+compte**. Mesuré avec une seule et même clé : 200 depuis une IP résidentielle,
+`{"access": "Your account is suspended"}` depuis la VM comme depuis un
+conteneur cloud. RapidAPI aurait relayé, mais son site rend « Something Went
+Wrong » sur sa propre page d'éditeur — piste fermée.
+
+Le pont réutilise le serveur d'ingestion et le motif du §18.6 : le userscript
+demande à la VM quoi appeler, appelle, repose la réponse BRUTE. Trois
+différences avec les trois autres ponts, toutes en sa faveur — **pas d'onglet
+dédié** (il se greffe sur ceux déjà ouverts), **quelques appels par jour**, et
+**un PC éteint 24 h ne perd rien**, il prend du retard.
+
+⚠️ Le plan gratuit d'API-Football ne sert qu'une **fenêtre de trois jours**
+autour d'aujourd'hui. Aucun rattrapage historique n'est possible en gratuit.
+Une journée refusée pour motif `plan` reçoit une pierre tombale et n'est plus
+jamais réclamée — sinon le pont brûlerait du quota chaque heure sans aucune
+chance d'aboutir. Un refus `access` n'en reçoit pas : il est temporaire.
+
+⚠️ **Le compte reste suspendu au 18/08.** C'est le seul blocage du P&L
+football, et donc de la question du §20.4.
+
+### 20.6 Alerte « softbook muet »
+
+Un book qui cesse de produire ne se voyait nulle part. Le 16/08, Betano est
+resté quatre heures sans une seule cote — onglet fermé — et le seul symptôme
+était une ligne de `valuebet.log`.
+
+**Deux seuils, et il faut les deux : 15 minutes ET 5 cycles.** La durée seule
+se déclencherait sur un cycle anormalement long (9-24 min pendant une purge) ;
+le nombre de cycles seul ne veut rien dire non plus, un cycle durant de 24 s à
+24 min selon le moment.
+
+15 min plutôt que les 20 de Pinnacle : les books les plus rapides corrigent en
+4 à 6 minutes (§16.3), donc un quart d'heure d'aveuglement coûte déjà des
+occasions. Et contrairement à Pinnacle, dont la panne se voit à l'effondrement
+des détections, un seul book absent ne change rien de visible.
+
+**La liste surveillée se construit seule** : un couple (book, sport) y entre le
+jour où il rend sa première cote. Un book coupé par `BOOKS_DISABLED` n'y entre
+jamais et ne peut donc pas alerter à vide — c'est ce qui distingue « ce book
+est absent » de « ce book n'a jamais existé ici ».
+
+Mesurée sur `soft_raw` et non `soft_q` : la question est « ce book répond-il »,
+pas « ses cotes s'apparient-elles ». Les confondre enverrait chercher un
+onglet fermé pendant que le vrai problème est le rapprochement.
+
+⚠️ **Non vérifiée de bout en bout au 18/08.** Le test manuel a échoué sur une
+config Telegram vide — voir §20.10.
+
+### 20.7 La fenêtre d'avant coup d'envoi, ouverte de 15 à 5 minutes
+
+Le code tenait les alertes de dernière minute pour « disproportionnellement des
+erreurs de ligne périmée ». **La mesure dit l'inverse.**
+
+| Délai | n | CLV | positives |
+|---|---|---|---|
+| **5-10 min** | 50 | **+11,20 %** | **88,0 %** |
+| **10-15 min** | 49 | **+10,73 %** | **91,8 %** |
+| 15-30 min | 106 | +8,95 % | 83,0 % |
+| 30-60 min | 118 | +6,98 % | 80,5 % |
+
+La tranche 5-15 min porte les deux meilleurs taux de positives du tableau.
+
+**Et ce n'est pas un mirage.** Le contrôle qui compte est l'écart CLV moins EV
+de départ : **−2,4 à −3,3 points** sur 5-15 min contre −4,6 à −6,7 plus loin.
+La ligne bouge donc bel et bien dans ces dernières minutes, le CLV n'y répète
+pas l'EV qu'on a soi-même calculée — c'était l'erreur du §1, écartée ici.
+
+⚠️ Le taux de positives de 90 % reste **en partie mécanique** : moins de temps
+avant la clôture, c'est moins d'occasions de basculer. C'est le CLV moyen qui
+porte le signal.
+
+⚠️ **5 minutes est un plancher physique, pas un arbitrage** : la tranche 0-5
+min est vide sur tout l'historique, Pinnacle retirant ses marchés prématch
+avant le coup d'envoi.
+
+Gain par canal : principal +3,49 → +5,32 % (168 opportunités), premium
++9,73 → +10,97 % (99), critique +6.
+
+**Les surebets et middles gardent leur propre fenêtre à 15 min**
+(`TELEGRAM_SUREBET_MIN_MINUTES_TO_KICKOFF`). Le risque n'y est pas le même : un
+value bet est protégé par sa référence sharp, un surebet est une incohérence
+ENTRE deux books, où une seule cote figée fabrique un arbitrage fantôme.
+
+### 20.8 Analyses du 17/08 sur export frais
+
+Export de 26 923 lignes, 21/06 → 17/08. Méthode du §16.7, déduplication sur
+équipes + jour + marché + pari. **6 486 opportunités, 4 813 matchs.**
+
+**L'edge n'a pas bougé** malgré une semaine ressentie comme mauvaise :
+
+| Période | n | CLV | σ | positives |
+|---|---|---|---|---|
+| Avant août | 608 | +9,81 % | 14,9 | 79,6 % |
+| Août complet | 1 545 | +9,78 % | 21,8 | 76,6 % |
+| 10-17/08 | 709 | +9,04 % | 13,2 | 74,3 % |
+
+L'écart de 0,77 point fait 1,1 σ. Sur cette même fenêtre où la bankroll a
+reculé de 638 €, les paris joués affichaient **+9,23 % de CLV et 75,5 % de
+positives** — un épisode à 1,8 σ sous l'espérance, soit une semaine sur trente.
+
+**Par book, ta fenêtre 10-17/08 (premium)** : Unibet +11,93 % (237, 84,8 %
+pos) · Betano +10,82 % (69) · Ladbrokes +9,52 % (40) · StarCasino +8,33 %
+(200) · **Napoleon +2,60 % (88, 61,4 % pos)**.
+
+⚠️ **Napoleon est le seul book faible sur les trois fenêtres indépendantes**
+(+3,85 %, +5,55 %, +2,60 %), avec le pire taux de positives à chaque fois. Sur
+328 opportunités premium cumulées, ce n'est plus du bruit.
+
+**Over / Under** — l'écart est réel et significatif :
+
+| | n | CLV | positives |
+|---|---|---|---|
+| h2h | 5 631 | +7,11 % | 72,2 % |
+| **OVER** | 418 | **+6,50 %** | 77,3 % |
+| **UNDER** | 437 | **+3,80 %** | 74,1 % |
+
+2,7 points d'écart, **z = 2,7, p ≈ 0,007**. Les `under` hauts sont les plus
+faibles : under 3.5 à +3,45 %, under 4.5 à +2,51 %, contre over 4.5 à +8,50 %.
+
+⚠️ **Aucun total de tennis n'apparaît avec une clôture** — zéro sur tout
+l'historique, alors que les totaux de jeux sont collectés. Perte de mesure
+silencieuse, non élucidée.
+
+**Les ligues ne disent rien.** 4 529 opportunités portent une ligue, 564 ligues
+distinctes, dont **12 seulement atteignent 40 opportunités**. Aucune n'est
+négative — la plus faible est à +3,29 %. Et le test de permutation sur 2 000
+tirages donne **p = 0,62** : les 7 points d'écart entre la meilleure et la pire
+sont ce que le pur hasard produit. **Il n'y a rien à couper.**
+
+Les deux plus faibles sont les qualifications UEFA (Conference +3,29 %, Europa
++3,49 %). À poser comme hypothèse et retester dans deux mois sur données
+neuves — pas à exploiter aujourd'hui.
+
+⚠️ **Une conclusion rétractée.** Une première analyse annonçait que les
+opportunités multi-books valaient le double des exclusivités. En changeant la
+définition (match plutôt que sélection) et la fenêtre, le classement s'inverse
+pour la moitié des books : StarCasino fait +11,48 % en exclusivité contre
++9,56 % accompagné, Napoleon +10,23 % contre +3,30 %. **Une conclusion qui ne
+survit pas à un changement de découpe n'est pas une conclusion.** Seul Circus
+perd vraiment en exclusivité (+5,91 % contre +9,78 %).
+
+### 20.9 Quatre hypothèses démenties par la mesure
+
+Conservées parce que le raisonnement compte plus que le résultat.
+
+| Hypothèse | Ce que la mesure a dit |
+|---|---|
+| « Un book décroche un cycle sur deux » — 14 000 cotes football manquantes | **Faux.** Les neuf books répondent dans les deux cycles, aux mêmes volumes au chiffre près. L'alternance venait de la ligne `cotes`, dont le dénominateur additionne plus que la sortie du rapprochement. Artefact de comptage |
+| « La durée de cycle suit la charge » | **Faux.** 24 s de médiane à 26 800 cotes contre 27 s à 41 000 — trois secondes pour 55 % de volume en plus. La dérive du §19.9 point 4 reste inexpliquée |
+| « Le rapprochement alterne » | **Faux.** Stable à 59 % en football et 41-42 % en tennis, six cycles d'affilée, sur 780 et 128 lignes justes constantes |
+| « Le plafond tennis est le plus gros levier » | **Faux, et c'est le plus utile.** Voir ci-dessous |
+
+⚠️ **Le plafond tennis, correctement mesuré.** Pinnacle ne price que **129
+événements de tennis, horizon J+0** — il n'ouvre ses marchés que le jour même.
+Les books en offrent 187 à 433, à J+1 ou J+2. Vérifié dans le code : le
+scraper n'a **aucun filtre de date**, le J+0 vient de Pinnacle.
+
+Mais les matchs manquants sont à J+1/J+2, et c'est là que le tennis vaut le
+moins : **+3,90 % à 24-48 h contre +9 à +11 % sous 24 h**, et seulement 4 % des
+détections tennis dépassent 24 h. Surtout, **ce n'est pas un trou de
+couverture mais un décalage de calendrier** : un match affiché à J+2 devient
+référençable quand son jour arrive, et il est alors détecté dans la fenêtre où
+le tennis rapporte le plus. Une seconde référence sharp au tennis apporterait
+donc du volume dans la tranche la plus faible du système.
+
+### 20.10 Le disque — 35 Go récupérés
+
+`df` restait à 85-89 % alors que la purge fonctionnait : **SQLite supprime des
+lignes, il ne rend pas d'espace.** Le fichier gardait 34 Go dont **34,06 Go de
+freelist pour 2,13 Go de données vivantes** — 94 % de vide.
+
+Procédure suivie, et deux écarts au §19.1 qui comptent :
+
+1. **Daemon arrêté AVANT le VACUUM**, pas seulement pour l'échange : compacter
+   pendant que le daemon écrit produit un instantané, et tout ce qu'il écrirait
+   entre le VACUUM et l'échange serait perdu. Avec 2,13 Go l'opération dure
+   trois minutes.
+2. **`valuebet-listener` doit être arrêté aussi.** Oublié la première fois, il
+   tenait le verrou et le VACUUM échouait sur `database is locked`.
+
+⚠️ Deux échecs avant de réussir : un `VACUUM INTO` refuse un fichier cible
+existant, et le brouillon partiel de 1,9 Go occupait l'espace qui manquait au
+suivant. Le supprimer a suffi.
+
+Résultat : **disque 89 % → 18 %**, base 34 Go → 1,9 Go, aucune ligne perdue
+(six tables vérifiées identiques avant échange).
+
+⚠️ **`PRUNE_MAX_SECONDS` était resté à 1 800 s** alors que le §18.4 l'avait
+porté à 7 200. C'est pour ça que 21,6 M de lignes traînaient en retard, et que
+la plus ancienne cote datait de 3 jours pour une rétention de 2. Corrigé.
+
+⚠️ **`PRUNE_DAYS` n'est PAS dans `.env`** — il tourne sur son défaut de 2. À
+ajouter, pas à modifier, le jour où on veut 7.
+
+### 20.11 Outils et correctifs d'outillage
+
+| Outil | Répond à |
+|---|---|
+| `results-update` | remplit `results` ; `--dry-run` = la sonde de couverture |
+| `scripts/pnl_detections.py` | P&L sur TOUTES les détections, pas seulement les cliquées |
+| `clv-report --since/--until` | l'edge a-t-il bougé cette semaine, ou est-ce la variance ? |
+| `tools/scores-ingest.user.js` | pont navigateur pour les résultats football |
+
+**Quatre défauts d'outillage corrigés**, tous du même genre — un chiffre faux
+lu comme vrai :
+
+⚠️ **`cycle_speed.py` mesurait la PÉRIODE et l'appelait « durée d'un cycle ».**
+L'écart entre deux en-têtes contient le sommeil de 20 s : on lisait 47 s là où
+le cycle en coûtait 26. Toute comparaison avant/après optimisation était
+faussée du même décalage. Les deux mesures sont désormais affichées côte à
+côte.
+
+⚠️ **`track-update` divisait le ROI par un forfait constant** alors que le P&L
+par pari utilisait la vraie mise. Tant que tout valait 25 € les deux
+coïncidaient ; depuis les 35/45 € du §19.12, le ROI affiché aurait été faux dès
+le premier calcul.
+
+⚠️ **Aucune commande ne chargeait `.env`.** Le daemon le reçoit par
+`scan-daemon.sh` ; une commande tapée à la main ne recevait rien. Le piège en
+était à sa **quatrième** occurrence (§14.11 en compte deux). Corrigé à la
+racine par un callback Typer, avant n'importe quelle commande — `setdefault`,
+donc l'environnement de systemd gagne toujours.
+
+⚠️ **Le rapprochement ne journalisait pas ce qu'il jette.** Nouveau compteur :
+`rapprochement : N/M (X %) sur K lignes justes`. Le nombre de lignes justes
+n'est pas décoratif — un rendement qui chute parce que la référence a rétréci
+et un rendement qui chute parce que les noms ne s'apparient plus appellent deux
+correctifs opposés.
+
+### 20.12 Pièges rencontrés
+
+- **Une conclusion tirée avant la mesure est une conjecture.** Quatre fois en
+  deux sessions (§20.9). À chaque fois c'est le chiffre qui a tranché, jamais
+  le raisonnement.
+- **Un P&L trop beau est un symptôme.** +52,88 % de ROI contre +16,65 % de CLV
+  faisait 3,8 σ — c'est ça qui a fait chercher le bug d'orientation, pas une
+  erreur visible.
+- **Un mock peut annuler ce qu'il teste.** Le test de cadence remplaçait `_get`
+  en entier, or la cadence vit dedans. Il fallait remplacer la couche HTTP.
+  Variante du §13.10.
+- **Lire l'environnement à l'import fige la configuration** au démarrage du
+  process. Fait deux fois dans ces sessions (`provider_for`, puis la cadence
+  tennis), corrigé deux fois. Toujours lire à l'appel ou à la construction.
+- **Une garde défensive sur une donnée manquante ment.** Rappel du §18.3,
+  reconfirmé : `_football_error_message` réécrit désormais « account
+  suspended » pour désigner l'IP et non le compte — le message brut avait déjà
+  coûté un aller-retour.
+- **Des `...` collés à la place d'une clé** dans `.env` ont produit deux
+  diagnostics faux (un 403 et un « unauthorized ») interprétés comme des
+  refus d'API. Toujours vérifier la longueur de ce qui a été écrit.
+- **`systemctl stop` qui « bloque » est normal** — il attend la fin du cycle,
+  jusqu'à 90 s. Et `sleep 300` n'affiche rien pendant cinq minutes.
+- **`sqlite3` n'est pas installé sur la VM.** Passer par `.venv/bin/python`.
+
+### 20.13 Réglages ajoutés
+
+```
+SCORES_FOOTBALL_KEY=              # API-Sports, palier gratuit = fenêtre 3 jours
+SCORES_FOOTBALL_RAPIDAPI_KEY=     # bascule sur RapidAPI (piste fermée, site cassé)
+SCORES_FOOTBALL_BRIDGE=0          # 1 => lit data/scores/ au lieu d'appeler
+SCORES_INGEST_DIR=data/scores
+SCORES_BRIDGE_DAYS=2              # fenêtre réellement servie par le gratuit
+SCORES_FINAL_AFTER_SEC=21600      # au-delà, une journée n'est plus redemandée
+SCORES_TENNIS_KEY=                # Live Tennis, Basic 9,99 $/mois obligatoire
+SCORES_TENNIS_MIN_INTERVAL_SEC=1.1   # 54 req/min, sous la limite de 60
+BOOK_ALERT_AFTER_MIN=15           # softbook muet : les DEUX seuils requis
+BOOK_ALERT_AFTER_CYCLES=5
+TELEGRAM_MIN_MINUTES_TO_KICKOFF=5        # value bets, plancher physique
+TELEGRAM_SUREBET_MIN_MINUTES_TO_KICKOFF=15   # surebets, risque différent
+PRUNE_MAX_SECONDS=7200            # était resté à 1800 malgré le §18.4
+TELEGRAM_BANKROLL=3720            # capital réellement exposé
+```
+
+⚠️ Le palier gratuit de Live Tennis donne **20 appels d'historique par MOIS**,
+pas 100 par jour comme sa grille le laisse croire. Basic est indispensable.
+
+### 20.14 État des lieux
+
+| | |
+|---|---|
+| Disque | **18 %**, base 1,9 Go |
+| Cycles | 27 s de travail, 47 s de période, stables |
+| `results` | **3 091 lignes** (tennis) — plus jamais vide |
+| Tests | **679 passés**, 4 ignorés |
+| Books actifs | Pinnacle, MagicBetting, StarCasino, GoldenPalace, Unibet, Circus, Napoleon, Ladbrokes, Betano |
+| Mises | 35 € / 45 € au-dessus de 15 % d'EV |
+
+### 20.15 À faire au prochain démarrage — remplace §19.9
+
+1. **Débloquer le compte API-Football** — [dashboard.api-football.com](https://dashboard.api-football.com).
+   C'est le seul blocage du P&L football, **et donc de la question la plus
+   importante du projet** : la CLV mesure-t-elle vraiment l'edge ? Le tennis
+   suggère 9 points d'écart, le football tranchera. Prendre un plan payant
+   ensuite : le gratuit ne sert que trois jours, donc aucun rattrapage.
+2. **Vérifier l'alerte softbook de bout en bout** (§20.6) — le test manuel a
+   échoué sur une config Telegram vide, la chaîne de livraison n'est donc pas
+   prouvée.
+3. **Durcir Napoleon** — seul book faible sur trois fenêtres indépendantes,
+   328 opportunités premium cumulées.
+4. **Relever le seuil d'EV sur les `under`**, surtout 3.5 et 4.5 (§20.8). Seul
+   effet significatif de toute l'analyse.
+5. **Décocher BetFirst dans `/book`** — 15 paris joués à +3,72 % de CLV,
+   médiane +0,84 %, alors que le §15.2 le réserve à la donnée.
+6. **Les totaux de tennis sans clôture** — zéro sur tout l'historique alors
+   qu'ils sont collectés. Perte de mesure silencieuse.
+7. **Résorber le retard de purge** avant de passer `PRUNE_DAYS` à 7 : allonger
+   la rétention pendant le rattrapage l'aggraverait.
+8. Reliquats : découpage en runs du `pinnacle_doctor`, noms de books dédoublés
+   dans `paris_track.csv` (§14.10), dérive de cycles inexpliquée (§19.9 pt 4),
+   `line_speed` à repenser (§18.5).

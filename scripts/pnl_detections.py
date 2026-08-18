@@ -127,6 +127,22 @@ def main() -> int:
 
     report("TOTAL", opp)
     print()
+
+    # ⚠️ LA découpe qui teste la qualité de la référence.
+    #
+    # Un devig biaisé aux cotes hautes rend une « ligne juste » trop généreuse
+    # pour les outsiders : ces paris affichent alors de l'EV et de la CLV sans
+    # que l'argent suive. La signature est nette — edge positif sur les cotes
+    # basses, négatif sur les hautes. Si le ROI décroît régulièrement quand la
+    # cote monte, ce n'est pas la malchance, c'est la méthode de devig.
+    print("  par tranche de cote  ⚠️ décroissance régulière = devig suspect")
+    bands = [("1.0-1.8", 1.0, 1.8), ("1.8-2.3", 1.8, 2.3), ("2.3-3.0", 2.3, 3.0),
+             ("3.0-4.0", 3.0, 4.0), ("4.0-6.0", 4.0, 6.0), ("> 6.0", 6.0, 1e9)]
+    for lab, lo, hi in bands:
+        report(f"    cote {lab}",
+               [r for r in opp if lo <= float(r["odd_taken"]) < hi], warn=30)
+    print()
+
     for field, title in (("sport", "par sport"), ("market", "par marché"),
                          ("book", "par book")):
         by = defaultdict(list)
