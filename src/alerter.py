@@ -199,7 +199,16 @@ class TelegramConfig:
     chat_id: str                          # main chat — value bets land here
     surebet_chat_id: str | None = None    # prematch surebets
     live_surebet_chat_id: str | None = None  # live surebets (match already started)
-    min_minutes_to_kickoff: int = 15      # drop prematch value/surebet alerts firing within N min of kickoff (stale-line errors)
+    min_minutes_to_kickoff: int = 15      # value bets : fenêtre morte avant le coup d'envoi
+    # Surebets et middles gardent leur PROPRE fenêtre, volontairement plus
+    # large. Le risque n'y est pas le même : un value bet se mesure contre une
+    # référence sharp, qui le protège d'une cote périmée, alors qu'un surebet
+    # est une incohérence ENTRE deux books — une seule ligne figée chez l'un
+    # suffit à fabriquer un arbitrage qui n'existe pas. Mesuré le 17/08, la
+    # tranche 5-15 min est la meilleure du système POUR LES VALUE BETS ; rien
+    # n'a été mesuré côté surebets, et les ouvrir sur la même décision serait
+    # étendre une conclusion au-delà de ce qui la soutient.
+    surebet_min_minutes_to_kickoff: int = 15
     min_ev_pct: float = 5.0               # main chat: value bets below this stay silent
     main_max_ev_pct: float = 8.0          # main chat: value bets above this go to premium instead
     main_min_odd: float = 1.5             # main chat: only value bets within this odds band
@@ -274,6 +283,8 @@ class TelegramConfig:
             surebet_chat_id=os.getenv("TELEGRAM_SUREBET_CHAT_ID") or None,
             live_surebet_chat_id=os.getenv("TELEGRAM_LIVE_SUREBET_CHAT_ID") or None,
             min_minutes_to_kickoff=int(os.getenv("TELEGRAM_MIN_MINUTES_TO_KICKOFF", "15")),
+            surebet_min_minutes_to_kickoff=int(
+                os.getenv("TELEGRAM_SUREBET_MIN_MINUTES_TO_KICKOFF", "15")),
             min_ev_pct=float(os.getenv("TELEGRAM_MIN_EV", "5.0")),
             main_max_ev_pct=float(os.getenv("TELEGRAM_MAIN_MAX_EV", "8.0")),
             main_min_odd=float(os.getenv("TELEGRAM_MAIN_MIN_ODD", "1.5")),
@@ -1105,7 +1116,7 @@ def send_surebet_alerts(
             # last-minute arbs are usually stale-line/data errors, not real.
             if parsed is not None and not is_live:
                 mins_to_kickoff = (parsed[0] - now).total_seconds() / 60
-                if mins_to_kickoff < config.min_minutes_to_kickoff:
+                if mins_to_kickoff < config.surebet_min_minutes_to_kickoff:
                     continue
             if alerter.send_surebet(sb, sport=sport, is_live=is_live):
                 sent.append(sb)
@@ -1133,7 +1144,7 @@ def send_middle_alerts(
                 if kickoff <= now:
                     continue  # live — skip
                 mins_to_kickoff = (kickoff - now).total_seconds() / 60
-                if mins_to_kickoff < config.min_minutes_to_kickoff:
+                if mins_to_kickoff < config.surebet_min_minutes_to_kickoff:
                     continue
             if alerter.send_middle(m, sport=sport):
                 sent.append(m)
