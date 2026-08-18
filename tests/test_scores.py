@@ -209,3 +209,47 @@ def test_scores_feed_settle_in_the_unit_of_the_totals_market(
 
     r = _res("A", "B", T, sport=sport, hs=hs, aws=aws)
     assert settle("totals", label, line, r.winner, r.home_score, r.away_score) == expected
+
+
+# ------------------------------------------------------------- orientation ---
+
+def test_a_swapped_match_has_its_winner_put_back_the_right_way():
+    """`match_event` apparie les deux orientations — indispensable au tennis —
+    mais ne dit pas laquelle il a retenue. Sans remise d'aplomb, un pari `home`
+    est noté sur le joueur que NOUS appelons `away`, et rien ne le signale : le
+    score et le vainqueur restent cohérents entre eux, seul leur rattachement à
+    nos noms est faux."""
+    ours = [_ours("Laura Mair", "Yelyzaveta Kotliar", T)]
+    # La source ordonne les joueurs dans l'autre sens, et c'est ELLE qui gagne.
+    res = [_res("Yelyzaveta Kotliar", "Laura Mair", T, sport="tennis",
+                winner="home", hs=12, aws=4)]
+
+    bindings, counters = bind_results(ours, res, sport="tennis")
+
+    assert counters["orientation_corrigee"] == 1
+    _, r = bindings[0]
+    # Dans NOTRE ordre, Kotliar est `away` : c'est donc elle la gagnante.
+    assert r.winner == "away"
+    assert r.home == "Laura Mair" and r.away == "Yelyzaveta Kotliar"
+    # Les scores suivent les camps, sinon le total resterait juste mais le
+    # rattachement faux.
+    assert (r.home_score, r.away_score) == (4, 12)
+
+
+def test_a_correctly_ordered_match_is_left_alone():
+    ours = [_ours("Laura Mair", "Yelyzaveta Kotliar", T)]
+    res = [_res("Laura Mair", "Yelyzaveta Kotliar", T, sport="tennis",
+                winner="home", hs=12, aws=4)]
+    bindings, counters = bind_results(ours, res, sport="tennis")
+    assert counters["orientation_corrigee"] == 0
+    _, r = bindings[0]
+    assert r.winner == "home" and (r.home_score, r.away_score) == (12, 4)
+
+
+def test_a_flipped_football_draw_stays_a_draw():
+    """Un nul n'a pas de côté : le retourner doit le laisser intact."""
+    ours = [_ours("Anderlecht", "Club Brugge", T)]
+    res = [_res("Club Brugge", "Anderlecht", T, winner="draw", hs=1, aws=1)]
+    bindings, counters = bind_results(ours, res, sport="soccer")
+    _, r = bindings[0]
+    assert r.winner == "draw"

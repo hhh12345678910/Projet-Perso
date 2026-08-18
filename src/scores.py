@@ -34,7 +34,7 @@ from dataclasses import dataclass
 from datetime import date, datetime
 from typing import Iterable, Protocol
 
-from .matcher import match_event, tolerance_for, wide_tolerance_for
+from .matcher import match_event, team_similarity, tolerance_for, wide_tolerance_for
 
 # Les sports où le total d'un marché « totals » se déduit du score, donc où le
 # vainqueur aussi. Le football en fait partie : plus de buts = victoire. Le
@@ -160,6 +160,37 @@ def tolerance_for_scores(sport: str | None) -> int:
     return wide_tolerance_for(sport) or tolerance_for(sport)
 
 
+def _is_swapped(ev: "OurEvent", res: MatchResult) -> bool:
+    """L'appariement a-t-il retenu l'orientation inverse ?
+
+    On compare la ressemblance de NOTRE domicile avec chacun des deux camps du
+    résultat. Si elle est meilleure avec le second, c'est que la source ordonne
+    les joueurs dans l'autre sens.
+
+    En cas d'égalité parfaite on répond False — ne rien changer est le choix
+    sûr : inverser sur une hésitation créerait l'erreur qu'on cherche à éviter.
+    """
+    direct = (team_similarity(ev.home, res.home) + team_similarity(ev.away, res.away))
+    swap = (team_similarity(ev.home, res.away) + team_similarity(ev.away, res.home))
+    return swap > direct
+
+
+def _flip(res: MatchResult) -> MatchResult:
+    """Remettre un résultat dans NOTRE ordre : camps, scores et vainqueur.
+
+    Les trois doivent bouger ensemble. N'en retourner que deux laisserait un
+    résultat cohérent en apparence et faux en profondeur — exactement le genre
+    d'erreur que rien ne signale ensuite.
+    """
+    from dataclasses import replace
+    flipped_winner = {"home": "away", "away": "home"}.get(res.winner or "", res.winner)
+    return replace(
+        res, home=res.away, away=res.home,
+        home_score=res.away_score, away_score=res.home_score,
+        winner=flipped_winner,
+    )
+
+
 def bind_results(
     events: Iterable[OurEvent],
     results: Iterable[MatchResult],
@@ -184,6 +215,7 @@ def bind_results(
         "lies": 0,
         "sans_candidat": 0,      # aucun résultat proche : la source ne l'a pas
         "resultat_inutilisable": 0,  # apparié, mais ni vainqueur ni scores
+        "orientation_corrigee": 0,   # apparié à l'envers, vainqueur remis d'aplomb
     }
     tol = tolerance_for_scores(sport)
     bindings: list[tuple[str, MatchResult]] = []
@@ -198,6 +230,19 @@ def bind_results(
         if not best.gradable:
             counters["resultat_inutilisable"] += 1
             continue
+        # ⚠️ `match_event` apparie les deux orientations — « A vs B » et
+        # « B vs A » — ce qui est indispensable au tennis, où la notion de
+        # domicile n'existe pas et où chaque source ordonne les joueurs à sa
+        # guise. Mais il ne DIT PAS laquelle il a retenue.
+        #
+        # Sans ce contrôle, un résultat apparié à l'envers inscrit le vainqueur
+        # du mauvais côté : le pari `home` est noté sur le joueur que NOUS
+        # appelons `away`. Rien ne le signale — le score et le vainqueur restent
+        # cohérents entre eux, seul leur rattachement à nos noms est faux.
+        if _is_swapped(ev, best):
+            best = _flip(best)
+            counters["orientation_corrigee"] += 1
+
         bindings.append((ev.event_key, best))
         counters["lies"] += 1
 
