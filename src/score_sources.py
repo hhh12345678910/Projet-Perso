@@ -342,9 +342,23 @@ class LiveTennisScores:
     name = "livetennisapi"
     sports = ("tennis",)
     page_size = 200
+    # ⚠️ Le palier Basic plafonne à 60 requêtes/minute. Un rattrapage de
+    # soixante jours enchaîne soixante appels : sans cadence, il tombe très
+    # exactement sur la limite et échoue en plein milieu, laissant la moitié
+    # de l'historique sans résultat. 1,1 s d'espacement rend 54 req/min, ce
+    # qui laisse une marge sans allonger sensiblement le rattrapage (~70 s
+    # pour deux mois).
+    #
+    # Lu à la CONSTRUCTION et non ici : une valeur figée à l'import rendrait
+    # le réglage de `.env` sans effet, et rien ne dirait pourquoi. Même piège
+    # que `provider_for`, §19.11.
+    DEFAULT_MIN_INTERVAL_SEC = 1.1
 
     def __init__(self, api_key: str | None = None) -> None:
         self.api_key = api_key or os.getenv("SCORES_TENNIS_KEY", "")
+        self.min_interval_sec = float(os.getenv(
+            "SCORES_TENNIS_MIN_INTERVAL_SEC", str(self.DEFAULT_MIN_INTERVAL_SEC)))
+        self._last_call = 0.0
         self._client = httpx.Client(
             base_url=LIVE_TENNIS_BASE, timeout=_TIMEOUT,
             headers={
@@ -362,9 +376,23 @@ class LiveTennisScores:
 
     @_RETRY
     def _get(self, path: str, params: dict) -> dict:
+        self._pace()
         r = self._client.get(path, params=params)
         r.raise_for_status()
         return r.json()
+
+    def _pace(self) -> None:
+        """Espacer les appels pour rester sous la limite du palier.
+
+        Portée sur l'INSTANCE et non sur l'appel : `results-update` crée un
+        seul fournisseur puis boucle sur les journées, donc c'est bien la
+        succession des jours qu'il faut cadencer, pas les pages d'un jour.
+        """
+        import time as _t
+        wait = self.min_interval_sec - (_t.monotonic() - self._last_call)
+        if wait > 0:
+            _t.sleep(wait)
+        self._last_call = _t.monotonic()
 
     def fetch_results(self, sport: str, day: date) -> list[MatchResult]:
         results, _ = self.fetch_with_counters(sport, day)

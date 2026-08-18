@@ -318,3 +318,57 @@ def test_a_refused_first_page_still_surfaces_as_a_failure(monkeypatch):
     with LiveTennisScores() as p:
         with pytest.raises(RuntimeError, match="403"):
             p.fetch_with_counters("tennis", date(2026, 8, 15))
+
+
+def test_backfill_is_paced_under_the_rate_limit(monkeypatch):
+    """Le palier Basic plafonne à 60 req/min. Un rattrapage de soixante jours
+    enchaîne soixante appels : sans cadence il tombe exactement sur la limite
+    et échoue en plein milieu, laissant la moitié de l'historique sans
+    résultat.
+
+    ⚠️ La couche HTTP est remplacée, PAS `_get` : la cadence vit dans `_get`,
+    et le mocker annulerait exactement ce qu'on veut vérifier. C'est le piège
+    du §13.10, où un mock masquait le défaut qu'il était censé couvrir."""
+    from datetime import date
+
+    from src.score_sources import LiveTennisScores
+
+    monkeypatch.setenv("SCORES_TENNIS_KEY", "x")
+    monkeypatch.setenv("SCORES_TENNIS_MIN_INTERVAL_SEC", "0.05")
+
+    slept: list[float] = []
+    monkeypatch.setattr("time.sleep", lambda s: slept.append(s))
+
+    class _Resp:
+        def raise_for_status(self):
+            return None
+
+        def json(self):
+            return {"data": [], "meta": {"has_more": False}}
+
+    monkeypatch.setattr("httpx.Client.get", lambda self, path, params=None: _Resp())
+
+    with LiveTennisScores() as p:
+        assert p.min_interval_sec == 0.05
+        for d in (1, 2, 3):
+            p.fetch_with_counters("tennis", date(2026, 8, d))
+
+    # Le premier appel part sans attendre, les suivants sont espacés.
+    assert len(slept) >= 2, "aucune cadence appliquée entre les journées"
+    assert all(0 < x <= 0.05 for x in slept)
+
+
+def test_pacing_is_read_at_construction_not_at_import(monkeypatch):
+    """Une valeur figée à l'import rendrait le réglage de `.env` sans effet, et
+    rien ne dirait pourquoi. Même piège que `provider_for` (§19.11)."""
+    from src.score_sources import LiveTennisScores
+
+    monkeypatch.setenv("SCORES_TENNIS_KEY", "x")
+    monkeypatch.delenv("SCORES_TENNIS_MIN_INTERVAL_SEC", raising=False)
+    with LiveTennisScores() as p:
+        assert p.min_interval_sec == 1.1        # 54 req/min, sous les 60
+        assert 60 / p.min_interval_sec < 60
+
+    monkeypatch.setenv("SCORES_TENNIS_MIN_INTERVAL_SEC", "2.5")
+    with LiveTennisScores() as p:
+        assert p.min_interval_sec == 2.5
