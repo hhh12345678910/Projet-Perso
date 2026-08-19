@@ -3698,6 +3698,44 @@ Puis, une fois des matchs clôturés :
 python -m src.main clv-report --sport tennis --market totals
 ```
 
+### 21.6 bis Le taux attendu — une prédiction falsifiable
+
+Une heure après la mise en service : **283 couples devigués, 630 cotes de books
+comparables, 0 détection**. Ce zéro n'est pas une anomalie, et le vérifier
+comptait autant que le correctif lui-même.
+
+`scripts/market_supply.py` sur la même fenêtre, football contre tennis :
+
+| totals | football | tennis (jeux) |
+|---|---|---|
+| cotes comparables (2 h) | 10 708 | 630 |
+| médiane d'EV | −8,1 % | **−7,9 %** |
+| p90 | −5,1 % | **−4,5 %** |
+| au-dessus de +2 % | 0,3 % | **0,5 %** |
+| détections réelles (24 h) | 77 | — |
+
+La distribution d'EV des totaux de jeux est **indiscernable de celle des totaux
+de football**, légèrement meilleure même. Les trois pannes possibles sont
+écartées : Pinnacle price des deux côtés sur 283/283, aucune référence écartée
+pour marge aberrante, zéro book incomplet. La chaîne est saine ; la marge des
+books belges y est simplement normale.
+
+Le tennis pesant 5,9 % du volume comparable du football, le taux attendu est :
+
+> **77 × 0,059 ≈ 4 à 5 détections de totaux de tennis par jour**, à EV moyenne
+> autour de **+7 à 8 %** (les totaux rendent moins que les h2h : +7,8 % contre
+> +11,4 % au football).
+
+⚠️ À vérifier 24 h après la mise en service, avec la requête du §21.6. **Moins
+de 2 : il reste un blocage, reprendre la chasse. Autour de 5 : le correctif fait
+son travail.** Une estimation antérieure de 7/jour, tirée d'une fenêtre de 3 h,
+est à ignorer — celle-ci repose sur 24 h.
+
+Reste inconnu, et c'est la vraie question : la **CLV** de ces détections. Celle
+du tennis h2h est excellente (+15 % en premium) ; celle des totaux de jeux n'a
+jamais existé. `clv-report --sport tennis --market totals` tranchera une fois
+des matchs clôturés — pas avant.
+
 ### 21.7 Reste ouvert
 
 - **Le `max_gap` des middles** est un nombre absolu. Un écart d'un but au
