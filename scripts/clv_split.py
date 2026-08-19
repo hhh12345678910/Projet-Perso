@@ -1,0 +1,127 @@
+"""CLV découpé selon les axes qu'on veut, et séparé jouable / muet.
+
+Pourquoi cet outil existe
+-------------------------
+Quatre books sur huit sont en sourdine dans `/book` (§21.8), soit 45 % des
+détections. `clv-report` mesure la population entière : ses moyennes décrivent
+donc un flux que personne ne reçoit. Un book muet à CLV faible tire les
+chiffres vers le bas et fait croire à une dégradation pendant que le flux
+réellement alerté s'améliore — et rien dans la sortie ne le signale.
+
+`clv-report` n'accepte par ailleurs ni `--sport` ni `--market`. Répondre à
+« la CLV de StarCasino est-elle mauvaise partout ou seulement au tennis ? »
+supposait donc d'exporter un CSV et de l'ouvrir à la main.
+
+    python -m scripts.clv_split --by book,sport
+    python -m scripts.clv_split --by sport,market --min 30
+    python -m scripts.clv_split --by book --since 2026-08-10
+
+La CLV vient de `clv.clv_pct` et les lignes de `Storage.all_closed_bets()` :
+mêmes chiffres que `clv-report`, au découpage près (§17.7 — une sonde qui
+recalcule autre chose que la production ment).
+
+⚠️ Le taux de CLV positives est plus robuste que la moyenne : la CLV a des
+queues épaisses, et une poignée de gros gagnants déplace la moyenne sans rien
+dire de la régularité. La colonne σ dit à partir de quand l'écart est lisible.
+"""
+from __future__ import annotations
+
+import argparse
+import sqlite3
+from collections import defaultdict
+from statistics import mean, pstdev
+
+from src.clv import clv_pct
+from src.config import ScanConfig
+from src.storage import Storage
+
+_AXES = ("book", "sport", "market", "league", "played", "alerte")
+
+
+def _muted(db_path: str) -> set[str]:
+    """Les books coupés dans /book. Lus à la même table que l'alerter."""
+    try:
+        con = sqlite3.connect(db_path)
+        con.execute("CREATE TABLE IF NOT EXISTS book_alerts_off "
+                    "(book TEXT PRIMARY KEY, disabled_at TEXT NOT NULL)")
+        rows = con.execute("SELECT book FROM book_alerts_off").fetchall()
+        con.close()
+        return {r[0] for r in rows}
+    except Exception:
+        return set()
+
+
+def main() -> None:
+    ap = argparse.ArgumentParser(description=__doc__)
+    ap.add_argument("--by", default="book",
+                    help=f"Axes séparés par des virgules, parmi {', '.join(_AXES)}. "
+                         "« alerte » sépare les books muets des books actifs.")
+    ap.add_argument("--min", type=int, default=20,
+                    help="Effectif minimum pour afficher une ligne (défaut 20).")
+    ap.add_argument("--since", default="", help="Date de détection minimale (AAAA-MM-JJ).")
+    ap.add_argument("--until", default="", help="Date de détection maximale, incluse.")
+    ap.add_argument("--db", default=ScanConfig().db_path)
+    args = ap.parse_args()
+
+    axes = [a.strip() for a in args.by.split(",") if a.strip()]
+    inconnus = [a for a in axes if a not in _AXES]
+    if inconnus:
+        raise SystemExit(f"Axe inconnu : {inconnus}. Choix : {', '.join(_AXES)}")
+
+    muets = _muted(args.db)
+    rows = Storage(args.db).all_closed_bets()
+
+    groupes: dict[tuple, list[float]] = defaultdict(list)
+    for r in rows:
+        d = (r["detected_at"] or "")[:10]
+        if args.since and d < args.since:
+            continue
+        if args.until and d > args.until:
+            continue
+        fair = r["closing_fair_odd"]
+        if not fair or fair <= 0:
+            continue
+        cle = []
+        for a in axes:
+            if a == "alerte":
+                cle.append("muet" if r["book"] in muets else "actif")
+            elif a == "played":
+                cle.append("joué" if r["played"] else "détecté")
+            else:
+                cle.append(r[a] or "?")
+        groupes[tuple(cle)].append(clv_pct(r["odd_taken"], fair) * 100.0)
+
+    if not groupes:
+        print("Aucun pari clôturé sur cette fenêtre.")
+        return
+
+    entete = "  ".join(f"{a:<16s}" for a in axes)
+    print(f"\n{entete}  {'n':>6s} {'CLV moy':>9s} {'σ moy':>7s} {'médiane':>8s} {'positives':>10s}")
+    print("-" * (18 * len(axes) + 45))
+
+    petits = 0
+    for cle, vals in sorted(groupes.items(), key=lambda kv: -len(kv[1])):
+        if len(vals) < args.min:
+            petits += len(vals)
+            continue
+        v = sorted(vals)
+        moy = mean(v)
+        # σ de la MOYENNE, pas de l'échantillon : c'est elle qui dit si l'écart
+        # entre deux lignes est lisible ou du bruit.
+        sigma = pstdev(v) / (len(v) ** 0.5) if len(v) > 1 else float("nan")
+        med = v[len(v) // 2]
+        pos = 100.0 * sum(1 for x in v if x > 0) / len(v)
+        libelle = "  ".join(f"{c:<16.16s}" for c in cle)
+        print(f"{libelle}  {len(v):6d} {moy:+8.2f} % {sigma:6.2f} {med:+7.2f} % {pos:9.1f} %")
+
+    if petits:
+        print(f"\n({petits} paris dans des groupes sous {args.min}, masqués — "
+              "une CLV moyenne sur quelques dizaines de paris ne distingue rien.)")
+    if "alerte" not in axes and muets:
+        print(f"\n⚠️ {len(muets)} books sont muets dans /book ({', '.join(sorted(muets))}). "
+              "Leurs détections sont comptées ici alors qu'elles n'atteignent aucun canal.\n"
+              "   Ajoute « alerte » aux axes pour les séparer.")
+
+
+if __name__ == "__main__":
+    main()

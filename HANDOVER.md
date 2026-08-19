@@ -3695,8 +3695,11 @@ S'il reste à une seule ligne, le correctif n'est pas en service.
 Puis, une fois des matchs clôturés :
 
 ```bash
-python -m src.main clv-report --sport tennis --market totals
+python -m scripts.clv_split --by sport,market --min 20
 ```
+
+⚠️ `clv-report` n'accepte **ni `--sport` ni `--market`** — seulement
+`--detected`, `--since` et `--until`. Tout découpage passe par `clv_split`.
 
 ### 21.6 bis Le taux attendu — une prédiction falsifiable
 
@@ -3733,7 +3736,7 @@ est à ignorer — celle-ci repose sur 24 h.
 
 Reste inconnu, et c'est la vraie question : la **CLV** de ces détections. Celle
 du tennis h2h est excellente (+15 % en premium) ; celle des totaux de jeux n'a
-jamais existé. `clv-report --sport tennis --market totals` tranchera une fois
+jamais existé. `python -m scripts.clv_split --by sport,market` tranchera une fois
 des matchs clôturés — pas avant.
 
 ### 21.8 Quatre books sur huit sont muets — 45 % des détections
@@ -3773,8 +3776,9 @@ opportunités relevées venant de StarCasino, muet.
 **Question ouverte, mesurable.** StarCasino est muet sur TOUS les sports alors
 que le constat de départ portait sur son ROI au tennis. Si son football est
 sain, 1 200 détections sont coupées pour un problème qui n'en concerne qu'une
-partie. À trancher avec `clv-report` par sport avant d'envisager quoi que ce
-soit — un mute par sport serait un développement, pas un réglage.
+partie. À trancher avec `python -m scripts.clv_split --by book,sport` avant
+d'envisager quoi que ce soit — un mute par sport serait un développement, pas
+un réglage.
 
 ### 21.7 Reste ouvert
 
