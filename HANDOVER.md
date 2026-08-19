@@ -3557,10 +3557,153 @@ pas 100 par jour comme sa grille le laisse croire. Basic est indispensable.
    effet significatif de toute l'analyse.
 5. **Décocher BetFirst dans `/book`** — 15 paris joués à +3,72 % de CLV,
    médiane +0,84 %, alors que le §15.2 le réserve à la donnée.
-6. **Les totaux de tennis sans clôture** — zéro sur tout l'historique alors
-   qu'ils sont collectés. Perte de mesure silencieuse.
+6. ~~**Les totaux de tennis sans clôture**~~ — cause trouvée et corrigée le
+   19/08 : ils n'étaient pas collectés du tout. Voir §21.
 7. **Résorber le retard de purge** avant de passer `PRUNE_DAYS` à 7 : allonger
    la rétention pendant le rattrapage l'aggraverait.
 8. Reliquats : découpage en runs du `pinnacle_doctor`, noms de books dédoublés
    dans `paris_track.csv` (§14.10), dérive de cycles inexpliquée (§19.9 pt 4),
    `line_speed` à repenser (§18.5).
+
+---
+
+## 21. Session du 19/08 — les totaux de jeux du tennis, jamais collectés
+
+### 21.1 Le constat
+
+Sur l'export complet des détections : **5 019 h2h au tennis, zéro over/under**.
+Pas « peu » — zéro, depuis le premier jour. Or six books affichent des totaux
+de jeux au tennis, et le tennis est le meilleur sport du système (CLV premium
++15 %, 92 % de paris à CLV positive). Le §20.15 le listait comme « perte de
+mesure silencieuse » sans en connaître la cause.
+
+Interrogation de la base sur la fenêtre J±1, marché `totals`, tennis :
+
+```
+magicbetting   21 lignes : [17.5 … 23.0]
+golden_palace   6 lignes
+starcasino      6 lignes
+unibet          5 lignes
+betano          3 lignes
+circus          3 lignes
+pinnacle        1 ligne  : [2.5]      ← la référence
+```
+
+Pinnacle donnait **2,5** en face des 17,5-23,0 des books. Une ligne de **sets**
+contre des lignes de **jeux** : aucun appariement n'était possible, donc aucune
+ligne juste, donc aucune détection. Sans erreur, sans log — le mode §11.
+
+### 21.2 La cause
+
+`/sports/33/matchups` (tennis) renvoie **166 entrées** : 72 racines et
+94 enfants, dont 81 marqués `units: "Games"` et 13 `units: "Sets"`.
+
+| famille | `total` | échelle |
+|---|---|---|
+| racine | 2,5 | **sets** |
+| enfant `Games` | 15,0 à 33,5 | **jeux** |
+
+Les 320 marchés de totaux en jeux portent tous le `matchupId` d'un **enfant**.
+L'index, lui, ne retenait que les racines :
+
+```python
+indexed = {m["id"]: m for m in matchups if ... and not m.get("parent")}
+```
+
+Ils tombaient donc intégralement sur `if matchup is None: continue`. Sonde :
+
+```
+totaux SETS  :  63  dont matchupId connu : 51
+totaux JEUX  : 320  dont matchupId connu :  0
+```
+
+### 21.3 Le piège que le correctif aurait pu ouvrir
+
+La racine et son enfant `Games` décrivent le **même match** : même `event_key`.
+Indexer les enfants tels quels aurait donc fusionné deux échelles sous une
+seule clé — et elles **se croisent** :
+
+```
+spread ±1,5 sur la racine       → handicap d'un SET
+spread ±1,5 sur l'enfant Games  → handicap d'un JEU
+```
+
+**20 des 72 matchs relevés** présentaient les deux. Deviguer 1,5 jeu contre
+1,5 set n'aurait levé aucune erreur : le groupe aurait eu ses deux côtés, la
+marge aurait été plausible, seule la ligne juste aurait été fausse. C'est la
+confusion jeux/sets du §19.2, dans sa version silencieuse — celle qui produit
+des paris de valeur inventés au lieu de zéro pari.
+
+D'où une règle volontairement étroite : **d'un matchup en jeux on ne prend que
+les totaux**, dont l'échelle (≥ 15) ne recoupe jamais celle des sets (2,5 ou
+3,5). Les handicaps et `team_total` en jeux restent dehors tant qu'une ligne ne
+portera pas son unité. Les enfants `Sets` sont ignorés : ils redisent la racine.
+
+### 21.4 Trois détails du payload, tous mesurés
+
+1. **Les participants de l'enfant sont suffixés** — `Katarina Zavatska (Games)`.
+   Les lire fabriquerait une `event_key` fantôme, sans h2h en face et invisible
+   au réalignement des softs. Les noms et l'heure viennent du bloc `parent`
+   embarqué, complet sur 81/81.
+2. **`parent.isLive` ment toujours** : False sur 81/81, y compris pour un match
+   commencé depuis **909 minutes**. C'est `isLive` de l'ENFANT qui dit la
+   vérité (14 cas). S'y fier fait entrer des prix en direct dans la référence.
+3. **20 enfants sur 81 n'avaient plus leur racine au calendrier** (tous
+   au-delà du coup d'envoi). Résoudre le parent via l'index les aurait perdus ;
+   le bloc `parent` embarqué suffit.
+
+### 21.5 Ce que ça donne, mesuré avant et après sur l'API réelle
+
+Même relevé, même minute, code d'avant puis code d'après :
+
+| tennis | avant | après |
+|---|---|---|
+| `totals` — cotes | 106 | **672** |
+| `totals` — événements | 53 | **63** |
+| `totals` — lignes | `{2.5}` | `{2.5, 15.0 … 24.5}` |
+| dont événements avec un h2h en face | 53 | **58** |
+| `h2h` | 132 | 132 |
+| `handicap` | 210 | 210 |
+| doublons (clé, marché, ligne, côté) | 0 | **0** |
+
+Football : **30 269 cotes, identiques au octet près** — le correctif ne touche
+que les sports qui produisent des matchups `units`, c'est-à-dire le tennis.
+
+⚠️ Ce tableau mesure ce qui sort du scraper, **pas** un gain de détections. Le
+gain réel dépend de l'appariement des lignes des books avec celles de Pinnacle,
+et se lira sur la base après quelques cycles — pas avant. Six hypothèses ont
+déjà été démenties par la mesure dans ces sessions ; celle-ci attend la sienne.
+
+### 21.6 Vérification à faire tourner sur la VM
+
+Après `git pull` et redémarrage du service, laisser passer deux ou trois cycles
+puis :
+
+```bash
+sqlite3 data/valuebet.db "
+  SELECT book, COUNT(DISTINCT outcome_line) AS lignes,
+         MIN(outcome_line), MAX(outcome_line), COUNT(*)
+  FROM quotes q JOIN events e ON e.event_key = q.event_key
+  WHERE e.sport='tennis' AND q.market='totals'
+    AND q.fetched_at > datetime('now','-1 hour')
+  GROUP BY book ORDER BY 5 DESC;"
+```
+
+Attendu : `pinnacle` avec une quinzaine de lignes entre 15 et 25, plus 2.5.
+S'il reste à une seule ligne, le correctif n'est pas en service.
+
+Puis, une fois des matchs clôturés :
+
+```bash
+python -m src.main clv-report --sport tennis --market totals
+```
+
+### 21.7 Reste ouvert
+
+- **Le `max_gap` des middles** est un nombre absolu. Un écart d'un but au
+  football et d'un jeu au tennis n'ont pas le même sens ; la formule d'EV, elle,
+  reste juste puisque `P_mid` vient des prix Pinnacle eux-mêmes. À rouvrir avec
+  des chiffres, pas avant.
+- **Le handicap de jeux** (664 prix par relevé) reste inexploité. Le débloquer
+  demande que la ligne porte son unité — un changement de modèle, pas un
+  correctif de scraper.

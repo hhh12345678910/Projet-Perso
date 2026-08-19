@@ -3,6 +3,7 @@ from __future__ import annotations
 import os
 import threading
 import time
+from dataclasses import dataclass
 from datetime import datetime, timezone
 from typing import Iterable, Iterator
 
@@ -31,6 +32,125 @@ SPORT_IDS = {
     "esports": 12,
     "volleyball": 34,
 }
+
+
+# Au tennis, les totaux de JEUX vivent sur un matchup ENFANT
+# ----------------------------------------------------------------------------
+# Relevé du 19/08 sur /sports/33 (tennis) : 166 entrées de calendrier, dont
+# 72 racines et 94 enfants — 81 marqués `units: "Games"`, 13 `units: "Sets"`.
+#
+#   racine        total  →  2,5          (des SETS)
+#   enfant Games  total  →  15 à 33,5    (des JEUX)
+#
+# L'index ne retenait que les racines (`not m.get("parent")`), donc les 320
+# marchés de totaux en jeux tombaient tous sur `matchup is None: continue`.
+# C'est pour ça que la base ne contient PAS UNE SEULE détection de totaux au
+# tennis depuis le début, alors que six books en affichent : Pinnacle donnait
+# 2,5 en face de leurs 17,5-23,0, et aucune ligne ne s'appariait jamais.
+#
+# ⚠️ Deux échelles, une seule clé — et c'est le piège
+# ---------------------------------------------------
+# La racine et l'enfant « Games » décrivent le MÊME match, donc portent la même
+# `event_key`. Leurs prix ne comptent pourtant pas la même chose, et les deux
+# échelles se croisent : `spread ±1,5` existe des deux côtés — handicap d'un SET
+# sur la racine, handicap d'un JEU sur l'enfant — sur 20 des 72 matchs relevés.
+# Les fusionner ferait deviguer un handicap de 1,5 jeu contre un handicap de
+# 1,5 set, et rien ne le signalerait : le groupe aurait ses deux côtés, la
+# marge serait plausible, la ligne juste serait fausse. C'est la confusion
+# jeux/sets du §19.2, dans sa version silencieuse.
+#
+# D'où la règle, volontairement étroite : d'un enfant « Games » on ne prend QUE
+# les totaux, dont l'échelle ne recoupe jamais celle des sets. Les handicaps et
+# team totals en jeux restent dehors tant qu'une ligne ne portera pas son unité.
+# Les enfants « Sets » sont ignorés : ils redisent la racine, et deux prix pour
+# la même (clé, marché, ligne) ne feraient que se marcher dessus.
+_UNITS_GAMES = "Games"
+
+# La frontière entre les deux échelles. Un match en deux sets gagnants ne peut
+# pas compter moins de 12 jeux, et aucune ligne de sets ne dépasse 4,5 (BO5) :
+# 10 sépare donc sans ambiguïté. Ce seuil ne sert pas à classer — la famille du
+# matchup le fait déjà — mais à ce qu'un changement d'API se voie, au lieu de
+# glisser un total de sets dans le groupe des jeux.
+_GAMES_MIN_LINE = 10.0
+
+
+@dataclass(frozen=True)
+class _Matchup:
+    """Ce que le calendrier apporte à un marché : les noms, l'heure, la ligue —
+    et l'échelle dans laquelle ses prix se lisent.
+
+    `source_id` est celui de la RACINE, même pour un enfant : une cote doit
+    pointer vers le match, pas vers son sous-marché.
+    """
+    source_id: str
+    home: str
+    away: str
+    start_time: datetime
+    league: str
+    is_live: bool
+    counts_games: bool
+
+
+def _read_matchup(m: dict) -> _Matchup | None:
+    """Traduit une entrée de calendrier, racine ou enfant « Games ».
+
+    Pour un enfant, les noms et l'heure viennent du bloc `parent` embarqué, et
+    surtout pas de l'enfant lui-même : ses participants sont suffixés
+    « (Games) » et son `startTime` dérive une fois le match commencé (14 cas sur
+    81 au relevé). C'est le parent qui fabrique la MÊME `event_key` que la
+    racine — sans ça les totaux de jeux atterriraient sur un événement fantôme,
+    sans h2h en face.
+
+    Le parent embarqué est complet (participants et startTime présents sur
+    81/81) mais son `isLive` vaut toujours False, y compris pour des matchs
+    commencés depuis huit heures : c'est `isLive` de l'ENFANT qui dit la vérité.
+    """
+    if not isinstance(m, dict) or m.get("id") is None:
+        return None
+
+    parent = m.get("parent")
+    if parent:
+        if m.get("units") != _UNITS_GAMES:
+            return None                      # enfants « Sets » : voir ci-dessus
+        source = m.get("parentId") or (parent.get("id") if isinstance(parent, dict) else None)
+        infos = parent if isinstance(parent, dict) else {}
+        counts_games = True
+    else:
+        source = m.get("id")
+        infos = m
+        counts_games = False
+
+    participants = infos.get("participants") or []
+    home = next((p["name"] for p in participants if p.get("alignment") == "home"), None)
+    away = next((p["name"] for p in participants if p.get("alignment") == "away"), None)
+    start_raw = infos.get("startTime")
+    if not (home and away and start_raw and source is not None):
+        return None
+
+    return _Matchup(
+        source_id=str(source),
+        home=home,
+        away=away,
+        start_time=datetime.fromisoformat(
+            start_raw.replace("Z", "+00:00")).astimezone(timezone.utc),
+        league=(m.get("league") or {}).get("name", ""),
+        is_live=bool(m.get("isLive")),
+        counts_games=counts_games,
+    )
+
+
+def _wrong_scale(matchup: _Matchup, points: float | None) -> bool:
+    """Un total annoncé en jeux qui n'est pas dans l'échelle des jeux.
+
+    Le contrôle ne va que dans ce sens. Il ne peut PAS être rendu symétrique :
+    une racine de basket affiche des totaux à 220,5, très au-dessus du seuil, et
+    un seuil appliqué aux racines jetterait tous les totaux de basket et de
+    hockey. Ici la famille du matchup a déjà classé le prix ; le seuil sert
+    seulement à ce qu'un changement d'API se voie.
+    """
+    if not matchup.counts_games:
+        return False
+    return points is None or points < _GAMES_MIN_LINE
 
 
 # Le calendrier coûte deux fois le prix des cotes, et ne change presque jamais
@@ -198,14 +318,19 @@ class PinnacleScraper:
         # See orchestrator for the batch path.
         return []
 
-    def _matchups_by_id(self, sport_id: int) -> dict:
+    def _matchups_by_id(self, sport_id: int) -> dict[object, _Matchup]:
         """Calendrier indexé par matchupId, rechargé au plus toutes les
         _MATCHUPS_TTL secondes. Voir le commentaire près de _MATCHUPS_CACHE :
         c'est la plus grosse réponse de l'API et celle qui bouge le moins.
 
         Le cache retient le dictionnaire déjà indexé, pas le JSON brut : sur le
         football, réindexer 34 Mo à chaque cycle coûtait aussi du CPU sur une
-        petite VM."""
+        petite VM.
+
+        Les racines ET les enfants « Games » y entrent, chacun sous SON propre
+        matchupId — c'est celui-là que porte le marché. Un enfant y est déjà
+        résolu vers les noms et l'heure de sa racine (voir `_read_matchup`),
+        donc les deux familles produisent la même `event_key`."""
         now = time.monotonic()
         with _MATCHUPS_LOCK:
             hit = _MATCHUPS_CACHE.get(sport_id)
@@ -215,11 +340,11 @@ class PinnacleScraper:
         matchups = self._get(f"/sports/{sport_id}/matchups")
         if not isinstance(matchups, list):
             return {}
-        # Index prematch matchups by id (skip derivative "parent" entries).
-        indexed = {
-            m["id"]: m for m in matchups
-            if isinstance(m, dict) and m.get("id") is not None and not m.get("parent")
-        }
+        indexed: dict[object, _Matchup] = {}
+        for m in matchups:
+            entry = _read_matchup(m) if isinstance(m, dict) else None
+            if entry is not None:
+                indexed[m["id"]] = entry
         with _MATCHUPS_LOCK:
             _MATCHUPS_CACHE[sport_id] = (time.monotonic(), indexed)
         return indexed
@@ -250,28 +375,29 @@ class PinnacleScraper:
             if market.get("status") not in (None, "open"):
                 continue
             matchup = matchups_by_id.get(market.get("matchupId"))
-            if matchup is None or matchup.get("isLive"):
+            if matchup is None or matchup.is_live:
                 continue
-
-            participants = matchup.get("participants") or []
-            home = next((p["name"] for p in participants if p.get("alignment") == "home"), None)
-            away = next((p["name"] for p in participants if p.get("alignment") == "away"), None)
-            start_raw = matchup.get("startTime")
-            if not (home and away and start_raw):
-                continue
-            league_name = (matchup.get("league") or {}).get("name", "")
-            if is_noise_event(home, away, league_name):
-                continue
-            start = datetime.fromisoformat(start_raw.replace("Z", "+00:00")).astimezone(timezone.utc)
-            record_pair(home, away)
-            ek = event_key(home, away, start)
 
             market_type = self._map_market(market.get("type"))
             if market_type is None:
                 continue
+            # D'un matchup qui compte en JEUX on ne prend que les totaux : son
+            # `spread ±1,5` porte la même ligne que le handicap de SETS de la
+            # racine, sur le même événement et le même marché. Voir _UNITS_GAMES.
+            if matchup.counts_games and market_type is not MarketType.TOTALS:
+                continue
+
+            home, away = matchup.home, matchup.away
+            league_name = matchup.league
+            if is_noise_event(home, away, league_name):
+                continue
+            record_pair(home, away)
+            ek = event_key(home, away, matchup.start_time)
 
             for p in market.get("prices") or []:
                 if p.get("points") is not None and market_type == MarketType.H2H:
+                    continue
+                if _wrong_scale(matchup, p.get("points")):
                     continue
                 decimal_odd = _american_to_decimal(p.get("price"))
                 if decimal_odd is None:
@@ -285,7 +411,7 @@ class PinnacleScraper:
                     outcome=Outcome(label=label, line=p.get("points")),
                     decimal_odd=decimal_odd,
                     fetched_at=now,
-                    source_event_id=str(market.get("matchupId")),
+                    source_event_id=matchup.source_id,
                     # La ligue était lue puis jetée : elle servait au filtre de
                     # bruit et n'allait pas plus loin. Pinnacle est la seule
                     # source qui la nomme pour TOUS les événements de la
