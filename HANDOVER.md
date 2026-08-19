@@ -3551,12 +3551,12 @@ pas 100 par jour comme sa grille le laisse croire. Basic est indispensable.
 2. **Vérifier l'alerte softbook de bout en bout** (§20.6) — le test manuel a
    échoué sur une config Telegram vide, la chaîne de livraison n'est donc pas
    prouvée.
-3. **Durcir Napoleon** — seul book faible sur trois fenêtres indépendantes,
-   328 opportunités premium cumulées.
+3. ~~**Durcir Napoleon**~~ — sans objet : il est en sourdine dans `/book`
+   depuis, et n'est plus joué. Un book muet n'a pas besoin de seuil, il ne
+   peut plus coûter un euro. Voir §21.8.
 4. **Relever le seuil d'EV sur les `under`**, surtout 3.5 et 4.5 (§20.8). Seul
    effet significatif de toute l'analyse.
-5. **Décocher BetFirst dans `/book`** — 15 paris joués à +3,72 % de CLV,
-   médiane +0,84 %, alors que le §15.2 le réserve à la donnée.
+5. ~~**Décocher BetFirst dans `/book`**~~ — fait. Voir §21.8.
 6. ~~**Les totaux de tennis sans clôture**~~ — cause trouvée et corrigée le
    19/08 : ils n'étaient pas collectés du tout. Voir §21.
 7. **Résorber le retard de purge** avant de passer `PRUNE_DAYS` à 7 : allonger
@@ -3735,6 +3735,46 @@ Reste inconnu, et c'est la vraie question : la **CLV** de ces détections. Celle
 du tennis h2h est excellente (+15 % en premium) ; celle des totaux de jeux n'a
 jamais existé. `clv-report --sport tennis --market totals` tranchera une fois
 des matchs clôturés — pas avant.
+
+### 21.8 Quatre books sur huit sont muets — 45 % des détections
+
+Relevé le 19/08 : `book_alerts_off` contient **betano_be, betfirst,
+napoleon_be, starcasino_sport**.
+
+| book | détections 7 j | EV moy | état |
+|---|---|---|---|
+| starcasino_sport | 1 217 | +10,9 % | **muet** |
+| unibet_be | 1 177 | +10,6 % | actif |
+| golden_palace | 785 | +11,3 % | actif |
+| napoleon_be | 661 | +11,7 % | **muet** |
+| betano_be | 473 | +10,9 % | **muet** |
+| ladbrokes_be | 407 | +12,6 % | actif |
+| circus_be | 350 | +12,6 % | actif |
+| magicbetting | 169 | +17,2 % | actif |
+
+**2 351 détections sur 5 239 — 45 % — n'atteignent plus aucun canal**, dont le
+book de tête en volume. Le réglage `/book` ne coupe QUE la notification
+(`alerter.py:667`) : les cotes restent collectées, stockées, suivies en courbe
+et exportées, et les détections restent écrites dans `value_bets`. C'est
+voulu — faire taire sans cesser de mesurer.
+
+⚠️ **Conséquence sur toute analyse à partir d'ici.** `value_bets` mélange
+désormais ce qui est jouable et ce qui ne l'est plus, dans une proportion qui
+n'est plus marginale. Une moyenne de CLV tous books confondus mesure un flux
+qui n'existe pour personne : un book muet à CLV faible tire les chiffres vers le
+bas et fait croire à une dégradation pendant que le flux réellement reçu
+s'améliore. **Toute comparaison de books doit séparer les deux groupes**, et
+tout chiffre « global » doit dire lequel des deux il décrit.
+
+Conséquence aussi sur la prédiction du §21.6 bis : 4-5 **détections** par jour
+sur les totaux de tennis, mais ~2-3 **alertes**, deux des meilleures
+opportunités relevées venant de StarCasino, muet.
+
+**Question ouverte, mesurable.** StarCasino est muet sur TOUS les sports alors
+que le constat de départ portait sur son ROI au tennis. Si son football est
+sain, 1 200 détections sont coupées pour un problème qui n'en concerne qu'une
+partie. À trancher avec `clv-report` par sport avant d'envisager quoi que ce
+soit — un mute par sport serait un développement, pas un réglage.
 
 ### 21.7 Reste ouvert
 
