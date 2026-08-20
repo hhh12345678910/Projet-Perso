@@ -11,6 +11,21 @@ class MarketType(str, Enum):
     TOTALS = "totals"         # over/under
     HANDICAP = "handicap"     # asian / european handicap
     BTTS = "btts"             # both teams to score
+    # Première mi-temps. Types DISTINCTS, et non un champ `period` porté à
+    # côté du marché : le devig groupe sur (event_key, market, line), donc un
+    # `total 1.5` de mi-temps et un `total 1.5` de match plein ne doivent
+    # jamais pouvoir tomber dans le même groupe. Avec des types séparés, la
+    # séparation est acquise par construction, et tout code écrit avant eux
+    # (`market == MarketType.TOTALS`) continue de ne voir que le match plein.
+    # Un chemin non mis à jour IGNORE donc les mi-temps au lieu de les
+    # confondre — l'inverse d'un champ oublié dans une clé, qui produirait la
+    # panne silencieuse du §21.3.
+    #
+    # Football seulement : chez Pinnacle `period 1` vaut mi-temps au football
+    # mais PREMIER SET au tennis. Les réunir sous un même nom rejouerait la
+    # confusion jeux/sets du §19.2.
+    H2H_H1 = "h2h_h1"         # 1X2 / moneyline, première mi-temps
+    TOTALS_H1 = "totals_h1"   # over/under, première mi-temps
 
 
 class Book(str, Enum):
@@ -46,6 +61,34 @@ class Event:
     start_time: datetime
     source_id: str
     book: Book
+
+
+#: Les marchés de mi-temps. Aucune alerte ne doit en sortir (§21.14) : ils
+#: sont collectés, devigués, stockés et suivis en CLV, mais muets.
+HALF_TIME_MARKETS = frozenset({MarketType.H2H_H1, MarketType.TOTALS_H1})
+
+#: Les marchés de type over/under, toutes périodes confondues. À utiliser
+#: partout où un test portait sur `MarketType.TOTALS` pour une raison de
+#: SÉMANTIQUE (labels over/under symétriques), et non de périmètre.
+TOTALS_LIKE = frozenset({MarketType.TOTALS, MarketType.TOTALS_H1})
+
+#: Le marché de match plein correspondant. Sert à l'affichage et aux
+#: regroupements, jamais à l'appariement — apparier une mi-temps à un match
+#: plein est précisément ce que ces types empêchent.
+_BASE_MARKET = {
+    MarketType.H2H_H1: MarketType.H2H,
+    MarketType.TOTALS_H1: MarketType.TOTALS,
+}
+
+
+def is_half_time(market: "MarketType") -> bool:
+    """Vrai pour un marché de première mi-temps."""
+    return market in HALF_TIME_MARKETS
+
+
+def base_market(market: "MarketType") -> "MarketType":
+    """Le marché de match plein correspondant, ou le marché lui-même."""
+    return _BASE_MARKET.get(market, market)
 
 
 @dataclass(frozen=True)

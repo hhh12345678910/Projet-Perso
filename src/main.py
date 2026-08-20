@@ -24,7 +24,8 @@ from .ev import ev_pct, fair_odd, kelly_fraction, kelly_stake
 from .leagues import categorize as _league_category
 from .matcher import (parse_event_key, reconcile_event_keys, tolerance_for,
                       wide_tolerance_for)
-from .models import Book, FairLine, MarketType, OddQuote, Outcome, ValueBet
+from .models import (Book, FairLine, HALF_TIME_MARKETS, MarketType, OddQuote,
+                     Outcome, TOTALS_LIKE, ValueBet, is_half_time)
 from .scrapers.betano import (
     BetanoAuthError,
     BetanoScraper,
@@ -1120,7 +1121,9 @@ def _flip_outcome_for_swap(outcome: Outcome, market: MarketType) -> Outcome:
     that event are now pointing at the wrong team in the reference frame.
     Flip home↔away (draw stays); the totals over/under labels are
     team-symmetric so they pass through unchanged."""
-    if market == MarketType.TOTALS:
+    # TOTALS_LIKE, pas TOTALS : un `totals_h1` a les mêmes labels
+    # over/under symétriques, et tomberait sinon dans la branche home↔away.
+    if market in TOTALS_LIKE:
         return outcome
     flipped_label = _OPPOSITE_OUTCOME.get(outcome.label, outcome.label)
     return replace(outcome, label=flipped_label)

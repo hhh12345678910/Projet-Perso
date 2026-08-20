@@ -3,7 +3,8 @@
 Document de reprise. À lire en premier pour reprendre le travail sans
 redécouvrir le contexte. Dernière mise à jour : 20/08/2026.
 
-**Nouveau (20/08) :** §21.13 — on jette 35,5 % du payload Pinnacle (les
+**Nouveau (20/08) :** §21.14 — les mi-temps sont EN SERVICE et MUETTES
+(collectées, deviguées, suivies en CLV, zéro alerte). §21.13 — on jette 35,5 % du payload Pinnacle (les
 mi-temps) sur la foi d'un commentaire faux, et 26,9 % (les handicaps) pour une
 raison valable. La mi-temps est le chantier à ouvrir en premier.
 
@@ -4085,6 +4086,85 @@ gonfle surtout le bas du spectre, là où la CLV attendue n'est que +1,0 % (EV
 l'acheteur. **Trancher le seuil global devrait probablement précéder
 l'élargissement**, pas le suivre.
 
+### 21.14 Les mi-temps sont en service — muettes, mais mesurées
+
+Session du 20/08, suite du §21.13. Les marchés de première mi-temps entrent
+dans le pipeline. **Aucune alerte n'en sort**, à la demande : ils sont
+collectés, devigués, stockés, clôturés et suivis en CLV — seul l'envoi est
+coupé. Même principe que la sourdine par book du §21.8.
+
+**Le choix de conception, et pourquoi il est le bon.** La période n'est PAS un
+champ posé à côté du marché. Ce sont des **types de marché distincts** :
+
+| | |
+|---|---|
+| `h2h_h1` | 1X2 / moneyline, première mi-temps |
+| `totals_h1` | over/under, première mi-temps |
+
+Un champ `period` aurait fait porter la sûreté à chaque chemin de code qui
+construit une clé : un seul oubli, et un `total 1.5` de mi-temps rejoignait le
+`total 1.5` du match plein — deux côtés présents, marge plausible, aucune
+erreur levée, ligne juste fausse. Le §21.3 en version étendue. **Avec des types
+séparés, la séparation est acquise par construction, et tout code écrit avant
+eux (`market == MarketType.TOTALS`) ne voit plus que le match plein.** Un
+chemin non mis à jour IGNORE les mi-temps au lieu de les confondre : l'erreur
+tombe du bon côté.
+
+**Football seulement.** Chez Pinnacle, `period 1` vaut mi-temps au football
+mais **premier set au tennis**. Les réunir sous un même type rejouerait la
+confusion jeux/sets du §19.2. Le tennis reste au match plein tant qu'une
+capture n'aura pas établi ses propres types.
+
+**Ce qui a changé, fichier par fichier :**
+
+| fichier | changement |
+|---|---|
+| `models.py` | `H2H_H1`, `TOTALS_H1`, plus `is_half_time`, `base_market`, `TOTALS_LIKE`, `HALF_TIME_MARKETS` |
+| `pinnacle.py` | `period in (0, 1)`, football seul ; `spread` reste dehors en période 1 aussi |
+| `main.py` | `_flip_outcome_for_swap` teste `TOTALS_LIKE` — un `totals_h1` tombait sinon dans la branche home↔away |
+| `alerter.py` | `is_half_time` → aucun canal, ni principal, ni premium, ni critique |
+| `betano.py` | `OUH1` quitte les exclus et devient `TOTALS_H1` ; les dispatches passent par `base_market` |
+
+⚠️ **Aucune migration de schéma.** `quotes.market` et `value_bets.market` sont
+des colonnes TEXT : les nouveaux types s'y écrivent sans changement. C'est un
+effet secondaire heureux du choix par types, pas une chance.
+
+**Côté softs, un seul code confirmé à ce jour : `OUH1` chez Betano.** Circus
+expose des `1st-half-*`, mais son `_MARKETS` exige l'**égalité exacte** et le
+fichier avertit explicitement de ne jamais ajouter de variante par ressemblance
+(`first-set-total-games-over-under` contient `total-games-over-under` en
+sous-chaîne). **Les autres books seront ajoutés sur capture réelle, jamais par
+déduction.** Betano étant muet dans `/book` (§21.8), ce flux est doublement
+silencieux — ce qui n'empêche ni la détection ni la CLV.
+
+**Ce qui garde le tout :** `tests/test_half_time.py`, 12 tests. Les deux qui
+comptent — un soft de mi-temps ne se valorise PAS sur la ligne de match plein
+(sinon +61 % d'EV fantôme sur l'exemple), et la clôture d'une mi-temps ne lit
+pas les cotes du match plein (sinon la CLV demandée serait un chiffre faux et
+plausible). Les trois tests qui gardaient l'ancien comportement ont été
+réécrits en conservant ce qui reste vrai : la période 2 est toujours écartée,
+et `OUH1` ne doit **jamais** devenir un `TOTALS`.
+
+**À surveiller :**
+
+```bash
+.venv/bin/python -m scripts.check_half_time
+```
+
+Elle vérifie l'existence du flux, **l'échelle des lignes** — une mi-temps doit
+coter sous le match plein, moins de buts se marquant en 45 min qu'en 90, et
+l'inverse signalerait un mélange des deux échelles — puis la CLV.
+
+**La condition pour lever le silence** : que `check_half_time` section D, ou
+`clv_split --by market`, montre une CLV comparable à celle du match plein sur
+un effectif suffisant. Le §21.12 vient de rappeler qu'un constat tiré de 437
+paris peut s'inverser à 774 : **ne pas allumer les alertes sous 200 paris
+clôturés.** Le silence se lève dans `alerter.py`, à l'endroit marqué.
+
+⚠️ **Volume attendu : faible au début**, un seul soft étant mappé. Le §21.13
+annonçait +55 % de marchés *chez Pinnacle* ; ce plafond ne se réalisera qu'à
+mesure que les softs seront ajoutés sur capture.
+
 ### 21.9 État des lieux et à faire — remplace §20.15
 
 | | |
@@ -4109,12 +4189,12 @@ l'élargissement**, pas le suivre.
    la CLV de ces détections**, seule mesure qui dise si l'edge est réel —
    `.venv/bin/python -m scripts.clv_split --by sport,market --min 20`, une fois assez de
    matchs clôturés.
-3. **Élargir les marchés — mi-temps d'abord** (§21.13). +55 % de marchés
-   comparables au football, en types déjà supportés, contre +43 % pour les
-   handicaps avec un risque bien plus élevé. **Condition impérative** : la
-   période doit entrer dans la clé de devig AVANT la première cote de mi-temps,
-   sinon c'est le §21.3. À arbitrer avec le seuil global (§21.12), qui devrait
-   probablement passer en premier.
+3. **Capturer les codes de mi-temps des autres softs** (§21.14). Le pipeline
+   est en service et muet ; seul Betano (`OUH1`) est mappé, donc le volume
+   reste marginal. Circus, Unibet, GoldenPalace : une capture par book, et
+   **par égalité exacte, jamais par ressemblance**. C'est ce qui transforme le
+   +55 % théorique du §21.13 en détections réelles.
+   Puis : `.venv/bin/python -m scripts.check_half_time` pour décider du silence.
 4. **Démarrer le relevé public horodaté** (§21.10). Sa valeur est
    proportionnelle à son ancienneté : c'est le seul actif du projet qui ne se
    rattrape pas.

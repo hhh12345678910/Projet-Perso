@@ -282,9 +282,15 @@ def test_parse_prematch_maps_superodds_boosted_1x2():
     assert all(q.market is MarketType.H2H for q in quotes)
 
 
-def test_parse_prematch_drops_first_half_totals():
-    """OUH1 is first-half goals. Treating it as TOTALS would price it against
-    Pinnacle's full-match ladder and manufacture phantom value bets."""
+def test_parse_prematch_maps_first_half_totals_to_their_own_market():
+    """OUH1, ce sont les buts de la PREMIÈRE MI-TEMPS.
+
+    Le danger que ce test gardait reste entier : le prendre pour un `totals`
+    de match plein le confronterait à l'échelle de Pinnacle sur 90 minutes et
+    fabriquerait des paris fantômes. Ce n'est plus l'exclusion qui l'écarte
+    mais le TYPE — `totals_h1` ne partage aucune clé de devig avec `totals`
+    (§21.14). L'exigence du test devient donc : jamais MarketType.TOTALS.
+    """
     market = {
         "type": "OUH1",
         "name": "But en première mi-temps Plus de/Moins de",
@@ -294,16 +300,22 @@ def test_parse_prematch_drops_first_half_totals():
             {"name": "Moins de", "price": 1.90, "handicap": 1.5},
         ],
     }
-    assert list(parse_prematch(_prematch_payload([market]))) == []
+    quotes = list(parse_prematch(_prematch_payload([market])))
+    assert len(quotes) == 2
+    assert {q.market for q in quotes} == {MarketType.TOTALS_H1}
+    assert MarketType.TOTALS not in {q.market for q in quotes}
+    assert {q.outcome.label for q in quotes} == {"over", "under"}
+    assert all(q.outcome.line == 1.5 for q in quotes)
 
 
 def test_parse_prematch_known_exclusions_are_not_reported_as_unknown():
     """Deliberate exclusions must stay out of the unknown set, or the warning
     fires every cycle and hides a genuinely new code."""
     unknown: set[str] = set()
+    # OUH1 a quitté cette liste : il est désormais exploité (§21.14).
     markets = [
         {"type": t, "selections": [{"name": "x", "price": 2.0}]}
-        for t in ("OUH1", "DBLC", "DNOB", "BTSC")
+        for t in ("DBLC", "DNOB", "BTSC")
     ]
     assert list(parse_prematch(_prematch_payload(markets), unknown_types=unknown)) == []
     assert unknown == set()

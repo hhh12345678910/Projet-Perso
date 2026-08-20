@@ -3,6 +3,7 @@ from __future__ import annotations
 import httpx
 import pytest
 
+from src.models import MarketType
 from src.scrapers.pinnacle import _american_to_decimal, _is_retryable
 
 
@@ -28,7 +29,7 @@ def _status_error(code: int) -> httpx.HTTPStatusError:
     return httpx.HTTPStatusError("e", request=req, response=resp)
 
 
-def test_fetch_market_quotes_skips_non_full_match_periods():
+def test_fetch_market_quotes_separates_periods_and_drops_second_half():
     # Pinnacle returns per-period markets sharing the same matchupId. Only
     # period 0 (full match) should make it through to OddQuote — anything
     # else (1st half, 2nd half, ...) would contaminate the (event, market,
@@ -54,7 +55,9 @@ def test_fetch_market_quotes_skips_non_full_match_periods():
             {"designation": "draw", "price": +350},
             {"designation": "away", "price": +400},
          ]},
-        # 1st half moneyline at the same matchup — must be dropped.
+        # 1st half moneyline at the same matchup — désormais RETENU, sous un
+        # type distinct (§21.14). Ce qui comptait dans ce test reste vrai : il
+        # ne doit pas se mélanger au match plein.
         {"status": "open", "matchupId": matchup_id, "type": "moneyline",
          "period": 1, "prices": [
             {"designation": "home", "price": +200},
@@ -84,14 +87,23 @@ def test_fetch_market_quotes_skips_non_full_match_periods():
         quotes = list(sc.fetch_market_quotes("soccer"))
         sc.close()
 
-    # Exactly 3 quotes (home/draw/away) from period 0 only — no period
-    # 1 or 2 leakage into the same matchup.
-    assert len(quotes) == 3
-    labels = {q.outcome.label for q in quotes}
-    assert labels == {"home", "draw", "away"}
-    # Sanity: the odds match the period-0 American prices.
-    home = next(q for q in quotes if q.outcome.label == "home")
+    # La période 2 ne doit toujours PAS passer : seules 0 et 1 sont ouvertes.
+    assert all(q.market in (MarketType.H2H, MarketType.H2H_H1) for q in quotes)
+
+    plein = [q for q in quotes if q.market == MarketType.H2H]
+    mi_temps = [q for q in quotes if q.market == MarketType.H2H_H1]
+    assert len(plein) == 3, "le match plein reste à 3 issues"
+    assert len(mi_temps) == 3, "la mi-temps est désormais collectée (§21.14)"
+    assert len(quotes) == 6, "et rien d'autre — la période 2 reste écartée"
+
+    assert {q.outcome.label for q in plein} == {"home", "draw", "away"}
+    assert {q.outcome.label for q in mi_temps} == {"home", "draw", "away"}
+
+    # Chaque période garde SES prix : c'est tout l'enjeu de la séparation.
+    home = next(q for q in plein if q.outcome.label == "home")
     assert home.decimal_odd < 2.0   # American -150 -> ~1.67
+    home_h1 = next(q for q in mi_temps if q.outcome.label == "home")
+    assert home_h1.decimal_odd == pytest.approx(3.0, abs=0.01)  # +200
 
 
 def test_is_retryable_only_transient():

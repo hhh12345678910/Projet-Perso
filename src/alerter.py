@@ -16,7 +16,7 @@ except ImportError:  # Python < 3.9 fallback — sandbox is 3.11 so this is safe
     ZoneInfo = None  # type: ignore[assignment]
 
 from .matcher import parse_event_key
-from .models import Book, ValueBet
+from .models import Book, ValueBet, is_half_time
 from .surebet import Surebet
 from .middle import Middle
 from . import teams
@@ -776,6 +776,16 @@ class TelegramAlerter:
         # Book mis en sourdine via /book. La détection a bien eu lieu et reste
         # en base ; seul l'envoi est supprimé.
         if bet.book.value in self._books_off:
+            return False
+        # Mi-temps : AUCUN canal, ni principal, ni premium, ni critique.
+        #
+        # Même principe que la sourdine par book (§21.8) : la détection a lieu,
+        # elle est écrite dans `value_bets`, sa clôture est capturée et sa CLV
+        # mesurée — seul l'envoi est supprimé. Ces marchés viennent d'être
+        # ouverts (§21.14) et leur CLV est inconnue ; les alerter avant de
+        # l'avoir mesurée mettrait dans les canaux un flux dont personne ne
+        # sait ce qu'il vaut. À lever quand `clv_split --by market` aura tranché.
+        if is_half_time(bet.market):
             return False
         ev = bet.ev_pct
         text = format_value_bet(bet, sport=sport, bankroll=cfg.bankroll)

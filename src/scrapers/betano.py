@@ -10,7 +10,7 @@ import httpx
 from tenacity import retry, retry_if_exception, stop_after_attempt, wait_exponential
 
 from ..matcher import event_key, team_similarity
-from ..models import Book, MarketType, OddQuote, Outcome
+from ..models import Book, MarketType, OddQuote, Outcome, base_market
 from ..teams import record_pair
 
 
@@ -275,6 +275,10 @@ def _h2h_label(label: str, home: str | None, away: str | None) -> str | None:
 
 def _normalise_outcome_label(label: str, market: MarketType) -> str:
     s = label.strip().lower()
+    # Un marché de mi-temps s'étiquette comme son marché de match plein.
+    # Sans ce passage par la base, `totals_h1` tomberait dans le retour brut
+    # et ses over/under ne seraient jamais normalisés.
+    market = base_market(market)
     if market == MarketType.H2H:
         return _H2H_DIRECT.get(s, s)
     if market == MarketType.TOTALS:
@@ -390,7 +394,7 @@ def parse_overview(data: dict) -> Iterator[OddQuote]:
             continue
 
         raw_label = str(_first(sel, _FIELDS_SELECTION_LABEL, default=""))
-        if market_type == MarketType.H2H:
+        if base_market(market_type) == MarketType.H2H:
             label = _h2h_label(raw_label, home, away)
         elif market_type == MarketType.HANDICAP:
             label = _side_from_team(raw_label, home, away)
@@ -438,6 +442,7 @@ _PREMATCH_MARKET_BY_TYPE = {
     "MR12": MarketType.H2H,        # Résultat de match SuperOdds — boosted 1X2
     "FTGO": MarketType.TOTALS,     # Total jeux
     "HCTG": MarketType.TOTALS,     # Total des buts Plus de/Moins de
+    "OUH1": MarketType.TOTALS_H1,  # But en première mi-temps (§21.14)
     "TGHC": MarketType.HANDICAP,   # Handicap jeux
     "HCAP": MarketType.HANDICAP,
     "AHCP": MarketType.HANDICAP,
@@ -449,13 +454,14 @@ _PREMATCH_MARKET_BY_TYPE = {
 #
 # Each is excluded because the pipeline has no sharp reference for it —
 # Pinnacle only prices moneyline/total/spread, and no other scraper emits BTTS
-# — so a quote here could never be devigged into a fair line. OUH1 is the
-# dangerous one: it looks like a totals market, but it's first-half goals.
-# Mapping it to TOTALS would price it against Pinnacle's full-match ladder and
-# manufacture phantom value bets, the same trap the handicap exclusion in
-# find_value_bets already guards against.
+# — so a quote here could never be devigged into a fair line.
+#
+# OUH1 a quitté cette liste le 20/08 : il est désormais mappé sur TOTALS_H1
+# (§21.14). Le danger décrit ici — « le prendre pour un totals de match plein
+# fabriquerait des value bets fantômes » — était réel et reste entier ; il est
+# écarté par le TYPE, pas par l'exclusion. `totals_h1` ne peut pas rencontrer
+# la ligne de match plein de Pinnacle, les deux clés de devig étant distinctes.
 _PREMATCH_IGNORED_TYPES = {
-    "OUH1",   # But en première mi-temps — period market, not full-time totals
     "DBLC",   # Double chance — no Pinnacle equivalent
     "DNOB",   # Draw No Bet — no Pinnacle equivalent
     "BTSC",   # Les deux équipes marquent — nothing else prices BTTS
@@ -525,7 +531,7 @@ def parse_prematch(data: dict, unknown_types: set[str] | None = None) -> Iterato
                         continue
 
                     raw_label = str(sel.get("name") or "")
-                    if market_type == MarketType.H2H:
+                    if base_market(market_type) == MarketType.H2H:
                         label = _h2h_label(raw_label, home, away)
                     elif market_type == MarketType.HANDICAP:
                         label = _side_from_team(raw_label, home, away)

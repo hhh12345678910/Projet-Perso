@@ -12,7 +12,7 @@ from tenacity import retry, retry_if_exception, stop_after_attempt, wait_exponen
 
 from ..filter import is_noise_event
 from ..matcher import event_key
-from ..models import Book, Event, MarketType, OddQuote, Outcome
+from ..models import Book, Event, MarketType, OddQuote, Outcome, base_market
 from ..teams import record_pair
 
 
@@ -23,6 +23,13 @@ PINNACLE_API_KEY = os.getenv(
     "PINNACLE_API_KEY",
     "CmX2KcMrXuFmNg6YFbmTxE0y9CIrOi0R",
 )
+
+#: Le type de mi-temps correspondant. Absent = pas d'équivalent exploitable,
+#: le marché est écarté en période 1.
+_HALF_TIME_EQUIVALENT = {
+    MarketType.H2H: MarketType.H2H_H1,
+    MarketType.TOTALS: MarketType.TOTALS_H1,
+}
 
 SPORT_IDS = {
     "soccer": 29,
@@ -368,9 +375,23 @@ class PinnacleScraper:
         for market in markets:
             if not isinstance(market, dict):
                 continue
-            # Only full-match (period 0); per-period prices would contaminate
-            # the (event, market, line) devig groups.
-            if market.get("period") != 0:
+            # Période 0 = match plein, période 1 = première mi-temps.
+            #
+            # La contamination que ce filtre évitait — une mi-temps et un match
+            # plein dans le même groupe de devig — est désormais impossible :
+            # les mi-temps portent des TYPES de marché distincts
+            # (`h2h_h1`, `totals_h1`), donc la clé (event, market, line) les
+            # sépare par construction. Voir MarketType dans models.py.
+            #
+            # Football SEULEMENT. Chez Pinnacle, `period 1` vaut mi-temps au
+            # football mais PREMIER SET au tennis : les réunir sous le même
+            # type rejouerait la confusion jeux/sets du §19.2. Le tennis reste
+            # donc au match plein tant qu'une capture n'aura pas établi ses
+            # propres types.
+            periode = market.get("period")
+            if periode not in (0, 1):
+                continue
+            if periode == 1 and sport != "soccer":
                 continue
             if market.get("status") not in (None, "open"):
                 continue
@@ -381,6 +402,13 @@ class PinnacleScraper:
             market_type = self._map_market(market.get("type"))
             if market_type is None:
                 continue
+            if periode == 1:
+                # Seuls h2h et totals ont un équivalent de mi-temps exploitable.
+                # Les `spread` restent dehors, période 1 comprise : leur
+                # convention de signe n'est pas résolue (§21.13).
+                market_type = _HALF_TIME_EQUIVALENT.get(market_type)
+                if market_type is None:
+                    continue
             # D'un matchup qui compte en JEUX on ne prend que les totaux : son
             # `spread ±1,5` porte la même ligne que le handicap de SETS de la
             # racine, sur le même événement et le même marché. Voir _UNITS_GAMES.
@@ -395,7 +423,7 @@ class PinnacleScraper:
             ek = event_key(home, away, matchup.start_time)
 
             for p in market.get("prices") or []:
-                if p.get("points") is not None and market_type == MarketType.H2H:
+                if p.get("points") is not None and base_market(market_type) == MarketType.H2H:
                     continue
                 if _wrong_scale(matchup, p.get("points")):
                     continue
@@ -431,8 +459,11 @@ class PinnacleScraper:
     @staticmethod
     def _designation_label(designation: str, market: MarketType, home: str, away: str) -> str:
         d = designation.lower()
-        if market == MarketType.H2H:
+        # Les désignations d'une mi-temps sont celles du match plein : on
+        # raisonne donc sur le marché de base.
+        base = base_market(market)
+        if base == MarketType.H2H:
             return {"home": "home", "away": "away", "draw": "draw"}.get(d, d)
-        if market == MarketType.TOTALS:
+        if base == MarketType.TOTALS:
             return {"over": "over", "under": "under"}.get(d, d)
         return d
