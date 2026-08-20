@@ -300,7 +300,20 @@ sudo journalctl -u valuebet-listener --since "5 min ago" --no-pager | grep -v sy
 
 grep "done in" valuebet.log | tail -5        # durée des cycles (~17 s normal)
 tac valuebet.log | awk '/══ CYCLE/{c++} c<5' | tac | grep -oiP '\b\w[\w ]*(?= skipped:)' | sort | uniq -c
+
+# Tests — TOUJOURS avec le repertoire, jamais `pytest` seul (voir ci-dessous)
+.venv/bin/python -m pytest tests/ -q
 ```
+
+⚠️ **`pytest` lancé à la racine ne rend AUCUN test**, et le message n'a rien à
+voir avec la cause. `test_alerts.py` à la racine n'est pas une suite pytest
+mais le script d'envoi manuel du §20.6 ; il lève `SystemExit` à l'import quand
+la config Telegram est absente, et pytest meurt en `INTERNALERROR` avant
+d'avoir collecté quoi que ce soit — « no tests ran », sur un dépôt dont les 696
+tests sont verts. **Toujours `pytest tests/`.** C'est aussi ce qui a fait
+échouer la vérification de bout en bout du §20.6, restée en attente depuis le
+18/08 : le script s'arrête sur une config vide avant d'atteindre la chaîne
+qu'il est censé prouver.
 
 ### Services systemd
 
@@ -3680,17 +3693,38 @@ Après `git pull` et redémarrage du service, laisser passer deux ou trois cycle
 puis :
 
 ```bash
-sqlite3 data/valuebet.db "
-  SELECT book, COUNT(DISTINCT outcome_line) AS lignes,
-         MIN(outcome_line), MAX(outcome_line), COUNT(*)
-  FROM quotes q JOIN events e ON e.event_key = q.event_key
-  WHERE e.sport='tennis' AND q.market='totals'
-    AND q.fetched_at > datetime('now','-1 hour')
-  GROUP BY book ORDER BY 5 DESC;"
+.venv/bin/python -m scripts.check_tennis_totals
 ```
 
 Attendu : `pinnacle` avec une quinzaine de lignes entre 15 et 25, plus 2.5.
 S'il reste à une seule ligne, le correctif n'est pas en service.
+
+La sonde répond aux trois questions dans l'ordre où elles se conditionnent —
+Pinnacle publie-t-il des lignes de jeux, un book en offre-t-il en face, et
+combien de détections sur 24 h — puis rend le verdict de la prédiction du
+§21.6 bis. Deux tests la tiennent, un par régime : une sonde qui rendrait le
+même verdict avant et après le correctif ne servirait à rien.
+
+⚠️ **La commande d'origine de cette section ne pouvait pas tourner**, et
+personne ne l'aurait su avant de la coller. Trois défauts, dont deux fatals :
+
+| Défaut | Conséquence |
+|---|---|
+| `sqlite3` appelé | absent de la VM (§20.12) — `command not found` |
+| colonne `outcome_line` | elle s'appelle **`line`** — `no such column` |
+| balayage de `quotes` par `fetched_at` | le motif interdit par le §17.7 |
+
+Le troisième n'est plus un problème, et c'est utile de savoir pourquoi :
+l'interdiction du §17.7 visait le régime d'écriture dense, ~2,5 M lignes par
+heure. Depuis l'écriture parcimonieuse du §18.5 il en reste ~63 000, soit
+quelques secondes de lecture. **Une règle de prudence peut être rendue caduque
+par un correctif ailleurs** — celle-ci l'a été par le §18.5, sans que rien ne
+la relie à lui.
+
+⚠️ La leçon est celle du §11 appliquée à la documentation : **une commande
+écrite mais jamais exécutée est du code non testé.** Elle figurait comme « la
+première chose à faire au démarrage » et aurait coûté un aller-retour au
+prochain démarrage, sur le point le plus urgent de la liste.
 
 Puis, une fois des matchs clôturés :
 
@@ -3784,7 +3818,7 @@ un réglage.
 
 | | |
 |---|---|
-| Tests | **690 passés**, 4 ignorés |
+| Tests | **696 passés**, 4 ignorés — `pytest tests/`, jamais `pytest` seul (§4) |
 | `results` | 3 091 lignes (tennis) |
 | Books actifs en ALERTE | unibet, golden_palace, ladbrokes, circus, magicbetting |
 | Books muets (donnée seule) | betano, betfirst, napoleon, starcasino — **45 % des détections** |
@@ -3801,6 +3835,8 @@ un réglage.
 2. **Vérifier la prédiction du §21.6 bis** — 4 à 5 détections `tennis/totals`
    par jour. Moins de 2 : reprendre la chasse. C'est la première chose à faire
    au démarrage, la mise en service datant du 19/08 en soirée.
+   La sonde est prête et testée : `.venv/bin/python -m scripts.check_tennis_totals`.
+   L'ancienne commande du §21.6 ne pouvait pas tourner — voir §21.6.
 3. **Démarrer le relevé public horodaté** (§21.10). Sa valeur est
    proportionnelle à son ancienneté : c'est le seul actif du projet qui ne se
    rattrape pas.
