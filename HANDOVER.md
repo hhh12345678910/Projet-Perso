@@ -4129,7 +4129,25 @@ capture n'aura pas établi ses propres types.
 des colonnes TEXT : les nouveaux types s'y écrivent sans changement. C'est un
 effet secondaire heureux du choix par types, pas une chance.
 
-**Côté softs, un seul code confirmé à ce jour : `OUH1` chez Betano.** Circus
+**Côté softs, un seul code confirmé à ce jour : `OUH1` chez Betano.** Pour
+relever les autres sans deviner :
+
+```bash
+.venv/bin/python -m scripts.discover_half_time
+```
+
+Elle lit les dumps déjà sur le disque (Circus, Betano, MagicBetting), relève
+les identifiants de marché **avec leur libellé** et signale ceux qui évoquent
+une première mi-temps — en écartant les secondes mi-temps, que Pinnacle ne
+référence pas. Elle ne mappe rien : elle produit les pièces sur lesquelles
+mapper. Les books sans dump (Unibet et la famille Kambi, GoldenPalace,
+StarCasino, Ladbrokes, Napoleon, Betcenter) tirent d'une API en direct et
+demandent un relevé côté book.
+
+⚠️ Elle teste le code **et** le libellé, et signale quand aucun libellé n'a
+été lu — sans quoi un champ mal nommé donnerait « ce book n'a pas de mi-temps »
+au lieu de « je n'ai pas su lire ».
+ Circus
 expose des `1st-half-*`, mais son `_MARKETS` exige l'**égalité exacte** et le
 fichier avertit explicitement de ne jamais ajouter de variante par ressemblance
 (`first-set-total-games-over-under` contient `total-games-over-under` en
