@@ -2549,7 +2549,13 @@ def _daemon_scan_sport(
         console.print(
             rf"\[{current_sport}]   rapprochement : {_kept}/{_raw} "
             f"({100 * _kept / _raw if _raw else 0:.0f} %) sur "
-            f"{len(ref_keys)} lignes justes"
+            # ⚠️ `ref_keys` compte des ÉVÉNEMENTS, pas des lignes justes : c'est
+            # l'ensemble des event_key distinctes de `fair`, dont chacune porte
+            # plusieurs lignes (h2h, et un total par ligne cotée). L'étiquette
+            # « lignes justes » faisait lire 47 là où le tennis avait 47 matchs
+            # et plusieurs centaines de lignes — et donc conclure à une
+            # référence effondrée alors qu'elle était normale.
+            f"{len(ref_keys)} événements de référence"
         )
 
         _offered += len(soft_q)
