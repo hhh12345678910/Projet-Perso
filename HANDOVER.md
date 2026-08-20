@@ -3787,7 +3787,7 @@ du tennis h2h est excellente (+15 % en premium) ; celle des totaux de jeux n'a
 jamais existé. `.venv/bin/python -m scripts.clv_split --by sport,market` tranchera une fois
 des matchs clôturés — pas avant.
 
-### 21.8 Quatre books sur huit sont muets — 45 % des détections
+### 21.8 Cinq books sur huit sont muets — 48 % des détections
 
 Relevé le 19/08 : `book_alerts_off` contient **betano_be, betfirst,
 napoleon_be, starcasino_sport**.
@@ -3801,10 +3801,34 @@ napoleon_be, starcasino_sport**.
 | betano_be | 473 | +10,9 % | **muet** |
 | ladbrokes_be | 407 | +12,6 % | actif |
 | circus_be | 350 | +12,6 % | actif |
-| magicbetting | 169 | +17,2 % | actif |
+| magicbetting | 169 | +17,2 % | **muet** (depuis le 20/08) |
 
-**2 351 détections sur 5 239 — 45 % — n'atteignent plus aucun canal**, dont le
-book de tête en volume. Le réglage `/book` ne coupe QUE la notification
+**2 520 détections sur 5 239 — 48 % — n'atteignent plus aucun canal**, dont le
+book de tête en volume.
+
+⚠️ **`magicbetting` s'est ajouté aux muets le 20/08**, portant le compte de
+quatre à cinq. **Le compte y est limité** — mise en sourdine volontaire, rien à
+réparer : alerter sur un book où l'on ne peut plus miser ne produit que du
+bruit.
+
+**Ce silence-là dit quelque chose sur l'edge, et c'est la question du §20.4.**
+Le book limité est celui dont la CLV mesurée est **la plus haute du parc,
++17,2 %** — devant les sept autres. Un book limite les comptes qu'il juge
+gagnants, avec ses propres données de clôture et sans rien savoir de notre
+mesure. Deux jugements indépendants désignent donc le même book comme le plus
+rentable. C'est un signal externe, faible mais réel, que la CLV mesure bien un
+edge et pas un artefact de mesure — le premier qui ne vienne pas de nos propres
+chiffres. À ne pas surinterpréter : n=169 détections, et une limitation dépend
+aussi du volume et du profil de mise, pas seulement de la rentabilité.
+
+**Deux motifs de silence, à ne pas confondre.** Un book coupé par choix
+d'exploitation se rallume ; un book où le compte est limité, non. Seul
+`magicbetting` est documenté ici comme limité (20/08) — **le motif des quatre
+autres n'a jamais été relevé**, et cette colonne reste donc à remplir. Sans
+elle, la liste des muets se relit comme un réglage réversible, ce qu'elle n'est
+plus entièrement.
+
+Le réglage `/book` ne coupe QUE la notification
 (`alerter.py:667`) : les cotes restent collectées, stockées, suivies en courbe
 et exportées, et les détections restent écrites dans `value_bets`. C'est
 voulu — faire taire sans cesser de mesurer.
@@ -3891,8 +3915,8 @@ le seuil à 15 de la sonde le classe simplement hors « jeux » au comptage.
 |---|---|
 | Tests | **710 passés**, 4 ignorés — `pytest tests/`, jamais `pytest` seul (§4) |
 | `results` | 3 091 lignes (tennis) |
-| Books actifs en ALERTE | unibet, golden_palace, ladbrokes, circus, magicbetting |
-| Books muets (donnée seule) | betano, betfirst, napoleon, starcasino — **45 % des détections** |
+| Books actifs en ALERTE | unibet, golden_palace, ladbrokes, circus |
+| Books muets (donnée seule) | betano, betfirst, napoleon, starcasino, **magicbetting** — **48 %** (§21.8) |
 | Comptes joués | Unibet + ses jumeaux Kambi (711, Bingoal, Scooore) déjà exploités |
 | Détections 24 h | soccer h2h 382, tennis h2h 157, soccer totals 77, **tennis totals 10** (§21.11) |
 | Capital | ~3 720 € (relevé du 17/08) |
