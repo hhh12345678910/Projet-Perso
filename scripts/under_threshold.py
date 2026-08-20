@@ -154,14 +154,26 @@ def main() -> None:
         print(_ligne(f"under {cle}", bandes[cle]) + marque)
 
     # 3. LA question. Un seuil d'EV ne trie que si la CLV monte avec l'EV.
-    _entete("3. Les `under` par tranche d'EV  ← lire ceci en premier")
+    print("\n3. Les `under` par tranche d'EV  ← lire ceci en premier")
+    print(f"{'':<22s} {'n':>6s} {'EV moy':>8s} {'CLV moy':>9s} {'σ moy':>7s} {'positives':>10s}")
+    print("-" * 67)
     tranches = ((2.0, 3.0), (3.0, 4.0), (4.0, 6.0), (6.0, 8.0), (8.0, 12.0), (12.0, 1e9))
     pente: list[tuple[float, float, int]] = []
     for bas, haut in tranches:
         vals = [c for ev, _, c in unders if bas <= ev < haut]
         libelle = f"EV {bas:.0f}–{haut:.0f} %" if haut < 1e9 else f"EV ≥ {bas:.0f} %"
         marque = "" if len(vals) >= args.min else f"   (sous {args.min}, indicatif)"
-        print(_ligne(libelle, vals) + marque)
+        evs_t = [ev for ev, _, c in unders if bas <= ev < haut]
+        # L'EV moyenne de la tranche, sans quoi « EV ≥ 12 % » ne se compare à
+        # rien : une tranche non bornée peut avoir une moyenne très au-dessus de
+        # sa borne, et l'écart à la droite CLV/EV serait imputé à tort à une
+        # non-linéarité.
+        n_t, moy_t, sig_t, pos_t = _stats(vals)
+        if n_t:
+            print(f"{libelle:<22.22s} {n_t:6d} {mean(evs_t):7.2f} % {moy_t:+8.2f} % "
+                  f"{sig_t:6.2f} {pos_t:8.1f} %" + marque)
+        else:
+            print(f"{libelle:<22.22s} {0:6d}" + " " * 37 + "—" + marque)
         if vals:
             pente.append((mean([ev for ev, _, c in unders if bas <= ev < haut]),
                           mean(vals), len(vals)))

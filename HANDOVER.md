@@ -3,6 +3,11 @@
 Document de reprise. À lire en premier pour reprendre le travail sans
 redécouvrir le contexte. Dernière mise à jour : 20/08/2026.
 
+**Nouveau (20/08) :** §21.12 — la CLV n'est pas un miroir de l'EV (R² = 0,257
+sur 15 222 paris clôturés, la ligne juste bouge de 5,61 % en médiane). Le KPI du
+projet tient. En revanche le §20.8 sur les `under` ne se reproduit pas sur un
+échantillon doublé, et le §21.9 pt 4 est annulé.
+
 **Si tu ne lis que trois choses :** §20.4 pour le premier P&L réel du projet et
 la question qu'il ouvre (la CLV mesure-t-elle vraiment l'edge ?), §11 pour le
 mode de défaillance dominant (la panne silencieuse), et §21.9 pour la liste de
@@ -3909,6 +3914,97 @@ tranchera, et rien avant lui.
 set ne dépasse pas 13 jeux, tie-break compris. C'est un total de match court, et
 le seuil à 15 de la sonde le classe simplement hors « jeux » au comptage.
 
+### 21.12 Le seuil des `under` : la tâche est morte, la CLV est saine
+
+Session du 20/08. Le §21.9 pt 4 demandait de « relever le seuil d'EV sur les
+`under` » d'après le §20.8. Deux sondes ont été écrites pour choisir le chiffre
+(`scripts/under_threshold.py`, `scripts/clv_independence.py`). **Aucun seuil n'a
+été modifié, et il ne faut pas en modifier.**
+
+**1. Le constat du §20.8 ne se reproduit plus.** Sur 774 `under` clôturés contre
+437 à l'époque :
+
+| | §20.8 (17/08) | 20/08 |
+|---|---|---|
+| h2h | +7,11 % | +6,45 % (n=13 544) |
+| OVER | +6,50 % (n=418) | +5,88 % (n=904) |
+| UNDER | **+3,80 %** (n=437) | **+6,25 %** (n=774) |
+
+Les `under` sont désormais **devant** les `over`, et l'écart de 0,37 point pour
+un σ combiné de 0,70 vaut **0,5 σ** — rien. Par ligne, retournement franc :
+under 3.5 passe de +3,45 % (le plus faible du §20.8) à **+9,47 %** (le plus fort).
+L'échantillon a presque doublé et il dit l'inverse. **Le §20.8 mesurait du
+bruit** ; son p ≈ 0,007 n'a pas survécu au doublement des données.
+
+**2. L'effet qui semblait le remplacer n'est pas propre aux `under`.** La CLV
+monte fortement avec l'EV — mais sur tous les marchés :
+
+| marché | n | pente CLV/EV | σ |
+|---|---|---|---|
+| h2h | 13 544 | +0,86 | 0,01 |
+| over | 904 | +0,71 | 0,03 |
+| under | 774 | +1,09 | 0,04 |
+
+Relever le seuil des seuls `under` aurait donc traité comme un défaut local une
+propriété de tout le flux. **La vraie question est celle du seuil GLOBAL**, et
+elle reste ouverte.
+
+**3. La CLV n'est PAS un miroir de l'EV — hypothèse testée et écartée.** Ces
+pentes proches de 1 faisaient craindre le pire : CLV et EV partagent le même
+numérateur (la cote prise) et ne diffèrent que par le déplacement de la ligne
+juste. Si celle-ci ne bougeait pas, la CLV réénoncerait l'estimation du modèle
+au lieu de la confronter au marché — elle serait nécessairement flatteuse, et le
+§20.4 s'expliquerait sans mystère. `clv_independence` sur 15 222 paris clôturés
+tranche :
+
+| | |
+|---|---|
+| déplacement médian de la ligne juste | **5,61 %** |
+| déplacement moyen | 11,58 % |
+| 9e décile | 27,77 % |
+| clôtures identiques au bit près | 13,1 % (sous le seuil d'alarme, structurel) |
+| délai médian détection → clôture | 8,3 h |
+| **R² de CLV sur EV** | **0,257** |
+
+**La ligne bouge, et beaucoup.** Un R² de 0,26 dit que les trois quarts de la
+variance de la CLV ne viennent pas de l'EV. **Le KPI du projet tient debout** :
+la CLV mesure bien le déplacement du marché. C'est la septième hypothèse
+démentie par la mesure dans ces sessions, et la première qui soit une bonne
+nouvelle.
+
+⚠️ Ça ne referme pas le §20.4. Les trois lectures y restent entières, dont la
+troisième — un devig qui surestimerait l'outsider au tennis. Une CLV
+indépendante peut rester fausse si la référence l'est.
+
+**4. La droite, exploitable.** Globalement :
+
+> **CLV ≈ 0,849 × EV − 3,22** (CLV moyenne +6,40 % pour EV moyenne +11,33 %)
+
+Le marché reprend ~3,2 points fixes, puis laisse 85 % du reste. Conséquences :
+
+- **La CLV s'annule à EV ≈ 3,8 %.** En dessous, une détection a une CLV
+  attendue négative.
+- Le plancher réel de détection est **5 %** (aucun `under` clôturé sous ce
+  seuil), pas les 2 % de `ScanConfig.min_ev_pct` — à élucider, c'est
+  probablement le réglage du daemon.
+- **À EV 5 %, la CLV attendue n'est que +1,0 %** ; à 6 %, +1,9 %. Le gros du
+  volume détecté vaut donc bien moins que la moyenne de +6,40 % ne le suggère.
+  **C'est l'argument sérieux pour relever le seuil global** — mais c'est un
+  arbitrage volume/qualité qui n'a pas été fait ici.
+
+La droite colle à 0,3 point près sur les tranches d'EV 4–6, 6–8 et 8–12 %. Sur
+la tranche `EV ≥ 12 %` l'observation est à +21,94 %, très au-dessus de ce que
+la droite donnerait pour une EV moyenne de 18 % — mais **l'EV moyenne de cette
+tranche n'a pas été relevée**, et `max_ev_pct` valant 1000, elle peut être bien
+plus haute. Non tranché : conclure à une non-linéarité serait prématuré. Une
+colonne « EV moy » a été ajoutée au tableau 3 de `under_threshold` pour la
+prochaine exécution.
+
+**Ce qu'il ne faut PAS faire** : lire le tableau 4 de `under_threshold` comme un
+menu. « Seuil à 8 % → CLV +13,46 % » est vrai et trompeur — le gain vient de la
+pente globale, pas des `under`, et il se paie en volume (290 paris gardés
+sur 774).
+
 ### 21.9 État des lieux et à faire — remplace §20.15
 
 | | |
@@ -3936,8 +4032,13 @@ le seuil à 15 de la sonde le classe simplement hors « jeux » au comptage.
 3. **Démarrer le relevé public horodaté** (§21.10). Sa valeur est
    proportionnelle à son ancienneté : c'est le seul actif du projet qui ne se
    rattrape pas.
-4. **Relever le seuil d'EV sur les `under`**, surtout 3.5 et 4.5 (§20.8). Seul
-   effet significatif de toute l'analyse du 17/08, toujours pas appliqué.
+4. ~~**Relever le seuil d'EV sur les `under`**~~ — **annulé le 20/08, mesuré**.
+   Le constat du §20.8 ne se reproduit pas sur un échantillon doublé : les
+   `under` sont devant les `over`, et l'effet EV→CLV n'a rien de propre aux
+   `under`. Voir §21.12. **À la place** : trancher le seuil GLOBAL. La CLV
+   attendue n'est que +1,0 % à EV 5 % et +1,9 % à 6 %, contre +6,40 % de
+   moyenne — le gros du volume vaut bien moins que la moyenne ne le suggère.
+   Arbitrage volume/qualité, non fait.
 5. **Vérifier l'alerte softbook de bout en bout** (§20.6) — le test manuel avait
    échoué sur une config Telegram vide, la chaîne de livraison n'est pas prouvée.
 6. **Élargir le premium** (§17.4, +39 % de volume) — et cette fois avec un œil
