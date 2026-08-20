@@ -62,14 +62,36 @@ def test_derivative_markets_are_reported_not_swallowed(payload):
     unknown: set[str] = set()
     list(parse_prematch(payload, unknown_types=unknown))
     assert "both-teams-to-score" in unknown
-    assert "1st-half-1x2" in unknown
+    assert "draw-no-bet" in unknown
+    # `1st-half-1x2` figurait ici jusqu'au 20/08. Il est désormais MAPPÉ
+    # (§21.14) : l'y voir signalerait une régression du mappage.
+    assert "1st-half-1x2" not in unknown
+    assert "1st-half-total-OverUnder" not in unknown
 
 
-def test_half_time_markets_never_become_quotes(quotes):
-    """Comparer une mi-temps au total match complet de Pinnacle fabriquerait
-    de faux value bets — le piège déjà rencontré sur Betano."""
-    assert all(q.market in (MarketType.H2H, MarketType.TOTALS) for q in quotes)
-    # 1ère mi-temps : 3 issues comme un 1X2, donc invisible sans ce contrôle.
+def test_half_time_markets_get_their_own_types(quotes):
+    """Les mi-temps sont lues depuis le 20/08 — mais JAMAIS comme du match plein.
+
+    Le danger que gardait la version précédente de ce test reste entier : une
+    mi-temps comparée au total de match complet de Pinnacle fabriquerait de
+    faux value bets. Ce n'est plus l'exclusion qui l'écarte mais le TYPE. Un
+    1X2 de mi-temps a trois issues comme un 1X2 de match plein : sans ce
+    contrôle, la confusion serait invisible.
+    """
+    mi_temps = [q for q in quotes if q.market in (MarketType.H2H_H1, MarketType.TOTALS_H1)]
+    assert mi_temps, "la fixture contient des 1st-half-*, ils doivent être lus"
+    plein = {MarketType.H2H, MarketType.TOTALS}
+    assert all(q.market not in plein for q in mi_temps)
+
+    # Et l'inverse : rien du match plein ne doit avoir glissé en mi-temps.
+    for q in quotes:
+        if q.market is MarketType.H2H_H1:
+            assert q.outcome.line is None
+        if q.market is MarketType.TOTALS_H1:
+            assert q.outcome.line is not None
+
+    # Le contrôle d'origine, toujours valable : deux marchés distincts ne
+    # doivent pas produire la même clé.
     lines = {(q.event_key, q.market, q.outcome.label, q.outcome.line) for q in quotes}
     assert len(lines) == len(quotes), "aucun doublon issu d'un marché dérivé"
 

@@ -4124,6 +4124,14 @@ capture n'aura pas établi ses propres types.
 | `main.py` | `_flip_outcome_for_swap` teste `TOTALS_LIKE` — un `totals_h1` tombait sinon dans la branche home↔away |
 | `alerter.py` | `is_half_time` → aucun canal, ni principal, ni premium, ni critique |
 | `betano.py` | `OUH1` quitte les exclus et devient `TOTALS_H1` ; les dispatches passent par `base_market` |
+| `circus.py` | quatre codes mappés ; dispatch par `base_market` — sinon un `h2h_h1` tombait dans la branche des totaux et ses 506 marchés disparaissaient en silence |
+
+⚠️ **Le même piège a été rencontré dans les TROIS scrapers** : `pinnacle.py`,
+`betano.py` et `circus.py` commutaient tous sur `market == MarketType.H2H` ou
+`TOTALS`. Un nouveau type de marché tombe donc, par défaut, dans une branche
+qui ne l'attend pas. **Tout scraper à qui l'on ajoutera la mi-temps devra
+passer son dispatch par `base_market`** — c'est la première chose à vérifier,
+avant même le mappage des codes.
 
 ⚠️ **Aucune migration de schéma.** `quotes.market` et `value_bets.market` sont
 des colonnes TEXT : les nouveaux types s'y écrivent sans changement. C'est un

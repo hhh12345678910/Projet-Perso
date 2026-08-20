@@ -23,7 +23,7 @@ from datetime import datetime, timezone
 from typing import Iterable, Iterator
 
 from ..matcher import event_key
-from ..models import Book, MarketType, OddQuote, Outcome
+from ..models import Book, MarketType, OddQuote, Outcome, base_market
 from ..teams import record_pair
 
 
@@ -32,17 +32,7 @@ from ..teams import record_pair
 # référence qui ne le price pas fabrique des value bets fantômes.
 #
 # Volontairement exclus :
-#   1st-half-*            mi-temps. ⚠️ Le motif écrit ici — « Pinnacle ne price
-#                         que le match complet » — est FAUX, mesuré le 20/08 :
-#                         Pinnacle publie 18 098 marchés de période 1 au
-#                         football, dont 6 475 moneyline et 4 880 totals. La
-#                         croyance venait de notre propre filtre
-#                         (pinnacle.py, `period != 0`), pas de l'API. Le vrai
-#                         blocage est ailleurs : OddQuote n'a pas de champ
-#                         `period` et le devig groupe sur
-#                         (event_key, market, line), donc une mi-temps et un
-#                         match plein tomberaient dans le même groupe. Voir
-#                         §21.13.
+#   (les `1st-half-*` ont quitté cette liste le 20/08 : voir _MARKETS)
 #   both-teams-to-score   aucune référence sharp
 #   draw-no-bet           idem
 #   1X12X2                double chance, idem
@@ -69,6 +59,26 @@ _MARKETS: dict[str, MarketType] = {
     "P1P2": MarketType.H2H,
     "total-games-OverUnder": MarketType.TOTALS,
     "total-games-over-under": MarketType.TOTALS,
+    # Football, première mi-temps (§21.14). Relevés le 20/08 sur le dump réel
+    # par `scripts.discover_half_time`, avec leur libellé — jamais déduits.
+    #
+    # Circus écrit CHACUN de ces deux marchés de DEUX façons, exactement comme
+    # ses totaux de jeux au tennis plus haut. Les quatre coexistent dans le
+    # même dump, et les volumes montrent que n'en prendre qu'une moitié
+    # coûterait le gros du gisement :
+    #
+    #   half-time-totals-over-under-OverUnder  ×448   « 1ère mi-temps - Total de buts »
+    #   1HalfP1XP2                             ×407   « 1ère mi-temps - Vainqueur »
+    #   1st-half-total-OverUnder                ×99   « … (Plus de/Moins de) »
+    #   1st-half-1x2                            ×99   « 1ère mi-temps - Vainqueur »
+    #
+    # Ces cotes ne peuvent pas rencontrer la ligne de match plein de Pinnacle :
+    # `h2h_h1` et `totals_h1` sont des marchés distincts, donc des clés de
+    # devig distinctes. C'est ce qui rend leur ouverture sûre.
+    "half-time-totals-over-under-OverUnder": MarketType.TOTALS_H1,
+    "1st-half-total-OverUnder": MarketType.TOTALS_H1,
+    "1HalfP1XP2": MarketType.H2H_H1,
+    "1st-half-1x2": MarketType.H2H_H1,
 }
 
 _OVER = {"plus de", "over", "meer dan"}
@@ -161,7 +171,12 @@ def parse_prematch(
                     if not isinstance(odd, (int, float)) or odd <= 1.0:
                         continue
 
-                    if market_type is MarketType.H2H:
+                    # `base_market` et non `is MarketType.H2H` : un `h2h_h1`
+                    # tomberait sinon dans la branche des totaux, où
+                    # `_totals_label` ne reconnaît ni « 1 », ni « X », ni « 2 »
+                    # et renvoie None. Les marchés de vainqueur de mi-temps
+                    # auraient disparu en silence.
+                    if base_market(market_type) is MarketType.H2H:
                         label = _h2h_label(out.get("Name", ""), home, away)
                         line = None
                     else:

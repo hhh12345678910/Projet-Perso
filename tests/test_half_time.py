@@ -224,3 +224,77 @@ def test_une_mi_temps_reste_ecrite_en_base_malgre_le_silence(tmp_path):
     assert any(int(r["id"]) == vb_id for r in ouverts), \
         "le pari doit entrer dans la file de clôture, sinon pas de CLV"
     assert next(r for r in ouverts if int(r["id"]) == vb_id)["market"] == "totals_h1"
+
+
+# --------------------------------------------------------------------------
+# Circus — les quatre codes relevés sur le dump réel le 20/08
+# --------------------------------------------------------------------------
+
+def _circus_dump(marches):
+    return {"Leagues": [{"LeagueName": "Jupiler", "SportId": 1, "Events": [
+        {"HomeName": "Anderlecht", "AwayName": "Genk", "EventId": "1",
+         "StartDate": "2030-01-01T20:00:00", "Markets": marches}]}]}
+
+
+def test_circus_lit_les_deux_orthographes_du_total_de_mi_temps():
+    """Circus écrit ce marché de DEUX façons, coexistant dans le même dump.
+
+    N'en reconnaître qu'une avait déjà coûté 64 % des totaux de tennis
+    (voir circus.py). Ici, la moitié négligée pèse 448 marchés contre 99.
+    """
+    from src.scrapers.circus import parse_prematch
+
+    quotes = list(parse_prematch(_circus_dump([
+        {"BetType": "half-time-totals-over-under-OverUnder", "Base": 1.5,
+         "Outcomes": [{"Name": "Plus de", "Odd": 2.10, "Base": 1.5},
+                      {"Name": "Moins de", "Odd": 1.70, "Base": 1.5}]},
+        {"BetType": "1st-half-total-OverUnder", "Base": 0.5,
+         "Outcomes": [{"Name": "Plus de", "Odd": 1.55, "Base": 0.5},
+                      {"Name": "Moins de", "Odd": 2.35, "Base": 0.5}]},
+    ])))
+    assert len(quotes) == 4, "les DEUX orthographes doivent passer"
+    assert {q.market for q in quotes} == {MarketType.TOTALS_H1}
+    assert {q.outcome.line for q in quotes} == {1.5, 0.5}
+    assert {q.outcome.label for q in quotes} == {"over", "under"}
+
+
+def test_circus_lit_les_deux_orthographes_du_vainqueur_de_mi_temps():
+    """Le piège du dispatch : avant `base_market`, un `h2h_h1` tombait dans la
+    branche des totaux et `_totals_label` renvoyait None sur « 1 »/« X »/« 2 ».
+    Les 506 marchés de vainqueur de mi-temps disparaissaient en silence.
+    """
+    from src.scrapers.circus import parse_prematch
+
+    for code in ("1HalfP1XP2", "1st-half-1x2"):
+        quotes = list(parse_prematch(_circus_dump([
+            {"BetType": code, "Outcomes": [
+                {"Name": "Anderlecht", "Odd": 2.40},
+                {"Name": "Nul", "Odd": 2.05},
+                {"Name": "Genk", "Odd": 3.60}]}])))
+        assert len(quotes) == 3, f"{code} doit rendre ses trois issues"
+        assert {q.market for q in quotes} == {MarketType.H2H_H1}
+        assert all(q.outcome.line is None for q in quotes), \
+            "un h2h ne porte pas de ligne"
+
+
+def test_circus_ne_confond_pas_mi_temps_et_match_plein():
+    """Les deux dans le même dump, sur la même ligne 1.5 : ils doivent sortir
+    sous des marchés différents, sans quoi le devig les réunirait."""
+    from src.scrapers.circus import parse_prematch
+
+    quotes = list(parse_prematch(_circus_dump([
+        {"BetType": "total-goals-OverUnder", "Base": 1.5,
+         "Outcomes": [{"Name": "Plus de", "Odd": 1.30, "Base": 1.5},
+                      {"Name": "Moins de", "Odd": 3.40, "Base": 1.5}]},
+        {"BetType": "half-time-totals-over-under-OverUnder", "Base": 1.5,
+         "Outcomes": [{"Name": "Plus de", "Odd": 3.60, "Base": 1.5},
+                      {"Name": "Moins de", "Odd": 1.28, "Base": 1.5}]},
+    ])))
+    par_marche = {q.market: q for q in quotes if q.outcome.label == "over"}
+    assert set(par_marche) == {MarketType.TOTALS, MarketType.TOTALS_H1}
+    # Même ligne, mais des cotes qui n'ont rien à voir : c'est bien deux
+    # marchés, et les mélanger produirait une ligne juste absurde.
+    assert par_marche[MarketType.TOTALS].outcome.line == 1.5
+    assert par_marche[MarketType.TOTALS_H1].outcome.line == 1.5
+    assert par_marche[MarketType.TOTALS].decimal_odd == 1.30
+    assert par_marche[MarketType.TOTALS_H1].decimal_odd == 3.60
