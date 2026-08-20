@@ -3814,16 +3814,73 @@ partie. À trancher avec `python -m scripts.clv_split --by book,sport` avant
 d'envisager quoi que ce soit — un mute par sport serait un développement, pas
 un réglage.
 
+### 21.11 La prédiction du §21.6 bis, vérifiée — 10 détections, pas 4-5
+
+Relevé du 20/08, 24 h après la mise en service, avec
+`.venv/bin/python -m scripts.check_tennis_totals` :
+
+| | prédit (§21.6 bis) | observé |
+|---|---|---|
+| détections `tennis/totals` / jour | 4 à 5 | **10** |
+| EV moyenne | +7 à 8 % | **+6,9 %** (pondérée) |
+
+Pinnacle publie **33 638 cotes en jeux sur 24 lignes** ; 600 matchs portent une
+ligne de jeux et **580 ont un book en face**. Le correctif du §21.2 est en
+service, et le gisement du §21.6 bis existe.
+
+**Le compte double du prédit devait d'abord se lire comme la panne du §21.3** —
+un total de jeux lu à la mauvaise échelle fabrique des paris de valeur inventés,
+et c'est exactement le profil qu'il produirait. Trois vérifications l'écartent,
+et aucune ne repose sur la bonne foi du scraper :
+
+1. **L'appariement exige la clé exacte** `(event_key, market, line)`
+   (`main.py:448`). Une ligne de sets (2,5-4,5) ne peut pas rencontrer une ligne
+   de jeux (≥ 14,5) : les échelles ne se recoupent pas, et c'est *pourquoi* la
+   règle étroite du §21.3 est sûre.
+2. **Pinnacle est restreint à `period == 0`** (`pinnacle.py:373`). Les totaux de
+   jeux **par set** — la seule autre échelle qui pourrait se confondre — ne
+   rentrent jamais dans la référence.
+3. **Les handicaps sont exclus d'office** (`main.py:446`), pour le motif du
+   §21.3 déjà.
+
+L'EV observée est le second argument, et il est indépendant : une confusion
+d'échelle produit des EV erratiques et énormes, pas une moyenne à +6,9 % qui
+tombe dans la bande prédite +7-8 %.
+
+**L'explication du 10 est la concentration, pas un gisement plus large.** Une
+détection vaut pour un couple (match, book, ligne) — dédoublonné par
+`find_value_bet_id`, donc pas de recomptage entre cycles. Un seul match mal
+pricé rend donc plusieurs détections : 3 books × 3 lignes en font 9 à lui seul.
+La prédiction, elle, était une moyenne journalière tirée d'un ratio de volume.
+Sur un Poisson de moyenne 4,5, P(≥ 10) ≈ 1,7 % — et un Poisson **sous-estime**
+la dispersion d'un phénomène groupé. L'écart ne demande donc pas d'explication
+supplémentaire.
+
+Le volet **D** de la sonde fait tourner ces contrôles à chaque exécution : il
+liste chaque détection avec son échelle, dénonce toute ligne tombant dans la
+bande morte 4,5-14,5 (signature §21.3), signale une référence Pinnacle à un seul
+côté ou une référence de repli (§17), et affiche la concentration.
+
+⚠️ **Ce que ce relevé ne dit pas : si ces paris sont bons.** Une détection est
+une opportunité, pas un gain — c'est la leçon du §20.4. La CLV des totaux de
+jeux n'a toujours jamais été mesurée. `clv_split --by sport,market --min 20`
+tranchera, et rien avant lui.
+
+⚠️ Un détail à ne pas relire comme une panne : `unibet_be` sort 6 cotes sous
+`GAMES_MIN_LINE`, sur une ligne à **14,5**. Ce n'est pas une ligne de sets — un
+set ne dépasse pas 13 jeux, tie-break compris. C'est un total de match court, et
+le seuil à 15 de la sonde le classe simplement hors « jeux » au comptage.
+
 ### 21.9 État des lieux et à faire — remplace §20.15
 
 | | |
 |---|---|
-| Tests | **696 passés**, 4 ignorés — `pytest tests/`, jamais `pytest` seul (§4) |
+| Tests | **710 passés**, 4 ignorés — `pytest tests/`, jamais `pytest` seul (§4) |
 | `results` | 3 091 lignes (tennis) |
 | Books actifs en ALERTE | unibet, golden_palace, ladbrokes, circus, magicbetting |
 | Books muets (donnée seule) | betano, betfirst, napoleon, starcasino — **45 % des détections** |
 | Comptes joués | Unibet + ses jumeaux Kambi (711, Bingoal, Scooore) déjà exploités |
-| Détections 24 h | soccer h2h 382, tennis h2h 157, soccer totals 77, **tennis totals 0 → à revérifier** |
+| Détections 24 h | soccer h2h 382, tennis h2h 157, soccer totals 77, **tennis totals 10** (§21.11) |
 | Capital | ~3 720 € (relevé du 17/08) |
 
 1. **Débloquer le compte API-Football** — demande de réactivation envoyée, en
@@ -3832,11 +3889,12 @@ un réglage.
    (pour la fenêtre de dates, PAS le plan proxy), `SCORES_FOOTBALL_BRIDGE=1`,
    `SCORES_BRIDGE_DAYS=60`, puis `results-update --days 60 --sport soccer` et
    `track-update`.
-2. **Vérifier la prédiction du §21.6 bis** — 4 à 5 détections `tennis/totals`
-   par jour. Moins de 2 : reprendre la chasse. C'est la première chose à faire
-   au démarrage, la mise en service datant du 19/08 en soirée.
-   La sonde est prête et testée : `.venv/bin/python -m scripts.check_tennis_totals`.
-   L'ancienne commande du §21.6 ne pouvait pas tourner — voir §21.6.
+2. ~~**Vérifier la prédiction du §21.6 bis**~~ — fait le 20/08 : **10 détections**
+   contre 4-5 prédites, sur des lignes de jeux authentiques. Le correctif du
+   §21.2 est en service et rend plus que prévu. Voir §21.11. **Ce qui reste :
+   la CLV de ces détections**, seule mesure qui dise si l'edge est réel —
+   `python -m scripts.clv_split --by sport,market --min 20`, une fois assez de
+   matchs clôturés.
 3. **Démarrer le relevé public horodaté** (§21.10). Sa valeur est
    proportionnelle à son ancienneté : c'est le seul actif du projet qui ne se
    rattrape pas.

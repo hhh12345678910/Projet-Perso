@@ -7,7 +7,7 @@ n'existe pas — elle s'appelle `line`.
 
     .venv/bin/python -m scripts.check_tennis_totals
 
-Trois questions, dans l'ordre où elles se conditionnent :
+Quatre questions, dans l'ordre où elles se conditionnent :
 
   A. Pinnacle publie-t-il des lignes de JEUX (15 a 25) en plus du 2,5 en sets ?
      Non => le correctif n'est pas deploye, rien d'autre ne peut marcher.
@@ -16,6 +16,11 @@ Trois questions, dans l'ordre où elles se conditionnent :
   C. Combien de detections tennis/totals sur 24 h ? C'est la prediction
      falsifiable du §21.6 bis : moins de 2 => il reste un blocage,
      autour de 5 => le correctif fait son travail.
+  D. Ces detections apparient-elles bien une echelle a elle-meme ? Un compte
+     au-dessus du predit se lit d'abord comme la panne §21.3 — un total de
+     jeux par set pris pour un total de match — avant de se lire comme une
+     bonne nouvelle. D repond, et donne la concentration : un seul match mal
+     price rend plusieurs detections.
 
 La lecture est en mode `ro` : ce script ne peut rien ecrire, et le daemon
 peut tourner pendant.
@@ -31,6 +36,14 @@ from pathlib import Path
 # jouent a 2,5 ou 3,5 (§21.3). C'est cette absence de recouvrement qui rend la
 # regle sure.
 GAMES_MIN_LINE = 15.0
+
+# Les trois echelles que « totals » recouvre au tennis, et le trou entre elles.
+# Un set se joue a 2,5/3,5 (4,5 en Bo5) ; un match en Bo3 se totalise a partir
+# de ~14,5 jeux. Entre les deux, plus rien de legitime : une ligne qui tombe
+# dans ce trou est un total de jeux PAR SET (6 a 13 jeux) qui a fuite dans un
+# marche de match. C'est la signature §21.3, et le volet D la cherche.
+SETS_MAX_LINE = 4.5
+AMBIGUOUS_BAND = (SETS_MAX_LINE, 14.5)
 
 # §21.6 bis : 77 detections de totaux football x 5,9 % de volume tennis.
 EXPECTED_PER_DAY = (4, 5)
@@ -85,6 +98,59 @@ def _detections(conn: sqlite3.Connection, hours: int) -> list[sqlite3.Row]:
         """,
         (f"-{hours} hours",),
     ).fetchall()
+
+
+def _detection_detail(conn: sqlite3.Connection, hours: int) -> list[sqlite3.Row]:
+    """Chaque detection avec sa ligne, sa reference, et de quoi juger l'echelle.
+
+    `reference_book` vaut NULL quand la reference est Pinnacle : storage.py ne
+    l'ecrit que pour une reference de repli (§17). Un NULL est donc une bonne
+    nouvelle, pas une donnee manquante.
+    """
+    return conn.execute(
+        """
+        SELECT v.event_key, v.book, v.line, v.outcome_label, v.odd_taken,
+               ROUND(v.ev_pct, 2)                       AS ev,
+               COALESCE(v.reference_book, 'pinnacle')   AS ref,
+               (SELECT COUNT(DISTINCT q.outcome_label)
+                  FROM quotes q
+                 WHERE q.event_key = v.event_key
+                   AND q.book      = 'pinnacle'
+                   AND q.market    = 'totals'
+                   AND q.line      = v.line)            AS ref_cotes
+        FROM value_bets v
+        JOIN events e ON e.event_key = v.event_key
+        WHERE e.sport = 'tennis'
+          AND v.market = 'totals'
+          AND v.detected_at > datetime('now', ?)
+        ORDER BY v.line, v.book
+        """,
+        (f"-{hours} hours",),
+    ).fetchall()
+
+
+def _scale(line: float | None) -> str:
+    """SETS / JEUX / AMBIGU — l'echelle que la valeur de ligne trahit."""
+    if line is None:
+        return "?"
+    lo, hi = AMBIGUOUS_BAND
+    if line <= lo:
+        return "sets"
+    if line >= hi:
+        return "jeux"
+    return "AMBIGU"
+
+
+def _poisson_tail(k: int, lam: float) -> float:
+    """P(X >= k) pour un Poisson de moyenne lam, en pourcentage.
+
+    La prediction du §21.6 bis est une moyenne, pas un plafond. Sans cette
+    borne on lit un ecart de comptage comme une panne — ou l'inverse.
+    """
+    import math
+
+    cdf = sum(math.exp(-lam) * lam ** i / math.factorial(i) for i in range(k))
+    return max(0.0, 1.0 - cdf) * 100
 
 
 def _overlap(conn: sqlite3.Connection, hours: int) -> tuple[int, int]:
@@ -188,6 +254,67 @@ def main(argv: list[str]) -> int:
             "  VERDICT : nettement au-dessus du predit. Bonne nouvelle possible, "
             "mais verifier d'abord qu'aucune ligne de sets n'est lue comme des "
             "jeux (§21.3) — c'est la panne qui produirait ce profil."
+        )
+
+    if dets:
+        print()
+        print(f"=== D. Audit d'echelle des detections, {det_hours} h ===")
+        detail = _detection_detail(conn, det_hours)
+        for d in detail:
+            ech = _scale(d["line"])
+            flag = "  <-- SUSPECT" if ech == "AMBIGU" else ""
+            manque = " (ref absente des quotes : purge)" if d["ref_cotes"] == 0 else ""
+            if 0 < d["ref_cotes"] < 2:
+                manque = "  <-- REFERENCE A UN SEUL COTE"
+            print(
+                f"  ligne {str(d['line']):>5} [{ech:6}]  {d['book']:16} "
+                f"{d['outcome_label']:6} @ {d['odd_taken']:5}  EV {d['ev']:5}%  "
+                f"ref {d['ref']}{manque}{flag}"
+            )
+
+        ambigus = [d for d in detail if _scale(d["line"]) == "AMBIGU"]
+        unilateral = [d for d in detail if 0 < d["ref_cotes"] < 2]
+        hors_pinnacle = [d for d in detail if d["ref"] != "pinnacle"]
+        events = {d["event_key"] for d in detail}
+
+        print()
+        lo, hi = AMBIGUOUS_BAND
+        if ambigus:
+            print(
+                f"  ECHEC : {len(ambigus)} detection(s) sur une ligne entre {lo} et "
+                f"{hi} — ni sets ni jeux de match. C'est la panne du §21.3 : un "
+                "total de jeux par set lu comme un total de match. Ne pas jouer "
+                "ces paris, et remonter au scraper du book concerne."
+            )
+        else:
+            print(
+                f"  OK : aucune ligne dans la bande {lo}-{hi}. Toutes les "
+                "detections apparient une echelle a elle-meme, donc la confusion "
+                "jeux/sets du §21.3 ne les explique pas."
+            )
+        if unilateral:
+            print(
+                f"  ATTENTION : {len(unilateral)} reference(s) Pinnacle a un seul "
+                "cote — le devig n'avait pas ses deux faces."
+            )
+        if hors_pinnacle:
+            print(
+                f"  NOTE : {len(hors_pinnacle)} detection(s) valorisee(s) contre une "
+                "reference de repli, pas Pinnacle (§17)."
+            )
+
+        print()
+        print(f"  detections : {len(detail)} sur {len(events)} match(s) distinct(s)")
+        if events:
+            print(f"  soit {len(detail) / len(events):.1f} detection(s) par match touche")
+        print(
+            "  Un match mal price rend une detection par book et par ligne : le "
+            "comptage se concentre, il ne se distribue pas."
+        )
+        exp = sum(EXPECTED_PER_DAY) / 2
+        print(
+            f"  P(>= {len(detail)} | moyenne {exp}) = {_poisson_tail(len(detail), exp):.1f}% "
+            "— et un Poisson SOUS-estime encore la dispersion vu ce groupement."
         )
 
     print()

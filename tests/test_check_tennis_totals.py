@@ -40,9 +40,32 @@ def _schema() -> str:
     return src[src.index(_DDL_START):src.index(_DDL_END)]
 
 
-def _build(path: Path, pinnacle_lines: list[float], detections: int) -> Path:
+def _migrate(conn: sqlite3.Connection) -> None:
+    """Appliquer les MIGRATIONS de production, pas seulement le DDL de base.
+
+    `reference_book` et consorts n'existent que la : une base de test batie sur
+    le seul SCHEMA n'a pas la forme de celle de la VM, et la sonde y echouerait
+    sur une colonne que la production a pourtant. Meme motif qu'au §19.8 —
+    on importe la definition, on ne la recopie pas.
+    """
+    from src.storage import MIGRATIONS
+
+    for table, column, coltype in MIGRATIONS:
+        try:
+            conn.execute(f"ALTER TABLE {table} ADD COLUMN {column} {coltype}")
+        except sqlite3.OperationalError:
+            pass  # deja presente
+
+
+def _build(
+    path: Path,
+    pinnacle_lines: list[float],
+    detections: int,
+    det_line: float = 20.5,
+) -> Path:
     conn = sqlite3.connect(path)
     conn.executescript(_schema())
+    _migrate(conn)
     for i in range(3):
         conn.execute(
             "INSERT INTO events VALUES (?, 'tennis', 'ATP', ?, ?, ?)",
@@ -61,8 +84,8 @@ def _build(path: Path, pinnacle_lines: list[float], detections: int) -> Path:
     for i in range(detections):
         conn.execute(
             _INSERT_VB,
-            (f"ev{i % 3}", "unibet_be", "totals", "over", 20.5, 2.0, 0.55, 1.82,
-             8.5, 1.0),
+            (f"ev{i % 3}", "unibet_be", "totals", "over", det_line, 2.0, 0.55,
+             1.82, 8.5, 1.0),
         )
     conn.commit()
     conn.close()
@@ -133,3 +156,86 @@ def test_the_probe_never_writes(after):
             conn.execute("DELETE FROM quotes")
     finally:
         conn.close()
+
+
+# --- Volet D : l'audit d'echelle ------------------------------------------
+#
+# Le volet C ne sait que compter. Un comptage au-dessus du predit a deux
+# lectures opposees — un gisement reel, ou la panne §21.3 qui fabrique des
+# paris de valeur inventes — et le §11 dit laquelle coute cher. D les separe.
+
+
+@pytest.mark.parametrize(
+    "line, expected",
+    [
+        (2.5, "sets"),    # Bo3
+        (3.5, "sets"),    # Bo5
+        (4.5, "sets"),    # borne haute des sets
+        (9.5, "AMBIGU"),  # jeux d'UN set : la fuite du §21.3
+        (13.5, "AMBIGU"), # un set va jusqu'a 13 jeux, tie-break compris
+        (14.5, "jeux"),   # plus court total de match observe (unibet_be)
+        (20.5, "jeux"),
+        (27.0, "jeux"),
+    ],
+)
+def test_scale_separates_sets_from_games_and_flags_the_gap(line, expected):
+    """Entre 4,5 et 14,5, une ligne de totaux n'a aucun sens legitime.
+
+    C'est ce trou qui rend le diagnostic possible : un total de jeux par set
+    (6 a 13) ne peut pas se deguiser en total de match sans y tomber.
+    """
+    assert ctt._scale(line) == expected
+
+
+def test_section_d_denounces_a_per_set_games_line(tmp_path, capsys):
+    """La panne §21.3, telle qu'elle se presenterait : une ligne a 9,5.
+
+    Sans ce test, la sonde dirait « nettement au-dessus du predit » et
+    laisserait l'operateur conclure a une bonne nouvelle.
+    """
+    db = _build(tmp_path / "leak.db", [2.5, 9.5, 20.5], detections=6, det_line=9.5)
+    assert ctt.main(["", str(db)]) == 0
+    out = capsys.readouterr().out
+    assert "SUSPECT" in out
+    assert "§21.3" in out
+    assert "Ne pas jouer" in out
+
+
+def test_section_d_clears_detections_that_stay_on_the_games_scale(after, capsys):
+    assert ctt.main(["", str(after)]) == 0
+    out = capsys.readouterr().out
+    assert "OK : aucune ligne dans la bande" in out
+    assert "SUSPECT" not in out
+
+
+def test_section_d_reports_concentration(after, capsys):
+    """Cinq detections sur trois matchs, ce n'est pas cinq matchs mal prices.
+
+    Un match mal price rend une detection par book et par ligne. Sans cette
+    ligne, un comptage groupe se lit comme un gisement large.
+    """
+    assert ctt.main(["", str(after)]) == 0
+    assert "detections : 5 sur 3 match(s) distinct(s)" in capsys.readouterr().out
+
+
+def test_section_d_is_silent_without_detections(before, capsys):
+    assert ctt.main(["", str(before)]) == 0
+    assert "Audit d'echelle" not in capsys.readouterr().out
+
+
+def test_poisson_tail_frames_the_prediction_as_a_mean():
+    """4-5 par jour est une moyenne. 10 doit rester improbable sans etre exclu."""
+    assert ctt._poisson_tail(0, 4.5) == pytest.approx(100.0)
+    assert 1.0 < ctt._poisson_tail(10, 4.5) < 5.0
+    assert ctt._poisson_tail(5, 4.5) > ctt._poisson_tail(10, 4.5)
+
+
+def test_section_d_flags_a_one_sided_reference(tmp_path, capsys):
+    """Un devig a un seul cote ne peut pas donner une ligne juste."""
+    db = _build(tmp_path / "onesided.db", [2.5], detections=2, det_line=20.5)
+    conn = sqlite3.connect(db)
+    conn.execute(_INSERT_QUOTE, ("ev0", "pinnacle", "totals", "over", 20.5, 1.9))
+    conn.commit()
+    conn.close()
+    assert ctt.main(["", str(db)]) == 0
+    assert "REFERENCE A UN SEUL COTE" in capsys.readouterr().out
