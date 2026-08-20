@@ -30,7 +30,31 @@ from statistics import mean, pstdev
 
 from src.clv import clv_pct
 from src.config import ScanConfig
+from src.models import HALF_TIME_MARKETS, Book
 from src.storage import Storage
+
+
+def _books_mappes() -> dict[str, int]:
+    """Les books dont un scraper sait produire de la mi-temps, et combien de
+    codes y sont mappés.
+
+    Lu dans les tables de marché elles-mêmes, jamais écrit en dur : sans ça,
+    ce message vieillit à chaque book ajouté et finit par affirmer le
+    contraire du code — ce qu'il a fait dès le premier ajout.
+    """
+    tables = []
+    try:
+        from src.scrapers.circus import _MARKETS
+        tables.append((Book.CIRCUS_BE.value, _MARKETS))
+    except Exception:
+        pass
+    try:
+        from src.scrapers.betano import _PREMATCH_MARKET_BY_TYPE
+        tables.append((Book.BETANO_BE.value, _PREMATCH_MARKET_BY_TYPE))
+    except Exception:
+        pass
+    return {nom: n for nom, table in tables
+            if (n := sum(1 for m in table.values() if m in HALF_TIME_MARKETS))}
 
 _MI_TEMPS = ("h2h_h1", "totals_h1")
 _PLEIN = {"h2h_h1": "h2h", "totals_h1": "totals"}
@@ -96,6 +120,30 @@ def main() -> None:
                       f"passent,\n     donc ce n'est pas le filtre de période. "
                       f"À élucider.")
 
+    # Le point qui décide de tout : un soft price-t-il en face ?
+    # Pinnacle seul ne produit jamais la moindre détection.
+    attendus = _books_mappes()
+    presents = {r["book"] for r in mi_temps}
+    print("\n  Softs mappés pour la mi-temps :")
+    if not attendus:
+        print("    aucun — Pinnacle seul ne produira jamais de détection.")
+    for book, n_codes in sorted(attendus.items()):
+        if book in presents:
+            n = sum(r["n"] for r in mi_temps if r["book"] == book)
+            print(f"    {book:<18s} {n_codes} code(s)   {n:6d} cotes en base")
+        else:
+            print(f"    {book:<18s} {n_codes} code(s)   ⚠️ AUCUNE cote en base")
+    manquants = [b for b in attendus if b not in presents]
+    if manquants:
+        print(f"\n  ⚠️ {', '.join(manquants)} : mappé(s) mais rien en base.")
+        print("     Trois causes possibles, dans cet ordre de vraisemblance :")
+        print("       1. le daemon n'a pas encore bouclé un cycle depuis le")
+        print("          déploiement — attendre quelques minutes et relancer ;")
+        print("       2. le pont navigateur ne dépose plus de dump frais")
+        print("          (`ls -l data/circus/ && date -u`) ;")
+        print("       3. le book a renommé ses codes")
+        print("          (`.venv/bin/python -m scripts.discover_half_time`).")
+
     print("\n=== B. Échelles — mi-temps contre match plein ===")
     par_marche = {}
     for r in lignes:
@@ -127,8 +175,15 @@ def main() -> None:
         "GROUP BY market, book ORDER BY n DESC",
         (*_MI_TEMPS, f"-{args.heures} hours")).fetchall()
     if not rows:
-        print("  Aucune détection. Normal tant qu'aucun soft ne price la mi-temps\n"
-              "  en face de Pinnacle : seul Betano (OUH1) est mappé à ce jour.")
+        attendus = _books_mappes()
+        if attendus:
+            print("  Aucune détection, alors que "
+                  f"{', '.join(sorted(attendus))} sont mappés.")
+            print("  Normal SI leurs cotes ne sont pas encore en base (voir A), ou")
+            print("  si Pinnacle et le soft ne se recouvrent pas sur les mêmes")
+            print("  lignes. Anormal si les cotes des deux côtés sont là.")
+        else:
+            print("  Aucune détection, et aucun soft mappé : attendu.")
     else:
         for r in rows:
             print(f"  {r['market']:<10s} {r['book']:<18s} {r['n']:4d}   EV moy {r['ev']:.2f} %")

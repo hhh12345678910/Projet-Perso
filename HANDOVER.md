@@ -4171,6 +4171,18 @@ plausible). Les trois tests qui gardaient l'ancien comportement ont été
 réécrits en conservant ce qui reste vrai : la période 2 est toujours écartée,
 et `OUH1` ne doit **jamais** devenir un `TOTALS`.
 
+**Le coût, mesuré le 20/08.** Le cycle passe de ~17 s à **31-38 s** (moyenne
+~34 s). Mais le chiffre qui compte n'est pas là : `daemon` fait
+`time.sleep(breather)` APRÈS le cycle, et le service passe `--breather 20`.
+**La période réelle entre deux rafraîchissements d'un même marché passe donc de
+~37 s à ~54 s, soit +46 % de péremption.** C'est la vraie contrepartie de ce
+chantier, et elle porte sur TOUT le flux, mi-temps comprise ou non.
+
+Le levier immédiat si ça pèse : `--breather 5` dans l'unité systemd, qui
+ramène la période à ~39 s au prix d'un CPU jamais au repos. À ne faire que si
+la CLV des mi-temps le justifie — sinon le bon geste est de refermer le
+robinet, pas d'accélérer.
+
 **Première mise en service, relevée le 20/08 :** `totals_h1` et `h2h_h1`
 arrivent bien en base côté Pinnacle (8 794 cotes de totaux de mi-temps au
 premier relevé), échelle saine — ligne moyenne **1,13** contre **3,45** au
