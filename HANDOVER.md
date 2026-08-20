@@ -3859,17 +3859,31 @@ encaissé**, pas après : est-ce que cela relève de la Commission des jeux de
 hasard, et des restrictions de publicité ? La sortie de ce piège serait
 d'étendre le scraper à d'autres pays (NL, FR) — plusieurs mois de travail.
 
-**Nom.** Vérifié le 19/08 au registre `.com` (RDAP Verisign, autoritatif) :
-`purodds.com`, `purodd.com`, `pureodd.com`, `aequodds.com`, `aeqodds.com`,
-`aequodd.com`, `aeqodd.com`, `cotejuste.com`, `justecote.com`, `lignejuste.com`,
-`deuceline.com`, `truodd.com`, `vigcut.com` étaient tous LIBRES. Recommandation :
-**`purodds.com`** au pluriel — `odd` au singulier veut dire « bizarre » en
-anglais. `aequodds` est plus distinctif et mieux protégeable, mais un
-francophone qui l'entend ne sait pas l'écrire, et le bouche-à-oreille est le
-canal d'acquisition principal.
+**Nom.** Recommandation retenue : **`equodds.com`**, avec `aequodds.com` en
+redirection. Racine latine *aequo* (« équitable ») + odds, et surtout une
+orthographe qu'un francophone écrit spontanément après l'avoir entendue —
+« équodds » → `equodds`. Le bouche-à-oreille (forums, Telegram) étant le canal
+d'acquisition principal, un nom inécrivable coûte des clients qu'on ne compte
+jamais ; c'est ce qui disqualifie la graphie savante `aequodds` comme nom
+principal, tout en la gardant comme actif défensif.
+
+⚠️ **`purodds` a été écarté, et il ne faut pas y revenir.** Le domaine était
+libre, mais **pureodds.io** est un casino crypto actif (jeux « provably fair »,
+USDC, sur invitation). Une lettre d'écart, prononciation identique, sens
+identique, même classe 41 : risque de confusion manuel. Et surtout, la
+contamination d'image est disqualifiante — un produit qui se vend sur la rigueur
+statistique ne peut pas se faire confondre avec un casino crypto anonyme, sans
+compter la friction bancaire que ce voisinage provoque.
+
+Libres au registre `.com` le 19-20/08 (RDAP Verisign, autoritatif) :
+`equodds`, `aequodds`, `aequline`, `aequoline`, `oddsaequo`, `cotejuste`,
+`justecote`, `lignejuste`, `cotevraie`, `deuceline`, `truodd`, `vigcut`.
+
 ⚠️ **Aucune recherche d'antériorité n'a été faite.** Domaine libre ≠ marque
-libre : BOIP (Benelux) et EUIPO restent à vérifier. Une recherche web n'a
-remonté aucune marque existante, ce qui ne prouve rien.
+libre : BOIP (Benelux) et EUIPO restent à vérifier — sur `equodds`, mais aussi
+sur `pureodds`, pour savoir si le casino a déposé quelque chose qui couvrirait
+la classe visée. Une recherche web n'a remonté aucune marque, ce qui ne prouve
+rien.
 
 ### 21.7 Reste ouvert
 
