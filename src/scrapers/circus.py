@@ -32,7 +32,17 @@ from ..teams import record_pair
 # référence qui ne le price pas fabrique des value bets fantômes.
 #
 # Volontairement exclus :
-#   1st-half-*            mi-temps — Pinnacle ne price que le match complet ici
+#   1st-half-*            mi-temps. ⚠️ Le motif écrit ici — « Pinnacle ne price
+#                         que le match complet » — est FAUX, mesuré le 20/08 :
+#                         Pinnacle publie 18 098 marchés de période 1 au
+#                         football, dont 6 475 moneyline et 4 880 totals. La
+#                         croyance venait de notre propre filtre
+#                         (pinnacle.py, `period != 0`), pas de l'API. Le vrai
+#                         blocage est ailleurs : OddQuote n'a pas de champ
+#                         `period` et le devig groupe sur
+#                         (event_key, market, line), donc une mi-temps et un
+#                         match plein tomberaient dans le même groupe. Voir
+#                         §21.13.
 #   both-teams-to-score   aucune référence sharp
 #   draw-no-bet           idem
 #   1X12X2                double chance, idem

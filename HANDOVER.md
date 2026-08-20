@@ -3,6 +3,10 @@
 Document de reprise. À lire en premier pour reprendre le travail sans
 redécouvrir le contexte. Dernière mise à jour : 20/08/2026.
 
+**Nouveau (20/08) :** §21.13 — on jette 35,5 % du payload Pinnacle (les
+mi-temps) sur la foi d'un commentaire faux, et 26,9 % (les handicaps) pour une
+raison valable. La mi-temps est le chantier à ouvrir en premier.
+
 **Nouveau (20/08) :** §21.12 — la CLV n'est pas un miroir de l'EV (R² = 0,257
 sur 15 222 paris clôturés, la ligne juste bouge de 5,61 % en médiane). Le KPI du
 projet tient. En revanche le §20.8 sur les `under` ne se reproduit pas sur un
@@ -2751,11 +2755,11 @@ changé de nature (§19.5).
    garder, et sur quels sports.
 4. **L'offre complète MagicBetting** (§18.6) — 27 matchs aujourd'hui.
 5. **Le tennis MagicBetting** — trois identifiants à capturer.
-6. **Élargir le premium** (§17.4) : +39 % de volume au même taux. Si une seule
+7. **Élargir le premium** (§17.4) : +39 % de volume au même taux. Si une seule
    poche, cote > 6 / EV 20-35 (+15,54 %, 5,9 σ). Jamais cote > 6 / EV 5-10,
    qui est négative.
 7. **Remplir `results`** (§17.9) — l'inventaire est fait, ~30 lignes à écrire.
-8. Reliquats : `line_speed` à repenser (§18.5), découpage en runs du
+9. Reliquats : `line_speed` à repenser (§18.5), découpage en runs du
    `pinnacle_doctor`, noms de books dédoublés dans `paris_track.csv` (§14.10).
 
 ### 18.9 Réglages ajoutés
@@ -3593,7 +3597,7 @@ pas 100 par jour comme sa grille le laisse croire. Basic est indispensable.
    19/08 : ils n'étaient pas collectés du tout. Voir §21.
 7. **Résorber le retard de purge** avant de passer `PRUNE_DAYS` à 7 : allonger
    la rétention pendant le rattrapage l'aggraverait.
-8. Reliquats : découpage en runs du `pinnacle_doctor`, noms de books dédoublés
+9. Reliquats : découpage en runs du `pinnacle_doctor`, noms de books dédoublés
    dans `paris_track.csv` (§14.10), dérive de cycles inexpliquée (§19.9 pt 4),
    `line_speed` à repenser (§18.5).
 
@@ -4005,6 +4009,82 @@ menu. « Seuil à 8 % → CLV +13,46 % » est vrai et trompeur — le gain vient
 pente globale, pas des `under`, et il se paie en volume (290 paris gardés
 sur 774).
 
+### 21.13 Élargir les marchés — mesuré, et les deux commentaires faux
+
+Session du 20/08, en vue du §21.10 (vendre les value bets, donc besoin de
+volume). Le projet n'exploite que `h2h` et `totals` en match plein : sur
+15 222 paris clôturés, **aucun handicap, aucune mi-temps**. Deux exclusions en
+sont la cause. `scripts/market_expansion.py` lit l'API sans les filtres.
+
+**Relevé sur l'API réelle, 51 098 marchés ouverts au football, 1 188 au tennis :**
+
+| football | marchés | part |
+|---|---|---|
+| période 0 (match plein) | 32 947 | gardé |
+| **période 1 (mi-temps)** | **18 098** | **jeté — 35,5 %** |
+| période 8 | 53 | jeté |
+| dont période 0 : moneyline | 12 377 | gardé |
+| dont période 0 : `spread` | 8 876 | **jeté — 26,9 %** |
+| dont période 0 : total | 8 201 | gardé |
+| dont période 0 : `team_total` | 3 493 | jeté (non mappé) |
+
+**1. `circus.py:35` était factuellement FAUX.** Il affirmait « mi-temps —
+Pinnacle ne price que le match complet ici ». Pinnacle publie **18 098 marchés
+de période 1** au football, dont 6 475 moneyline et 4 880 totals. La croyance
+venait de notre propre filtre `pinnacle.py` (`period != 0`) : le scraper
+n'ayant jamais rien remonté, le soft a été exclu à son tour. **Raisonnement
+circulaire, corrigé dans le code.** Les softs, eux, les proposent — Gaming1
+nomme ses `1st-half-*`, Betano son `OUH1`.
+
+**2. Le « ~45 % » des handicaps était surévalué de moitié.** Mesuré : `spread`
+fait **26,9 %** de la période 0 au football, 36,7 % au tennis. Corrigé dans
+`main.py`.
+
+**3. Pinnacle signe chaque côté, sans une exception** : 8 876/8 876 au football
+et 324/324 au tennis en lignes opposées (`[-1.25, 1.25]`, `[-3.0, 3.0]`). La
+convention de la référence est donc parfaitement régulière — **tout le travail
+de normalisation est du côté des softs**, book par book.
+
+**Le classement, en types DÉJÀ supportés** (moneyline + total, football) :
+
+| chantier | marchés | gain relatif | risque |
+|---|---|---|---|
+| **mi-temps (période 1)** | **11 355** | **+55 %** | faible |
+| handicaps (période 0) | 8 876 | +43 % | élevé |
+| handicaps de mi-temps | 4 960 | — | élevé |
+
+**La mi-temps est le bon premier chantier, et ce n'est pas le plus gros par
+hasard : c'est le moins risqué.** Un `h2h` ou un `totals` de mi-temps a
+exactement la même sémantique qu'en match plein — aucun devig nouveau, aucune
+convention de signe. Les handicaps, eux, demandent de normaliser chaque soft un
+par un, avec la panne silencieuse du §21.3 au bout en cas d'erreur.
+
+⚠️ **Mais le blocage technique de la mi-temps est réel, et il est structurel.**
+`OddQuote` **n'a pas de champ `period`**, et le devig groupe sur
+`(event_key, market, line)`. En l'état, un `total 1.5` de mi-temps et un
+`total 1.5` de match plein tomberaient dans le MÊME groupe : marge plausible,
+deux côtés présents, aucune erreur levée, et une ligne juste fausse. C'est
+exactement le §21.3. **La période doit devenir partie de la clé AVANT que la
+moindre cote de mi-temps entre dans le pipeline** — c'est la condition, pas une
+amélioration ultérieure.
+
+Portée du chantier mi-temps : `models.py` (période sur `OddQuote`, ou types de
+marché distincts), `pinnacle.py` (lever le filtre en portant la période), les
+scrapers softs (rouvrir les `1st-half-*` aujourd'hui exclus), le schéma de
+`quotes`, le groupement du devig, et l'alerteur (une alerte doit DIRE que c'est
+une mi-temps).
+
+⚠️ **Ces chiffres sont un plafond, pas une prévision.** Un marché chez Pinnacle
+ne produit une détection que si un soft le price en face. Le §21.6 bis l'a déjà
+montré : correctif en service, 630 cotes comparables, zéro détection la première
+heure. Le vrai gain se lira sur la base, après quelques cycles.
+
+⚠️ **Et le §21.12 complique l'arbitrage commercial.** Élargir à seuil constant
+gonfle surtout le bas du spectre, là où la CLV attendue n'est que +1,0 % (EV
+5 %) à +1,9 % (EV 6 %). Du volume vendable qui ne rapporterait presque rien à
+l'acheteur. **Trancher le seuil global devrait probablement précéder
+l'élargissement**, pas le suivre.
+
 ### 21.9 État des lieux et à faire — remplace §20.15
 
 | | |
@@ -4029,22 +4109,28 @@ sur 774).
    la CLV de ces détections**, seule mesure qui dise si l'edge est réel —
    `.venv/bin/python -m scripts.clv_split --by sport,market --min 20`, une fois assez de
    matchs clôturés.
-3. **Démarrer le relevé public horodaté** (§21.10). Sa valeur est
+3. **Élargir les marchés — mi-temps d'abord** (§21.13). +55 % de marchés
+   comparables au football, en types déjà supportés, contre +43 % pour les
+   handicaps avec un risque bien plus élevé. **Condition impérative** : la
+   période doit entrer dans la clé de devig AVANT la première cote de mi-temps,
+   sinon c'est le §21.3. À arbitrer avec le seuil global (§21.12), qui devrait
+   probablement passer en premier.
+4. **Démarrer le relevé public horodaté** (§21.10). Sa valeur est
    proportionnelle à son ancienneté : c'est le seul actif du projet qui ne se
    rattrape pas.
-4. ~~**Relever le seuil d'EV sur les `under`**~~ — **annulé le 20/08, mesuré**.
+5. ~~**Relever le seuil d'EV sur les `under`**~~ — **annulé le 20/08, mesuré**.
    Le constat du §20.8 ne se reproduit pas sur un échantillon doublé : les
    `under` sont devant les `over`, et l'effet EV→CLV n'a rien de propre aux
    `under`. Voir §21.12. **À la place** : trancher le seuil GLOBAL. La CLV
    attendue n'est que +1,0 % à EV 5 % et +1,9 % à 6 %, contre +6,40 % de
    moyenne — le gros du volume vaut bien moins que la moyenne ne le suggère.
    Arbitrage volume/qualité, non fait.
-5. **Vérifier l'alerte softbook de bout en bout** (§20.6) — le test manuel avait
+6. **Vérifier l'alerte softbook de bout en bout** (§20.6) — le test manuel avait
    échoué sur une config Telegram vide, la chaîne de livraison n'est pas prouvée.
-6. **Élargir le premium** (§17.4, +39 % de volume) — et cette fois avec un œil
+7. **Élargir le premium** (§17.4, +39 % de volume) — et cette fois avec un œil
    sur le §21.10 : élargir le premium change ce que tu vendrais.
-7. **`PRUNE_DAYS=7`** — désormais sans risque, le retard de purge est résorbé.
-8. Reliquats : découpage en runs du `pinnacle_doctor`, noms de books dédoublés
+8. **`PRUNE_DAYS=7`** — désormais sans risque, le retard de purge est résorbé.
+9. Reliquats : découpage en runs du `pinnacle_doctor`, noms de books dédoublés
    dans `paris_track.csv` (§14.10), dérive de cycles inexpliquée (§19.9 pt 4),
    `line_speed` à repenser (§18.5), handicap de jeux inexploité (§21.7).
 

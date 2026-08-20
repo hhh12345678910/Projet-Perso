@@ -2063,9 +2063,17 @@ def _fetch_all_parallel(
             except Exception as e:
                 console.print(f"[yellow]\\[{sport}]   {name} skipped: {e}[/yellow]")
     # Drop handicap quotes at the source: they're excluded from both value bets
-    # and surebets, so parsing/storing/matching them is pure wasted CPU (and
-    # they're ~45% of Pinnacle's payload). Filtering here lightens the whole
-    # downstream pipeline — critical on a small CPU.
+    # and surebets, so parsing/storing/matching them is pure wasted CPU.
+    # Filtering here lightens the whole downstream pipeline — critical on a
+    # small CPU.
+    #
+    # ⚠️ Ce commentaire annonçait « ~45% of Pinnacle's payload ». Mesuré le
+    # 20/08 (scripts/market_expansion.py) : les `spread` font 26,9 % de la
+    # période 0 au football (8 876 sur 32 947) et 36,7 % au tennis (324 sur
+    # 884). Le gisement reste important, mais il était surévalué de moitié.
+    # Pinnacle signe chaque côté sans exception (8 876/8 876 et 324/324 en
+    # lignes opposées) : la normalisation à faire est du côté des softs, pas
+    # de la référence. Voir §21.13.
     return [q for q in all_quotes if q.market != MarketType.HANDICAP]
 
 
