@@ -17,8 +17,8 @@ Cet outil rejoue la chaîne réelle sur les cotes DÉJÀ EN BASE : mêmes
 `build_fair_lines`, `_devig_group` et `find_value_bets` que le daemon. Une
 sonde qui recoderait le calcul mesurerait autre chose que la production (§17.7).
 
-    python -m scripts.market_supply --sport tennis --market totals --hours 2
-    python -m scripts.market_supply --sport tennis --market totals --min-line 10
+    .venv/bin/python -m scripts.market_supply --sport tennis --market totals --hours 2
+    .venv/bin/python -m scripts.market_supply --sport tennis --market totals --min-line 10
 """
 from __future__ import annotations
 

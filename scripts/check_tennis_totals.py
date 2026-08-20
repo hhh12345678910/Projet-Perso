@@ -321,7 +321,7 @@ def main(argv: list[str]) -> int:
     print("  Rappel : ce sont des DETECTIONS. Quatre books sur huit sont muets")
     print("  (§21.8), donc les alertes recues seront moins nombreuses.")
     print("  La CLV de ces detections reste inconnue tant qu'aucun match n'a")
-    print("  cloture : python -m scripts.clv_split --by sport,market --min 20")
+    print("  cloture : .venv/bin/python -m scripts.clv_split --by sport,market --min 20")
 
     conn.close()
     return 0

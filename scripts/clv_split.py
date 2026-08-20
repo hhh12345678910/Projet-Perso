@@ -12,9 +12,9 @@ réellement alerté s'améliore — et rien dans la sortie ne le signale.
 « la CLV de StarCasino est-elle mauvaise partout ou seulement au tennis ? »
 supposait donc d'exporter un CSV et de l'ouvrir à la main.
 
-    python -m scripts.clv_split --by book,sport
-    python -m scripts.clv_split --by sport,market --min 30
-    python -m scripts.clv_split --by book --since 2026-08-10
+    .venv/bin/python -m scripts.clv_split --by book,sport
+    .venv/bin/python -m scripts.clv_split --by sport,market --min 30
+    .venv/bin/python -m scripts.clv_split --by book --since 2026-08-10
 
 La CLV vient de `clv.clv_pct` et les lignes de `Storage.all_closed_bets()` :
 mêmes chiffres que `clv-report`, au découpage près (§17.7 — une sonde qui

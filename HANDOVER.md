@@ -260,25 +260,36 @@ ingérer des books protégés par anti-bot sans proxy résidentiel.
 
 ## 4. Commandes
 
+⚠️ **Toujours `.venv/bin/python`, jamais `python`.** La VM n'a pas de binaire
+`python` — seulement `python3`, et le paquet `python-is-python3` n'est pas
+installé. `python -m …` répond « Command 'python' not found », et `python3 -m …`
+tournerait hors du venv, donc sans les dépendances. Il n'y a pas non plus de
+`source .venv/bin/activate` implicite : chaque commande porte son chemin.
+Ce document a prescrit `python` nu pendant trois sessions ; les commandes
+ci-dessous sont corrigées, mais toute commande recopiée d'une section ancienne
+est à relire. Même famille que le §20.12 (`sqlite3` absent) et que la commande
+du §21.6 : **une commande jamais exécutée n'est pas une commande, c'est une
+intention.**
+
 ```bash
 ./doctor.sh                                  # état complet + cause de tout zéro
-python -m src.main clv-report                # LA mesure de rentabilité
-python -m src.main track-update              # suivi des paris joués -> CSV
-python -m src.main settle --from <csv>       # injecte les scores, calcule le P&L
-python -m src.main backfill-fair-lines       # rattrape les clôtures d'avant le correctif
-python -m src.main backfill-played-bets      # rattache les anciens clics à leur détection
-python -m src.main export-history --out <csv>   # détections + ligue + délai + overround + CLV
-python -m src.main features --premium         # CLV par championnat  (PAS `features-report`)
-python -m src.main corrections                # vitesse de correction par book (PAS `corrections-report`)
-python -m src.main export-tracking --out <db> # historique durable, transportable
-python -m src.main export-curves --out <csv> --days 7   # trajectoires (§15.1)
-python tools/book_revive_check.py             # quels books desactives repondent encore
-python -m src.main books-coverage --sport soccer,tennis   # events, horizon, ∩ Pinnacle
-python -m src.main betano-value-test --min-ev 0.5   # dry-run, sans alerte
-python -m src.main betano-coverage           # ce que contient le dump Betano
-python -m src.main betano-prematch-shape data/prematch/soccer.json
-python -m src.main inspect-json <fichier> --path a.b.0.c
-python -m src.main prune --days 2            # purge (VACUUM refusé si disque insuffisant)
+.venv/bin/python -m src.main clv-report                # LA mesure de rentabilité
+.venv/bin/python -m src.main track-update              # suivi des paris joués -> CSV
+.venv/bin/python -m src.main settle --from <csv>       # injecte les scores, calcule le P&L
+.venv/bin/python -m src.main backfill-fair-lines       # rattrape les clôtures d'avant le correctif
+.venv/bin/python -m src.main backfill-played-bets      # rattache les anciens clics à leur détection
+.venv/bin/python -m src.main export-history --out <csv>   # détections + ligue + délai + overround + CLV
+.venv/bin/python -m src.main features --premium         # CLV par championnat  (PAS `features-report`)
+.venv/bin/python -m src.main corrections                # vitesse de correction par book (PAS `corrections-report`)
+.venv/bin/python -m src.main export-tracking --out <db> # historique durable, transportable
+.venv/bin/python -m src.main export-curves --out <csv> --days 7   # trajectoires (§15.1)
+.venv/bin/python tools/book_revive_check.py             # quels books desactives repondent encore
+.venv/bin/python -m src.main books-coverage --sport soccer,tennis   # events, horizon, ∩ Pinnacle
+.venv/bin/python -m src.main betano-value-test --min-ev 0.5   # dry-run, sans alerte
+.venv/bin/python -m src.main betano-coverage           # ce que contient le dump Betano
+.venv/bin/python -m src.main betano-prematch-shape data/prematch/soccer.json
+.venv/bin/python -m src.main inspect-json <fichier> --path a.b.0.c
+.venv/bin/python -m src.main prune --days 2            # purge (VACUUM refusé si disque insuffisant)
 ./tools/detect-platform.sh https://www.bet777.be/fr
 
 # Ponts navigateur — fraîcheur et cadence (les deux doivent être < 60 s)
@@ -289,8 +300,11 @@ sudo journalctl -u betano-ingest --since "30 min ago" --no-pager | grep -P "\] [
 
 # Détections par book sur une fenêtre donnée — pour juger un book récent, il
 # FAUT restreindre la fenêtre : comparer 3 h à 7 jours donne 13 contre 1813.
-sqlite3 data/valuebet.db "SELECT book, COUNT(*) FROM value_bets \
-  WHERE detected_at > '2026-07-30T16:30:00' GROUP BY book ORDER BY 2 DESC;"
+# ⚠️ `sqlite3` est ABSENT de la VM (§20.12) : passer par le module Python.
+.venv/bin/python -c 'import sqlite3,sys
+q="SELECT book,COUNT(*) FROM value_bets WHERE detected_at>? GROUP BY book ORDER BY 2 DESC"
+for r in sqlite3.connect("file:data/valuebet.db?mode=ro",uri=True).execute(q,(sys.argv[1],)):
+    print("%-18s %s" % r)' 2026-07-30T16:30:00   # <- la fenêtre, à changer
 
 node tools/circus-ingest.selftest.js tools/circus-ingest.user.js  # 7 scénarios
 
@@ -1494,7 +1508,7 @@ meurt et plus rien n'est détecté. Règle de dimensionnement à garder :
 
 ### 14.9 Vitesse de correction des books — combien de temps pour cliquer
 
-`python -m src.main corrections` (le nom réel de la commande est `corrections`,
+`.venv/bin/python -m src.main corrections` (le nom réel de la commande est `corrections`,
 **pas** `corrections-report` comme l'annonçait le §13.6 ; de même `features` et
 non `features-report`).
 
@@ -3729,7 +3743,7 @@ prochain démarrage, sur le point le plus urgent de la liste.
 Puis, une fois des matchs clôturés :
 
 ```bash
-python -m scripts.clv_split --by sport,market --min 20
+.venv/bin/python -m scripts.clv_split --by sport,market --min 20
 ```
 
 ⚠️ `clv-report` n'accepte **ni `--sport` ni `--market`** — seulement
@@ -3770,7 +3784,7 @@ est à ignorer — celle-ci repose sur 24 h.
 
 Reste inconnu, et c'est la vraie question : la **CLV** de ces détections. Celle
 du tennis h2h est excellente (+15 % en premium) ; celle des totaux de jeux n'a
-jamais existé. `python -m scripts.clv_split --by sport,market` tranchera une fois
+jamais existé. `.venv/bin/python -m scripts.clv_split --by sport,market` tranchera une fois
 des matchs clôturés — pas avant.
 
 ### 21.8 Quatre books sur huit sont muets — 45 % des détections
@@ -3810,7 +3824,7 @@ opportunités relevées venant de StarCasino, muet.
 **Question ouverte, mesurable.** StarCasino est muet sur TOUS les sports alors
 que le constat de départ portait sur son ROI au tennis. Si son football est
 sain, 1 200 détections sont coupées pour un problème qui n'en concerne qu'une
-partie. À trancher avec `python -m scripts.clv_split --by book,sport` avant
+partie. À trancher avec `.venv/bin/python -m scripts.clv_split --by book,sport` avant
 d'envisager quoi que ce soit — un mute par sport serait un développement, pas
 un réglage.
 
@@ -3893,7 +3907,7 @@ le seuil à 15 de la sonde le classe simplement hors « jeux » au comptage.
    contre 4-5 prédites, sur des lignes de jeux authentiques. Le correctif du
    §21.2 est en service et rend plus que prévu. Voir §21.11. **Ce qui reste :
    la CLV de ces détections**, seule mesure qui dise si l'edge est réel —
-   `python -m scripts.clv_split --by sport,market --min 20`, une fois assez de
+   `.venv/bin/python -m scripts.clv_split --by sport,market --min 20`, une fois assez de
    matchs clôturés.
 3. **Démarrer le relevé public horodaté** (§21.10). Sa valeur est
    proportionnelle à son ancienneté : c'est le seul actif du projet qui ne se
@@ -3930,7 +3944,7 @@ ROI vaut 100 % / √N :
 Sous ~800 paris premium clôturés, « +6,69 % de ROI » n'est pas un résultat mais
 un bruit favorable. La CLV premium (+15 % au tennis, 92 % de positives) est un
 argument indépendant et solide, mais ce n'est pas un ROI. Compteur :
-`python -m scripts.pnl_detections --premium`, lire le n et le σ.
+`.venv/bin/python -m scripts.pnl_detections --premium`, lire le n et le σ.
 
 ⚠️ Deux réserves à ne pas oublier au moment de rédiger quoi que ce soit :
 le premium contient du football, dont le P&L n'est pas mesuré (si la preuve est
