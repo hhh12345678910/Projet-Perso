@@ -1,11 +1,11 @@
 # Valuebet — état du projet
 
 Document de reprise. À lire en premier pour reprendre le travail sans
-redécouvrir le contexte. Dernière mise à jour : 18/08/2026.
+redécouvrir le contexte. Dernière mise à jour : 20/08/2026.
 
 **Si tu ne lis que trois choses :** §20.4 pour le premier P&L réel du projet et
 la question qu'il ouvre (la CLV mesure-t-elle vraiment l'edge ?), §11 pour le
-mode de défaillance dominant (la panne silencieuse), et §20.15 pour la liste de
+mode de défaillance dominant (la panne silencieuse), et §21.9 pour la liste de
 travail à jour.
 
 La mesure de CLV qui fait autorité reste §18.1 (+9,49 % sur 2 025 opportunités
@@ -3567,7 +3567,7 @@ pas 100 par jour comme sa grille le laisse croire. Basic est indispensable.
 
 ---
 
-## 21. Session du 19/08 — les totaux de jeux du tennis, jamais collectés
+## 21. Sessions des 19-20/08 — les totaux de jeux du tennis, jamais collectés
 
 ### 21.1 Le constat
 
@@ -3779,6 +3779,97 @@ sain, 1 200 détections sont coupées pour un problème qui n'en concerne qu'une
 partie. À trancher avec `python -m scripts.clv_split --by book,sport` avant
 d'envisager quoi que ce soit — un mute par sport serait un développement, pas
 un réglage.
+
+### 21.9 État des lieux et à faire — remplace §20.15
+
+| | |
+|---|---|
+| Tests | **690 passés**, 4 ignorés |
+| `results` | 3 091 lignes (tennis) |
+| Books actifs en ALERTE | unibet, golden_palace, ladbrokes, circus, magicbetting |
+| Books muets (donnée seule) | betano, betfirst, napoleon, starcasino — **45 % des détections** |
+| Comptes joués | Unibet + ses jumeaux Kambi (711, Bingoal, Scooore) déjà exploités |
+| Détections 24 h | soccer h2h 382, tennis h2h 157, soccer totals 77, **tennis totals 0 → à revérifier** |
+| Capital | ~3 720 € (relevé du 17/08) |
+
+1. **Débloquer le compte API-Football** — demande de réactivation envoyée, en
+   attente de réponse. Reste le premier point du projet : c'est le seul moyen de
+   trancher « la CLV mesure-t-elle vraiment l'edge ? ». Ensuite : plan payant
+   (pour la fenêtre de dates, PAS le plan proxy), `SCORES_FOOTBALL_BRIDGE=1`,
+   `SCORES_BRIDGE_DAYS=60`, puis `results-update --days 60 --sport soccer` et
+   `track-update`.
+2. **Vérifier la prédiction du §21.6 bis** — 4 à 5 détections `tennis/totals`
+   par jour. Moins de 2 : reprendre la chasse. C'est la première chose à faire
+   au démarrage, la mise en service datant du 19/08 en soirée.
+3. **Démarrer le relevé public horodaté** (§21.10). Sa valeur est
+   proportionnelle à son ancienneté : c'est le seul actif du projet qui ne se
+   rattrape pas.
+4. **Relever le seuil d'EV sur les `under`**, surtout 3.5 et 4.5 (§20.8). Seul
+   effet significatif de toute l'analyse du 17/08, toujours pas appliqué.
+5. **Vérifier l'alerte softbook de bout en bout** (§20.6) — le test manuel avait
+   échoué sur une config Telegram vide, la chaîne de livraison n'est pas prouvée.
+6. **Élargir le premium** (§17.4, +39 % de volume) — et cette fois avec un œil
+   sur le §21.10 : élargir le premium change ce que tu vendrais.
+7. **`PRUNE_DAYS=7`** — désormais sans risque, le retard de purge est résorbé.
+8. Reliquats : découpage en runs du `pinnacle_doctor`, noms de books dédoublés
+   dans `paris_track.csv` (§14.10), dérive de cycles inexpliquée (§19.9 pt 4),
+   `line_speed` à repenser (§18.5), handicap de jeux inexploité (§21.7).
+
+### 21.10 Le volet commercial — ce qui est décidé, ce qui bloque
+
+Décision prise : **si le système est vendu, l'argument portera sur le canal
+premium seul**, pas sur la sélection globale ni le ROI global. C'est le bon
+choix — le premium est le seul sous-ensemble dont le ROI réel a été mesuré
+séparément (+6,69 % contre −0,34 % pour le reste, §20.8).
+
+**Le verrou est statistique, et il est chiffré.** À des cotes de 1,5 à 4,
+l'écart-type d'un pari unitaire vaut ~100 % de la mise, donc l'erreur-type du
+ROI vaut 100 % / √N :
+
+| N premium clôturés | 1σ | +6,69 % vaut |
+|---|---|---|
+| 100 | ±10,0 % | 0,7σ — indistinguable de zéro |
+| 300 | ±5,8 % | 1,2σ |
+| **800** | **±3,5 %** | **1,9σ — le minimum annonçable** |
+| 1 800 | ±2,4 % | 2,8σ |
+
+Sous ~800 paris premium clôturés, « +6,69 % de ROI » n'est pas un résultat mais
+un bruit favorable. La CLV premium (+15 % au tennis, 92 % de positives) est un
+argument indépendant et solide, mais ce n'est pas un ROI. Compteur :
+`python -m scripts.pnl_detections --premium`, lire le n et le σ.
+
+⚠️ Deux réserves à ne pas oublier au moment de rédiger quoi que ce soit :
+le premium contient du football, dont le P&L n'est pas mesuré (si la preuve est
+tennis, l'annonce doit dire tennis) ; et +6,69 % est un ROI sur **mise
+notionnelle**, qui suppose la cote disponible à l'instant de l'alerte — un
+abonné arrivant 90 secondes plus tard aura une autre cote, et il vaut mieux
+l'écrire que se le faire reprocher.
+
+**Ce qui vend vraiment**, ce n'est pas un backtest — n'importe qui en produit un
+— mais un relevé public horodaté et non retouchable. Tout existe déjà (alertes
+temps réel, `track-update`, `close-lines`) ; il ne manque que la publication au
+moment de la détection dans un canal public en lecture seule. À démarrer avant
+d'en avoir besoin.
+
+**Le problème structurel :** la valeur du produit tient à la couverture des
+books BELGES, donc la clientèle ne peut être que belge — la juridiction la plus
+restrictive d'Europe en matière de communication sur les jeux d'argent depuis
+l'arrêté royal de 2023. **Question pour un avocat avant le premier euro
+encaissé**, pas après : est-ce que cela relève de la Commission des jeux de
+hasard, et des restrictions de publicité ? La sortie de ce piège serait
+d'étendre le scraper à d'autres pays (NL, FR) — plusieurs mois de travail.
+
+**Nom.** Vérifié le 19/08 au registre `.com` (RDAP Verisign, autoritatif) :
+`purodds.com`, `purodd.com`, `pureodd.com`, `aequodds.com`, `aeqodds.com`,
+`aequodd.com`, `aeqodd.com`, `cotejuste.com`, `justecote.com`, `lignejuste.com`,
+`deuceline.com`, `truodd.com`, `vigcut.com` étaient tous LIBRES. Recommandation :
+**`purodds.com`** au pluriel — `odd` au singulier veut dire « bizarre » en
+anglais. `aequodds` est plus distinctif et mieux protégeable, mais un
+francophone qui l'entend ne sait pas l'écrire, et le bouche-à-oreille est le
+canal d'acquisition principal.
+⚠️ **Aucune recherche d'antériorité n'a été faite.** Domaine libre ≠ marque
+libre : BOIP (Benelux) et EUIPO restent à vérifier. Une recherche web n'a
+remonté aucune marque existante, ce qui ne prouve rien.
 
 ### 21.7 Reste ouvert
 
