@@ -81,7 +81,13 @@ def _marche(entrees, titre: str, connus: set) -> None:
           f"{len(candidats)} candidats mi-temps")
     for (code, libelle), n in sorted(candidats.items(), key=lambda kv: -kv[1]):
         deja = "  ← DÉJÀ MAPPÉ" if code in connus else ""
-        print(f"    ★ {str(code):<28.28s} {libelle[:44]:<44.44s} ×{n}{deja}")
+        # JAMAIS tronqué, et en repr() : le mappage se fait par égalité
+        # exacte, donc un code coupé à la largeur d'une colonne ne matcherait
+        # rien — en silence. La première version coupait à 28 caractères, ce
+        # qui a masqué la fin de `half-time-totals-over-under-…` : un code
+        # illisible vaut un code absent.
+        print(f"    ★ {n:>5d} ×  {code!r}{deja}")
+        print(f"              {libelle!r}")
     if not candidats:
         print("    (aucun code ni libellé n'évoque une mi-temps)")
     if sans_libelle == len(entrees) and entrees:

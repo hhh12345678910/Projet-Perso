@@ -130,3 +130,20 @@ def test_circus_signale_un_dump_de_forme_inconnue(tmp_path, capsys):
     circus(tmp_path)
     out = capsys.readouterr().out
     assert "AUCUNE clé `Markets`" in out
+
+
+def test_un_code_long_n_est_jamais_tronque(tmp_path, capsys):
+    """Le mappage se fait par égalité exacte : un code coupé ne matche rien.
+
+    Relevé le 20/08 : `half-time-totals-over-under-...` faisait exactement la
+    largeur de colonne et sortait amputé de sa fin. Un code illisible vaut un
+    code absent, et coûte ici 444 marchés.
+    """
+    long_code = "half-time-totals-over-under-OverUnder-extra-long-suffix"
+    d = tmp_path / "data" / "circus"
+    d.mkdir(parents=True)
+    (d / "s.json").write_text(json.dumps({"Leagues": [{"Events": [
+        {"Markets": [{"BetType": long_code, "Name": "1ère mi-temps - Total de buts"}]}]}]}))
+    circus(tmp_path)
+    out = capsys.readouterr().out
+    assert long_code in out, "le code doit apparaître en entier"
