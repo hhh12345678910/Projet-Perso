@@ -100,3 +100,33 @@ def test_un_repertoire_absent_ne_fait_pas_echouer_la_sonde(tmp_path, capsys):
     # Compter la LIGNE de message, pas le mot : le chemin temporaire de
     # pytest contient lui-même « absent ».
     assert out.count("répertoire absent") == 3
+
+
+def test_circus_lit_un_dump_enveloppe(tmp_path, capsys):
+    """Le dump réel n'a pas `Leagues` à la racine.
+
+    La première version supposait cette forme et n'a rien lu sur la VM, alors
+    que le répertoire existait — « aucun marché lu » se lisant comme « ce book
+    n'a pas de mi-temps ». La traversée doit trouver les marchés où qu'ils
+    soient.
+    """
+    d = tmp_path / "data" / "circus"
+    d.mkdir(parents=True)
+    (d / "soccer.json").write_text(json.dumps(
+        {"Result": {"Data": {"Leagues": [{"Events": [
+            {"Markets": [{"BetType": "P1XP2"},
+                         {"BetType": "1st-half-P1XP2"}]}]}]}}}))
+    circus(tmp_path)
+    out = capsys.readouterr().out
+    assert "1st-half-P1XP2" in out
+    assert "1 candidats" in out
+
+
+def test_circus_signale_un_dump_de_forme_inconnue(tmp_path, capsys):
+    """Des fichiers lus mais aucune clé `Markets` : le dire, ne pas conclure."""
+    d = tmp_path / "data" / "circus"
+    d.mkdir(parents=True)
+    (d / "soccer.json").write_text(json.dumps({"autre": {"forme": [1, 2, 3]}}))
+    circus(tmp_path)
+    out = capsys.readouterr().out
+    assert "AUCUNE clé `Markets`" in out

@@ -4163,11 +4163,25 @@ plausible). Les trois tests qui gardaient l'ancien comportement ont été
 réécrits en conservant ce qui reste vrai : la période 2 est toujours écartée,
 et `OUH1` ne doit **jamais** devenir un `TOTALS`.
 
+**Première mise en service, relevée le 20/08 :** `totals_h1` et `h2h_h1`
+arrivent bien en base côté Pinnacle (8 794 cotes de totaux de mi-temps au
+premier relevé), échelle saine — ligne moyenne **1,13** contre **3,45** au
+match plein, exactement le rapport attendu entre 45 et 90 minutes. **Zéro
+détection**, ce qui est normal : seul Betano est mappé côté soft.
+
 **À surveiller :**
 
 ```bash
 .venv/bin/python -m scripts.check_half_time
 ```
+
+⚠️ Cette sonde a menti à sa première exécution : sa section A annonçait
+« AUCUNE cote de mi-temps, le correctif n'est pas en service » pendant que sa
+section B en comptait 8 794. Deux requêtes distinctes décrivaient le même fait
+et se sont contredites. Corrigé : **une seule lecture alimente désormais les
+deux sections**, la contradiction est impossible par construction. Leçon à
+retenir au-delà de cette sonde — un diagnostic qui se contredit est pire
+qu'absent, il envoie chercher une panne qui n'existe pas.
 
 Elle vérifie l'existence du flux, **l'échelle des lignes** — une mi-temps doit
 coter sous le match plein, moins de buts se marquant en 45 min qu'en 90, et

@@ -103,21 +103,37 @@ def circus(racine: Path) -> None:
     if not d.is_dir():
         print("  répertoire absent — le pont navigateur n'a rien déposé.")
         return
+    # Traversée générique, comme pour Betano. La version précédente supposait
+    # `Leagues → Events → Markets` à la racine et n'a RIEN lu sur le dump réel,
+    # là où le répertoire existait bel et bien : le pont enveloppe visiblement
+    # la réponse. Une sonde de découverte qui suppose la forme de ce qu'elle
+    # découvre ne découvre rien — elle affiche « aucun marché », ce qui se lit
+    # comme « ce book n'en a pas ».
     vus: Counter = Counter()
+    fichiers = 0
     for f in sorted(d.glob("*.json")):
         data = _charger(f)
         if data is None:
             continue
-        for ligue in (data.get("Result") or data.get("Leagues") or []):
-            if not isinstance(ligue, dict):
-                continue
-            for ev in (ligue.get("Events") or []):
-                if not isinstance(ev, dict):
-                    continue
-                for m in (ev.get("Markets") or []):
-                    if isinstance(m, dict):
-                        vus[(str(m.get("BetType") or "?"),
-                             str(m.get("Name") or m.get("N") or ""))] += 1
+        fichiers += 1
+        piles = [data]
+        while piles:
+            n = piles.pop()
+            if isinstance(n, dict):
+                if isinstance(n.get("Markets"), list):
+                    for m in n["Markets"]:
+                        if isinstance(m, dict):
+                            vus[(str(m.get("BetType") or "?"),
+                                 str(m.get("Name") or m.get("MarketName")
+                                     or m.get("N") or ""))] += 1
+                piles.extend(v for v in n.values() if isinstance(v, (dict, list)))
+            elif isinstance(n, list):
+                piles.extend(x for x in n if isinstance(x, (dict, list)))
+    if fichiers and not vus:
+        print(f"  ⚠️ {fichiers} fichier(s) lu(s), AUCUNE clé `Markets` trouvée.\n"
+              "     Le dump a une autre forme — à inspecter avant de conclure\n"
+              "     que ce book n'expose pas de mi-temps :\n"
+              "       .venv/bin/python -m src.main inspect-json <fichier> --path .")
     _marche(vus, "BetType", set(_MARKETS))
 
 

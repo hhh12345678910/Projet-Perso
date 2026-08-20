@@ -46,51 +46,79 @@ def main() -> None:
     con = sqlite3.connect(f"file:{args.db}?mode=ro", uri=True)
     con.row_factory = sqlite3.Row
 
-    print(f"=== A. Cotes collectées, {args.heures:.0f} h ===")
-    rows = con.execute(
-        "SELECT market, book, COUNT(*) n, COUNT(DISTINCT event_key) ev,"
-        "       MIN(line) lo, MAX(line) hi, COUNT(DISTINCT line) lignes "
-        "FROM quotes WHERE market IN (?,?) "
-        "  AND fetched_at > datetime('now', ?) "
-        "GROUP BY market, book ORDER BY n DESC",
-        (*_MI_TEMPS, f"-{args.heures} hours")).fetchall()
-    if not rows:
-        print("  AUCUNE cote de mi-temps.")
+    # UNE seule lecture alimente A et B.
+    #
+    # La version précédente interrogeait la table deux fois, et les deux
+    # requêtes se sont contredites sur la même base : A annonçait « AUCUNE cote
+    # de mi-temps, le correctif n'est pas en service » pendant que B en comptait
+    # 8 794. Un diagnostic qui se contredit est pire qu'absent — il envoie
+    # chercher une panne inexistante. Deux sections qui décrivent le même fait
+    # doivent donc lire la même ligne, pas deux requêtes qu'on suppose
+    # équivalentes.
+    marches = tuple(_MI_TEMPS) + tuple(_PLEIN.values())
+    trous = ",".join("?" * len(marches))
+    lignes = con.execute(
+        f"SELECT market, book, COUNT(*) n, COUNT(DISTINCT event_key) ev,"
+        f"       COUNT(line) avec_ligne, MIN(line) lo, MAX(line) hi,"
+        f"       AVG(line) moy, COUNT(DISTINCT line) lignes,"
+        f"       SUM(CASE WHEN fetched_at > datetime('now', ?) THEN 1 ELSE 0 END) recent "
+        f"FROM quotes WHERE market IN ({trous}) "
+        f"GROUP BY market, book ORDER BY n DESC",
+        (f"-{args.heures} hours", *marches)).fetchall()
+
+    mi_temps = [r for r in lignes if r["market"] in _MI_TEMPS]
+    total_mt = sum(r["n"] for r in mi_temps)
+    recent_mt = sum(r["recent"] for r in mi_temps)
+
+    print(f"=== A. Cotes collectées ===")
+    if not mi_temps:
+        print("  AUCUNE cote de mi-temps, sur TOUTE la base.")
         print("  → Le correctif n'est pas en service, ou Pinnacle ne publie rien.")
         print("    Vérifier : git pull, puis redémarrage du daemon.")
     else:
-        for r in rows:
-            print(f"  {r['market']:<10s} {r['book']:<18s} {r['n']:6d} cotes  "
-                  f"{r['ev']:4d} events  {r['lignes']:3d} lignes  "
-                  f"[{r['lo']} .. {r['hi']}]")
+        for r in sorted(mi_temps, key=lambda r: -r["n"]):
+            etendue = (f"[{r['lo']} .. {r['hi']}]  {r['lignes']:3d} lignes"
+                       if r["avec_ligne"] else "sans ligne (normal pour un h2h)")
+            print(f"  {r['market']:<10s} {r['book']:<18s} {r['n']:7d} cotes  "
+                  f"{r['ev']:4d} events  {etendue}")
+        print(f"\n  dont {recent_mt} sur les {args.heures:.0f} dernières heures, "
+              f"{total_mt} au total.")
+        if recent_mt == 0:
+            print("  ⚠️ Rien de RÉCENT : la collecte a eu lieu puis s'est arrêtée,\n"
+                  "     ou le daemon vient d'être redémarré et n'a pas fini son\n"
+                  "     premier cycle. Relancer dans quelques minutes.")
+        # h2h_h1 n'a pas de ligne : son absence ici serait invisible à la
+        # section B, qui ne sait comparer que des échelles.
+        vus = {r["market"] for r in mi_temps}
+        for m in _MI_TEMPS:
+            if m not in vus:
+                print(f"  ⚠️ AUCUNE cote `{m}` — les autres marchés de mi-temps "
+                      f"passent,\n     donc ce n'est pas le filtre de période. "
+                      f"À élucider.")
 
-    print(f"\n=== B. Échelles — mi-temps contre match plein ===")
+    print("\n=== B. Échelles — mi-temps contre match plein ===")
+    par_marche = {}
+    for r in lignes:
+        if r["book"] == "pinnacle" and r["avec_ligne"]:
+            par_marche[r["market"]] = r
     for mt in _MI_TEMPS:
-        for marche in (mt, _PLEIN[mt]):
-            r = con.execute(
-                "SELECT COUNT(*) n, MIN(line) lo, MAX(line) hi, AVG(line) moy "
-                "FROM quotes WHERE market=? AND book='pinnacle' "
-                "  AND line IS NOT NULL AND fetched_at > datetime('now', ?)",
-                (marche, f"-{args.heures} hours")).fetchone()
-            if r and r["n"]:
-                print(f"  {marche:<10s} n={r['n']:6d}  [{r['lo']} .. {r['hi']}]  "
-                      f"moyenne {r['moy']:.2f}")
-        # Le test qui compte : une mi-temps DOIT coter plus bas qu'un match plein.
-        a = con.execute("SELECT AVG(line) m FROM quotes WHERE market=? AND book='pinnacle'"
-                        " AND line IS NOT NULL AND fetched_at > datetime('now', ?)",
-                        (mt, f"-{args.heures} hours")).fetchone()["m"]
-        b = con.execute("SELECT AVG(line) m FROM quotes WHERE market=? AND book='pinnacle'"
-                        " AND line IS NOT NULL AND fetched_at > datetime('now', ?)",
-                        (_PLEIN[mt], f"-{args.heures} hours")).fetchone()["m"]
-        if a is not None and b is not None and mt == "totals_h1":
-            if a >= b:
-                print(f"  ⚠️ ANOMALIE : la ligne moyenne de {mt} ({a:.2f}) n'est PAS "
-                      f"sous celle de {_PLEIN[mt]} ({b:.2f}).")
-                print("     Moins de buts se marquent en 45 min qu'en 90. Une mi-temps "
-                      "qui\n     cote comme un match plein signale un mélange des deux "
-                      "échelles (§21.3).")
-            else:
-                print(f"  OK : {mt} ({a:.2f}) cote bien sous {_PLEIN[mt]} ({b:.2f}).")
+        a, b = par_marche.get(mt), par_marche.get(_PLEIN[mt])
+        if a is None or b is None:
+            if mt in par_marche or _PLEIN[mt] in par_marche:
+                print(f"  {mt} : pas de quoi comparer (l'un des deux marchés "
+                      f"n'a aucune ligne).")
+            continue
+        print(f"  {mt:<10s} n={a['n']:7d}  [{a['lo']} .. {a['hi']}]  moyenne {a['moy']:.2f}")
+        print(f"  {_PLEIN[mt]:<10s} n={b['n']:7d}  [{b['lo']} .. {b['hi']}]  moyenne {b['moy']:.2f}")
+        if a["moy"] >= b["moy"]:
+            print(f"  ⚠️ ANOMALIE : la ligne moyenne de {mt} ({a['moy']:.2f}) n'est "
+                  f"PAS sous celle de {_PLEIN[mt]} ({b['moy']:.2f}).")
+            print("     Moins de buts se marquent en 45 min qu'en 90. Une mi-temps "
+                  "qui\n     cote comme un match plein signale un mélange des deux "
+                  "échelles (§21.3).")
+        else:
+            print(f"  OK : {mt} ({a['moy']:.2f}) cote bien sous {_PLEIN[mt]} "
+                  f"({b['moy']:.2f}).")
 
     print(f"\n=== C. Détections, {args.heures:.0f} h ===")
     rows = con.execute(
