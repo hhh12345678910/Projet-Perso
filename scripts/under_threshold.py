@@ -96,6 +96,10 @@ def main() -> None:
 
     reference: dict[str, list[float]] = defaultdict(list)   # h2h / over / under
     unders: list[tuple[float, float, float]] = []           # (ev, ligne, clv)
+    # Mêmes couples (ev, clv) pour les autres marchés : sans ce témoin, une
+    # pente propre aux `under` et une pente globale se ressemblent trait pour
+    # trait — et elles n'appellent pas du tout le même remède.
+    temoins: dict[str, list[tuple[float, float, float]]] = defaultdict(list)
 
     for r in rows:
         d = (r["detected_at"] or "")[:10]
@@ -110,14 +114,17 @@ def main() -> None:
         marche = (r["market"] or "").lower()
         cote = (r["outcome_label"] or "").lower()
 
+        ev, ligne = r["ev_pct"], r["line"]
         if marche == "h2h":
             reference["h2h"].append(clv)
+            if ev is not None:
+                temoins["h2h"].append((float(ev), 0.0, clv))
         elif marche == "totals" and cote in ("over", "under"):
             reference[cote.upper()].append(clv)
-            if cote == "under":
-                ev, ligne = r["ev_pct"], r["line"]
-                if ev is not None and ligne is not None:
-                    unders.append((float(ev), float(ligne), clv))
+            if ev is not None:
+                temoins[cote.upper()].append((float(ev), 0.0, clv))
+            if cote == "under" and ev is not None and ligne is not None:
+                unders.append((float(ev), float(ligne), clv))
 
     if not unders:
         print("Aucun `under` clôturé sur cette fenêtre — rien à mesurer.")
@@ -174,7 +181,22 @@ def main() -> None:
         j = f"{mj:+8.2f} %" if nj else "       —"
         print(f"{t:>6.1f} %   {ng:6d} {g:>11s} {nj:6d} {j:>10s}{actuel}")
 
-    # 5. La lecture, énoncée plutôt que laissée au lecteur.
+    # 5. Le témoin : la même pente, mesurée sur les autres marchés.
+    _entete("5. La pente EV→CLV, par marché  ← le témoin", largeur=14)
+    print(f"{'':<14s} {'n':>6s} {'pente':>10s} {'σ':>7s} {'verdict':>12s}")
+    print("-" * 52)
+    pentes: dict[str, tuple[float, float | None]] = {}
+    for cle in ("h2h", "OVER", "UNDER"):
+        lot = temoins.get(cle, [])
+        a_i, e_i = _pente(lot)
+        pentes[cle] = (a_i, e_i)
+        if e_i is None:
+            print(f"{cle:<14s} {len(lot):6d}" + " " * 20 + "non mesurable")
+        else:
+            v = "bruit" if abs(a_i) <= 2 * e_i else "significative"
+            print(f"{cle:<14s} {len(lot):6d} {a_i:+9.2f} {e_i:6.2f} {v:>13s}")
+
+    # 6. La lecture, énoncée plutôt que laissée au lecteur.
     print("\n" + "=" * 60)
     cible = _stats(reference["OVER"])[1] if reference["OVER"] else float("nan")
     print(f"Cible : la CLV des `over`, {cible:+.2f} %. Un seuil ne « marche » que\n"
@@ -204,6 +226,27 @@ def main() -> None:
         else:
             print("→ La CLV monte avec l'EV, et l'écart dépasse le bruit. Un seuil trie\n"
                   "  donc quelque chose ; le tableau 4 dit lequel, au prix de quel volume.")
+            # Mais trie-t-il quelque chose de PROPRE aux `under` ?
+            a_h, e_h = pentes.get("h2h", (0.0, None))
+            a_o, e_o = pentes.get("OVER", (0.0, None))
+            voisines = [x for x, e in ((a_h, e_h), (a_o, e_o)) if e is not None]
+            if voisines and all(abs(a - x) <= 2 * (err + 0.01) for x in voisines):
+                print("\n⚠️ Le tableau 5 donne la MÊME pente sur les autres marchés. La\n"
+                      "  relation EV→CLV n'a donc rien de propre aux `under` : c'est une\n"
+                      "  propriété globale du flux. Relever le seuil des seuls `under`\n"
+                      "  traiterait comme un défaut de marché ce qui vaut partout —\n"
+                      "  la question devient celle du seuil GLOBAL, sur tous les marchés.")
+            # Plancher de tolérance : sur un ajustement quasi parfait l'erreur
+            # standard tend vers zéro, et « à 2 σ de 1,00 » exigerait alors
+            # l'égalité au bit près. Une pente de 0,97 dit déjà que la clôture
+            # ne s'écarte pas de la détection.
+            if abs(a - 1.0) <= max(2 * err, 0.05):
+                print("\n⚠️ Pente indiscernable de +1,00 : la CLV ne fait alors que répéter\n"
+                      "  l'EV, la ligne juste de clôture ne s'écartant pas de celle de la\n"
+                      "  détection. Une CLV qui répète l'EV ne la CONFIRME pas — elle ne\n"
+                      "  mesure plus rien d'indépendant. C'est l'erreur du §1 dans sa forme\n"
+                      "  silencieuse, et la question du §20.4. À élucider avant de régler\n"
+                      "  quelque seuil que ce soit sur ces chiffres.")
     print(f"\n⚠️ Une ligne sous {args.min} paris ne distingue rien. Et la σ affichée est\n"
           "celle de la MOYENNE : deux lignes se distinguent si leur écart dépasse\n"
           "deux ou trois σ, pas moins.")

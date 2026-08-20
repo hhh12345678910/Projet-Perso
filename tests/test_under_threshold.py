@@ -127,3 +127,43 @@ def test_sans_under_ne_plante_pas(tmp_path, capsys):
     """Base sans `under` clôturé : message clair, pas une trace."""
     out = _sortie(capsys, _base(tmp_path, [], overs=[(5.0, 2.5, 0.06)] * 5))
     assert "Aucun `under` clôturé" in out
+
+
+def test_pente_globale_est_signalee_comme_telle(tmp_path, capsys):
+    """Même pente sur h2h, over et under : la sonde doit refuser d'y voir un
+    défaut propre aux `under`.
+
+    C'est la confusion qui ferait relever le seuil du seul marché regardé,
+    en prenant pour une faiblesse locale une propriété de tout le flux.
+    """
+    rnd = random.Random(3)
+    lot = lambda k: [(ev, 2.5, rnd.gauss(0.01 * ev, 0.10))
+                     for _ in range(k) for ev in [rnd.uniform(5.0, 15.0)]]
+    out = _sortie(capsys, _base(tmp_path, lot(400), overs=lot(400), h2h=lot(400)))
+    assert "MÊME pente sur les autres marchés" in out
+    assert "seuil GLOBAL" in out
+
+
+def test_pente_proche_de_un_alerte_sur_la_clv_qui_repete_l_ev(tmp_path, capsys):
+    """CLV = EV exactement : la ligne juste de clôture n'a pas bougé.
+
+    La CLV ne mesure alors plus rien d'indépendant — elle réénonce l'EV. La
+    sonde doit le dire avant qu'on règle un seuil sur ces chiffres (§20.4).
+    """
+    rnd = random.Random(5)
+    unders = [(ev, 2.5, ev / 100.0) for _ in range(300) for ev in [rnd.uniform(5.0, 15.0)]]
+    out = _sortie(capsys, _base(tmp_path, unders))
+    assert "répéter" in out and "§20.4" in out
+
+
+def test_pente_franchement_sous_un_ne_declenche_pas_l_alerte(tmp_path, capsys):
+    """Contrepartie : une CLV qui régresse vers zéro est le cas SAIN.
+
+    La ligne de clôture s'écarte de celle de la détection, donc la CLV apporte
+    une information que l'EV ne contenait pas. Pas d'alerte attendue.
+    """
+    rnd = random.Random(9)
+    unders = [(ev, 2.5, rnd.gauss(0.003 * ev, 0.05))
+              for _ in range(600) for ev in [rnd.uniform(5.0, 15.0)]]
+    out = _sortie(capsys, _base(tmp_path, unders))
+    assert "répéter" not in out
