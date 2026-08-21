@@ -4897,19 +4897,53 @@ classe n'est pas reprise. **C'est très exactement l'erreur du 21/08, restée
 invisible parce qu'aucun compteur n'était affiché** — et elle a été annoncée à
 l'utilisateur comme vérifiable avant qu'on s'aperçoive qu'elle ne l'était pas.
 
-**Les 23 qui restent, et le suspect suivant.** `Argentina - Reserve League`
-est à **0/1** alors que le fichier du 20/08 contient **6 matchs** de cette
-compétition : c'est très probablement le MÊME défaut de classe, la troisième
-famille de `_CLASS_RULES` (`xreserve`) n'étant pas dans
-`_LEAGUE_CLASS_RULES`. ⚠️ **Ne pas l'ajouter sans relever les noms d'équipe des
-deux côtés** — c'est l'erreur du féminin, et `\bii\b` en particulier ferait
-passer « Romania - Liga II », une vraie deuxième division, pour une équipe
-réserve.
+**14. Les 23 restants : le manque est RÉPARTI. La question du biais est
+close.** Relevé des deux côtés sur les zéros restants :
 
-Les autres zéros — Finland Kolmonen (0/4), Iceland 4. Deild (0/3), Estonia
-Meistriliiga Women (0/2), Iceland Urvalsdeild Women (0/2) — sont
-vraisemblablement de vrais trous de catalogue : aucune de ces compétitions
-n'apparaissait dans l'inventaire du fichier. À confirmer avant de conclure.
+| Ligue | Manquants | Cause établie |
+|---|---|---|
+| Finland - Kolmonen | 4 | **trou de catalogue** — zéro fixture côté source |
+| Iceland - 4. Deild | 3 | **trou de catalogue** |
+| Estonia Meistriliiga Women / Iceland Urvalsdeild Women | 4 | **trou de catalogue** |
+| Argentina - Reserve League | 1 | autre compétition que la `Reserve League` de la source |
+| 5 ligues à 1 manquant | 5 | appariements isolés |
+
+Aucune grande catégorie du flux n'est amputée : **le P&L sera représentatif**,
+et c'est la réponse à l'avertissement du §21.9. À 76 % réparti, API-Football
+suffit pour trancher le §20.4.
+
+⚠️ **L'hypothèse « les réserves sont un défaut de classe » était FAUSSE.**
+Relevé : côté source `'Platense Res.'` → `main`, côté nous `'platense'` →
+`main`. Les deux sont `main`, la barrière ne joue pas, et
+`Argentina - Liga Pro Reserves` (6 matchs) se résout déjà. La règle
+`xreserve` n'a PAS été ajoutée aux règles de ligue — et `\bii\b` y aurait fait
+passer « Romania - Liga II », une vraie deuxième division, pour du football de
+réserve. Deuxième supposition de convention démentie par le relevé en deux
+tours : **relever les deux côtés n'est pas une précaution, c'est la méthode.**
+
+**15. 🔴 CHANTIER OUVERT : `events.home` stocke les noms COMPACTÉS de la clé.**
+Trouvé dans le même relevé, non corrigé :
+
+    'tampereunitedxreserve' -> classe 'xreserve'
+    'bocajuniors', 'colonsantafe', 'estudiantesriocuarto'
+
+`build_event_rows` dérive les noms de `parse_event_key(ek)`, qui rend le nom
+NORMALISÉ et compacté, **tag interne `xreserve` compris**. Or l'en-tête de
+`scores.py` prescrit explicitement l'inverse — « les noms BRUTS, pas
+normalisés : les noms compactés de la clé sont précisément ce qui avait fait
+perdre tout le tennis de deux books au §15.4 ». L'intention documentée et le
+code se contredisent depuis le début.
+
+Deux conséquences, l'une latente et l'autre diffuse :
+- le tag `xreserve` dans le nom rend ces équipes **inappariables dès que la
+  source aura la compétition** — ça n'a rien cassé le 20/08 uniquement parce
+  que la Kolmonen est absente du catalogue ;
+- les noms compactés dégradent l'appariement flou partout, en silence.
+
+⚠️ Le correctif change ce que le daemon écrit pour TOUS les événements et n'a
+pas pu être vérifié en marche. `OddQuote` ne porte pas les noms bruts (seulement
+`event_key`, `league`, `book_event_key`) : il faudra les remonter du scraper ou
+passer par la table `teams`. À ouvrir tête reposée.
 
 **Ce qui reste à faire, dans l'ordre** :
 1. ~~Mesurer ce que le correctif féminin récupère~~ — fait : **76 %**.
