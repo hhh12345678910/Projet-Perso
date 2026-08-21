@@ -155,3 +155,45 @@ def test_le_match_le_plus_profond_garde_l_identifiant_de_l_ancetre():
     candidats, contamines = _explorer(payload, {6: MarketType.TOTALS})
     assert "11928" in next(iter(candidats)), "le libellé vient du criterion"
     assert contamines, "et l'identifiant mappé vient de l'offre parente"
+
+
+def test_les_horloges_de_match_ne_sont_pas_des_marches():
+    """Kambi publie l'état en direct sur chaque événement en cours :
+    « 1ère mi-temps », minute 45, running.
+
+    Relevé le 21/08 : 37 de ces nœuds noyaient les 2 vrais marchés. Un signal
+    qu'il faut chercher dans du bruit finit par être manqué.
+    """
+    payload = {"events": [
+        {"score": {"minute": 45, "second": 0, "period": "1ère mi-temps",
+                   "running": False, "periodId": "FIRST_HALF"}},
+        {"betOffers": [{"betOfferType": {"id": 6, "name": "Over/Under"},
+                        "outcomes": [{"odds": 1900}, {"odds": 1900}],
+                        "criterion": {"id": 11928,
+                                      "label": "Total Goals - 1st Half"}}]},
+    ]}
+    candidats, _ = _explorer(payload, {})
+    rendu = " ".join(candidats)
+    assert "11928" in rendu
+    assert "minute" not in rendu, "l'horloge de match n'est pas un marché"
+    assert len(candidats) == 1
+
+
+def test_une_entree_de_catalogue_est_signalee_comme_non_mappable():
+    """Un criterion sans offre en face ne suffit pas à mapper : deux
+    identifiants vus une fois chacun ressemblent à un catalogue."""
+    payload = {"criteria": [{"id": 11927, "label": "Half Time"}]}
+    candidats, _ = _explorer(payload, {})
+    assert "CATALOGUE" in next(iter(candidats))
+
+
+def test_une_vraie_offre_montre_son_type_et_ses_issues():
+    """Ce qui permet de décider : le criterion porte-t-il des cotes ?"""
+    payload = {"betOffers": [{
+        "betOfferType": {"id": 2, "name": "Match"},
+        "outcomes": [{"odds": 2400}, {"odds": 2050}, {"odds": 3600}],
+        "criterion": {"id": 11927, "label": "Half Time"}}]}
+    candidats, _ = _explorer(payload, {})
+    rendu = next(iter(candidats))
+    assert "betOfferType=2" in rendu
+    assert "3 issues cotées" in rendu

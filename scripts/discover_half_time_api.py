@@ -45,6 +45,18 @@ _CHAMPS_ID = ("id", "typeId", "betOfferType", "criterion", "betId",
               "englishLabel", "criterionId")
 
 
+#: Nœuds d'HORLOGE de match, pas des marchés. Kambi publie l'état en direct
+#: (« 1ère mi-temps », minute 45, running) sur chaque événement en cours : sans
+#: ce filtre, 37 de ces nœuds noient les 2 vrais marchés relevés le 21/08.
+#: Un signal qu'il faut chercher dans du bruit finit par être manqué.
+_CLES_HORLOGE = ("minute", "second", "running", "periodId",
+                 "minutesLeftInPeriod", "secondsLeftInMinute")
+
+
+def _est_horloge(d: dict) -> bool:
+    return sum(1 for k in _CLES_HORLOGE if k in d) >= 2
+
+
 def _textes(d: dict) -> list[str]:
     """Les valeurs textuelles d'un dict, y compris un niveau d'imbrication.
 
@@ -55,7 +67,11 @@ def _textes(d: dict) -> list[str]:
     for v in d.values():
         if isinstance(v, str):
             out.append(v)
-        elif isinstance(v, dict):
+        elif isinstance(v, dict) and not _est_horloge(v):
+            # Sans cette exclusion, le texte d'une horloge imbriquée remonte au
+            # parent, qui est alors retenu comme « marché » avec une empreinte
+            # vide. Écarter l'horloge elle-même ne suffit pas : il faut aussi
+            # l'empêcher de contaminer ce qui la contient.
             out.extend(x for x in v.values() if isinstance(x, str))
     return out
 
@@ -99,7 +115,7 @@ def _empreinte(d: dict) -> str:
 
 def _matche(d) -> bool:
     """Ce nœud porte-t-il, à son propre niveau, un libellé de mi-temps ?"""
-    if not isinstance(d, dict):
+    if not isinstance(d, dict) or _est_horloge(d):
         return False
     return any(_INDICES.search(t) and not _CONTRE.search(t) for t in _textes(d))
 
@@ -129,6 +145,27 @@ def _descendant_matche(n) -> bool:
     return False
 
 
+def _contexte(ancetres: tuple) -> str:
+    """À quoi ce nœud est-il rattaché ?
+
+    Un `criterion` relevé seul ne suffit pas à mapper : il faut savoir s'il
+    porte une VRAIE offre — avec un `betOfferType` et des issues cotées — ou
+    s'il n'est qu'une entrée de catalogue. Deux identifiants vus une seule fois
+    chacun ressemblent à un catalogue, et mapper là-dessus serait deviner.
+    """
+    for a in ancetres[::-1]:
+        bot = a.get("betOfferType")
+        if isinstance(bot, dict) or "outcomes" in a:
+            bits = []
+            if isinstance(bot, dict):
+                bits.append(f"betOfferType={bot.get('id')}/{bot.get('name')!r}")
+            outs = a.get("outcomes")
+            bits.append(f"{len(outs)} issues cotées" if isinstance(outs, list)
+                        else "AUCUNE issue — catalogue, pas une offre")
+            return "   ← " + "  ".join(bits)
+    return "   ← ⚠️ rattaché à aucune offre : entrée de CATALOGUE, non mappable"
+
+
 def _explorer(payload, mappes: dict, bruts: list | None = None) -> tuple[Counter, Counter]:
     """(candidats mi-temps, contaminations) relevés dans un payload.
 
@@ -147,6 +184,10 @@ def _explorer(payload, mappes: dict, bruts: list | None = None) -> tuple[Counter
         n, ancetres = piles.pop()
         if isinstance(n, dict):
             textes = _textes(n)
+            if _est_horloge(n):
+                piles.extend((v, ancetres + (n,)) for v in n.values()
+                             if isinstance(v, (dict, list)))
+                continue
             if any(_INDICES.search(t) and not _CONTRE.search(t) for t in textes):
                 if _descendant_matche(n):
                     # Un nœud plus profond dit la même chose : c'est lui le
@@ -156,7 +197,7 @@ def _explorer(payload, mappes: dict, bruts: list | None = None) -> tuple[Counter
                     continue
                 if bruts is not None and len(bruts) < 5:
                     bruts.append(n)
-                emp = f"{_declencheur(n)!r}   {_empreinte(n)}"
+                emp = f"{_declencheur(n)!r}   {_empreinte(n)}{_contexte(ancetres)}"
                 candidats[emp] += 1
                 # L'identifiant mappé est-il sur ce nœud, ou sur l'un de ses
                 # ancêtres ? Les deux comptent : c'est la même offre.
