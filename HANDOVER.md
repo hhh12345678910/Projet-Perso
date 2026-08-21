@@ -4666,6 +4666,37 @@ session.
 API-Sports appelé depuis le pont dès le premier jour, ou cinquième pont vers un
 site de scores public.
 
+**4. Le serveur d'ingestion était aveugle sur ses propres refus — corrigé.**
+Trouvé en branchant le pont résultats : le userscript n'écrivait qu'une ligne
+(`déclenchement manuel`) et le journal de la VM ne montrait **aucune** trace de
+`/scores-plan`, pendant que les trois autres ponts y écrivaient en continu.
+
+La cause : `log_message` est muet (choix délibéré, le serveur journalise
+lui-même), mais `do_GET` n'appelait `_log` **ni sur ses 401 ni sur ses 404**.
+`do_POST` journalisait déjà ses 401 — c'est cette asymétrie qui a coûté le
+diagnostic. Résultat, deux causes opposées rendaient le même symptôme :
+
+| Cause | Ce qu'on voyait | Ce qu'il fallait faire |
+|---|---|---|
+| jeton faux dans Tampermonkey | rien | corriger le userscript |
+| requête jamais partie (réseau, pare-feu, Tampermonkey) | rien | regarder le réseau |
+
+⚠️ **Donc « pas de ligne dans `journalctl` » ne prouvait PAS que la requête
+n'était pas arrivée.** C'est la panne dominante du projet (§11) retournée
+contre l'outil de diagnostic lui-même — le pire endroit où elle puisse être.
+
+Corrigé : les deux routes GET protégées (`/scores-plan`, `/magic-plan`)
+journalisent leur 401 avec la route et l'IP appelante — **jamais le jeton
+fourni**, le journal part dans systemd et se relit à plusieurs — et les 404
+sont journalisés en GET comme en POST, parce que c'est la signature d'un
+userscript qui appelle une route mal orthographiée. Six tests d'intégration
+(`tests/test_ingest_server_refusals.py`) lancent le vrai serveur sur un port
+éphémère et lisent sa sortie ; quatre échouent sur l'ancien code, vérifié.
+
+⚠️ **Déploiement obligatoire pour en profiter** : `git pull &&
+sudo systemctl restart betano-ingest`. Sans le redémarrage, le serveur continue
+de servir l'ancien code muet — c'est le §19.11.
+
 **Ce qui reste à faire, dans l'ordre** : lancer la sonde sur la VM, lire la
 part du top 5, et seulement ensuite choisir la voie. La mesure coûte une
 commande, le mauvais choix coûte un pont.
@@ -4674,7 +4705,7 @@ commande, le mauvais choix coûte un pont.
 
 | | |
 |---|---|
-| Tests | **794 passés**, 4 ignorés — `pytest tests/`, jamais `pytest` seul (§4) |
+| Tests | **800 passés**, 4 ignorés — `pytest tests/`, jamais `pytest` seul (§4) |
 | `results` | 3 091 lignes (tennis) |
 | Books actifs en ALERTE | unibet, golden_palace, ladbrokes, circus |
 | Books muets (donnée seule) | betano, betfirst, napoleon, starcasino, **magicbetting** — **48 %** (§21.8) |

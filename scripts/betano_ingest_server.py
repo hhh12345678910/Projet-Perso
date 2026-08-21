@@ -439,25 +439,47 @@ class Handler(BaseHTTPRequestHandler):
         self._send(204, "")
 
     def do_GET(self) -> None:  # noqa: N802
+        """⚠️ Tout refus est JOURNALISÉ ici, et ce n'est pas décoratif.
+
+        `log_message` est muet (voir plus haut) : sans les `_log` ci-dessous,
+        un 401 et un 404 sur cette route ne laissaient AUCUNE trace. Or le
+        diagnostic normal d'un pont muet est « est-ce que la requête est
+        arrivée ? », et on le lit dans ce journal. Un jeton faux et une
+        requête qui n'est jamais partie rendaient donc le même symptôme —
+        rien — ce qui est très exactement la panne dominante du projet (§11).
+
+        Mesuré le 21/08 sur le pont résultats : trois autres ponts écrivaient
+        en continu pendant que `/scores-plan` restait invisible, et rien ne
+        permettait de dire si le serveur refusait ou si le navigateur
+        n'appelait pas. `do_POST` journalisait déjà ses 401 ; c'est cette
+        asymétrie qui a coûté le diagnostic.
+
+        Le 404 est journalisé aussi : c'est la signature d'un userscript qui
+        appelle une route mal orthographiée, aujourd'hui parfaitement
+        silencieuse. Un flot de 404 signifie que le port se fait balayer
+        depuis l'extérieur — ce qu'on veut savoir aussi.
+        """
         route = self.path.split("?", 1)[0]
         if route == "/health":
             self._send(200, "ok")
             return
-        if route == "/magic-plan":
+        if route in ("/magic-plan", "/scores-plan"):
             # Le plan dit quelles compétitions balayer : c'est de la
             # configuration de collecte, pas une donnée publique. Même jeton
             # que les écritures.
             if not self._authorized():
+                # Jamais le jeton fourni, même tronqué : le journal part dans
+                # systemd et se relit à plusieurs. Le refus et son origine
+                # suffisent à trancher « mauvais jeton » de « jamais arrivé ».
+                _log(f"401 unauthorized {route} from {self.client_address[0]}")
                 self._send(401, {"error": "bad or missing token"})
                 return
-            self._handle_magic_plan()
+            if route == "/magic-plan":
+                self._handle_magic_plan()
+            else:
+                self._handle_scores_plan()
             return
-        if route == "/scores-plan":
-            if not self._authorized():
-                self._send(401, {"error": "bad or missing token"})
-                return
-            self._handle_scores_plan()
-            return
+        _log(f"404 GET {route} from {self.client_address[0]}")
         self._send(404, {"error": "not found"})
 
     def _handle_scores_plan(self) -> None:
@@ -1054,10 +1076,13 @@ class Handler(BaseHTTPRequestHandler):
                          "/ingest-prematch", "/ingest-circus",
                          "/ingest-magicbetting", "/probe-magicbetting",
                          "/magic-catalog", "/ingest-scores"):
+            # Même motif qu'en GET : une route mal orthographiée dans un
+            # userscript était totalement muette côté serveur.
+            _log(f"404 POST {route} from {self.client_address[0]}")
             self._send(404, {"error": "not found"})
             return
         if not self._authorized():
-            _log(f"401 unauthorized from {self.client_address[0]}")
+            _log(f"401 unauthorized {route} from {self.client_address[0]}")
             self._send(401, {"error": "bad or missing token"})
             return
 
