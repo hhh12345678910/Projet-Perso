@@ -147,3 +147,54 @@ def test_un_code_long_n_est_jamais_tronque(tmp_path, capsys):
     circus(tmp_path)
     out = capsys.readouterr().out
     assert long_code in out, "le code doit apparaître en entier"
+
+
+def test_detail_montre_les_noms_d_issues_intraduisibles(tmp_path, capsys):
+    """Un marché correctement mappé peut rendre des groupes incomplets.
+
+    `_h2h_label` traduit par ÉGALITÉ EXACTE avec les noms d'équipe : un nom
+    suffixé renvoie None, la cote est jetée, et `find_value_bets` écarte le
+    groupe entier au contrôle de structure. Rien n'est journalisé — d'où ce
+    mode détail. Observé le 21/08 : 66 % des h2h_h1 de Circus écartés.
+    """
+    from scripts.discover_half_time import _detail
+
+    d = tmp_path / "data" / "circus"
+    d.mkdir(parents=True)
+    (d / "s.json").write_text(json.dumps({"Leagues": [{"Events": [
+        {"HomeName": "Anderlecht", "AwayName": "Genk",
+         "Markets": [{"BetType": "1HalfP1XP2", "Outcomes": [
+             {"Name": "Anderlecht"},        # traduit
+             {"Name": "Nul"},               # traduit
+             {"Name": "Genk (1ère MT)"},    # PAS traduit
+         ]}]}]}]}))
+    _detail(tmp_path, "1HalfP1XP2")
+    out = capsys.readouterr().out
+    assert "Genk (1ère MT)" in out
+    assert "JETÉE" in out
+    assert "1 cotes sur 3" in out
+
+
+def test_detail_confirme_quand_tout_est_traduit(tmp_path, capsys):
+    from scripts.discover_half_time import _detail
+
+    d = tmp_path / "data" / "circus"
+    d.mkdir(parents=True)
+    (d / "s.json").write_text(json.dumps({"Leagues": [{"Events": [
+        {"HomeName": "Anderlecht", "AwayName": "Genk",
+         "Markets": [{"BetType": "1HalfP1XP2", "Outcomes": [
+             {"Name": "Anderlecht"}, {"Name": "Nul"}, {"Name": "Genk"}]}]}]}]}))
+    _detail(tmp_path, "1HalfP1XP2")
+    out = capsys.readouterr().out
+    assert "tous les noms d'issues sont traduits" in out
+
+
+def test_detail_sur_un_code_absent_le_dit(tmp_path, capsys):
+    from scripts.discover_half_time import _detail
+
+    d = tmp_path / "data" / "circus"
+    d.mkdir(parents=True)
+    (d / "s.json").write_text(json.dumps({"Leagues": []}))
+    _detail(tmp_path, "code-inexistant")
+    out = capsys.readouterr().out
+    assert "Aucun marché" in out

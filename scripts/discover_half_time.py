@@ -197,12 +197,85 @@ def magicbetting(racine: Path) -> None:
     _marche(vus, "StakeType Id", connus)
 
 
+def _detail(racine: Path, code: str) -> None:
+    """Les noms d'issues réellement vus pour un code de marché.
+
+    Un marché peut être correctement mappé et rendre quand même des groupes
+    incomplets : `_h2h_label` traduit « nom d'issue » → home/draw/away par
+    ÉGALITÉ EXACTE avec les noms d'équipe. Un nom suffixé ou abrégé renvoie
+    None, la cote est jetée, et le groupe part avec deux issues sur trois —
+    `find_value_bets` l'écarte alors entièrement. Rien n'est journalisé.
+    """
+    print(f"Noms d'issues vus pour BetType == {code!r}\n")
+    d = Path(os.getenv("CIRCUS_INGEST_DIR", racine / "data" / "circus"))
+    noms: Counter = Counter()
+    exemples: dict[str, tuple[str, str]] = {}
+    trouve = 0
+    for f in sorted(d.glob("*.json")):
+        data = _charger(f)
+        if data is None:
+            continue
+        piles = [data]
+        while piles:
+            n = piles.pop()
+            if isinstance(n, dict):
+                home, away = n.get("HomeName"), n.get("AwayName")
+                if isinstance(n.get("Markets"), list) and home and away:
+                    for m in n["Markets"]:
+                        if not isinstance(m, dict) or m.get("BetType") != code:
+                            continue
+                        trouve += 1
+                        for o in (m.get("Outcomes") or []):
+                            if isinstance(o, dict):
+                                nom = str(o.get("Name") or "")
+                                noms[nom] += 1
+                                exemples.setdefault(nom, (home, away))
+                piles.extend(v for v in n.values() if isinstance(v, (dict, list)))
+            elif isinstance(n, list):
+                piles.extend(x for x in n if isinstance(x, (dict, list)))
+
+    if not trouve:
+        print(f"  Aucun marché {code!r} dans le dump.")
+        return
+    print(f"  {trouve} marchés, {len(noms)} noms d'issues distincts :\n")
+    from src.scrapers.circus import _h2h_label, _totals_label
+    for nom, n in noms.most_common(20):
+        home, away = exemples[nom]
+        h = _h2h_label(nom, home, away)
+        t = _totals_label(nom)
+        verdict = (f"→ h2h:{h}" if h else "") + (f"  → totals:{t}" if t else "")
+        if not verdict:
+            verdict = "🔴 TRADUIT PAR AUCUNE des deux fonctions — cote JETÉE"
+        print(f"    ×{n:<5d} {nom!r:<40s} {verdict}")
+        if not verdict.startswith("🔴"):
+            continue
+        print(f"           (équipes de cet événement : {home!r} / {away!r})")
+    perdus = sum(n for nom, n in noms.items()
+                 if _h2h_label(nom, *exemples[nom]) is None and _totals_label(nom) is None)
+    if perdus:
+        print(f"\n  🔴 {perdus} cotes sur {sum(noms.values())} sont jetées faute de")
+        print("     traduction. Un groupe amputé d'une issue est écarté ENTIER par")
+        print("     find_value_bets (contrôle de structure), donc la perte réelle")
+        print("     est plus grande que ce compte.")
+    else:
+        print("\n  OK : tous les noms d'issues sont traduits.")
+
+
 def main() -> None:
     ap = argparse.ArgumentParser(description=__doc__,
                                  formatter_class=argparse.RawDescriptionHelpFormatter)
     ap.add_argument("--racine", default=".", help="Racine du projet.")
+    ap.add_argument("--detail", default="",
+                    help="Affiche les NOMS D'ISSUES vus pour ce code de marché. "
+                         "Sert à comprendre pourquoi un marché mappé rend des "
+                         "groupes incomplets : les libellés d'issues sont "
+                         "traduits par égalité exacte, eux aussi.")
     args = ap.parse_args()
     racine = Path(args.racine).resolve()
+
+    if args.detail:
+        _detail(racine, args.detail)
+        return
 
     print("Codes de marché relevés dans les dumps — AUCUN mappage effectué.")
     print("Les ★ sont des candidats mi-temps, à confirmer par leur libellé.")

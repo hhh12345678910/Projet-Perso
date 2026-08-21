@@ -4195,7 +4195,58 @@ robinet, pas d'accélérer.
 | **détections** | **ZÉRO** |
 | Betano | mappé, **aucune cote** |
 
-🔴 **Zéro détection alors que les DEUX côtés sont en base.** Ce n'est plus le
+✅ **Zéro détection est le comportement CORRECT — mesuré le 21/08.**
+`market_supply` sur 2 h tranche : la chaîne est saine, c'est la marge des books
+qui bloque.
+
+| | totals_h1 | h2h_h1 |
+|---|---|---|
+| couples devigables / cotés | 6 088 / 6 088 | 735 / 735 |
+| références écartées pour marge | 0 | 0 |
+| cotes de books comparables | 1 368 | 222 |
+| **EV médiane** | **−8,5 %** | **−10,0 %** |
+| p90 | −3,5 % | −6,6 % |
+| meilleure EV observée | **+0,6 %** | **−1,9 %** |
+| au-dessus de +2 % | **0** | **0** |
+
+À comparer aux références du §21.6 bis : football totals de match plein
+−8,1 % de médiane, tennis totaux de jeux −7,9 %. **Les totaux de mi-temps sont
+donc dans la norme** (leur p90 à −3,5 % est même meilleur), simplement avec une
+queue plus mince. Au taux du football plein (0,3 % au-dessus de +2 %), on
+attendrait ~4 opportunités sur ces 1 368 cotes ; en observer 0 a une
+probabilité de 1,8 % — bas, mais pas absurde. **Le h2h de mi-temps est
+franchement moins bon** (−10,0 % de médiane, meilleure EV à −1,9 %) : Circus y
+cote plus large.
+
+**Conclusion : rien à réparer côté détection.** Le gisement de mi-temps est
+réel en volume mais pauvre en valeur aux seuils actuels. À reconsidérer si le
+seuil global du §21.12 bouge.
+
+🔴 **En revanche, 66 % des `h2h_h1` de Circus sont jetés.** 864 cotes sur 1 318
+tombent en « book incomplet sur cette ligne », contre 0 pour les totaux.
+`_h2h_label` traduit les noms d'issues en home/draw/away par **égalité exacte**
+avec les noms d'équipe : un nom suffixé ou abrégé renvoie `None`, la cote est
+jetée, et `find_value_bets` écarte alors le groupe ENTIER au contrôle de
+structure. Rien n'est journalisé. Pour voir les noms réels :
+
+```bash
+.venv/bin/python -m scripts.discover_half_time --detail 1HalfP1XP2
+.venv/bin/python -m scripts.discover_half_time --detail 1st-half-1x2
+```
+
+⚠️ Le même mode vaut pour **tout** marché mappé qui rendrait peu : un code
+reconnu ne garantit pas des issues traduites.
+
+🔴 **Betano est MORT depuis deux jours, et ça n'a rien à voir avec les
+mi-temps.** `data/prematch/soccer.json` date du **19/08 09:36**, relevé le
+21/08 15:40. Le prématch est ignoré au-delà de 30 min d'âge
+(`BETANO_PREMATCH_MAX_AGE_MIN`), donc **Betano ne remonte plus AUCUNE cote** —
+`check_half_time` le confirme, zéro cote tous marchés confondus sur 24 h. Le
+pont navigateur ne pousse plus. C'est un book sur huit hors service, à traiter
+en priorité sur tout ce chantier.
+
+⚠️ **Ancien constat, désormais dépassé :** zéro détection avec les deux côtés
+en base. Ce n'est plus le
 cas « normal » du §21.6 bis (où le soft manquait) : Pinnacle et Circus cotent
 tous deux la mi-temps, sur des lignes qui se recouvrent (0,5 / 1,5 / 2,5). À
 élucider avec l'outil qui a déjà répondu à cette question :
