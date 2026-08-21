@@ -1,0 +1,130 @@
+"""`results-update --day` — mesurer une source sans se mentir.
+
+Le 21/08, un dry-run a rendu 32 % et ce chiffre ne mesurait PAS la couverture
+de la source : la fenêtre de `--days` va jusqu'à `maintenant - 2 h`, donc elle
+contient toujours la journée en cours, dont le pont n'a pas encore déposé le
+fichier. Deux journées manquaient, et le taux mélangeait « la source n'a pas ce
+match » avec « ce jour n'a jamais été demandé ».
+
+Le compteur `journee_non_pontee` ne pouvait donc jamais retomber à zéro, ce qui
+rendait la sonde inutilisable pour ce à quoi elle sert : décider de payer un
+abonnement. `--day` borne sur une journée UTC révolue, et le taux qui en sort
+ne parle plus que de la source.
+"""
+from __future__ import annotations
+
+from datetime import datetime, timedelta, timezone
+
+import pytest
+from typer.testing import CliRunner
+
+from src.main import app
+from src.models import Book, MarketType, Outcome, ValueBet
+from src.storage import Storage
+
+runner = CliRunner()
+
+
+def _db_path(tmp_path):
+    """`ScanConfig.db_path` est un chemin RELATIF au répertoire courant, et
+    n'est pas réglable par l'environnement. On place donc la base là où la
+    commande ira la chercher, et `_run` se déplace dedans."""
+    (tmp_path / "data").mkdir(exist_ok=True)
+    return str(tmp_path / "data" / "valuebet.db")
+
+
+def _base(tmp_path, jours):
+    """Une détection football par journée demandée, à midi UTC."""
+    db = _db_path(tmp_path)
+    st = Storage(db)
+    for i, d in enumerate(jours):
+        ek = f"ev{i}::a__vs__b"
+        st.upsert_event(ek, "soccer", "Test League", "A", "B",
+                        datetime(d.year, d.month, d.day, 12, tzinfo=timezone.utc))
+        st.insert_value_bet(ValueBet(
+            event_key=ek, book=Book.UNIBET_BE, market=MarketType.H2H,
+            outcome=Outcome(label="home"), odd_taken=2.0, fair_prob=0.5,
+            fair_odd=1.9, ev_pct=10.0, kelly_stake_pct=1.0,
+            detected_at=datetime(d.year, d.month, d.day, 9, tzinfo=timezone.utc)))
+    return db
+
+
+def _run(monkeypatch, tmp_path, db, *args):
+    # Le pont, et un répertoire de scores VIDE : on veut que la source soit
+    # réclamée et manquante, c'est justement ce que compte
+    # `journee_non_pontee`. Aucun appel réseau n'est fait.
+    monkeypatch.setenv("SCORES_FOOTBALL_BRIDGE", "1")
+    monkeypatch.setenv("SCORES_INGEST_DIR", str(tmp_path / "scores"))
+    monkeypatch.chdir(tmp_path)
+    return runner.invoke(app, ["results-update", "--dry-run", "--sport", "soccer", *args])
+
+
+@pytest.fixture()
+def jours():
+    aujourdhui = datetime.now(timezone.utc).date()
+    return {"hier": aujourdhui - timedelta(days=1),
+            "avant_hier": aujourdhui - timedelta(days=2),
+            "aujourdhui": aujourdhui}
+
+
+def test_day_ne_juge_que_la_journee_demandee(monkeypatch, tmp_path, jours):
+    """Trois journées en base, une seule demandée : la sonde ne doit en voir
+    qu'une. Sinon le taux porte sur des jours qu'on n'a pas voulu mesurer."""
+    db = _base(tmp_path, [jours["avant_hier"], jours["hier"], jours["aujourdhui"]])
+    r = _run(monkeypatch, tmp_path, db, "--day", jours["hier"].isoformat())
+
+    assert r.exit_code == 0, r.output
+    # Une seule journée pontée manquante, donc un seul match à noter.
+    assert "journee_non_pontee=1" in r.output
+    assert f"journée {jours['hier'].isoformat()}" in r.output
+
+
+def test_sans_day_la_fenetre_avale_la_journee_en_cours(monkeypatch, tmp_path, jours):
+    """Le défaut d'origine, gardé sous test pour qu'on sache qu'il est
+    STRUCTUREL et non un accident : `--days` inclut toujours aujourd'hui."""
+    db = _base(tmp_path, [jours["hier"], jours["aujourdhui"]])
+    r = _run(monkeypatch, tmp_path, db, "--days", "2")
+
+    assert r.exit_code == 0, r.output
+    # Deux journées réclamées, aucune pontée : le compteur le dit.
+    assert "journee_non_pontee=2" in r.output
+
+
+def test_une_journee_non_revolue_est_refusee(monkeypatch, tmp_path, jours):
+    """Demander demain ne peut rien rendre. Mieux vaut le dire que d'afficher
+    un 0 % qui se lirait comme « la source ne couvre rien »."""
+    db = _base(tmp_path, [jours["hier"]])
+    demain = (jours["aujourdhui"] + timedelta(days=1)).isoformat()
+    r = _run(monkeypatch, tmp_path, db, "--day", demain)
+
+    assert r.exit_code != 0
+    assert "révolue" in r.output
+
+
+def test_une_date_illisible_est_refusee_clairement(monkeypatch, tmp_path, jours):
+    """`--day hier` doit dire ce qu'il attend, pas lever une ValueError nue."""
+    db = _base(tmp_path, [jours["hier"]])
+    r = _run(monkeypatch, tmp_path, db, "--day", "hier")
+
+    assert r.exit_code != 0
+    assert "AAAA-MM-JJ" in r.output
+
+
+def test_day_couvre_toute_la_journee_utc(monkeypatch, tmp_path, jours):
+    """Un match de 23 h UTC — l'Amérique du Sud, 7 % du flux — doit être dans
+    la journée demandée. Rogner `until` de deux heures les perdrait tous."""
+    db = _db_path(tmp_path)
+    st = Storage(db)
+    tard = datetime(jours["hier"].year, jours["hier"].month, jours["hier"].day,
+                    23, 30, tzinfo=timezone.utc)
+    st.upsert_event("tard::a__vs__b", "soccer", "Brazil - Serie C", "A", "B", tard)
+    st.insert_value_bet(ValueBet(
+        event_key="tard::a__vs__b", book=Book.UNIBET_BE, market=MarketType.H2H,
+        outcome=Outcome(label="home"), odd_taken=2.0, fair_prob=0.5,
+        fair_odd=1.9, ev_pct=10.0, kelly_stake_pct=1.0, detected_at=tard))
+
+    r = _run(monkeypatch, tmp_path, db, "--day", jours["hier"].isoformat())
+    assert r.exit_code == 0, r.output
+    # Le match est bien pris en compte : la source est réclamée pour ce jour.
+    assert "journee_non_pontee=1" in r.output
+    assert "Aucun match en attente" not in r.output

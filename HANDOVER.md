@@ -4757,17 +4757,53 @@ l'intervalle de dates et tranche elle-même :
     ✅ HISTORIQUE  → le tableau décrit le flux courant, décide dessus
     🔴 ACTIF       → la ligue cesse d'être capturée, répare AVANT de décider
 
-**Ce qui reste à faire, dans l'ordre** : attendre que le pont ait capturé deux
-ou trois journées consécutives (il le fait seul), relancer
-`results-update --dry-run --days 2` et vérifier que `journee_non_pontee` vaut
-**zéro**. Ce taux-là, et lui seul, dit si API-Football suffit. Il est gratuit.
-Ensuite seulement : payer pour la fenêtre de dates, ou construire la voie 3.
+**7. `--days` ne peut PAS mesurer une source — `--day` ajouté.** La fenêtre de
+`--days` va jusqu'à `maintenant - 2 h`, donc elle contient **toujours la
+journée en cours**, dont aucune source n'a le résultat et dont le pont n'a pas
+encore déposé le fichier. `journee_non_pontee` ne peut donc jamais retomber à
+zéro, et le taux affiché mélange en permanence « la source n'a pas ce match »
+et « ce jour n'a pas été demandé ». La sonde d'acceptation était inutilisable
+pour ce à quoi elle sert : décider de payer.
+
+    results-update --dry-run --day 2026-08-20 --sport soccer
+
+`--day` borne sur une journée UTC entière et révolue, **sans le rabot de deux
+heures** — le rogner perdrait les matchs de fin de soirée, c'est-à-dire
+l'Amérique du Sud, 7 % du flux. La fenêtre est désormais dans le titre du
+tableau : un taux se relit des jours plus tard, et « 32 % » ne veut rien dire
+sans savoir sur quoi il porte. Cinq tests, dont un qui garde le défaut de
+`--days` sous surveillance pour qu'on sache qu'il est structurel.
+
+**8. Le catalogue gratuit n'est PAS restreint — mon pronostic était faux.**
+Inventaire des 181 matchs du 20/08 réellement reçus : **56 ligues**, et le
+contenu tranche. France Ligue 3, Georgia Liga 3, Egypt Second League, Colombia
+Primera B, Estonia Esiliiga A et B, Kazakhstan 1. Division, Uzbekistan Pro
+League A, Kuwait Division 1, Ecuador Liga Pro Serie B, Tanzania Ligi kuu Bara,
+India Calcutta Premier Division, Norway Nasjonal U19, USA MLS Next Pro, NWSL
+Women, Colombia Liga Femenina, AFC Women's Champions League, Ukraine U19 —
+**et `World - Friendlies`**.
+
+Troisièmes divisions, féminin, jeunes, pays obscurs, amicaux : le palier
+gratuit descend très bas. Les 181 matchs étaient un jeudi calme, pas un
+catalogue amputé. J'avais prédit qu'API-Football plafonnerait sous les besoins
+du projet à cause des 8,4 % d'amicaux — **l'inventaire dit le contraire**, et
+il faut le lire avant de payer quoi que ce soit ou de construire un pont.
+
+⚠️ Les noms de ligue diffèrent entre Pinnacle et API-Football (« Poland - 3rd
+Liga » contre « Georgia - Liga 3 ») et **ça n'a aucune importance** :
+`match_event` apparie sur les NOMS D'ÉQUIPE et l'horaire, jamais sur la ligue.
+
+**Ce qui reste à faire, dans l'ordre** : attendre que le pont ait capturé une
+journée bien remplie — un week-end plutôt qu'un jeudi — puis
+`results-update --dry-run --day <cette journée> --sport soccer`. Ce taux-là, et
+lui seul, dit si API-Football suffit. Il est gratuit. Ensuite seulement : payer
+pour la fenêtre de dates, ou construire la voie 3.
 
 ### 21.9 État des lieux et à faire — remplace §20.15
 
 | | |
 |---|---|
-| Tests | **802 passés**, 4 ignorés — `pytest tests/`, jamais `pytest` seul (§4) |
+| Tests | **807 passés**, 4 ignorés — `pytest tests/`, jamais `pytest` seul (§4) |
 | `results` | 3 091 lignes (tennis) |
 | Books actifs en ALERTE | unibet, golden_palace, ladbrokes, circus |
 | Books muets (donnée seule) | betano, betfirst, napoleon, starcasino, **magicbetting** — **48 %** (§21.8) |

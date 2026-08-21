@@ -4345,6 +4345,11 @@ def settle_results(
 def results_update(
     days: int = typer.Option(3, "--days", help="Fenêtre de matchs à rattraper."),
     sport: str = typer.Option("soccer,tennis", "--sport", help="Sports à traiter."),
+    day: str = typer.Option(
+        "", "--day",
+        help="Ne juger QUE les matchs de cette journée UTC (AAAA-MM-JJ). "
+             "Ignore --days. Indispensable pour mesurer une source proprement "
+             "— voir la docstring."),
     dry_run: bool = typer.Option(
         False, "--dry-run",
         help="Ne rien écrire : mesure la couverture réelle des sources."),
@@ -4361,6 +4366,22 @@ def results_update(
     convient — c'est la règle du §15.7, celle qui a évité de mettre BetFirst en
     production avec ses 80 secondes de collecte.
 
+    ⚠️ **Pour MESURER une source, utilise `--day`, jamais `--days`.**
+
+    La fenêtre de `--days` va jusqu'à `maintenant - 2 h`, donc elle contient
+    TOUJOURS la journée en cours — dont aucune source n'a encore le résultat,
+    et dont le pont n'a pas encore déposé le fichier. Le taux affiché mélange
+    alors « la source n'a pas ce match » et « ce jour n'a pas encore été
+    demandé », et le compteur `journee_non_pontee` ne retombe jamais à zéro.
+    Mesuré le 21/08 : un dry-run à 32 % dont la moitié du manque venait de deux
+    journées absentes, pas de la source. Deux causes, un chiffre — le §13.12.
+
+        results-update --dry-run --day 2026-08-20 --sport soccer
+
+    `--day` borne sur une journée UTC entière et RÉVOLUE : le taux qui en sort
+    ne parle que de la couverture de la source. C'est celui sur lequel on
+    décide de payer un abonnement, ou de construire un pont.
+
     Une requête par (sport, jour) : trois jours de football et de tennis
     coûtent six appels sur les cent autorisés.
     """
@@ -4370,10 +4391,27 @@ def results_update(
     sports = [s.strip() for s in sport.split(",") if s.strip()]
 
     now = datetime.now(timezone.utc)
-    # Deux heures de grâce : un match qui vient de commencer n'a pas de
-    # résultat, et le réclamer ne ferait que consommer du quota.
-    until = now - timedelta(hours=2)
-    since = now - timedelta(days=days)
+    if day:
+        # Une journée UTC entière, bornes franches. Aucun rabot sur `until` :
+        # la journée demandée est révolue par construction, et la rogner de
+        # deux heures retirerait les matchs du soir — ceux d'Amérique du Sud,
+        # justement, qui sont 7 % du flux.
+        try:
+            d0 = datetime.fromisoformat(day).date()
+        except ValueError:
+            raise typer.BadParameter(
+                f"--day attend une date AAAA-MM-JJ, reçu {day!r}") from None
+        since = datetime(d0.year, d0.month, d0.day, tzinfo=timezone.utc)
+        until = since + timedelta(days=1)
+        if since >= now:
+            raise typer.BadParameter(
+                f"--day {day} n'est pas une journée révolue : aucun résultat "
+                "n'existe encore.")
+    else:
+        # Deux heures de grâce : un match qui vient de commencer n'a pas de
+        # résultat, et le réclamer ne ferait que consommer du quota.
+        until = now - timedelta(hours=2)
+        since = now - timedelta(days=days)
 
     pending = storage.events_awaiting_result(since, until)
     if not pending:
@@ -4405,7 +4443,11 @@ def results_update(
             start_time=start,
         ))
 
-    table = Table(title="Résultats récupérés" + (" — DRY RUN" if dry_run else ""))
+    # La fenêtre est dans le titre : un taux se relit des jours plus tard, et
+    # « 32 % » ne veut rien dire sans savoir sur quoi il porte.
+    fenetre = f"journée {day}" if day else f"{days} j"
+    table = Table(title=f"Résultats récupérés ({fenetre})"
+                        + (" — DRY RUN" if dry_run else ""))
     for col in ("Sport", "À noter", "Résolus", "%", "Sans résultat", "Écartés source"):
         table.add_column(col, justify="right" if col != "Sport" else "left")
 
