@@ -423,6 +423,7 @@ quoi que ce soit, sauf mention contraire.
 | `clv_independence` | la CLV mesure-t-elle autre chose que l'EV ? (§20.4, R² = 0,257) |
 | `pnl_detections` | P&L sur TOUTES les détections, pas seulement les paris cliqués |
 | `under_threshold` | quel seuil d'EV appliquer, mesuré par tranche (§21.12) |
+| `clv_split --by cote` | **CLV par tranche de cote**, aux MÊMES bornes que `pnl_detections` — c'est la table à mettre en face du §21.17 |
 | `crossclose` | rejuger les paris Smarkets contre la clôture de Pinnacle |
 | `scores_coverage` | **quelle couverture de ligues une source de résultats doit avoir** (§21.16) — la seule sonde qui n'a besoin ni de clé ni de réseau |
 
@@ -5038,8 +5039,15 @@ Trois raisons de ne rien trancher tout de suite :
    +4,53 % pour 79 % : **la courbe n'est pas monotone**, ce qui est le signe
    qu'on lit encore beaucoup de bruit.
 
+**Outil ajouté** : `clv_split --by cote`, aux mêmes bornes que
+`pnl_detections`. Deux découpages différents rendraient la contradiction
+illisible ; identiques, les deux tables se superposent et le §9 (« la cote
+n'est pas un critère », mesuré sur la CLV seule) peut enfin se relire en face
+du P&L.
+
 **À faire** : laisser le football s'accumuler (le pont capture seul), puis
-refaire `pnl_detections --premium` et découper par sport. Si le motif tient sur
+comparer `clv_split --by cote` et `pnl_detections` tranche par tranche, et
+découper par sport. Si le motif tient sur
 le football aussi, c'est un plafond de cote ; s'il est propre au tennis, c'est
 le devig du tennis qu'il faut regarder — et le §20.4 aura sa réponse.
 
@@ -5047,7 +5055,7 @@ le devig du tennis qu'il faut regarder — et le §20.4 aura sa réponse.
 
 | | |
 |---|---|
-| Tests | **826 passés**, 4 ignorés — `pytest tests/`, jamais `pytest` seul (§4) |
+| Tests | **830 passés**, 4 ignorés — `pytest tests/`, jamais `pytest` seul (§4) |
 | `results` | 3 091 lignes (tennis) |
 | Books actifs en ALERTE | unibet, golden_palace, ladbrokes, circus |
 | Books muets (donnée seule) | betano, betfirst, napoleon, starcasino, **magicbetting** — **48 %** (§21.8) |

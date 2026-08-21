@@ -35,7 +35,28 @@ from src.clv import clv_pct
 from src.config import ScanConfig
 from src.storage import Storage
 
-_AXES = ("book", "sport", "market", "league", "played", "alerte")
+_AXES = ("book", "sport", "market", "league", "played", "alerte", "cote")
+
+# ⚠️ Les MÊMES bornes que `pnl_detections`, et ce n'est pas un détail de
+# présentation. Le §21.17 a trouvé que la CLV et le P&L se contredisent sur les
+# grosses cotes — CLV plate, P&L à −20 % sur 4,0-6,0. Les comparer suppose des
+# tranches identiques ; deux découpages différents rendraient la contradiction
+# illisible, et c'est précisément ce qu'on cherche à mesurer.
+#
+# Le §9 et le §17.3 concluaient « la cote n'est pas un critère » — mais sur la
+# CLV seule. Cet axe sert à refaire cette lecture EN FACE du P&L.
+_BANDES_COTE = ((1.0, 1.8), (1.8, 2.3), (2.3, 3.0),
+                (3.0, 4.0), (4.0, 6.0), (6.0, float("inf")))
+
+
+def _bande_cote(odd: float | None) -> str:
+    """La tranche de cote d'un pari, dans les bornes de `pnl_detections`."""
+    if not odd or odd <= 0:
+        return "?"
+    for bas, haut in _BANDES_COTE:
+        if bas <= odd < haut:
+            return f"{bas:.1f}-{haut:.1f}" if haut != float("inf") else "> 6.0"
+    return "?"
 
 
 def _muted(db_path: str) -> set[str]:
@@ -55,7 +76,9 @@ def main() -> None:
     ap = argparse.ArgumentParser(description=__doc__)
     ap.add_argument("--by", default="book",
                     help=f"Axes séparés par des virgules, parmi {', '.join(_AXES)}. "
-                         "« alerte » sépare les books muets des books actifs.")
+                         "« alerte » sépare les books muets des books actifs, "
+                         "« cote » reprend les tranches de `pnl_detections` "
+                         "pour que les deux tables se comparent (§21.17).")
     ap.add_argument("--min", type=int, default=20,
                     help="Effectif minimum pour afficher une ligne (défaut 20).")
     ap.add_argument("--since", default="", help="Date de détection minimale (AAAA-MM-JJ).")
@@ -87,6 +110,8 @@ def main() -> None:
                 cle.append("muet" if r["book"] in muets else "actif")
             elif a == "played":
                 cle.append("joué" if r["played"] else "détecté")
+            elif a == "cote":
+                cle.append(_bande_cote(r["odd_taken"]))
             else:
                 cle.append(r[a] or "?")
         groupes[tuple(cle)].append(clv_pct(r["odd_taken"], fair) * 100.0)
@@ -100,7 +125,14 @@ def main() -> None:
     print("-" * (18 * len(axes) + 45))
 
     petits = 0
-    for cle, vals in sorted(groupes.items(), key=lambda kv: -len(kv[1])):
+    # Une table de cotes se lit dans l'ordre des cotes, pas des effectifs.
+    ordre_cote = [f"{b:.1f}-{h:.1f}" if h != float("inf") else "> 6.0"
+                  for b, h in _BANDES_COTE] + ["?"]
+    if axes == ["cote"]:
+        tri = lambda kv: ordre_cote.index(kv[0][0]) if kv[0][0] in ordre_cote else 99
+    else:
+        tri = lambda kv: -len(kv[1])
+    for cle, vals in sorted(groupes.items(), key=tri):
         if len(vals) < args.min:
             petits += len(vals)
             continue
