@@ -4883,9 +4883,36 @@ l'inverse ici. Corrigé : le tableau signale, il ne tranche plus, et donne la
 commande qui sépare les deux causes. **Une sonde qui conclut trop vite est pire
 qu'une sonde muette** — elle envoie construire un pont dont on n'a pas besoin.
 
+**12. Résultat du correctif : 68 % → 76 %** sur le 20/08, +7 matchs. Colombia
+Liga Women, AFC Champions League Women et NWSL disparaissent du tableau des
+manques. Restent 23 non résolus sur 95.
+
+**13. Les compteurs d'APPARIEMENT étaient invisibles — affichés maintenant.**
+La colonne « Écartés source » ne montre que ce que le FOURNISSEUR a écarté ;
+`classe_posee`, `orientation_corrigee` et `resultat_inutilisable` n'étaient
+affichés nulle part. Deux se lisent comme des alertes :
+`orientation_corrigee` dit que des résultats ont été retournés (§scores, piège
+n°2), et `classe_posee` à zéro sur une journée qui compte du féminin dit que la
+classe n'est pas reprise. **C'est très exactement l'erreur du 21/08, restée
+invisible parce qu'aucun compteur n'était affiché** — et elle a été annoncée à
+l'utilisateur comme vérifiable avant qu'on s'aperçoive qu'elle ne l'était pas.
+
+**Les 23 qui restent, et le suspect suivant.** `Argentina - Reserve League`
+est à **0/1** alors que le fichier du 20/08 contient **6 matchs** de cette
+compétition : c'est très probablement le MÊME défaut de classe, la troisième
+famille de `_CLASS_RULES` (`xreserve`) n'étant pas dans
+`_LEAGUE_CLASS_RULES`. ⚠️ **Ne pas l'ajouter sans relever les noms d'équipe des
+deux côtés** — c'est l'erreur du féminin, et `\bii\b` en particulier ferait
+passer « Romania - Liga II », une vraie deuxième division, pour une équipe
+réserve.
+
+Les autres zéros — Finland Kolmonen (0/4), Iceland 4. Deild (0/3), Estonia
+Meistriliiga Women (0/2), Iceland Urvalsdeild Women (0/2) — sont
+vraisemblablement de vrais trous de catalogue : aucune de ces compétitions
+n'apparaissait dans l'inventaire du fichier. À confirmer avant de conclure.
+
 **Ce qui reste à faire, dans l'ordre** :
-1. `results-update --dry-run --day 2026-08-20 --sport soccer` pour mesurer ce
-   que le correctif féminin récupère (attendu : 68 % → ~74 %, six matchs).
+1. ~~Mesurer ce que le correctif féminin récupère~~ — fait : **76 %**.
 2. Refaire sur un DIMANCHE, quand les troisièmes divisions et les amicaux
    jouent. n=95 un jeudi, c'est ±9 points.
 3. **Lire le tableau par ligue, pas le pourcentage.** Manque réparti →
@@ -4898,7 +4925,7 @@ qu'une sonde muette** — elle envoie construire un pont dont on n'a pas besoin.
 
 | | |
 |---|---|
-| Tests | **823 passés**, 4 ignorés — `pytest tests/`, jamais `pytest` seul (§4) |
+| Tests | **824 passés**, 4 ignorés — `pytest tests/`, jamais `pytest` seul (§4) |
 | `results` | 3 091 lignes (tennis) |
 | Books actifs en ALERTE | unibet, golden_palace, ladbrokes, circus |
 | Books muets (donnée seule) | betano, betfirst, napoleon, starcasino, **magicbetting** — **48 %** (§21.8) |

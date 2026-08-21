@@ -195,3 +195,26 @@ def test_une_couverture_complete_ne_signale_rien(monkeypatch, tmp_path, jours):
     assert "100 %" in r.output
     assert "ne résout RIEN" not in r.output
     assert "où la source manque" not in r.output
+
+
+def test_les_compteurs_dappariement_sont_affiches(monkeypatch, tmp_path, jours):
+    """Le 21/08, `classe_posee` a été annoncé à l'utilisateur puis n'apparaissait
+    nulle part : la colonne « Écartés source » ne montre que les compteurs de la
+    SOURCE. Un compteur qu'on ne voit pas ne diagnostique rien — c'est ce qui a
+    laissé croire une première fois qu'un correctif était appliqué."""
+    jour = jours["hier"]
+    db = _db_path(tmp_path)
+    st = Storage(db)
+    quand = datetime(jour.year, jour.month, jour.day, 12, tzinfo=timezone.utc)
+    st.upsert_event("f::a__vs__b", "soccer", "USA - National Womens Soccer League",
+                    "Houston Dash", "Chicago Red Stars", quand)
+    st.insert_value_bet(ValueBet(
+        event_key="f::a__vs__b", book=Book.UNIBET_BE, market=MarketType.H2H,
+        outcome=Outcome(label="home"), odd_taken=2.0, fair_prob=0.5,
+        fair_odd=1.9, ev_pct=10.0, kelly_stake_pct=1.0, detected_at=quand))
+    _fichier_pont(tmp_path, jour, [("Houston Dash W", "Chicago Red Stars W")])
+
+    r = _run(monkeypatch, tmp_path, db, "--day", jour.isoformat())
+    assert r.exit_code == 0, r.output
+    assert "classe_posee=1" in r.output
+    assert "100 %" in r.output

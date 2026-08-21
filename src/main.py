@@ -4481,6 +4481,7 @@ def results_update(
     table = Table(title=f"Résultats récupérés ({fenetre})"
                         + (" — DRY RUN" if dry_run else ""))
     manques: dict[str, list[tuple[str, int, int]]] = {}
+    apparie: dict[str, dict[str, int]] = {}
     for col in ("Sport", "À noter", "Résolus", "%", "Sans résultat", "Écartés source"):
         table.add_column(col, justify="right" if col != "Sport" else "left")
 
@@ -4517,6 +4518,7 @@ def results_update(
         bindings, match_counters = bind_results(events, fetched, sport=sp)
         if dry_run:
             manques[sp] = _coverage_by_league(events, bindings, league_of)
+            apparie[sp] = dict(match_counters)
         if not dry_run:
             for event_key, result in bindings:
                 storage.record_result(
@@ -4539,6 +4541,21 @@ def results_update(
 
     console.print(table)
     if dry_run:
+        # ⚠️ Les compteurs de l'APPARIEMENT, et pas seulement ceux de la source.
+        # La colonne « Écartés source » ne montre que ce que le fournisseur a
+        # écarté ; ce que le rapprochement a fait restait invisible. Deux
+        # d'entre eux se lisent comme des alertes : `orientation_corrigee` dit
+        # que des résultats ont été retournés (§scores, piège n°2), et
+        # `classe_posee` à zéro sur une journée qui compte du féminin dit que
+        # la classe n'est pas reprise — c'est très exactement l'erreur du
+        # 21/08, restée invisible parce qu'aucun compteur n'était affiché.
+        for sp, cs in apparie.items():
+            lisibles = {k: v for k, v in sorted(cs.items())
+                        if k not in ("lies", "sans_candidat") and v}
+            if lisibles:
+                console.print(f"[dim]{sp} — appariement : "
+                              + ", ".join(f"{k}={v}" for k, v in lisibles.items())
+                              + "[/dim]")
         for sp, lignes in manques.items():
             rates = [(lg, r, t) for lg, r, t in lignes if r < t]
             if not rates:
