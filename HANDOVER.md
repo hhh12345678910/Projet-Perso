@@ -3,6 +3,17 @@
 Document de reprise. À lire en premier pour reprendre le travail sans
 redécouvrir le contexte. Dernière mise à jour : 21/08/2026.
 
+**Nouveau (21/08, seconde session) :**
+- §21.16 : **la couverture de ligues est enfin mesurable** —
+  `scripts/scores_coverage.py` (20ᵉ sonde) chiffre ce qu'une source de
+  résultats doit couvrir, sans clé ni réseau. À lancer AVANT de choisir entre
+  les trois voies du §21.9 pt 1.
+- §21.16 : le pont résultats n'est **pas agnostique de sa source** — serveur,
+  userscript et fournisseur codent en dur la forme d'API-Football. La voie 3
+  (cinquième pont) coûte trois fichiers, pas « un parseur neuf ».
+- §17.1 : ⚠️ **le dépôt a de nouveau TROIS branches**, la garantie du §17.1 ne
+  tient plus. Voir ci-dessous.
+
 **Nouveau (21/08) — session « ValueDylan » :**
 - §21.15 : **deux pannes de production** trouvées au passage, non corrigées —
   Betano live en 403 (cookie expiré) et un libellé néerlandais non traduit chez
@@ -38,9 +49,18 @@ premium, 23,8 σ), confirmée le 17/08 sur 6 486 opportunités — voir §20.8.
 modifié aucun code — c'était une session de mesure. La §17, elle, a modifié le
 code : Smarkets est en production comme seconde référence sharp.
 
-⚠️ **Le dépôt n'a plus qu'UNE branche**, `claude/resume-clarification-1541xa`,
-qui est aussi la branche par défaut. Le piège de branche des §13 et §14 ne peut
-plus se produire — voir §17.1.
+⚠️ **La branche de travail est `claude/resume-clarification-1541xa`**, qui est
+aussi la branche par défaut du dépôt et celle que la VM suit. **Développer
+ailleurs recrée le piège des §13 et §14** — du code commité qui n'atteint
+jamais la production.
+
+⚠️ **Et le dépôt n'a plus une seule branche : il en a trois** (constaté le
+21/08). La garantie écrite au §17.1 ne tient donc plus. Aucune ne diverge à ce
+jour — `claude/valuedylan-ifsu3o` est à 29 commits EN RETARD et 0 en avance,
+`claude/resume-clarification-restructure-kpx0l3` est sur le même commit que la
+branche par défaut — mais elles rouvrent le piège pour la session suivante, qui
+peut y démarrer sans le savoir. **À supprimer au navigateur** (§17.1 : la
+suppression est impossible depuis une session Claude Code).
 
 Rapport visuel de l'analyse du 11/08 (courbes d'alignement, CLV découpée) :
 https://claude.ai/code/artifact/255c254a-32e3-4dfc-b275-03b8a7cd961e
@@ -381,7 +401,7 @@ est **définitivement perdu**.
 
 ### 4.1 Les sondes de `scripts/` — aucune n'était documentée ici
 
-19 sondes existent, **aucune n'apparaissait dans ce document** : elles se
+20 sondes existent, **aucune n'apparaissait dans ce document** : elles se
 redécouvraient par `ls`, ou pas du tout. Toutes se lancent en
 `.venv/bin/python -m scripts.<nom>` et acceptent `--help`. Aucune ne modifie
 quoi que ce soit, sauf mention contraire.
@@ -395,6 +415,7 @@ quoi que ce soit, sauf mention contraire.
 | `pnl_detections` | P&L sur TOUTES les détections, pas seulement les paris cliqués |
 | `under_threshold` | quel seuil d'EV appliquer, mesuré par tranche (§21.12) |
 | `crossclose` | rejuger les paris Smarkets contre la clôture de Pinnacle |
+| `scores_coverage` | **quelle couverture de ligues une source de résultats doit avoir** (§21.16) — la seule sonde qui n'a besoin ni de clé ni de réseau |
 
 **Comprendre un marché qui ne produit rien**
 
@@ -2246,6 +2267,15 @@ absent d'ailleurs, sauf `crossfit-hyrox-back-workout` dont le fichier
 (accès git en écriture seule, pas d'outil API). Elle se fait dans le navigateur,
 et la branche par défaut se change dans **Settings → General**, pas dans
 Settings → Branches.
+
+🔴 **Ce « état final » n'est plus vrai — trois branches au 21/08.**
+`claude/valuedylan-ifsu3o` (29 commits en retard, 0 en avance) et
+`claude/resume-clarification-restructure-kpx0l3` (même commit que la branche
+par défaut) se sont ajoutées. Aucune ne diverge encore, donc rien n'est perdu ;
+mais chacune est un point de démarrage possible pour une session suivante, et
+c'est exactement comme ça que le piège des §13-§14 s'était installé. **Les
+supprimer au navigateur**, et vérifier `git branch -a` au début de chaque
+session plutôt que de faire confiance à ce paragraphe.
 
 ### 17.2 La mesure du 13/08 — remplace §16.1
 
@@ -4530,11 +4560,95 @@ ses propres langues. C'est une classe de panne récurrente, silencieuse par
 nature, et le seul remède est le signalement systématique des libellés non
 traduits — à généraliser aux scrapers qui ne l'ont pas encore.
 
+### 21.16 La couverture, enfin mesurable — et le pont n'est pas agnostique
+
+Session du 21/08 au soir. Objectif : le §21.9 pt 1, remplacer la source de
+résultats football. **Aucune source n'a été branchée, et c'est le constat qui
+l'explique.**
+
+**Ce qui bloque une session Claude Code ici.** Le proxy d'egress de
+l'environnement ne laisse passer que quelques hôtes (registres de paquets,
+Anthropic). `api.sofascore.com`, `thesportsdb.com` et `rapidapi.com` répondent
+tous **403 au CONNECT**. Aucune source candidate n'est joignable depuis une
+session, et donc aucun échantillon réel n'est capturable. Or la règle du
+projet est que **le parseur se teste contre des échantillons réels**
+(`src/score_sources.py`, en-tête) : écrire un parseur SofaScore ou autre
+depuis ici reviendrait à deviner une forme de payload, c'est-à-dire à refaire
+le §21.13 — deux commentaires faux, un chantier fondé dessus.
+
+⚠️ **Conséquence à retenir pour les sessions futures** : brancher une nouvelle
+source de données est un travail de NAVIGATEUR, pas de session. La session
+écrit le plan, les sondes et les tests ; la capture se fait chez toi. C'est
+déjà le motif des quatre ponts, il vaut aussi pour leur mise en place.
+
+**1. La couverture était un critère invoqué, jamais mesuré.** Le §21.9 pt 1
+élimine les API gratuites généralistes parce que « les détections portent sur
+des centaines de ligues ». Personne ne l'a vérifié, et ce chiffre décide
+pourtant lequel des trois chemins vaut la peine — le plus cher étant un
+cinquième pont.
+
+`scripts/scores_coverage.py` (20ᵉ sonde) le mesure sur NOTRE base, sans clé,
+sans quota et sans réseau. Elle ne regarde aucune source : elle chiffre la
+**demande**, seul côté mesurable hors ligne. Elle rend la part des détections
+football qu'un catalogue limité aux cinq grands championnats réglerait, la
+concentration par paliers (combien de ligues pour 50/80/90/95/99 % du volume),
+la ventilation par catégorie de `src/leagues.py`, et la taille de la queue
+longue.
+
+    .venv/bin/python -m scripts.scores_coverage --min-ev 5
+
+**Comment lire le résultat.** La part du top 5 est un **plafond**, pas une
+promesse : une source « qui couvre les grands championnats » ne les couvre pas
+forcément tous ni toute la saison. Et c'est la FORME de la queue qui tranche,
+pas le nombre de ligues — cent ligues dont cinq portent 90 % du volume et cent
+ligues à parts égales appellent deux décisions opposées.
+
+⚠️ La sonde compte les détections sans ligne `events` (§19.7) et celles dont la
+ligue est vide, **et les annonce séparément**. Sans ça, « nos détections
+tiennent en peu de ligues » et « la moitié de nos détections n'a pas de ligue
+en base » donnent le même tableau rassurant. Six tests couvrent le verdict,
+l'exclusion du tennis, ce signalement, le filtre d'EV et les paliers.
+
+**2. Le pont résultats n'est pas agnostique de sa source.** Le §21.9 pt 1
+présentait la voie 3 comme « un parseur neuf » sur une plomberie réutilisable.
+C'est faux, et vérifié en lisant les trois fichiers :
+
+| Fichier | Ce qui est codé en dur |
+|---|---|
+| `scripts/betano_ingest_server.py` | `_handle_scores_plan` fabrique `/fixtures?date=…&timezone=UTC` ; `_handle_scores_ingest` exige un champ `response` et lit `errors` pour distinguer refus définitif et temporaire |
+| `tools/scores-ingest.user.js` | `API_BASE`, l'en-tête `x-apisports-key`, le `@connect v3.football.api-sports.io` |
+| `src/score_sources.py` | `BridgedFootballScores` appelle `parse_apifootball_results` en dur |
+
+Le parti « le userscript ne comprend rien » (§18.6) tient toujours et reste
+bon — mais il a pour corollaire que **c'est le serveur qui porte le
+fournisseur**. Changer de source demande donc trois fichiers, dont le serveur
+d'ingestion qui sert aussi les trois autres ponts. Rien d'insurmontable ; le
+chiffrage du §21.9 était simplement optimiste.
+
+Le seul point vraiment agnostique est plus bas : `provider_for(sport)` est un
+point d'extension net, et `src/scores.py` ne nomme aucun fournisseur. Le
+rapprochement (`bind_results`, `match_event`, son compteur `sans_candidat`) ne
+bougera pas d'une ligne quelle que soit la voie retenue.
+
+**3. La piste RapidAPI reste ouverte, et n'a pas été refermée ici.** Une
+recherche donne bien un listing à `rapidapi.com/api-sports/api/api-football`,
+mais l'hôte est bloqué par le proxy : **non vérifié**. À faire depuis ton
+navigateur. Le raisonnement en sa faveur tient toujours contre une suspension :
+un abonnement RapidAPI est un compte SÉPARÉ, et c'est l'infrastructure de
+RapidAPI qui appelle API-Sports — le compte suspendu n'est pas dans la boucle.
+Si le listing existe, `SCORES_FOOTBALL_RAPIDAPI_KEY` suffit toujours, zéro
+code (§20.5 l'avait cru fermée sur une page d'éditeur en erreur ; ce n'est pas
+la même chose qu'un listing absent).
+
+**Ce qui reste à faire, dans l'ordre** : lancer la sonde sur la VM, lire la
+part du top 5, et seulement ensuite choisir la voie. La mesure coûte une
+commande, le mauvais choix coûte un pont.
+
 ### 21.9 État des lieux et à faire — remplace §20.15
 
 | | |
 |---|---|
-| Tests | **788 passés**, 4 ignorés — `pytest tests/`, jamais `pytest` seul (§4) |
+| Tests | **794 passés**, 4 ignorés — `pytest tests/`, jamais `pytest` seul (§4) |
 | `results` | 3 091 lignes (tennis) |
 | Books actifs en ALERTE | unibet, golden_palace, ladbrokes, circus |
 | Books muets (donnée seule) | betano, betfirst, napoleon, starcasino, **magicbetting** — **48 %** (§21.8) |
@@ -4569,10 +4683,29 @@ traduits — à généraliser aux scrapers qui ne l'ont pas encore.
      générique et son compteur `sans_candidat` mesure l'alignement des noms
      avant tout engagement.
 
+     ⚠️ **Corrigé le 21/08 : cette voie coûte TROIS fichiers, pas un parseur.**
+     Le pont résultats n'est pas agnostique de sa source — la forme
+     d'API-Football est codée en dur à trois endroits : `_handle_scores_plan`
+     fabrique l'URL `/fixtures?date=…`, `_handle_scores_ingest` exige un champ
+     `response` et lit `errors` pour poser sa pierre tombale, et
+     `tools/scores-ingest.user.js` fixe `API_BASE`, l'en-tête `x-apisports-key`
+     et son `@connect`. Le parti « le userscript ne comprend rien » (§18.6)
+     tient toujours, mais c'est le SERVEUR qui porte le fournisseur. Voir
+     §21.16.
+
    ⚠️ **La couverture est le critère qui élimine les API gratuites
    généralistes** : les détections portent sur des centaines de ligues, et une
    source limitée aux grands championnats ne trancherait le §20.4 que sur un
    sous-ensemble non représentatif.
+
+   ➜ **Commence par le chiffrer, la sonde existe depuis le 21/08** :
+   `.venv/bin/python -m scripts.scores_coverage --min-ev 5`. Elle dit quelle
+   part des détections football un catalogue limité aux cinq grands
+   championnats réglerait, et sur combien de ligues se répartit le reste.
+   **Ce nombre décide entre les trois voies** — au-dessus de ~80 %, une API à
+   catalogue redevient candidate et le pont navigateur est du travail inutile ;
+   en dessous, la voie 3 s'impose. Jusqu'ici « des centaines de ligues » était
+   une intuition, jamais une mesure (§21.16).
 
    Ensuite, quelle que soit la voie : `SCORES_FOOTBALL_BRIDGE=1`,
    `SCORES_BRIDGE_DAYS=60`, puis `results-update --days 60 --sport soccer` et
