@@ -8,6 +8,10 @@ redécouvrir le contexte. Dernière mise à jour : 21/08/2026.
   `scripts/scores_coverage.py` (20ᵉ sonde) chiffre ce qu'une source de
   résultats doit couvrir, sans clé ni réseau. À lancer AVANT de choisir entre
   les trois voies du §21.9 pt 1.
+- §21.16 : 🔴 **la voie RapidAPI est morte** — listing supprimé (« API not
+  found », vérifié au navigateur). Troisième échec sur cette piste ; les trois
+  fichiers qui la recommandaient sont corrigés pour qu'il n'y ait pas de
+  quatrième. **Il ne reste que deux voies** au §21.9 pt 1.
 - §21.16 : le pont résultats n'est **pas agnostique de sa source** — serveur,
   userscript et fournisseur codent en dur la forme d'API-Football. La voie 3
   (cinquième pont) coûte trois fichiers, pas « un parseur neuf ».
@@ -4630,15 +4634,37 @@ point d'extension net, et `src/scores.py` ne nomme aucun fournisseur. Le
 rapprochement (`bind_results`, `match_event`, son compteur `sans_candidat`) ne
 bougera pas d'une ligne quelle que soit la voie retenue.
 
-**3. La piste RapidAPI reste ouverte, et n'a pas été refermée ici.** Une
-recherche donne bien un listing à `rapidapi.com/api-sports/api/api-football`,
-mais l'hôte est bloqué par le proxy : **non vérifié**. À faire depuis ton
-navigateur. Le raisonnement en sa faveur tient toujours contre une suspension :
-un abonnement RapidAPI est un compte SÉPARÉ, et c'est l'infrastructure de
-RapidAPI qui appelle API-Sports — le compte suspendu n'est pas dans la boucle.
-Si le listing existe, `SCORES_FOOTBALL_RAPIDAPI_KEY` suffit toujours, zéro
-code (§20.5 l'avait cru fermée sur une page d'éditeur en erreur ; ce n'est pas
-la même chose qu'un listing absent).
+**3. 🔴 La voie RapidAPI est MORTE — vérifiée, plus déduite.** Le listing
+`rapidapi.com/api-sports/api/api-football` répond **« NOT_FOUND — API not
+found »**, constaté au navigateur le 21/08.
+
+C'est le troisième échec sur cette même piste, sous trois formes différentes,
+et c'est ce qui la rend coûteuse : elle a l'air rouvrable à chaque fois.
+
+| Quand | Ce qu'on a vu | Ce qu'on en a conclu |
+|---|---|---|
+| 18/08 (§20.5) | « Something Went Wrong » sur la page d'éditeur | « piste fermée » |
+| 21/08 (§21.9) | introuvable sur le site | « à re-chercher » ← l'erreur |
+| 21/08 (§21.16) | `NOT_FOUND — API not found` | **listing supprimé** |
+
+Le raisonnement en sa faveur était pourtant JUSTE, et c'est pour ça qu'il
+revenait : un abonnement RapidAPI est un compte SÉPARÉ, et c'est
+l'infrastructure de RapidAPI qui appelle API-Sports — ni le refus d'IP ni la
+suspension ne s'y appliquent. La parade était bonne ; c'est le guichet qui a
+fermé.
+
+⚠️ **Le code de la route RapidAPI reste en place et n'a pas été retiré** —
+il est correct, il coûte zéro tant que `SCORES_FOOTBALL_RAPIDAPI_KEY` est vide,
+et il servira tel quel si API-Sports reparaît sur une place de marché. Mais les
+trois fichiers qui le RECOMMANDAIENT ont été corrigés (`.env.example`,
+`_football_error_message`, la docstring d'`ApiFootballScores`) : ils envoyaient
+chaque nouvelle session sur cette page. **Une piste morte doit être écrite
+morte à l'endroit où on la lit**, pas seulement dans un compte rendu de
+session.
+
+**Il ne reste donc que deux voies** pour le §21.9 pt 1 : nouveau compte
+API-Sports appelé depuis le pont dès le premier jour, ou cinquième pont vers un
+site de scores public.
 
 **Ce qui reste à faire, dans l'ordre** : lancer la sonde sur la VM, lire la
 part du top 5, et seulement ensuite choisir la voie. La mesure coûte une
@@ -4675,7 +4701,11 @@ commande, le mauvais choix coûte un pont.
      compte.
    - **RapidAPI (listing « API-FOOTBALL » d'API-Sports)** — `ApiFootballScores`
      supporte déjà cette route : poser `SCORES_FOOTBALL_RAPIDAPI_KEY` suffit,
-     zéro code. Non trouvé sur leur site le 21/08, à re-chercher.
+     zéro code. 🔴 **RAYÉE le 21/08 : le listing n'existe plus** — la page
+     répond « NOT_FOUND — API not found », constaté au navigateur. Troisième
+     échec sur cette piste, et le « à re-chercher » écrit ici était justement
+     l'invitation à y retourner une quatrième fois. **N'y retourne pas** ; voir
+     §21.16 pt 3 pour le détail et pourquoi le code de la route reste en place.
    - **Cinquième pont navigateur vers un site de scores public** — aucune clé,
      aucun quota, aucune limite de date, couverture illimitée. C'est
      l'architecture que le projet maîtrise le mieux (§3, « l'actif technique le

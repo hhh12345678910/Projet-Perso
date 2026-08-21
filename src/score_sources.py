@@ -152,11 +152,14 @@ def _football_error_message(errors: Any, route: str) -> str:
     if "suspend" in text.lower() and route == "direct":
         return (
             "api-football: réponse « account suspended » sur la route DIRECTE. "
-            "Le compte n'est probablement pas en cause : cette API refuse les IP "
-            "de datacenter et le présente ainsi. Vérifie depuis une IP "
-            "résidentielle avant de toucher au compte, et pose "
-            "SCORES_FOOTBALL_RAPIDAPI_KEY pour passer par RapidAPI, qui relaie "
-            "depuis sa propre infrastructure."
+            "DEUX causes donnent ce message et seul le tableau de bord du "
+            "fournisseur les sépare : (1) le compte est réellement suspendu, "
+            "(2) l'IP de datacenter est refusée et présentée ainsi. "
+            "Va voir le tableau de bord AVANT de conclure. Si le compte est "
+            "sain, pose SCORES_FOOTBALL_BRIDGE=1 pour appeler depuis le "
+            "navigateur (IP résidentielle). ⚠️ Ne cherche pas RapidAPI : le "
+            "listing d'API-Sports n'existe plus (« API not found », vérifié le "
+            "21/08 — §21.16)."
         )
     return f"api-football ({route}): {errors}"
 
@@ -189,6 +192,15 @@ class ApiFootballScores:
     ne voit jamais l'IP de la VM. La réponse est identique au champ près, donc
     le parseur ne change pas. Sinon on garde la route directe, valable partout
     où l'IP est acceptée.
+
+    🔴 **La route RapidAPI est du code MORT, et le restera sauf retour du
+    listing.** `rapidapi.com/api-sports/api/api-football` répond « NOT_FOUND —
+    API not found » (vérifié le 21/08, §21.16), après deux échecs antérieurs
+    d'une autre forme (§20.5, §21.9). Le code reste ici parce qu'il est juste
+    et coûte zéro s'il n'est pas activé — mais **ne repars pas chercher cette
+    page**, elle a déjà coûté trois allers-retours au projet. La parade
+    utilisable aujourd'hui est `SCORES_FOOTBALL_BRIDGE=1`, qui appelle depuis
+    le navigateur, donc depuis une IP résidentielle.
     """
 
     name = "api-football"
