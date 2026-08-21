@@ -134,15 +134,30 @@ def main() -> None:
         else:
             print(f"    {book:<18s} {n_codes} code(s)   ⚠️ AUCUNE cote en base")
     manquants = [b for b in attendus if b not in presents]
-    if manquants:
-        print(f"\n  ⚠️ {', '.join(manquants)} : mappé(s) mais rien en base.")
-        print("     Trois causes possibles, dans cet ordre de vraisemblance :")
-        print("       1. le daemon n'a pas encore bouclé un cycle depuis le")
-        print("          déploiement — attendre quelques minutes et relancer ;")
-        print("       2. le pont navigateur ne dépose plus de dump frais")
-        print("          (`ls -l data/circus/ && date -u`) ;")
-        print("       3. le book a renommé ses codes")
-        print("          (`.venv/bin/python -m scripts.discover_half_time`).")
+    for book in manquants:
+        # Le book remonte-t-il SEULEMENT quelque chose ? C'est ce qui sépare
+        # « les mi-temps ne passent pas » de « ce book ne passe plus du tout »,
+        # et les deux appellent des recherches opposées. Sans ce compteur, on
+        # irait relire un mappage correct pendant qu'un pont est en panne.
+        n = con.execute(
+            "SELECT COUNT(*) FROM quotes WHERE book=? "
+            "  AND fetched_at > datetime('now', ?)",
+            (book, f"-{args.heures} hours")).fetchone()[0]
+        print(f"\n  ⚠️ {book} : mappé, mais aucune cote de mi-temps en base.")
+        if n == 0:
+            print(f"     Et AUCUNE cote du tout sur {args.heures:.0f} h — le problème")
+            print("     n'est donc pas le mappage, c'est l'ingestion de ce book.")
+            if book == "betano_be":
+                print("     Betano ignore son prématch au-delà de 30 min d'âge")
+                print("     (BETANO_PREMATCH_MAX_AGE_MIN). Vérifier la fraîcheur :")
+                print("       ls -l data/prematch/ && date -u")
+            else:
+                print("     Vérifier le pont navigateur qui alimente ce book.")
+        else:
+            print(f"     Mais {n} cotes d'autres marchés sur {args.heures:.0f} h : ce book")
+            print("     remonte bien. Le problème est donc PROPRE à la mi-temps —")
+            print("     codes renommés, ou marchés absents de l'endpoint interrogé :")
+            print("       .venv/bin/python -m scripts.discover_half_time")
 
     print("\n=== B. Échelles — mi-temps contre match plein ===")
     par_marche = {}

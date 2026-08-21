@@ -4183,6 +4183,43 @@ ramène la période à ~39 s au prix d'un CPU jamais au repos. À ne faire que s
 la CLV des mi-temps le justifie — sinon le bon geste est de refermer le
 robinet, pas d'accélérer.
 
+**Relevé du 20/08, après mappage de Circus :**
+
+| | |
+|---|---|
+| Pinnacle `totals_h1` | 408 846 cotes, 1 367 events, 13 lignes [0,5 … 3,5] |
+| Pinnacle `h2h_h1` | 90 378 cotes, 769 events |
+| Circus `h2h_h1` | 47 927 cotes, 624 events |
+| Circus `totals_h1` | 45 788 cotes, 734 events, 3 lignes [0,5 … 2,5] |
+| échelle | **1,14** contre 3,53 au match plein — saine |
+| **détections** | **ZÉRO** |
+| Betano | mappé, **aucune cote** |
+
+🔴 **Zéro détection alors que les DEUX côtés sont en base.** Ce n'est plus le
+cas « normal » du §21.6 bis (où le soft manquait) : Pinnacle et Circus cotent
+tous deux la mi-temps, sur des lignes qui se recouvrent (0,5 / 1,5 / 2,5). À
+élucider avec l'outil qui a déjà répondu à cette question :
+
+```bash
+.venv/bin/python -m scripts.market_supply --sport soccer --market totals_h1 --hours 2
+.venv/bin/python -m scripts.market_supply --sport soccer --market h2h_h1 --hours 2
+```
+
+Il décompose étape par étape pourquoi une cote de book n'est pas comparable :
+ligne juste absente, book incomplet sur la ligne, ou simplement une EV qui
+n'atteint jamais le seuil. **L'hypothèse la plus probable est la dernière** —
+les marchés de mi-temps portent des marges de book plus larges que le match
+plein — mais le §21.6 bis a montré que la vérifier vaut autant que le
+correctif lui-même.
+
+**Unibet : hypothèse de contamination DÉMENTIE.** `discover_half_time_api` a
+relevé 3 marchés de mi-temps chez Kambi sous les identifiants `11927`/`11928`,
+**qu'on ne mappe pas** : rien de faux n'entre aujourd'hui. La crainte du §21.14
+— `parse_listview` mappant sur le seul `betOfferType.id` sans regarder
+`criterion` — était fondée en théorie mais ne se réalise pas ici, Kambi donnant
+des identifiants distincts à ses périodes. GoldenPalace et Ladbrokes n'ont rien
+rendu sur l'endpoint interrogé, ce qui ne prouve pas une absence.
+
 **Première mise en service, relevée le 20/08 :** `totals_h1` et `h2h_h1`
 arrivent bien en base côté Pinnacle (8 794 cotes de totaux de mi-temps au
 premier relevé), échelle saine — ligne moyenne **1,13** contre **3,45** au

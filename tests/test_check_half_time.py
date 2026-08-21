@@ -33,3 +33,55 @@ def test_l_inventaire_suit_l_ajout_d_un_code(monkeypatch):
     avant = _books_mappes()["circus_be"]
     monkeypatch.setitem(circus._MARKETS, "faux-code-de-test", MarketType.H2H_H1)
     assert _books_mappes()["circus_be"] == avant + 1
+
+
+def _base(tmp_path, lignes):
+    """Une base minimale avec les cotes données : (book, market)."""
+    import sqlite3
+    import datetime as dt
+    import sys
+    sys.path.insert(0, ".")
+    from src.storage import SCHEMA
+
+    chemin = tmp_path / "t.db"
+    c = sqlite3.connect(chemin)
+    c.executescript(SCHEMA)
+    now = dt.datetime.now(dt.timezone.utc).isoformat()
+    for book, marche in lignes:
+        c.execute(
+            "INSERT INTO quotes(event_key,book,market,outcome_label,line,"
+            "decimal_odd,fetched_at,source_event_id) "
+            "VALUES('e',?,?,'over',1.5,2.0,?,'1')", (book, marche, now))
+    c.commit()
+    c.close()
+    return str(chemin)
+
+
+def _lancer(db, capsys):
+    import sys
+    from unittest.mock import patch
+    from scripts.check_half_time import main
+    with patch.object(sys, "argv", ["check_half_time", "--db", db]):
+        main()
+    return capsys.readouterr().out
+
+
+def test_un_book_muet_partout_pointe_vers_l_ingestion(tmp_path, capsys):
+    """Betano mappé, aucune cote du tout : c'est l'ingestion, pas le mappage.
+
+    Sans cette distinction, on irait relire un mappage correct pendant qu'un
+    pont navigateur est en panne.
+    """
+    db = _base(tmp_path, [("pinnacle", "totals_h1"), ("circus_be", "totals_h1")])
+    out = _lancer(db, capsys)
+    assert "betano_be" in out
+    assert "AUCUNE cote du tout" in out
+    assert "BETANO_PREMATCH_MAX_AGE_MIN" in out
+
+
+def test_un_book_actif_sans_mi_temps_pointe_vers_les_codes(tmp_path, capsys):
+    """Le cas opposé : le book remonte, mais pas ses mi-temps."""
+    db = _base(tmp_path, [("pinnacle", "totals_h1"), ("betano_be", "totals")])
+    out = _lancer(db, capsys)
+    assert "ce book" in out and "remonte bien" in out
+    assert "discover_half_time" in out

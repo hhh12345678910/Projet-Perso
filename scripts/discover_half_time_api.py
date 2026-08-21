@@ -74,7 +74,14 @@ def _empreinte(d: dict) -> str:
                 bouts.append(f"{k}={petit}")
         elif isinstance(v, (str, int, float)):
             bouts.append(f"{k}={v!r}")
-    return "  ".join(bouts) or "(aucun identifiant reconnaissable)"
+    if bouts:
+        return "  ".join(bouts)
+    # Aucun champ connu : montrer ce qu'il Y A, plutôt que d'avouer l'échec.
+    # 25 marchés relevés sous « aucun identifiant reconnaissable » ne sont
+    # exploitables par personne.
+    apercu = {k: v for k, v in d.items()
+              if isinstance(v, (str, int, float, bool))}
+    return f"champs inconnus : {dict(list(apercu.items())[:5])}" if apercu else "(vide)"
 
 
 def _explorer(payload, mappes: dict) -> tuple[Counter, Counter]:
