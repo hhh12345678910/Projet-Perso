@@ -45,13 +45,6 @@ _CHAMPS_ID = ("id", "typeId", "betOfferType", "criterion", "betId",
               "englishLabel", "criterionId")
 
 
-#: Champs qui identifient un MARCHÉ. Un dict qui n'en porte aucun est trop
-#: haut dans l'arbre (un événement, une ligue) : on descend au lieu de le
-#: retenir. Sans cette règle la sonde s'arrête sur l'événement — un de ses
-#: champs imbriqués contenant « mi-temps » — et ne voit jamais l'offre.
-_CHAMPS_MARCHE = ("typeId", "betId", "marketTypeId", "betOfferType", "criterion")
-
-
 def _textes(d: dict) -> list[str]:
     """Les valeurs textuelles d'un dict, y compris un niveau d'imbrication.
 
@@ -104,7 +97,39 @@ def _empreinte(d: dict) -> str:
     return f"champs inconnus : {dict(list(apercu.items())[:5])}" if apercu else "(vide)"
 
 
-def _explorer(payload, mappes: dict) -> tuple[Counter, Counter]:
+def _matche(d) -> bool:
+    """Ce nœud porte-t-il, à son propre niveau, un libellé de mi-temps ?"""
+    if not isinstance(d, dict):
+        return False
+    return any(_INDICES.search(t) and not _CONTRE.search(t) for t in _textes(d))
+
+
+def _descendant_matche(n) -> bool:
+    """Un nœud PLUS PROFOND porte-t-il le même libellé ?
+
+    C'est ce qui remplace toute hypothèse de schéma. Deux tentatives ont
+    échoué avant celle-ci : s'arrêter au nœud le plus englobant retenait des
+    `eventId` inexploitables, et exiger des clés de marché connues
+    (`criterion`, `betOfferType`) ne retenait plus RIEN — le nœud qui portait
+    le libellé ÉTAIT le `criterion`, qui ne contient pas une clé de ce nom.
+    Un faux « ce book n'en propose pas », soit exactement le verdict que cette
+    sonde existe pour éviter.
+
+    On garde donc le match le plus PROFOND, sans rien supposer de la forme.
+    """
+    piles = [v for v in n.values() if isinstance(v, (dict, list))]
+    while piles:
+        x = piles.pop()
+        if isinstance(x, dict):
+            if _matche(x):
+                return True
+            piles.extend(v for v in x.values() if isinstance(v, (dict, list)))
+        elif isinstance(x, list):
+            piles.extend(y for y in x if isinstance(y, (dict, list)))
+    return False
+
+
+def _explorer(payload, mappes: dict, bruts: list | None = None) -> tuple[Counter, Counter]:
     """(candidats mi-temps, contaminations) relevés dans un payload.
 
     Une « contamination » est un marché dont le libellé dit mi-temps ALORS QUE
@@ -113,46 +138,69 @@ def _explorer(payload, mappes: dict) -> tuple[Counter, Counter]:
     """
     candidats: Counter = Counter()
     contamines: Counter = Counter()
-    piles = [payload]
+    # On porte la chaîne d'ancêtres : le libellé vit sur le nœud le plus
+    # profond (`criterion`), mais l'identifiant qu'on mappe vit sur son PARENT
+    # (`betOffer.betOfferType.id`). Chercher la contamination sur le seul nœud
+    # retenu la manquerait entièrement.
+    piles: list = [(payload, ())]
     while piles:
-        n = piles.pop()
+        n, ancetres = piles.pop()
         if isinstance(n, dict):
             textes = _textes(n)
             if any(_INDICES.search(t) and not _CONTRE.search(t) for t in textes):
-                if not any(k in n for k in _CHAMPS_MARCHE):
-                    # Trop haut : c'est un événement ou un conteneur, pas un
-                    # marché. On descend chercher l'offre plutôt que de retenir
-                    # un `eventId` que personne ne peut mapper.
-                    piles.extend(v for v in n.values() if isinstance(v, (dict, list)))
+                if _descendant_matche(n):
+                    # Un nœud plus profond dit la même chose : c'est lui le
+                    # marché, pas ce conteneur. On descend.
+                    piles.extend((v, ancetres + (n,)) for v in n.values()
+                                 if isinstance(v, (dict, list)))
                     continue
-                # Sinon on s'arrête ici sans descendre : chez Kambi le libellé
-                # vit dans `criterion`, imbriqué dans l'offre, et compter les
-                # deux doublerait chaque marché.
+                if bruts is not None and len(bruts) < 5:
+                    bruts.append(n)
                 emp = f"{_declencheur(n)!r}   {_empreinte(n)}"
                 candidats[emp] += 1
-                # L'identifiant est-il de ceux qu'on mappe déjà ?
-                for k in ("typeId", "betId", "marketTypeId"):
-                    if n.get(k) in mappes:
-                        contamines[f"{k}={n[k]!r} → {mappes[n[k]].value}   {emp}"] += 1
-                bot = n.get("betOfferType")
-                if isinstance(bot, dict) and bot.get("id") in mappes:
-                    contamines[f"betOfferType.id={bot['id']!r} → "
-                               f"{mappes[bot['id']].value}   {emp}"] += 1
+                # L'identifiant mappé est-il sur ce nœud, ou sur l'un de ses
+                # ancêtres ? Les deux comptent : c'est la même offre.
+                for noeud in (n,) + ancetres:
+                    for k in ("typeId", "betId", "marketTypeId"):
+                        if noeud.get(k) in mappes:
+                            contamines[f"{k}={noeud[k]!r} → "
+                                       f"{mappes[noeud[k]].value}   {emp}"] += 1
+                    bot = noeud.get("betOfferType")
+                    if isinstance(bot, dict) and bot.get("id") in mappes:
+                        contamines[f"betOfferType.id={bot['id']!r} → "
+                                   f"{mappes[bot['id']].value}   {emp}"] += 1
                 continue
-            piles.extend(v for v in n.values() if isinstance(v, (dict, list)))
+            piles.extend((v, ancetres + (n,)) for v in n.values()
+                         if isinstance(v, (dict, list)))
         elif isinstance(n, list):
-            piles.extend(x for x in n if isinstance(x, (dict, list)))
+            piles.extend((x, ancetres) for x in n if isinstance(x, (dict, list)))
     return candidats, contamines
 
 
-def _rapport(nom: str, payload, mappes: dict) -> None:
-    candidats, contamines = _explorer(payload, mappes)
+def _rapport(nom: str, payload, mappes: dict, brut: bool = False) -> None:
+    bruts: list = []
+    candidats, contamines = _explorer(payload, mappes, bruts)
     print(f"\n--- {nom} ---")
     if not candidats:
         print("  Aucun libellé de mi-temps dans le payload.")
         print("  → Soit ce book n'en propose pas, soit l'endpoint interrogé n'en")
         print("    remonte pas (une vue « principale » n'expose souvent que les")
         print("    marchés phares). Ne pas conclure à une absence sans vérifier.")
+        # Montrer ce QU'IL Y A : deux règles d'arrêt successives ont déjà
+        # produit un faux « rien trouvé » sur ce book. Un aperçu des marchés
+        # réellement présents dit tout de suite si le payload en contient.
+        noms = _apercu_marches(payload)
+        if noms:
+            print(f"\n  Pour contrôle, {len(noms)} libellés de marché lus dans ce")
+            print("  payload — si aucun n'évoque une mi-temps, l'endpoint n'en")
+            print("  expose pas :")
+            for t, k in noms.most_common(15):
+                print(f"    ×{k:<5d} {t!r}")
+        else:
+            print("\n  ⚠️ Et AUCUN libellé de marché lu du tout : la sonde ne")
+            print("     comprend pas la forme de ce payload. Relancer avec --brut.")
+        if brut:
+            _montrer_brut(payload)
         return
     print(f"  {len(candidats)} marché(s) de mi-temps distincts repérés :")
     for emp, n in candidats.most_common(12):
@@ -171,31 +219,71 @@ def _rapport(nom: str, payload, mappes: dict) -> None:
         print("  et peuvent être mappés proprement sur h2h_h1 / totals_h1.")
 
 
-def unibet() -> None:
+def _apercu_marches(payload) -> Counter:
+    """Les libellés qui ressemblent à des noms de marché, mi-temps ou non.
+
+    Sert de témoin : « aucune mi-temps » ne vaut que si la sonde a bien lu des
+    marchés par ailleurs.
+    """
+    noms: Counter = Counter()
+    piles = [payload]
+    while piles:
+        n = piles.pop()
+        if isinstance(n, dict):
+            for cle in ("label", "name", "englishLabel", "alternativeDescription"):
+                v = n.get(cle)
+                if isinstance(v, str) and v.strip():
+                    noms[v.strip()] += 1
+            piles.extend(v for v in n.values() if isinstance(v, (dict, list)))
+        elif isinstance(n, list):
+            piles.extend(x for x in n if isinstance(x, (dict, list)))
+    return noms
+
+
+def _montrer_brut(payload) -> None:
+    """Un échantillon de la structure, pour quand la sonde ne comprend rien."""
+    import json
+    print("\n  --brut : premiers nœuds du payload\n")
+    piles = [(payload, 0)]
+    vus = 0
+    while piles and vus < 3:
+        n, prof = piles.pop()
+        if isinstance(n, dict) and prof >= 2:
+            extrait = json.dumps(n, ensure_ascii=False)[:600]
+            print(f"    {extrait}…\n")
+            vus += 1
+            continue
+        if isinstance(n, dict):
+            piles.extend((v, prof + 1) for v in n.values() if isinstance(v, (dict, list)))
+        elif isinstance(n, list):
+            piles.extend((x, prof + 1) for x in n if isinstance(x, (dict, list)))
+
+
+def unibet(brut: bool = False) -> None:
     from src.scrapers.unibet import UnibetScraper, _MARKET_BY_TYPE_ID
     sc = UnibetScraper()
     try:
         _rapport("Unibet (Kambi — vaut aussi pour 711, Bingoal, Scooore)",
-                 sc.fetch_listview("soccer"), _MARKET_BY_TYPE_ID)
+                 sc.fetch_listview("soccer"), _MARKET_BY_TYPE_ID, brut=brut)
     finally:
         getattr(sc, "close", lambda: None)()
 
 
-def goldenpalace() -> None:
+def goldenpalace(brut: bool = False) -> None:
     from src.scrapers.goldenpalace import GoldenPalaceScraper, _MARKET_BY_TYPE_ID
     sc = GoldenPalaceScraper()
     try:
         _rapport("GoldenPalace (Altenar)", sc.fetch_events("soccer"),
-                 _MARKET_BY_TYPE_ID)
+                 _MARKET_BY_TYPE_ID, brut=brut)
     finally:
         getattr(sc, "close", lambda: None)()
 
 
-def ladbrokes() -> None:
+def ladbrokes(brut: bool = False) -> None:
     from src.scrapers.ladbrokes import LadbrokesScraper, _MARKET_BY_BET_ID
     sc = LadbrokesScraper()
     try:
-        _rapport("Ladbrokes", sc.fetch_prematch_next(), _MARKET_BY_BET_ID)
+        _rapport("Ladbrokes", sc.fetch_prematch_next(), _MARKET_BY_BET_ID, brut=brut)
     finally:
         getattr(sc, "close", lambda: None)()
 
@@ -207,6 +295,10 @@ def main() -> None:
     ap = argparse.ArgumentParser(description=__doc__,
                                  formatter_class=argparse.RawDescriptionHelpFormatter)
     ap.add_argument("--book", default="", help=f"Un seul book parmi {', '.join(_BOOKS)}.")
+    ap.add_argument("--brut", action="store_true",
+                    help="Affiche un échantillon brut du payload quand rien "
+                         "n'est trouvé — pour voir la forme réelle plutôt que "
+                         "de conclure à une absence.")
     args = ap.parse_args()
 
     choisis = {args.book: _BOOKS[args.book]} if args.book in _BOOKS else _BOOKS
@@ -217,7 +309,7 @@ def main() -> None:
     print("Appels RÉELS aux books — AUCUN mappage effectué, aucun code modifié.")
     for nom, f in choisis.items():
         try:
-            f()
+            f(brut=args.brut)
         except Exception as e:
             print(f"\n--- {nom} : échec ({type(e).__name__}: {e})")
             print("    Un book injoignable ne prouve rien sur ses marchés.")

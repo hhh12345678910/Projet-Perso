@@ -114,3 +114,44 @@ def test_un_conteneur_sans_identifiant_de_marche_ne_masque_pas_ses_enfants():
     candidats, _ = _explorer(payload, {})
     assert len(candidats) == 1
     assert "555" in next(iter(candidats))
+
+
+def test_rien_trouve_affiche_les_marches_reellement_lus(capsys):
+    """Deux règles d'arrêt successives ont produit un faux « rien trouvé » sur
+    Unibet — d'abord des `eventId` inexploitables, puis le vide.
+
+    Quand la sonde ne trouve pas de mi-temps, elle doit montrer les marchés
+    qu'elle a bien lus : c'est ce qui distingue « ce book n'en propose pas » de
+    « la sonde ne comprend pas ce payload ».
+    """
+    from scripts.discover_half_time_api import _rapport
+
+    _rapport("Test", {"events": [{"betOffers": [
+        {"criterion": {"label": "Résultat du match"}},
+        {"criterion": {"label": "Nombre de buts"}}]}]}, {})
+    out = capsys.readouterr().out
+    assert "Aucun libellé de mi-temps" in out
+    assert "Résultat du match" in out, "le témoin doit lister ce qui a été lu"
+    assert "l'endpoint n'en" in out
+
+
+def test_rien_lu_du_tout_est_distingue_de_rien_trouve(capsys):
+    """Le cas dangereux : la sonde ne comprend pas la forme du payload. Elle
+    doit le dire, pas laisser croire à une absence de marchés."""
+    from scripts.discover_half_time_api import _rapport
+
+    _rapport("Test", {"donnees": [{"x": 1}, {"y": 2}]}, {})
+    out = capsys.readouterr().out
+    assert "AUCUN libellé de marché lu du tout" in out
+    assert "--brut" in out
+
+
+def test_le_match_le_plus_profond_garde_l_identifiant_de_l_ancetre():
+    """La contamination se juge sur l'offre, le libellé vit sur le criterion :
+    les deux doivent être rapprochés."""
+    payload = {"events": [{"betOffers": [
+        {"betOfferType": {"id": 6},
+         "criterion": {"id": 11928, "label": "Nombre de buts - 1ère mi-temps"}}]}]}
+    candidats, contamines = _explorer(payload, {6: MarketType.TOTALS})
+    assert "11928" in next(iter(candidats)), "le libellé vient du criterion"
+    assert contamines, "et l'identifiant mappé vient de l'offre parente"
