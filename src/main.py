@@ -4547,15 +4547,26 @@ def results_update(
             for lg, r, t in rates[:15]:
                 t2.add_row(lg, str(r), str(t), str(t - r))
             console.print(t2)
-            # Une ligue entièrement ratée est le signal qui compte : c'est un
-            # trou de CATALOGUE, pas un appariement qui a glissé.
+            # ⚠️ Une ligue à zéro ne dit PAS que la source ignore cette
+            # compétition. La première version de ce message l'affirmait, et
+            # c'était faux : le 21/08, six matchs féminins étaient donnés
+            # « trou de catalogue » alors que la source les servait — c'est la
+            # barrière de classe du matcher qui les rejetait, la classe vivant
+            # dans le nom de LIGUE chez eux et d'ÉQUIPE chez nous (§21.16).
+            # Deux causes, un zéro. Le tableau les signale, il ne les tranche
+            # pas — et l'inventaire du fichier, lui, les sépare.
             muettes = [lg for lg, r, t in rates if r == 0]
             if muettes:
                 console.print(
                     f"[yellow]⚠️ {len(muettes)} ligue(s) où la source ne résout "
-                    f"RIEN[/yellow] — trou de catalogue, pas d'appariement :\n"
-                    f"   {', '.join(muettes[:8])}"
-                    + (" …" if len(muettes) > 8 else ""))
+                    f"RIEN[/yellow] :\n   {', '.join(muettes[:8])}"
+                    + (" …" if len(muettes) > 8 else "")
+                    + "\n   [dim]Deux causes possibles, et un zéro ne les "
+                      "sépare pas : la source n'a pas cette\n   compétition, "
+                      "OU elle l'a et les noms ne s'apparient pas (convention "
+                      "différente).\n   Vérifie dans le fichier avant de "
+                      "conclure :\n   [/dim][cyan]grep -o '\"name\":\"[^\"]*\"' "
+                      "data/scores/soccer/<jour>.json | sort -u[/cyan]")
             console.print(
                 "[dim]Manque RÉPARTI sur beaucoup de ligues → le P&L restera "
                 "représentatif.\nManque CONCENTRÉ sur quelques compétitions → "

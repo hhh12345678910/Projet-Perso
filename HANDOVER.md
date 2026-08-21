@@ -4827,18 +4827,60 @@ appariement de noms qui glisse. Deux causes, deux remèdes, et elles étaient
 indiscernables. Deux tests, dont un qui vérifie l'absence de faux positif
 quand tout est couvert.
 
-**Ce qui reste à faire, dans l'ordre** : relancer
-`results-update --dry-run --day <un dimanche> --sport soccer` et **lire le
-tableau par ligue**, pas seulement le pourcentage. Si le manque est réparti,
-API-Football suffit et il ne reste qu'à payer la fenêtre de dates. S'il est
-concentré sur les amicaux et les troisièmes divisions — 8,4 % et 10,6 % du
-flux — le P&L serait biaisé et la voie 3 reprend le dessus.
+**11. 🔴 LE VRAI DÉFAUT : tout le football féminin était inappariable.** Le
+tableau par ligue, dès son premier tour, a montré ceci sur le 20/08 :
+
+| Notre ligue | Résolus | Ce que le fichier contenait |
+|---|---|---|
+| AFC - Champions League Women | **0/2** | `World - AFC Women's Champions League`, **12 matchs** |
+| Colombia - Liga Women | **0/3** | `Colombia - Liga Femenina`, **4 matchs** |
+| USA - National Womens Soccer League | **0/1** | `USA - NWSL Women`, **1 match** |
+
+**La source AVAIT ces matchs.** La cause est la barrière de classe du matcher,
+qui est juste et doit rester : `team_similarity` renvoie `0.0` dès que la
+classe diffère, sinon un « Portland Thorns » masculin noterait les paris pris
+sur le féminin. Mais elle lit la classe dans le NOM D'ÉQUIPE, et les deux
+sources ne la mettent pas au même endroit :
+
+| | ligue | équipe |
+|---|---|---|
+| Pinnacle | `Colombia - Liga Women` | `Deportivo Cali (W)` |
+| API-Football | `Colombia - Liga Femenina` | `Deportivo Cali` |
+
+Chez eux l'équipe est un nom de club NU → classée `main` ; la nôtre est
+`xwomen` → similarité 0, **aucun match féminin appariable, en silence**. Le
+féminin pèse **6,1 % du flux sur 55 ligues**, et les jeunes ont le même défaut
+(`Ukraine - U19 League` était dans le fichier).
+
+Corrigé dans `parse_apifootball_results` : `class_marker_from_league` reporte
+le marqueur de la ligue sur les équipes, avec pliage des accents (« Division 1
+Féminine »). **Dans le parseur et pas dans le matcher, délibérément** : c'est
+une convention de SOURCE, et le matcher ne doit rien savoir d'API-Sports. Huit
+tests, dont deux qui gardent la barrière fermée dans l'autre sens — un
+masculin ne doit toujours JAMAIS matcher un féminin.
+
+⚠️ **Et mon propre message de diagnostic était faux.** Il annonçait « trou de
+catalogue, pas d'appariement » sur une ligue à zéro. C'est précisément
+l'inverse ici. Corrigé : le tableau signale, il ne tranche plus, et donne la
+commande qui sépare les deux causes. **Une sonde qui conclut trop vite est pire
+qu'une sonde muette** — elle envoie construire un pont dont on n'a pas besoin.
+
+**Ce qui reste à faire, dans l'ordre** :
+1. `results-update --dry-run --day 2026-08-20 --sport soccer` pour mesurer ce
+   que le correctif féminin récupère (attendu : 68 % → ~74 %, six matchs).
+2. Refaire sur un DIMANCHE, quand les troisièmes divisions et les amicaux
+   jouent. n=95 un jeudi, c'est ±9 points.
+3. **Lire le tableau par ligue, pas le pourcentage.** Manque réparti →
+   API-Football suffit, il ne reste qu'à payer la fenêtre de dates. Manque
+   concentré → le P&L serait biaisé et la voie 3 reprend le dessus.
+4. Pour chaque ligue à zéro qui reste, vérifier dans le fichier avant de
+   conclure — le féminin a montré que le zéro ment.
 
 ### 21.9 État des lieux et à faire — remplace §20.15
 
 | | |
 |---|---|
-| Tests | **809 passés**, 4 ignorés — `pytest tests/`, jamais `pytest` seul (§4) |
+| Tests | **817 passés**, 4 ignorés — `pytest tests/`, jamais `pytest` seul (§4) |
 | `results` | 3 091 lignes (tennis) |
 | Books actifs en ALERTE | unibet, golden_palace, ladbrokes, circus |
 | Books muets (donnée seule) | betano, betfirst, napoleon, starcasino, **magicbetting** — **48 %** (§21.8) |

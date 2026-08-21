@@ -177,6 +177,10 @@ def test_une_ligue_entierement_ratee_est_nommee(monkeypatch, tmp_path, jours):
     assert "Club Friendlies" in r.output
     # La Liga est intégralement couverte : elle ne doit pas être signalée.
     assert "La Liga" not in r.output.split("ne résout RIEN")[1]
+    # ⚠️ Et le message ne doit RIEN conclure : un zéro peut être un trou de
+    # catalogue OU une convention de noms. La première version affirmait
+    # « trou de catalogue » et se trompait sur le football féminin (§21.16).
+    assert "Deux causes possibles" in r.output
 
 
 def test_une_couverture_complete_ne_signale_rien(monkeypatch, tmp_path, jours):

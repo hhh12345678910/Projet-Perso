@@ -18,12 +18,15 @@ résultat, et c'est le mode de défaillance dominant du projet (§13.12).
 from __future__ import annotations
 
 import os
+import re
+import unicodedata
 from datetime import date, datetime, timezone
 from typing import Any
 
 import httpx
 from tenacity import retry, retry_if_exception, stop_after_attempt, wait_exponential
 
+from .matcher import normalize_team, team_class
 from .scores import MatchResult, winner_from_scores
 
 # --------------------------------------------------------------- commun ----
@@ -94,9 +97,73 @@ API_FOOTBALL_BASE = "https://v3.football.api-sports.io"
 _FOOTBALL_PLAYED_TO_COMPLETION = {"FT"}
 
 
+# Les mots qui, dans un nom de LIGUE, disent la classe des équipes qui y
+# jouent. Volontairement la même famille que `_CLASS_RULES` du matcher, plus
+# les formes propres aux noms de compétition (« femenina », « feminile »).
+_LEAGUE_CLASS = (
+    ("Women", re.compile(
+        r"\b(women|womens|women'?s|ladies|feminin\w*|femenin\w*|feminil\w*|"
+        r"femminil\w*|frauen|dames|damen)\b", re.IGNORECASE)),
+    ("U19", re.compile(r"\b(u1[5-9]|u2[0-3]|youth|junior\w*|jugend)\b", re.IGNORECASE)),
+)
+
+
+def class_marker_from_league(league: str) -> str:
+    """Le marqueur de classe porté par un nom de LIGUE, ou "".
+
+    ⚠️ Pourquoi ça existe, et pourquoi ça vaut 6 % du flux football.
+
+    Le matcher refuse — à raison — d'apparier une équipe féminine avec la
+    section masculine du même club : `team_similarity` renvoie 0.0 dès que la
+    classe diffère, sinon un « Portland Thorns » masculin noterait les paris
+    pris sur le féminin. Mais la classe se lit dans le NOM D'ÉQUIPE, et les
+    deux sources ne la mettent pas au même endroit :
+
+    | | ligue | équipe |
+    |---|---|---|
+    | Pinnacle      | `Colombia - Liga Women`  | `Deportivo Cali (W)` |
+    | API-Football  | `Colombia - Liga Femenina` | `Deportivo Cali`   |
+
+    Côté API-Football l'équipe est un nom de club NU : elle est donc classée
+    « main », la nôtre « xwomen », et la barrière les sépare. **Aucun match
+    féminin n'était appariable**, en silence — mesuré le 21/08 sur le 20/08 :
+    AFC Champions League Women 0/2, Colombia Liga Women 0/3, NWSL 0/1, alors
+    que la source servait bien 12, 4 et 1 matchs de ces compétitions.
+
+    On remet donc le marqueur là où le matcher le cherche. Le faire ICI plutôt
+    que dans le matcher est délibéré : c'est une CONVENTION DE SOURCE, et le
+    §score_sources dit que tout ce qui est propre à un fournisseur reste
+    derrière cette frontière. Le matcher, lui, ne doit rien savoir d'API-Sports.
+    """
+    # Accents pliés d'abord : « Division 1 Féminine » et « Copa Femenina » se
+    # côtoient dans le même catalogue, et `\bfeminin` ne voit pas le « é ».
+    # C'est la même normalisation que `normalize_team`, pour la même raison.
+    plat = unicodedata.normalize("NFKD", league or "").encode(
+        "ascii", "ignore").decode("ascii")
+    for marker, pat in _LEAGUE_CLASS:
+        if pat.search(plat):
+            return marker
+    return ""
+
+
+def _with_class(team: str, marker: str) -> str:
+    """Ajouter le marqueur, sauf s'il y est déjà.
+
+    Le doubler serait sans effet aujourd'hui — `_extract_class` retire TOUS les
+    marqueurs trouvés — mais un nom propre reste plus lisible dans les
+    journaux et les exports.
+    """
+    if not marker or not team:
+        return team
+    if team_class(normalize_team(team)) != "main":
+        return team
+    return f"{team} {marker}"
+
+
 def parse_apifootball_results(payload: dict) -> tuple[list[MatchResult], dict[str, int]]:
     """`/fixtures?date=` d'API-Football -> résultats notables."""
-    counters = {"retenus": 0, "non_termine": 0, "score_manquant": 0}
+    counters = {"retenus": 0, "non_termine": 0, "score_manquant": 0,
+                "classe_reportee": 0}
     out: list[MatchResult] = []
 
     for f in payload.get("response") or []:
@@ -110,6 +177,16 @@ def parse_apifootball_results(payload: dict) -> tuple[list[MatchResult], dict[st
         teams = f.get("teams") or {}
         home = ((teams.get("home") or {}).get("name") or "").strip()
         away = ((teams.get("away") or {}).get("name") or "").strip()
+        # La classe vit dans le nom de LIGUE chez cette source, dans le nom
+        # d'ÉQUIPE chez nous. Sans ce report, la barrière de classe du matcher
+        # rend tout le football féminin inappariable — voir
+        # `class_marker_from_league`.
+        marker = class_marker_from_league(((f.get("league") or {}).get("name") or ""))
+        if marker:
+            avant = (home, away)
+            home, away = _with_class(home, marker), _with_class(away, marker)
+            if (home, away) != avant:
+                counters["classe_reportee"] += 1
         ft = (f.get("score") or {}).get("fulltime") or {}
         hs, as_ = ft.get("home"), ft.get("away")
 
