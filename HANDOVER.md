@@ -1,7 +1,20 @@
 # Valuebet — état du projet
 
 Document de reprise. À lire en premier pour reprendre le travail sans
-redécouvrir le contexte. Dernière mise à jour : 20/08/2026.
+redécouvrir le contexte. Dernière mise à jour : 21/08/2026.
+
+**Nouveau (21/08) — session « ValueDylan » :**
+- §21.15 : **deux pannes de production** trouvées au passage, non corrigées —
+  Betano live en 403 (cookie expiré) et un libellé néerlandais non traduit chez
+  MagicBetting.
+- §21.14 : mi-temps **complètes côté Circus** (4 codes, ~93 700 cotes) après
+  correction du nul « Egalité », qui coûtait 66 % du marché. **Unibet abandonné**
+  sur mesure. **Zéro détection, et c'est correct** : EV médiane −8,5 %.
+- §21.13 : **les handicaps ne sont pas bloqués par les softs mais par notre
+  devig** — les deux côtés d'un même handicap tombent dans deux groupes
+  séparés. Chantier non lancé.
+- §21.9 pt 1 : le compte API-Football est **réellement suspendu** (tableau de
+  bord), pas seulement refusé par IP. Le pont ne peut rien.
 
 **Nouveau (20/08) :** §21.14 — les mi-temps sont EN SERVICE et MUETTES
 (collectées, deviguées, suivies en CLV, zéro alerte). §21.13 — on jette 35,5 % du payload Pinnacle (les
@@ -364,6 +377,58 @@ bouton « Jouer » devient erratique.
 clôture n'existe que dans notre propre capture (Pinnacle retire les marchés
 prématch au coup d'envoi) — une fois les lignes purgées, le CLV de ces paris
 est **définitivement perdu**.
+
+
+### 4.1 Les sondes de `scripts/` — aucune n'était documentée ici
+
+19 sondes existent, **aucune n'apparaissait dans ce document** : elles se
+redécouvraient par `ls`, ou pas du tout. Toutes se lancent en
+`.venv/bin/python -m scripts.<nom>` et acceptent `--help`. Aucune ne modifie
+quoi que ce soit, sauf mention contraire.
+
+**Mesurer la CLV et l'edge**
+
+| sonde | ce qu'elle répond |
+|---|---|
+| `clv_split` | CLV découpée par book/sport/marché/ligue, jouable vs muet |
+| `clv_independence` | la CLV mesure-t-elle autre chose que l'EV ? (§20.4, R² = 0,257) |
+| `pnl_detections` | P&L sur TOUTES les détections, pas seulement les paris cliqués |
+| `under_threshold` | quel seuil d'EV appliquer, mesuré par tranche (§21.12) |
+| `crossclose` | rejuger les paris Smarkets contre la clôture de Pinnacle |
+
+**Comprendre un marché qui ne produit rien**
+
+| sonde | ce qu'elle répond |
+|---|---|
+| `market_supply` | **où s'arrête** un marché stérile, étape par étape — l'outil à sortir en premier quand une détection manque |
+| `market_expansion` | ce que les filtres écartent chez Pinnacle, par période et par type |
+| `ev_outliers` | une EV énorme est-elle un cadeau du book ou une référence fausse ? |
+| `check_half_time` | flux, échelles et CLV des mi-temps (§21.14) |
+| `check_tennis_totals` | le correctif des totaux de jeux est-il en service ? (§21.1-21.5) |
+
+**Relever des codes de marché sans deviner**
+
+| sonde | ce qu'elle répond |
+|---|---|
+| `discover_half_time` | codes de mi-temps dans les dumps sur disque, **avec leur libellé** |
+| `discover_half_time --detail <code>` | les NOMS D'ISSUES d'un marché — pourquoi un marché mappé rend peu |
+| `discover_half_time_api` | idem pour les books en API directe (appels réels) |
+| `handicap_conventions` | convention de ligne des handicaps, book par book (§21.13) |
+
+**Santé et exploitation**
+
+| sonde | ce qu'elle répond |
+|---|---|
+| `book_health` | un book est-il traité comme les autres, ou seulement collecté ? |
+| `cycle_speed` | vitesse des cycles, lue dans `valuebet.log` |
+| `repair_events` | recrée les lignes `events` des paris orphelins (**écrit en base**) |
+| `magic_probe_report` / `magic_probe_show` | inventaire et forme des sondes MagicBetting |
+
+⚠️ **`market_supply` mérite d'être connue par cœur.** C'est elle qui a montré
+que zéro détection sur les mi-temps était le comportement JUSTE et non une
+panne — elle sépare « pas de ligne juste en face », « book incomplet sur cette
+ligne » et « EV qui n'atteint pas le seuil », trois causes qui donnent le même
+symptôme : rien.
 
 ---
 
@@ -3598,7 +3663,7 @@ pas 100 par jour comme sa grille le laisse croire. Basic est indispensable.
    19/08 : ils n'étaient pas collectés du tout. Voir §21.
 7. **Résorber le retard de purge** avant de passer `PRUNE_DAYS` à 7 : allonger
    la rétention pendant le rattrapage l'aggraverait.
-9. Reliquats : découpage en runs du `pinnacle_doctor`, noms de books dédoublés
+11. Reliquats : découpage en runs du `pinnacle_doctor`, noms de books dédoublés
    dans `paris_track.csv` (§14.10), dérive de cycles inexpliquée (§19.9 pt 4),
    `line_speed` à repenser (§18.5).
 
@@ -4420,16 +4485,63 @@ clôturés.** Le silence se lève dans `alerter.py`, à l'endroit marqué.
 annonçait +55 % de marchés *chez Pinnacle* ; ce plafond ne se réalisera qu'à
 mesure que les softs seront ajoutés sur capture.
 
+### 21.15 Deux pannes de production, vues au passage le 21/08
+
+Repérées dans la sortie d'une collecte, **aucune n'est corrigée**. Ni l'une ni
+l'autre n'a de rapport avec les chantiers de la session — elles se sont
+signalées seules, ce qui est exactement ce qu'on attend des avertissements
+ajoutés ces derniers jours.
+
+**1. Betano live est en 403 — cookie expiré.**
+
+```
+Betano live skipped: 403 from Betano — your cookie likely expired.
+Re-capture cf_clearance + datadome from your browser.
+```
+
+Le **prématch** continue de remonter (6 541 cotes au relevé), c'est donc une
+perte partielle : seules les cotes en direct manquent. À rapprocher de l'autre
+constat du 21/08 — `data/prematch/soccer.json` datait du **19/08 09:36** pour
+un relevé du 21/08 15:40, et Betano ne remontait alors plus RIEN. Le pont a été
+rallumé depuis. **Ces deux pannes sont distinctes** : le dump périmé venait du
+pont navigateur arrêté, le 403 vient des cookies anti-bot. Les confondre ferait
+rallumer un pont déjà actif.
+
+**2. MagicBetting : `Gelijkspel` non reconnu.**
+
+```
+MagicBetting : issue 'Gelijkspel' non reconnue sur un marché à 2 issues
+```
+
+C'est **le même défaut que « Egalité » chez Circus**, en néerlandais : un
+libellé d'issue qu'aucune table ne traduit, donc une cote jetée. Le
+signalement, lui, fonctionne — c'est précisément le mécanisme ajouté le 21/08
+après la panne Circus, et il a trouvé son deuxième cas en un jour.
+
+⚠️ Le message dit « marché à 2 issues », ce qui interroge : un nul sur un
+marché à deux issues n'a pas de sens. Soit le marché est un 1X2 dont une issue
+manque déjà, soit `Gelijkspel` y est mal placé. **À regarder avant de simplement
+ajouter le mot à une table** — la correction évidente masquerait peut-être un
+problème de structure. MagicBetting étant limité (§21.8), l'urgence est faible.
+
+**Ce que ces deux cas confirment.** Les libellés d'issues sont traduits par
+égalité exacte dans TOUS les scrapers, et chaque book a ses propres mots dans
+ses propres langues. C'est une classe de panne récurrente, silencieuse par
+nature, et le seul remède est le signalement systématique des libellés non
+traduits — à généraliser aux scrapers qui ne l'ont pas encore.
+
 ### 21.9 État des lieux et à faire — remplace §20.15
 
 | | |
 |---|---|
-| Tests | **710 passés**, 4 ignorés — `pytest tests/`, jamais `pytest` seul (§4) |
+| Tests | **788 passés**, 4 ignorés — `pytest tests/`, jamais `pytest` seul (§4) |
 | `results` | 3 091 lignes (tennis) |
 | Books actifs en ALERTE | unibet, golden_palace, ladbrokes, circus |
 | Books muets (donnée seule) | betano, betfirst, napoleon, starcasino, **magicbetting** — **48 %** (§21.8) |
 | Comptes joués | Unibet + ses jumeaux Kambi (711, Bingoal, Scooore) déjà exploités |
-| Détections 24 h | soccer h2h 382, tennis h2h 157, soccer totals 77, **tennis totals 10** (§21.11) |
+| Détections 24 h | soccer h2h 382, tennis h2h 157, soccer totals 77, tennis totals 10 (§21.11), **mi-temps 0** (§21.14, normal) |
+| Marchés collectés | h2h, totals — plus `h2h_h1`/`totals_h1` **muets** (§21.14). Handicaps toujours jetés (§21.13) |
+| Cycle | **34 s** + 20 s de pause = ~54 s entre deux rafraîchissements, contre ~37 s avant les mi-temps |
 | Capital | ~3 720 € (relevé du 17/08) |
 
 1. **Remplacer la source de résultats football** — le compte API-Football est
@@ -4475,12 +4587,19 @@ mesure que les softs seront ajoutés sur capture.
    la CLV de ces détections**, seule mesure qui dise si l'edge est réel —
    `.venv/bin/python -m scripts.clv_split --by sport,market --min 20`, une fois assez de
    matchs clôturés.
-3. **Capturer les codes de mi-temps des autres softs** (§21.14). Le pipeline
-   est en service et muet ; seul Betano (`OUH1`) est mappé, donc le volume
-   reste marginal. Circus, Unibet, GoldenPalace : une capture par book, et
-   **par égalité exacte, jamais par ressemblance**. C'est ce qui transforme le
-   +55 % théorique du §21.13 en détections réelles.
-   Puis : `.venv/bin/python -m scripts.check_half_time` pour décider du silence.
+3. ~~**Capturer les codes de mi-temps des autres softs**~~ — **fait le 21/08,
+   et le chantier est CLOS** (§21.14). Circus mappé (4 codes, ~93 700 cotes),
+   Betano à moitié (totaux seuls, il n'expose pas de 1X2 de mi-temps),
+   MagicBetting n'en propose pas, Unibet abandonné sur mesure. **Ce qui reste :
+   la CLV**, quand des matchs auront clôturé —
+   `.venv/bin/python -m scripts.check_half_time`. C'est elle qui décidera de
+   lever le silence ou de refermer le robinet, sachant que le coût mesuré est
+   +46 % de péremption sur TOUT le flux.
+
+   ⚠️ **N'attends pas de détections.** L'EV médiane est de −8,5 % sur les
+   totaux de mi-temps et −10,0 % sur les h2h, avec une meilleure valeur
+   observée à +0,6 %. Le gisement est réel en volume, nul en valeur aux seuils
+   actuels.
 4. **Démarrer le relevé public horodaté** (§21.10). Sa valeur est
    proportionnelle à son ancienneté : c'est le seul actif du projet qui ne se
    rattrape pas.
@@ -4495,8 +4614,24 @@ mesure que les softs seront ajoutés sur capture.
    échoué sur une config Telegram vide, la chaîne de livraison n'est pas prouvée.
 7. **Élargir le premium** (§17.4, +39 % de volume) — et cette fois avec un œil
    sur le §21.10 : élargir le premium change ce que tu vendrais.
-8. **`PRUNE_DAYS=7`** — désormais sans risque, le retard de purge est résorbé.
-9. Reliquats : découpage en runs du `pinnacle_doctor`, noms de books dédoublés
+8. **`PRUNE_DAYS=7`** — ⚠️ **cette ligne date d'AVANT les mi-temps.** Le volume
+   de cotes a augmenté d'environ 55 % côté Pinnacle depuis, et la base grossit
+   d'autant. À re-vérifier (`df -h ~ && ls -lh data/valuebet.db`) avant
+   d'allonger la rétention : le projet a déjà connu le mur des 34 Go avec un
+   `VACUUM` impossible (§19.1).
+
+9. **Les handicaps : NE PAS lancer** en l'état (§21.13). Le blocage n'est pas
+   la convention des books soft mais notre propre devig — `_group_quotes`
+   groupant sur la ligne SIGNÉE, les deux côtés d'un même handicap tombent dans
+   deux groupes d'une issue chacun, et rien n'est devigable, y compris chez
+   Pinnacle. Il faudrait une clé de groupe canonique au cœur du devig, ET
+   mapper les handicaps book par book (aucun soft n'en produit aujourd'hui) —
+   tout ça pour un gisement dont la valeur n'a jamais été mesurée. La leçon des
+   mi-temps est fraîche : 93 700 cotes, zéro détection.
+
+10. **Petites réparations** (§21.15) : cookie Betano live à recapturer,
+    `Gelijkspel` de MagicBetting à élucider.
+11. Reliquats : découpage en runs du `pinnacle_doctor`, noms de books dédoublés
    dans `paris_track.csv` (§14.10), dérive de cycles inexpliquée (§19.9 pt 4),
    `line_speed` à repenser (§18.5), handicap de jeux inexploité (§21.7).
 
