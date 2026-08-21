@@ -4341,6 +4341,25 @@ def settle_results(
         console.print("[dim]Relance `track-update` pour recalculer les P&L.[/dim]")
 
 
+def _coverage_by_league(events, bindings, league_of) -> list[tuple[str, int, int]]:
+    """Par ligue : (nom, résolus, total). Trié par nombre de MANQUES.
+
+    Sépare « la source rate un peu partout » de « la source ignore telle
+    compétition ». Le second cas biaise le P&L et ne se voit pas dans le taux
+    global — c'est le §13.12 appliqué à la couverture.
+    """
+    lies = {k for k, _ in bindings}
+    par_ligue: dict[str, list[int]] = {}
+    for e in events:
+        ligue = league_of.get(e.event_key, "?")
+        slot = par_ligue.setdefault(ligue, [0, 0])
+        slot[1] += 1
+        if e.event_key in lies:
+            slot[0] += 1
+    return sorted(((lg, r, t) for lg, (r, t) in par_ligue.items()),
+                  key=lambda x: (x[1] - x[2], -x[2]))
+
+
 @app.command(name="results-update")
 def results_update(
     days: int = typer.Option(3, "--days", help="Fenêtre de matchs à rattraper."),
@@ -4418,6 +4437,16 @@ def results_update(
         console.print("[bold]Aucun match en attente de résultat sur la fenêtre.[/bold]")
         return
 
+    # La ligue de chacun de nos événements, gardée pour le diagnostic de
+    # `--dry-run`. Un taux global ne dit pas si le manque est RÉPARTI ou
+    # CONCENTRÉ, et c'est toute la différence : à 68 %, une source dont les
+    # 32 % manquants tombent au hasard donne un P&L représentatif, alors
+    # qu'une source qui rate systématiquement les amicaux et les troisièmes
+    # divisions donne un P&L biaisé vers les grands championnats — ceux dont
+    # le §21.9 dit qu'ils ne trancheraient le §20.4 que sur un sous-ensemble
+    # non représentatif. Deux situations, un seul pourcentage.
+    league_of = {r["event_key"]: (r["league"] or "?") for r in pending}
+
     def _start_of(raw: str) -> datetime | None:
         """L'heure de nos événements, toujours rendue en UTC conscient.
 
@@ -4448,6 +4477,7 @@ def results_update(
     fenetre = f"journée {day}" if day else f"{days} j"
     table = Table(title=f"Résultats récupérés ({fenetre})"
                         + (" — DRY RUN" if dry_run else ""))
+    manques: dict[str, list[tuple[str, int, int]]] = {}
     for col in ("Sport", "À noter", "Résolus", "%", "Sans résultat", "Écartés source"):
         table.add_column(col, justify="right" if col != "Sport" else "left")
 
@@ -4482,6 +4512,8 @@ def results_update(
             continue
 
         bindings, match_counters = bind_results(events, fetched, sport=sp)
+        if dry_run:
+            manques[sp] = _coverage_by_league(events, bindings, league_of)
         if not dry_run:
             for event_key, result in bindings:
                 storage.record_result(
@@ -4504,6 +4536,30 @@ def results_update(
 
     console.print(table)
     if dry_run:
+        for sp, lignes in manques.items():
+            rates = [(lg, r, t) for lg, r, t in lignes if r < t]
+            if not rates:
+                continue
+            t2 = Table(title=f"{sp} — où la source manque ({fenetre})")
+            for col, just in (("Ligue", "left"), ("Résolus", "right"),
+                              ("Total", "right"), ("Manquants", "right")):
+                t2.add_column(col, justify=just)
+            for lg, r, t in rates[:15]:
+                t2.add_row(lg, str(r), str(t), str(t - r))
+            console.print(t2)
+            # Une ligue entièrement ratée est le signal qui compte : c'est un
+            # trou de CATALOGUE, pas un appariement qui a glissé.
+            muettes = [lg for lg, r, t in rates if r == 0]
+            if muettes:
+                console.print(
+                    f"[yellow]⚠️ {len(muettes)} ligue(s) où la source ne résout "
+                    f"RIEN[/yellow] — trou de catalogue, pas d'appariement :\n"
+                    f"   {', '.join(muettes[:8])}"
+                    + (" …" if len(muettes) > 8 else ""))
+            console.print(
+                "[dim]Manque RÉPARTI sur beaucoup de ligues → le P&L restera "
+                "représentatif.\nManque CONCENTRÉ sur quelques compétitions → "
+                "le P&L penchera vers ce que la source couvre (§21.9).[/dim]")
         console.print("[dim]Sonde seule — rien n'a été écrit.[/dim]")
     else:
         console.print(f"[green]✓[/green] {total_written} résultats enregistrés. "

@@ -128,3 +128,66 @@ def test_day_couvre_toute_la_journee_utc(monkeypatch, tmp_path, jours):
     # Le match est bien pris en compte : la source est réclamée pour ce jour.
     assert "journee_non_pontee=1" in r.output
     assert "Aucun match en attente" not in r.output
+
+
+def _fichier_pont(tmp_path, jour, matchs):
+    """Un fichier de pont à la forme d'API-Football. `matchs` = [(dom, ext)]."""
+    import json
+    d = tmp_path / "scores" / "soccer"
+    d.mkdir(parents=True, exist_ok=True)
+    (d / f"{jour.isoformat()}.json").write_text(json.dumps({"response": [
+        {"fixture": {"id": i, "date": f"{jour.isoformat()}T12:00:00+00:00",
+                     "status": {"short": "FT"}},
+         "teams": {"home": {"name": h}, "away": {"name": a}},
+         "score": {"fulltime": {"home": 1, "away": 0}}}
+        for i, (h, a) in enumerate(matchs)]}, ensure_ascii=False), encoding="utf-8")
+
+
+def _base_deux_ligues(tmp_path, jour):
+    """Deux ligues de deux matchs, aux noms d'équipe distincts."""
+    db = _db_path(tmp_path)
+    st = Storage(db)
+    quand = datetime(jour.year, jour.month, jour.day, 12, tzinfo=timezone.utc)
+    for ligue, equipes in (("Spain - La Liga", [("Alpha FC", "Beta FC"),
+                                                ("Gamma FC", "Delta FC")]),
+                           ("Club Friendlies", [("Epsilon FC", "Zeta FC"),
+                                                ("Eta FC", "Theta FC")])):
+        for h, a in equipes:
+            ek = f"{h}::{a}".lower().replace(" ", "")
+            st.upsert_event(ek, "soccer", ligue, h, a, quand)
+            st.insert_value_bet(ValueBet(
+                event_key=ek, book=Book.UNIBET_BE, market=MarketType.H2H,
+                outcome=Outcome(label="home"), odd_taken=2.0, fair_prob=0.5,
+                fair_odd=1.9, ev_pct=10.0, kelly_stake_pct=1.0, detected_at=quand))
+    return db
+
+
+def test_une_ligue_entierement_ratee_est_nommee(monkeypatch, tmp_path, jours):
+    """LE diagnostic qui manquait. Un taux global de 50 % ne dit pas si la
+    source rate un peu partout ou ignore une compétition entière — et seule la
+    seconde situation biaise le P&L (§21.9)."""
+    jour = jours["hier"]
+    db = _base_deux_ligues(tmp_path, jour)
+    # La source ne connaît que La Liga. Les amicaux sont absents du catalogue.
+    _fichier_pont(tmp_path, jour, [("Alpha FC", "Beta FC"), ("Gamma FC", "Delta FC")])
+
+    r = _run(monkeypatch, tmp_path, db, "--day", jour.isoformat())
+    assert r.exit_code == 0, r.output
+    assert "ne résout RIEN" in r.output
+    assert "Club Friendlies" in r.output
+    # La Liga est intégralement couverte : elle ne doit pas être signalée.
+    assert "La Liga" not in r.output.split("ne résout RIEN")[1]
+
+
+def test_une_couverture_complete_ne_signale_rien(monkeypatch, tmp_path, jours):
+    """Pas de faux positif : si tout est résolu, aucun tableau de manques."""
+    jour = jours["hier"]
+    db = _base_deux_ligues(tmp_path, jour)
+    _fichier_pont(tmp_path, jour, [("Alpha FC", "Beta FC"), ("Gamma FC", "Delta FC"),
+                                   ("Epsilon FC", "Zeta FC"), ("Eta FC", "Theta FC")])
+
+    r = _run(monkeypatch, tmp_path, db, "--day", jour.isoformat())
+    assert r.exit_code == 0, r.output
+    assert "100 %" in r.output
+    assert "ne résout RIEN" not in r.output
+    assert "où la source manque" not in r.output

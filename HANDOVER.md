@@ -4793,17 +4793,52 @@ il faut le lire avant de payer quoi que ce soit ou de construire un pont.
 Liga » contre « Georgia - Liga 3 ») et **ça n'a aucune importance** :
 `match_event` apparie sur les NOMS D'ÉQUIPE et l'horaire, jamais sur la ligue.
 
-**Ce qui reste à faire, dans l'ordre** : attendre que le pont ait capturé une
-journée bien remplie — un week-end plutôt qu'un jeudi — puis
-`results-update --dry-run --day <cette journée> --sport soccer`. Ce taux-là, et
-lui seul, dit si API-Football suffit. Il est gratuit. Ensuite seulement : payer
-pour la fenêtre de dates, ou construire la voie 3.
+**9. LA MESURE PROPRE : 68 % sur le 20/08.** Premier dry-run sans
+`journee_non_pontee` :
+
+| Sport | À noter | Résolus | % | Sans résultat | Écartés source |
+|---|---|---|---|---|---|
+| soccer | 95 | 65 | **68 %** | 30 | non_termine=11, score_manquant=0 |
+
+C'est le premier chiffre du projet qui mesure vraiment la couverture d'une
+source de résultats football sur notre univers.
+
+⚠️ **68 % est un PLANCHER, pas un plafond.** Les 11 `non_termine` sont des
+matchs que la source A, mais dans un état qu'on refuse (reportés, annulés, et
+les AET/PEN exclus à dessein — §score_sources). Une partie des 30 manquants est
+donc peut-être présente chez la source sans être notable. La couverture réelle
+est entre 68 % et ~79 %.
+
+⚠️ **n = 95, un jeudi.** À ±9 points près. À refaire sur un dimanche, quand les
+troisièmes divisions et les amicaux jouent — c'est là que le chiffre comptera.
+
+**10. Le taux global ne dit pas si le manque est biaisé — diagnostic ajouté.**
+À 68 %, deux situations opposées donnent le même pourcentage : un manque
+RÉPARTI (le P&L reste représentatif) ou CONCENTRÉ sur quelques compétitions
+(le P&L penche vers ce que la source couvre — précisément ce que le §21.9
+redoute pour le §20.4). `--dry-run` affiche désormais la couverture par ligue,
+triée par manques, et **nomme les ligues où la source ne résout RIEN** :
+
+    ⚠️ 3 ligue(s) où la source ne résout RIEN — trou de catalogue, pas
+       d'appariement : Club Friendlies, Finland - Kolmonen, …
+
+Une ligue à zéro est un trou de CATALOGUE ; une ligue à 8/12 est un
+appariement de noms qui glisse. Deux causes, deux remèdes, et elles étaient
+indiscernables. Deux tests, dont un qui vérifie l'absence de faux positif
+quand tout est couvert.
+
+**Ce qui reste à faire, dans l'ordre** : relancer
+`results-update --dry-run --day <un dimanche> --sport soccer` et **lire le
+tableau par ligue**, pas seulement le pourcentage. Si le manque est réparti,
+API-Football suffit et il ne reste qu'à payer la fenêtre de dates. S'il est
+concentré sur les amicaux et les troisièmes divisions — 8,4 % et 10,6 % du
+flux — le P&L serait biaisé et la voie 3 reprend le dessus.
 
 ### 21.9 État des lieux et à faire — remplace §20.15
 
 | | |
 |---|---|
-| Tests | **807 passés**, 4 ignorés — `pytest tests/`, jamais `pytest` seul (§4) |
+| Tests | **809 passés**, 4 ignorés — `pytest tests/`, jamais `pytest` seul (§4) |
 | `results` | 3 091 lignes (tennis) |
 | Books actifs en ALERTE | unibet, golden_palace, ladbrokes, circus |
 | Books muets (donnée seule) | betano, betfirst, napoleon, starcasino, **magicbetting** — **48 %** (§21.8) |
