@@ -4977,6 +4977,72 @@ maintenant qu'on sait que le coût mesuré est nul.
 4. Pour chaque ligue à zéro qui reste, vérifier dans le fichier avant de
    conclure — le féminin a montré que le zéro ment.
 
+### 21.17 CLV et P&L se contredisent sur les grosses cotes — la meilleure piste
+
+Session du 21/08, après branchement du pont. Premier `pnl_detections` de la
+session, sur 3 059 opportunités dédupliquées :
+
+| Population | n | ROI |
+|---|---|---|
+| Paris JOUÉS (`track-update`) | 169 réglés | +21,36 % (+902 € / 4 225 €) |
+| **Toutes détections** | **3 059** | **−0,33 %, −0,1 σ** |
+
+⚠️ **Le +21,36 % ne mesure rien**, et le §1 l'avait déjà établi sur un
+effectif quatre fois plus grand : sur 767 paris, +794 € attendus contre
++1 854 € observés, « environ 1 050 € des gains sont de la chance ». À 169
+paris réglés, ne rien en conclure.
+
+Le chiffre honnête est **−0,33 %, indiscernable de zéro**. La CLV du même flux
+vaut +8,77 %. **C'est le §20.4 posé frontalement.**
+
+**Le motif : les grosses cotes s'effondrent.**
+
+| tranche | n | ROI | σ | gagnés |
+|---|---|---|---|---|
+| 1,0-1,8 | 784 | +2,57 % | 1,0 | 69,9 % |
+| 1,8-2,3 | 624 | +9,22 % | 2,3 | 54,2 % |
+| 2,3-3,0 | 566 | −1,41 % | −0,3 | 37,6 % |
+| 3,0-4,0 | 449 | +8,93 % | 1,2 | 32,4 % |
+| **4,0-6,0** | **406** | **−20,34 %** | **−2,3** | 17,2 % |
+| **> 6,0** | **230** | **−16,20 %** | −1,1 | 11,7 % |
+
+C'est la TROISIÈME LECTURE du §20.4 — « un devig qui surestimerait l'outsider
+au tennis » — et elle a désormais un signal. Ce qu'un plafond de cote donnerait
+sur ces mêmes données :
+
+| plafond | volume gardé | P&L | ROI |
+|---|---|---|---|
+| aucun | 100 % | −251 € | −0,33 % |
+| **4,0** | **79,2 %** | **+2 746 €** | **+4,53 %** |
+| 3,0 | 64,5 % | +1 743 € | +3,53 % |
+| 2,3 | 46,0 % | +1 942 € | +5,52 % |
+
+🔴 **Pourquoi c'est la meilleure piste de la session, et pourquoi il ne faut
+RIEN couper encore.**
+
+Le §9 et le §17.3 ont mesuré que la cote n'est pas un critère — **mais sur la
+CLV, pas sur le P&L**. Si la CLV est flatteuse sur les grosses cotes, aucune
+analyse fondée sur elle ne pouvait voir ce motif. **C'est le premier endroit du
+projet où CLV et P&L se contredisent franchement**, et donc le premier levier
+sérieux sur le §20.4.
+
+Trois raisons de ne rien trancher tout de suite :
+1. **96 % de tennis** (2 945 / 3 059). Le football pèse 114 détections, ROI
+   +0,08 %, 0,0 σ — rien. Ce tableau ne dit rien du flux qu'on vient de
+   raccorder.
+2. **−2,3 σ sur une tranche parmi six examinées.** Retenir la plus extrême de
+   six découpes gonfle mécaniquement la significativité, et le §21.12 vient de
+   rappeler ce qu'un p ≈ 0,007 vaut : le §20.8 n'a pas survécu au doublement de
+   l'échantillon.
+3. Le plafond à 2,3 rend +5,52 % pour 46 % du volume, celui à 4,0 rend
+   +4,53 % pour 79 % : **la courbe n'est pas monotone**, ce qui est le signe
+   qu'on lit encore beaucoup de bruit.
+
+**À faire** : laisser le football s'accumuler (le pont capture seul), puis
+refaire `pnl_detections --premium` et découper par sport. Si le motif tient sur
+le football aussi, c'est un plafond de cote ; s'il est propre au tennis, c'est
+le devig du tennis qu'il faut regarder — et le §20.4 aura sa réponse.
+
 ### 21.9 État des lieux et à faire — remplace §20.15
 
 | | |
