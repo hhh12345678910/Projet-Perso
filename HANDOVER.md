@@ -4432,8 +4432,39 @@ mesure que les softs seront ajoutés sur capture.
 | Détections 24 h | soccer h2h 382, tennis h2h 157, soccer totals 77, **tennis totals 10** (§21.11) |
 | Capital | ~3 720 € (relevé du 17/08) |
 
-1. **Débloquer le compte API-Football** — demande de réactivation envoyée, en
-   attente de réponse. Reste le premier point du projet : c'est le seul moyen de
+1. **Remplacer la source de résultats football** — le compte API-Football est
+   **réellement suspendu**, constaté sur le tableau de bord le 21/08 et sans
+   réponse du fournisseur. ⚠️ Ne pas confondre avec le refus d'IP du 16/08 :
+   les deux rendent le MÊME message d'API, et seul le tableau de bord les
+   sépare. Le pont navigateur ne contourne que le refus d'IP, il est inopérant
+   contre une suspension.
+
+   Trois voies, par coût croissant :
+   - **Nouveau compte API-Sports + pont dès le départ** — parseur, appariement
+     et pont inchangés, tout le savoir mesuré conservé (filtre `FT`, exclusion
+     AET/PEN validée sur 1 215 matchs). ⚠️ Vérifier la **fenêtre de dates** du
+     palier gratuit : le backfill vise 60 jours, et c'est ce point, pas le
+     quota, qui décidera d'un plan payant. Appeler depuis le pont **dès le
+     premier jour**, sinon l'IP de datacenter risque de refaire suspendre le
+     compte.
+   - **RapidAPI (listing « API-FOOTBALL » d'API-Sports)** — `ApiFootballScores`
+     supporte déjà cette route : poser `SCORES_FOOTBALL_RAPIDAPI_KEY` suffit,
+     zéro code. Non trouvé sur leur site le 21/08, à re-chercher.
+   - **Cinquième pont navigateur vers un site de scores public** — aucune clé,
+     aucun quota, aucune limite de date, couverture illimitée. C'est
+     l'architecture que le projet maîtrise le mieux (§3, « l'actif technique le
+     plus important »). Demande un parseur neuf, mais `match_event` est
+     générique et son compteur `sans_candidat` mesure l'alignement des noms
+     avant tout engagement.
+
+   ⚠️ **La couverture est le critère qui élimine les API gratuites
+   généralistes** : les détections portent sur des centaines de ligues, et une
+   source limitée aux grands championnats ne trancherait le §20.4 que sur un
+   sous-ensemble non représentatif.
+
+   Ensuite, quelle que soit la voie : `SCORES_FOOTBALL_BRIDGE=1`,
+   `SCORES_BRIDGE_DAYS=60`, puis `results-update --days 60 --sport soccer` et
+   `track-update`. Reste le premier point du projet : c'est le seul moyen de
    trancher « la CLV mesure-t-elle vraiment l'edge ? ». Ensuite : plan payant
    (pour la fenêtre de dates, PAS le plan proxy), `SCORES_FOOTBALL_BRIDGE=1`,
    `SCORES_BRIDGE_DAYS=60`, puis `results-update --days 60 --sport soccer` et

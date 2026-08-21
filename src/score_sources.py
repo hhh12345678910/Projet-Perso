@@ -172,10 +172,17 @@ class ApiFootballScores:
     ⚠️ **API-Sports refuse les IP de datacenter et le déguise en suspension de
     compte.** Mesuré le 16/08 avec une seule et même clé : 200 depuis une IP
     résidentielle, `{"access": "Your account is suspended"}` depuis la VM ET
-    depuis un conteneur cloud. Le message est trompeur — le compte est actif,
-    c'est l'origine qui est refusée. C'est le quatrième anti-bot du projet
-    après DataDome, Gaming1 et Cloudflare, et le premier à toucher la mesure
-    plutôt que la collecte.
+    depuis un conteneur cloud. Le message était alors trompeur — le compte
+    était actif, c'est l'origine qui était refusée. C'est le quatrième anti-bot
+    du projet après DataDome, Gaming1 et Cloudflare, et le premier à toucher la
+    mesure plutôt que la collecte.
+
+    🔴 **MAIS le 21/08, le compte est RÉELLEMENT suspendu** — constaté sur le
+    tableau de bord du fournisseur, pas déduit d'un message d'API. Les deux
+    causes existent donc, elles produisent le même message, et seul le tableau
+    de bord les sépare. **Vérifier là AVANT de conclure quoi que ce soit d'une
+    réponse d'API.** Le pont navigateur ne contourne que le refus d'IP : contre
+    une suspension de compte, il ne sert à rien.
 
     D'où les deux routes. Si `SCORES_FOOTBALL_RAPIDAPI_KEY` est posée, l'appel
     passe par RapidAPI, qui relaie depuis SA propre infrastructure : API-Sports

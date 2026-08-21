@@ -21,7 +21,12 @@
  * API-Sports refuse les IP de datacenter et le déguise en « account
  * suspended ». Mesuré le 16/08 avec la MÊME clé : 200 depuis une IP
  * résidentielle, suspension depuis la VM comme depuis un conteneur cloud. Le
- * compte est actif ; c'est l'origine qui est rejetée. C'est le quatrième
+ * compte était alors actif ; c'était l'origine qui était rejetée.
+ *
+ * ⚠️ Le 21/08 le compte a été RÉELLEMENT suspendu, constaté sur le tableau de
+ * bord. Ce pont ne contourne que le refus d'IP : contre une suspension de
+ * compte il est inopérant, et le vérifier sur le tableau de bord évite de le
+ * soupçonner à tort. C'est le quatrième
  * anti-bot du projet après DataDome, Gaming1 et Cloudflare — et le premier à
  * toucher la mesure plutôt que la collecte.
  *
