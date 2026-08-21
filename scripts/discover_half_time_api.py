@@ -45,6 +45,13 @@ _CHAMPS_ID = ("id", "typeId", "betOfferType", "criterion", "betId",
               "englishLabel", "criterionId")
 
 
+#: Champs qui identifient un MARCHÉ. Un dict qui n'en porte aucun est trop
+#: haut dans l'arbre (un événement, une ligue) : on descend au lieu de le
+#: retenir. Sans cette règle la sonde s'arrête sur l'événement — un de ses
+#: champs imbriqués contenant « mi-temps » — et ne voit jamais l'offre.
+_CHAMPS_MARCHE = ("typeId", "betId", "marketTypeId", "betOfferType", "criterion")
+
+
 def _textes(d: dict) -> list[str]:
     """Les valeurs textuelles d'un dict, y compris un niveau d'imbrication.
 
@@ -58,6 +65,19 @@ def _textes(d: dict) -> list[str]:
         elif isinstance(v, dict):
             out.extend(x for x in v.values() if isinstance(x, str))
     return out
+
+
+def _declencheur(d: dict) -> str:
+    """Le texte qui a fait retenir ce dict.
+
+    C'est l'information la plus utile de toute la sonde : elle dit CE QU'EST le
+    marché. Sans elle on lit « id=11928 » sans savoir si c'est un 1X2 ou un
+    total, donc sans pouvoir mapper.
+    """
+    for t in _textes(d):
+        if _INDICES.search(t) and not _CONTRE.search(t):
+            return t
+    return "?"
 
 
 def _empreinte(d: dict) -> str:
@@ -99,11 +119,16 @@ def _explorer(payload, mappes: dict) -> tuple[Counter, Counter]:
         if isinstance(n, dict):
             textes = _textes(n)
             if any(_INDICES.search(t) and not _CONTRE.search(t) for t in textes):
-                # On s'arrête au dict le plus ENGLOBANT et on ne descend pas
-                # dedans : chez Kambi le libellé vit dans `criterion`, imbriqué
-                # dans l'offre, et compter les deux doublerait chaque marché.
-                # Les champs d'un marché appartiennent au marché.
-                emp = _empreinte(n)
+                if not any(k in n for k in _CHAMPS_MARCHE):
+                    # Trop haut : c'est un événement ou un conteneur, pas un
+                    # marché. On descend chercher l'offre plutôt que de retenir
+                    # un `eventId` que personne ne peut mapper.
+                    piles.extend(v for v in n.values() if isinstance(v, (dict, list)))
+                    continue
+                # Sinon on s'arrête ici sans descendre : chez Kambi le libellé
+                # vit dans `criterion`, imbriqué dans l'offre, et compter les
+                # deux doublerait chaque marché.
+                emp = f"{_declencheur(n)!r}   {_empreinte(n)}"
                 candidats[emp] += 1
                 # L'identifiant est-il de ceux qu'on mappe déjà ?
                 for k in ("typeId", "betId", "marketTypeId"):

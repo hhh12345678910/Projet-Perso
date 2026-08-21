@@ -74,3 +74,43 @@ def test_un_payload_muet_le_dit_sans_conclure(capsys):
     out = capsys.readouterr().out
     assert "Aucun libellé de mi-temps" in out
     assert "Ne pas conclure" in out
+
+
+def test_on_descend_jusqu_au_marche_sans_s_arreter_sur_l_evenement():
+    """Relevé le 21/08 : la sonde retenait 51 « marchés » dont la plupart
+    n'étaient que des `eventId`.
+
+    Un dict d'événement contient, quelque part dans ses champs imbriqués, le
+    mot « mi-temps » — il déclenchait donc la détection et bloquait la descente
+    vers l'offre. Un `eventId` n'est mappable par personne.
+    """
+    payload = {"events": [{
+        "event": {"eventId": 1028840142, "name": "A - B, 1ère mi-temps"},
+        "betOffers": [
+            {"betOfferType": {"id": 6}, "criterion": {"id": 11928,
+                                                      "label": "Nombre de buts - 1ère mi-temps"}},
+        ]}]}
+    candidats, _ = _explorer(payload, {})
+    rendu = " ".join(candidats)
+    assert "11928" in rendu, "on doit atteindre l'offre"
+    assert "1028840142" not in rendu, "et pas s'arrêter sur l'événement"
+
+
+def test_le_texte_declencheur_est_affiche():
+    """« id=11928 » seul ne dit pas si c'est un 1X2 ou un total, donc ne permet
+    pas de mapper. Le libellé qui a déclenché la détection est l'information
+    utile de toute la sonde."""
+    payload = {"o": [{"betOfferType": {"id": 6},
+                      "criterion": {"id": 11928,
+                                    "label": "Nombre de buts - 1ère mi-temps"}}]}
+    candidats, _ = _explorer(payload, {})
+    assert "Nombre de buts - 1ère mi-temps" in next(iter(candidats))
+
+
+def test_un_conteneur_sans_identifiant_de_marche_ne_masque_pas_ses_enfants():
+    """Une ligue ou un bloc intermédiaire ne doit rien retenir pour lui-même."""
+    payload = {"ligue": {"nom": "Championnat - 1ère mi-temps", "markets": [
+        {"typeId": 555, "name": "1ère mi-temps - Total de buts"}]}}
+    candidats, _ = _explorer(payload, {})
+    assert len(candidats) == 1
+    assert "555" in next(iter(candidats))
