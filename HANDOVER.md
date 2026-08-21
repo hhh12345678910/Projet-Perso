@@ -312,6 +312,13 @@ ingérer des books protégés par anti-bot sans proxy résidentiel.
 
 ## 4. Commandes
 
+📄 **Un aide-mémoire complet vit désormais dans `COMMANDES.md`**, à la racine —
+donc sur la VM après un `git pull`, et lisible par `cat COMMANDES.md`. Chaque
+commande y est précédée d'une phrase qui dit ce qu'elle AFFICHE, et **toutes
+ont été exécutées avant d'y être écrites**. C'est là qu'il faut ajouter une
+commande nouvelle, pas ici : ce document-ci raconte le projet, celui-là sert à
+s'en servir.
+
 ⚠️ **Toujours `.venv/bin/python`, jamais `python`.** La VM n'a pas de binaire
 `python` — seulement `python3`, et le paquet `python-is-python3` n'est pas
 installé. `python -m …` répond « Command 'python' not found », et `python3 -m …`
