@@ -183,6 +183,13 @@ def _overlap(conn: sqlite3.Connection, hours: int) -> tuple[int, int]:
 
 
 def main(argv: list[str]) -> int:
+    # ⚠️ `--help` était pris pour la DONNÉE positionnelle — un nom de book, un
+    # chemin de base — et la sonde répondait « Aucune détection pour --help ».
+    # Le §4.1 promettait pourtant que toutes acceptent `--help`. Promesse tenue.
+    if any(a in ("-h", "--help") for a in argv[1:]):
+        print(__doc__)
+        return 0
+
     db = Path(argv[1] if len(argv) > 1 else "data/valuebet.db")
     if not db.exists():
         print(f"base introuvable : {db}", file=sys.stderr)

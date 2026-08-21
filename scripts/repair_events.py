@@ -34,6 +34,14 @@ from src.matcher import parse_event_key                  # noqa: E402
 
 
 def main() -> int:
+    # ⚠️ AVANT toute lecture d'argument : `--help` déclenchait l'analyse au
+    # lieu de l'afficher. Inoffensif ici parce que l'écriture exige `--apply`,
+    # mais c'est la seule sonde du projet qui écrit en base — une aide qui
+    # EXÉCUTE est le pire endroit où poser ce défaut (§4.1).
+    if any(a in ("-h", "--help") for a in sys.argv[1:]):
+        print(__doc__)
+        return 0
+
     apply = "--apply" in sys.argv
     db = ScanConfig().db_path
 

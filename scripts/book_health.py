@@ -28,6 +28,13 @@ WINDOW_H = int(os.getenv("BOOK_HEALTH_HOURS", "48"))
 
 
 def main() -> int:
+    # ⚠️ `--help` était pris pour la DONNÉE positionnelle — un nom de book, un
+    # chemin de base — et la sonde répondait « Aucune détection pour --help ».
+    # Le §4.1 promettait pourtant que toutes acceptent `--help`. Promesse tenue.
+    if any(a in ("-h", "--help") for a in sys.argv[1:]):
+        print(__doc__)
+        return 0
+
     book = sys.argv[1] if len(sys.argv) > 1 else None
     c = sqlite3.connect(f"file:{DB}?mode=ro", uri=True)
     cut = f"datetime('now', '-{WINDOW_H} hours')"

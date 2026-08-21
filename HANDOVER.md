@@ -415,6 +415,23 @@ redécouvraient par `ls`, ou pas du tout. Toutes se lancent en
 `.venv/bin/python -m scripts.<nom>` et acceptent `--help`. Aucune ne modifie
 quoi que ce soit, sauf mention contraire.
 
+⚠️ **Cette promesse était FAUSSE jusqu'au 21/08, pour quatre sondes sur vingt.**
+`crossclose`, `book_health` et `check_tennis_totals` lisent un argument
+POSITIONNEL et prenaient `--help` pour la donnée : `book_health --help`
+répondait « Aucune détection pour --help sur la fenêtre », un message qui
+envoie chercher un book absent au lieu d'aider. Et `repair_events --help`
+**s'exécutait** au lieu d'afficher son aide — inoffensif parce que l'écriture
+exige `--apply`, mais c'est la seule sonde qui écrit en base, donc le pire
+endroit où poser ce défaut. Corrigé, et `tests/test_sondes_help.py` lance
+les 15 sondes à arguments en sous-processus pour que la promesse reste vraie.
+
+⚠️ `cycle_speed` et `magic_probe_report` n'ont volontairement AUCUN argument :
+ils lisent `valuebet.log` et le répertoire des sondes, donc ne répondent que
+sur la VM. Ils sont hors de ce test, pas oubliés.
+
+**Une documentation qui promet une commande qui ne marche pas coûte plus
+qu'une documentation muette** : elle fait perdre le temps de la vérifier.
+
 **Mesurer la CLV et l'edge**
 
 | sonde | ce qu'elle répond |
@@ -5055,7 +5072,7 @@ le devig du tennis qu'il faut regarder — et le §20.4 aura sa réponse.
 
 | | |
 |---|---|
-| Tests | **830 passés**, 4 ignorés — `pytest tests/`, jamais `pytest` seul (§4) |
+| Tests | **845 passés**, 4 ignorés — `pytest tests/`, jamais `pytest` seul (§4) |
 | `results` | 3 091 lignes (tennis) |
 | Books actifs en ALERTE | unibet, golden_palace, ladbrokes, circus |
 | Books muets (donnée seule) | betano, betfirst, napoleon, starcasino, **magicbetting** — **48 %** (§21.8) |
