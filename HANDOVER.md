@@ -4137,30 +4137,72 @@ avant même le mappage des codes.
 des colonnes TEXT : les nouveaux types s'y écrivent sans changement. C'est un
 effet secondaire heureux du choix par types, pas une chance.
 
-**Côté softs, un seul code confirmé à ce jour : `OUH1` chez Betano.** Pour
-relever les autres sans deviner :
+**État par book au 21/08** — lu dans les tables de marché, pas de mémoire :
+
+| book | mi-temps | état |
+|---|---|---|
+| **Circus** | `h2h_h1` + `totals_h1` | ✅ 4 codes en service, ~93 700 cotes |
+| **Betano** | `totals_h1` seul | ⚠️ **aucun 1X2 de mi-temps** — confirmé sur dump frais (`OUH1` ×753, rien d'autre) |
+| MagicBetting | — | ❌ **n'en propose pas**, mesuré deux fois sur 18 identifiants |
+| Unibet + 711/Bingoal/Scooore | — | ❌ **abandonné**, coût disproportionné (ci-dessous) |
+| GoldenPalace, Ladbrokes | — | ❓ rien vu sur l'endpoint interrogé — ne prouve pas une absence |
+| StarCasino, Betfirst, Napoleon | — | ❓ **jamais sondés**, pas de table d'identifiants |
+| Betcenter | — | hors périmètre, non utilisé |
+
+Les cinq codes mappés, tous relevés sur dump réel par
+`scripts/discover_half_time.py`, **aucun déduit** :
+
+| book | code | libellé | volume |
+|---|---|---|---|
+| Circus | `half-time-totals-over-under-OverUnder` | 1ère mi-temps - Total de buts | ×603 |
+| Circus | `1HalfP1XP2` | 1ère mi-temps - Vainqueur | ×492 |
+| Circus | `1st-half-total-OverUnder` | … (Plus de/Moins de) | ×163 |
+| Circus | `1st-half-1x2` | 1ère mi-temps - Vainqueur | ×163 |
+| Betano | `OUH1` | But en première mi-temps | ×753 |
+
+⚠️ **Circus écrit chacun de ses deux marchés de DEUX façons**, comme ses
+totaux de jeux au tennis où n'en reconnaître qu'une avait coûté 64 % du volume.
+Ici la moitié la plus facile à manquer est la plus grosse.
+
+**Pour relever un book sans deviner :**
 
 ```bash
-.venv/bin/python -m scripts.discover_half_time
+.venv/bin/python -m scripts.discover_half_time              # dumps sur disque
+.venv/bin/python -m scripts.discover_half_time_api          # books en API
+.venv/bin/python -m scripts.discover_half_time --detail <BetType>   # noms d'issues
 ```
 
-Elle lit les dumps déjà sur le disque (Circus, Betano, MagicBetting), relève
-les identifiants de marché **avec leur libellé** et signale ceux qui évoquent
-une première mi-temps — en écartant les secondes mi-temps, que Pinnacle ne
-référence pas. Elle ne mappe rien : elle produit les pièces sur lesquelles
-mapper. Les books sans dump (Unibet et la famille Kambi, GoldenPalace,
-StarCasino, Ladbrokes, Napoleon, Betcenter) tirent d'une API en direct et
-demandent un relevé côté book.
+⚠️ Ces sondes testent le code **et** le libellé, et disent quand elles n'ont
+rien su lire — sans quoi un champ mal nommé donnerait « ce book n'a pas de
+mi-temps » au lieu de « je n'ai pas su lire ». Les deux se ressemblent trait
+pour trait, et la version API a produit ce faux verdict deux fois avant d'être
+corrigée.
 
-⚠️ Elle teste le code **et** le libellé, et signale quand aucun libellé n'a
-été lu — sans quoi un champ mal nommé donnerait « ce book n'a pas de mi-temps »
-au lieu de « je n'ai pas su lire ».
- Circus
-expose des `1st-half-*`, mais son `_MARKETS` exige l'**égalité exacte** et le
-fichier avertit explicitement de ne jamais ajouter de variante par ressemblance
-(`first-set-total-games-over-under` contient `total-games-over-under` en
-sous-chaîne). **Les autres books seront ajoutés sur capture réelle, jamais par
-déduction.** Betano étant muet dans `/book` (§21.8), ce flux est doublement
+**Unibet : chantier fermé le 21/08, sur mesure.** `sevenelevenbe.py`,
+`bingoal.py` et `scooore.py` importent `_MARKET_BY_TYPE_ID` d'Unibet : l'ouvrir
+aurait valu **quatre books d'un coup**, le meilleur rapport effort/couverture
+restant. Trois constats l'ont fermé :
+
+1. **Kambi identifie ses mi-temps par `criterion.id`** — `11928` = « Total
+   Goals - 1st Half », `11927` = « Half Time » — et non par `betOfferType.id`.
+   `parse_listview` ne regarde que le second : ce n'est pas une entrée à
+   ajouter dans une table, c'est un changement de la logique de mappage, à
+   répercuter sur les quatre books.
+2. **Ces deux identifiants sont des entrées de CATALOGUE**, rattachées à
+   aucune offre cotée. L'endpoint `listView` — le seul qu'utilise le scraper —
+   n'expose pas les offres de mi-temps. Les atteindre demanderait
+   `betoffer/event/{id}.json`, **un appel par événement** : 700 à 1 400
+   requêtes HTTP par cycle, là où `fetch_all_events` en fait déjà jusqu'à 100.
+3. **Le cycle est déjà saturé** : 34 s de traitement plus 20 s de pause, contre
+   ~17 s avant ce chantier.
+
+**Le facteur décisif reste la valeur.** Les mi-temps mesurées chez Circus
+donnent −8,5 % d'EV médiane sur les totaux et −10,0 % sur les h2h, pour **zéro
+détection**. Rien ne laisse penser qu'Unibet ferait mieux : on triplerait le
+coût de collecte pour du volume dont la valeur mesurée est nulle. **À rouvrir
+seulement si la CLV des mi-temps de Circus s'avère bonne.**
+
+Betano étant muet dans `/book` (§21.8), son flux de mi-temps est doublement
 silencieux — ce qui n'empêche ni la détection ni la CLV.
 
 **Ce qui garde le tout :** `tests/test_half_time.py`, 12 tests. Les deux qui
