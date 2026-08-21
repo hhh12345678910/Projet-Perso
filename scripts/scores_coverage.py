@@ -24,6 +24,11 @@ détections football ? » Si la réponse est 80 %, les API gratuites redeviennen
 candidates et le pont navigateur est du travail inutile. Si c'est 25 %, elles
 sont éliminées et le §21.9 a raison — mais alors on le SAIT.
 
+Réponse mesurée le 21/08 : **12,3 %**, sur 10 051 détections et 395 ligues.
+Il faut 152 ligues pour couvrir 80 % du volume. La première ligue du flux est
+`Club Friendlies` (8,1 %), et les amicaux sont ce qu'une API de résultats
+couvre le plus mal, faute de calendrier officiel. Voir §21.16.
+
 ⚠️ Le biais qu'il faut avoir en tête. On mesure les ligues où le système
 détecte AUJOURD'HUI, c'est-à-dire là où Pinnacle price et où un soft suit. Ce
 n'est pas l'univers des ligues possibles ; c'est exactement la population dont
@@ -40,6 +45,7 @@ from __future__ import annotations
 import argparse
 import sqlite3
 from collections import Counter
+from datetime import date, timedelta
 
 from src.config import ScanConfig
 from src.leagues import TOP5, categorize
@@ -57,8 +63,8 @@ _PALIERS = (50.0, 80.0, 90.0, 95.0, 99.0)
 _SEUIL_QUEUE = 2
 
 
-def _detections(db_path: str, *, since: str, until: str,
-                min_ev: float) -> tuple[Counter, dict[str, int]]:
+def _detections(db_path: str, *, since: str, until: str, min_ev: float,
+                ) -> tuple[Counter, dict[str, int], tuple[str, str] | None]:
     """Les détections football, comptées par ligue BRUTE.
 
     On part de `value_bets` et non de `bet_features` : la table de features
@@ -73,9 +79,21 @@ def _detections(db_path: str, *, since: str, until: str,
     Renvoie aussi des compteurs de rejet. Sans eux, « nos détections tiennent
     en peu de ligues » et « la moitié de nos détections n'a pas de ligue en
     base » donnent le même tableau rassurant.
+
+    Le troisième élément renvoyé est l'INTERVALLE DE DATES des détections sans
+    ligue, et il tranche à lui seul entre deux situations opposées. Mesuré le
+    21/08 : 12 156 détections sans ligue, soit PLUS que les 10 051 comptées —
+    mais toutes entre le 21/06 et le **01/08**, donc antérieures à la capture
+    de la ligue (§13). Trou historique, mesure valable sur le flux courant. Si
+    la borne haute avait été aujourd'hui, c'était un trou ACTIF et il fallait
+    le réparer avant de décider quoi que ce soit. Sans cette borne, les deux
+    cas affichent exactement le même avertissement — et il a fallu une requête
+    SQL à la main pour les séparer.
     """
     compteurs = {"retenues": 0, "sans_event": 0, "ligue_vide": 0}
     par_ligue: Counter = Counter()
+    vide_min: str | None = None
+    vide_max: str | None = None
 
     con = sqlite3.connect(db_path)
     con.row_factory = sqlite3.Row
@@ -83,7 +101,8 @@ def _detections(db_path: str, *, since: str, until: str,
         # LEFT JOIN et non JOIN : une détection dont la ligne `events` manque
         # doit se COMPTER comme un trou, pas disparaître du dénominateur. Le
         # §19.7 est exactement ce trou-là.
-        sql = ("SELECT e.sport AS sport, e.league AS league "
+        sql = ("SELECT e.sport AS sport, e.league AS league, "
+               "vb.detected_at AS detected_at "
                "FROM value_bets vb LEFT JOIN events e ON e.event_key = vb.event_key "
                "WHERE vb.ev_pct >= ?")
         params: list = [min_ev]
@@ -107,13 +126,21 @@ def _detections(db_path: str, *, since: str, until: str,
             ligue = (r["league"] or "").strip()
             if not ligue:
                 compteurs["ligue_vide"] += 1
+                # Les dates ISO se comparent correctement en lexicographique,
+                # donc pas de parsing : une date illisible n'a aucune raison
+                # de faire tomber une sonde de diagnostic.
+                d = (r["detected_at"] or "")[:10]
+                if d:
+                    vide_min = d if vide_min is None else min(vide_min, d)
+                    vide_max = d if vide_max is None else max(vide_max, d)
                 continue
             par_ligue[ligue] += 1
             compteurs["retenues"] += 1
     finally:
         con.close()
 
-    return par_ligue, compteurs
+    bornes = (vide_min, vide_max) if vide_min and vide_max else None
+    return par_ligue, compteurs, bornes
 
 
 def _paliers(par_ligue: Counter) -> dict[float, int]:
@@ -144,7 +171,7 @@ def main() -> None:
     ap.add_argument("--db", default=ScanConfig().db_path)
     args = ap.parse_args()
 
-    par_ligue, compteurs = _detections(
+    par_ligue, compteurs, bornes_vides = _detections(
         args.db, since=args.since, until=args.until, min_ev=args.min_ev)
     total = sum(par_ligue.values())
 
@@ -212,9 +239,25 @@ def main() -> None:
 
     if compteurs["sans_event"] or compteurs["ligue_vide"]:
         print(f"\n⚠️ Non comptées : {compteurs['sans_event']} détections sans ligne "
-              f"`events` (§19.7), {compteurs['ligue_vide']} dont la ligue est vide.\n"
-              "   Elles ne sont ni football ni autre chose — elles sont invisibles, "
-              "et\n   ce tableau les ignore. Les régler d'abord si elles pèsent.")
+              f"`events` (§19.7), {compteurs['ligue_vide']} dont la ligue est vide.")
+        if bornes_vides:
+            debut, fin = bornes_vides
+            # LA question, et elle se répond toute seule ici : un trou qui
+            # s'arrête dans le passé est de l'histoire, un trou qui touche
+            # aujourd'hui invalide la mesure. Les deux affichaient le même
+            # avertissement, et il fallait une requête SQL à la main.
+            recent = fin >= (date.today() - timedelta(days=2)).isoformat()
+            print(f"   Elles vont du {debut} au {fin}.")
+            if recent:
+                print("   🔴 Ce trou touche AUJOURD'HUI : il est ACTIF. La ligue "
+                      "cesse d'être\n      capturée quelque part, et ce tableau ne "
+                      "décrit qu'une partie du flux.\n      À réparer AVANT de "
+                      "décider d'une source.")
+            else:
+                print("   ✅ Ce trou s'arrête dans le passé : il est HISTORIQUE "
+                      "(lignes d'avant\n      la capture de la ligue, §13). Le "
+                      "tableau ci-dessus décrit bien le flux\n      courant, et la "
+                      "décision peut se prendre dessus.")
 
     print("\n⚠️ La part du top 5 est un PLAFOND. Une source « qui couvre les grands\n"
           "   championnats » ne les couvre pas forcément tous, ni toute la saison.\n"

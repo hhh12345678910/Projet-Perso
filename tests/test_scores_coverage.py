@@ -138,6 +138,55 @@ def test_concentration_par_paliers(tmp_path, capsys):
     assert "10 ligues n'apparaissent qu'une ou deux fois" in out
 
 
+def _base_ligue_vide(tmp_path, jours_avant):
+    """Des détections football dont `events.league` est vide, datées.
+
+    Les dates sont RELATIVES à aujourd'hui : figer 2026-08 ferait passer ces
+    tests du vert au rouge avec le calendrier, sans qu'aucun code ne change.
+    """
+    db = str(tmp_path / "t.db")
+    st = Storage(db)
+    detected = datetime.now(timezone.utc) - timedelta(days=jours_avant)
+    st.upsert_event("ok::a__vs__b", "soccer", "England - Premier League",
+                    "A", "B", detected + timedelta(hours=3))
+    st.insert_value_bet(ValueBet(
+        event_key="ok::a__vs__b", book=Book.UNIBET_BE, market=MarketType.H2H,
+        outcome=Outcome(label="home"), odd_taken=2.0, fair_prob=0.5,
+        fair_odd=1.9, ev_pct=10.0, kelly_stake_pct=1.0, detected_at=detected))
+    for i in range(5):
+        ek = f"vide{i}::a__vs__b"
+        st.upsert_event(ek, "soccer", "", "A", "B", detected + timedelta(hours=3))
+        st.insert_value_bet(ValueBet(
+            event_key=ek, book=Book.UNIBET_BE, market=MarketType.H2H,
+            outcome=Outcome(label="home"), odd_taken=2.0, fair_prob=0.5,
+            fair_odd=1.9, ev_pct=10.0, kelly_stake_pct=1.0,
+            detected_at=detected + timedelta(minutes=i)))
+    return db
+
+
+def test_un_trou_de_ligue_ancien_est_declare_historique(tmp_path, capsys):
+    """Le cas réel du 21/08 : 12 156 détections sans ligue, toutes arrêtées au
+    01/08 — des lignes d'avant la capture de la ligue. La mesure reste valable
+    et la sonde doit le DIRE, sinon on suspecte le tableau sans raison."""
+    out = _sortie(capsys, _base_ligue_vide(tmp_path, jours_avant=45))
+
+    assert "5 dont la ligue est vide" in out
+    assert "HISTORIQUE" in out
+    assert "ACTIF" not in out
+
+
+def test_un_trou_de_ligue_actuel_est_declare_actif(tmp_path, capsys):
+    """Le cas opposé, qui invalide la mesure : si la ligue cesse d'être
+    capturée aujourd'hui, le tableau ne décrit qu'une partie du flux. Les deux
+    cas affichaient le même avertissement, et il fallait une requête SQL à la
+    main pour les séparer."""
+    out = _sortie(capsys, _base_ligue_vide(tmp_path, jours_avant=0))
+
+    assert "5 dont la ligue est vide" in out
+    assert "ACTIF" in out
+    assert "HISTORIQUE" not in out
+
+
 def test_base_sans_football(tmp_path, capsys):
     """Rien à dire doit se dire. Un tableau vide et un tableau absent se
     ressemblent trop pour qu'on laisse le doute."""

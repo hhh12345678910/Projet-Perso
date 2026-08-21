@@ -4,10 +4,15 @@ Document de reprise. À lire en premier pour reprendre le travail sans
 redécouvrir le contexte. Dernière mise à jour : 21/08/2026.
 
 **Nouveau (21/08, seconde session) :**
-- §21.16 : **la couverture de ligues est enfin mesurable** —
-  `scripts/scores_coverage.py` (20ᵉ sonde) chiffre ce qu'une source de
-  résultats doit couvrir, sans clé ni réseau. À lancer AVANT de choisir entre
-  les trois voies du §21.9 pt 1.
+- §21.16 : 🔴 **la couverture est MESURÉE : 12,3 %.** Un catalogue limité aux
+  cinq grands championnats réglerait un huitième de tes détections football
+  (10 051 détections, **395 ligues**, 152 ligues pour 80 % du volume). La
+  première ligue du flux est `Club Friendlies` à 8,1 %. Aucune API à catalogue
+  ne suffira. Sonde : `scripts/scores_coverage.py` (20ᵉ sonde), sans clé ni
+  réseau.
+- §21.16 : ⚠️ **le pont API-Football tourne**, mais le premier dry-run (32 %)
+  ne mesure rien — `journee_non_pontee=2`, le palier gratuit ne sert que trois
+  jours. **Ne rien payer avant un dry-run à `journee_non_pontee=0`.**
 - §21.16 : 🔴 **la voie RapidAPI est morte** — listing supprimé (« API not
   found », vérifié au navigateur). Troisième échec sur cette piste ; les trois
   fichiers qui la recommandaient sont corrigés pour qu'il n'y ait pas de
@@ -4697,15 +4702,72 @@ userscript qui appelle une route mal orthographiée. Six tests d'intégration
 sudo systemctl restart betano-ingest`. Sans le redémarrage, le serveur continue
 de servir l'ancien code muet — c'est le §19.11.
 
-**Ce qui reste à faire, dans l'ordre** : lancer la sonde sur la VM, lire la
-part du top 5, et seulement ensuite choisir la voie. La mesure coûte une
-commande, le mauvais choix coûte un pont.
+**5. LA MESURE, faite le 21/08 sur la VM — la couverture n'est plus une
+intuition.** `scores_coverage --min-ev 5` sur **10 051 détections football** :
+
+| | |
+|---|---|
+| Ligues distinctes | **395** |
+| Réglées par un catalogue top 5 seul | **12,3 %** (1 240) |
+| Hors top 5 | **87,7 %**, sur 351 ligues |
+| Ligues pour couvrir 80 % du volume | **152** |
+| Ligues pour couvrir 99 % | 337 |
+
+Le §21.9 avait raison, et le chiffre est pire que « des centaines de ligues »
+ne le laissait croire. Mais le plus décisif est le PROFIL, pas le compte :
+
+| Catégorie | Part | Ligues |
+|---|---|---|
+| Coupes | 20,1 % | 66 |
+| Autre | 16,4 % | 93 |
+| top 5 | 12,3 % | 44 |
+| Europe de l'Est | 10,8 % | 42 |
+| **Amicaux** | **8,4 %** | **2** |
+| Scandinavie | 7,9 % | 26 |
+| Amérique du Sud | 7,3 % | 23 |
+| Féminin | 6,3 % | 56 |
+| D2 + D3 | 10,4 % | 43 |
+
+🔴 **La première ligue du flux est `Club Friendlies`, à 8,1 %** — et les
+amicaux sont ce qu'une API de résultats couvre le plus mal, faute de calendrier
+officiel. Derrière : Poland 3rd Liga, Finland Kolmonen, Norway 3rd Division,
+England Northern Premier League, Guatemala Primera de Ascenso, Brazil Serie C,
+Brasileiro Women. Ce sont exactement les compétitions qu'un catalogue laisse
+tomber. **Aucune API « grands championnats + quelques autres » ne suffira.**
+
+⚠️ **Le premier dry-run n'a rien mesuré, et il faut savoir pourquoi.**
+`results-update --dry-run --days 2` a rendu 32 % — mais avec
+`journee_non_pontee=2` dans les compteurs : deux journées entières manquaient,
+le palier gratuit d'API-Football ayant posé des pierres tombales sur les 17,
+18 et 19/08 (fenêtre de trois jours). Les 32 % mélangeaient donc « la source
+n'a pas ce match » et « ce jour n'a jamais été demandé ». Sur le seul jour
+réellement ponté, l'ordre de grandeur est **~64 %**. **Ne rien décider, et
+surtout ne rien payer, sur un dry-run dont `journee_non_pontee` n'est pas à
+zéro** — c'est le §13.12 sous une forme nouvelle : deux causes, un chiffre.
+
+**6. Le compteur de ligues vides a servi dès son premier tour — et a été
+amélioré.** La sonde a signalé **12 156 détections sans ligue**, soit PLUS que
+les 10 051 comptées. Vérification : elles vont du 21/06 au **01/08**, donc
+antérieures à la capture de la ligue (§13) — trou HISTORIQUE, la mesure vaut
+pour le flux courant. Mais il a fallu une requête SQL à la main pour le savoir,
+alors que « trou historique » et « trou actif » appellent des décisions
+opposées et affichaient le même avertissement. La sonde donne désormais
+l'intervalle de dates et tranche elle-même :
+
+    ✅ HISTORIQUE  → le tableau décrit le flux courant, décide dessus
+    🔴 ACTIF       → la ligue cesse d'être capturée, répare AVANT de décider
+
+**Ce qui reste à faire, dans l'ordre** : attendre que le pont ait capturé deux
+ou trois journées consécutives (il le fait seul), relancer
+`results-update --dry-run --days 2` et vérifier que `journee_non_pontee` vaut
+**zéro**. Ce taux-là, et lui seul, dit si API-Football suffit. Il est gratuit.
+Ensuite seulement : payer pour la fenêtre de dates, ou construire la voie 3.
 
 ### 21.9 État des lieux et à faire — remplace §20.15
 
 | | |
 |---|---|
-| Tests | **800 passés**, 4 ignorés — `pytest tests/`, jamais `pytest` seul (§4) |
+| Tests | **802 passés**, 4 ignorés — `pytest tests/`, jamais `pytest` seul (§4) |
 | `results` | 3 091 lignes (tennis) |
 | Books actifs en ALERTE | unibet, golden_palace, ladbrokes, circus |
 | Books muets (donnée seule) | betano, betfirst, napoleon, starcasino, **magicbetting** — **48 %** (§21.8) |
