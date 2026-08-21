@@ -4054,6 +4054,27 @@ de normalisation est du côté des softs**, book par book.
 | handicaps (période 0) | 8 876 | +43 % | élevé |
 | handicaps de mi-temps | 4 960 | — | élevé |
 
+**Les handicaps — première mesure à faire, 21/08.** Le blocage n'est pas le
+mappage : `betano.py`, `unibet.py`, `goldenpalace.py`, `ladbrokes.py` et
+`betcenter.py` **parsent déjà** les handicaps, ils sont jetés en aval
+(`_fetch_all_parallel`). Toute la question est la convention de ligne, et elle
+se mesure :
+
+```bash
+.venv/bin/python -m scripts.handicap_conventions --sport soccer
+```
+
+Elle classe chaque book en **SIGNÉE** (les deux côtés en lignes opposées,
+comme Pinnacle — alignable directement), **MIROIR** (même |ligne| des deux
+côtés, le signe se déduit de home/away) ou refusé. Un book qui MÊLE les deux
+conventions est refusé : lire son signe serait juste une fois sur deux, et
+l'erreur ne lèverait rien.
+
+⚠️ `_fetch_all_parallel` accepte désormais `keep_handicaps=True`, réservé aux
+sondes. La production continue de les jeter. Ce détour évite de refaire la
+collecte dans la sonde — une sonde qui recalcule autre chose que la production
+ment (§17.7).
+
 **La mi-temps est le bon premier chantier, et ce n'est pas le plus gros par
 hasard : c'est le moins risqué.** Un `h2h` ou un `totals` de mi-temps a
 exactement la même sémantique qu'en match plein — aucun devig nouveau, aucune

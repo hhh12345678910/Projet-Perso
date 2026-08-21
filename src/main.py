@@ -1995,6 +1995,7 @@ def _fetch_all_parallel(
     betano_file: str | None = None,
     *,
     include_file_books: bool = True,
+    keep_handicaps: bool = False,
 ) -> list[OddQuote]:
     """Fetch Pinnacle + all soft books concurrently. Returns the merged list;
     callers split by book to route the sharp reference separately."""
@@ -2092,6 +2093,12 @@ def _fetch_all_parallel(
     # Pinnacle signe chaque côté sans exception (8 876/8 876 et 324/324 en
     # lignes opposées) : la normalisation à faire est du côté des softs, pas
     # de la référence. Voir §21.13.
+    if keep_handicaps:
+        # Uniquement pour les sondes de mesure : la production n'en veut pas
+        # tant que les conventions de signe ne sont pas normalisées. Passer par
+        # ici plutôt que de refaire la collecte ailleurs — une sonde qui
+        # recalcule autre chose que la production ment (§17.7).
+        return all_quotes
     return [q for q in all_quotes if q.market != MarketType.HANDICAP]
 
 
