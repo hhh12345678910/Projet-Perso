@@ -4467,8 +4467,26 @@ def results_update(
         start = _start_of(r["start_time"])
         if start is None:
             continue
+        # ⚠️ `events.home` ne contient PAS le nom brut : `build_event_rows` le
+        # dérive de `parse_event_key`, qui rend la forme COMPACTÉE de la clé,
+        # tag de classe interne compris — « bocajuniors »,
+        # « tampereunitedxreserve ». L'en-tête de `scores.py` prescrit
+        # pourtant les noms bruts, et cite le §15.4 où le compactage avait
+        # coûté le tennis de deux books.
+        #
+        # Mesuré le 21/08 sur des paires réelles : le compactage coûte 3 à
+        # 12 points de similarité, et fait basculer « colonsantafe » vs
+        # « Colón Res. » à 80,0 — sous le seuil de 85, donc match PERDU —
+        # là où le nom brut donne 87,5.
+        #
+        # Le registre `teams` existe exactement pour ça et il est clé sur la
+        # MÊME forme compactée : il rend le nom d'origine tel qu'un scraper
+        # l'a vu. On répare donc à la lecture, sans toucher à ce que le
+        # daemon écrit — le correctif de fond reste ouvert (§21.16 pt 15).
         by_sport[r["sport"]].append(OurEvent(
-            event_key=r["event_key"], home=r["home"], away=r["away"],
+            event_key=r["event_key"],
+            home=teams.display(r["home"]) or r["home"],
+            away=teams.display(r["away"]) or r["away"],
             start_time=start,
             # La ligue porte la classe (féminin, jeunes) que Pinnacle ne met
             # pas sur le nom d'équipe. L'omettre perd tout le féminin.

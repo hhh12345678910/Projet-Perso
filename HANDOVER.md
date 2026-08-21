@@ -4940,10 +4940,32 @@ Deux conséquences, l'une latente et l'autre diffuse :
   que la Kolmonen est absente du catalogue ;
 - les noms compactés dégradent l'appariement flou partout, en silence.
 
-⚠️ Le correctif change ce que le daemon écrit pour TOUS les événements et n'a
-pas pu être vérifié en marche. `OddQuote` ne porte pas les noms bruts (seulement
-`event_key`, `league`, `book_event_key`) : il faudra les remonter du scraper ou
-passer par la table `teams`. À ouvrir tête reposée.
+Le registre `teams` répare ça À LA LECTURE, sans toucher à ce que le daemon
+écrit : il est clé sur la MÊME forme compactée et rend le nom d'origine, tag
+compris. Branché dans `results_update`.
+
+⚠️ **MAIS il ne récupère aucun match, et il ne faut pas le croire.** Mesuré sur
+douze événements réels du 20/08 : le compactage coûte 2 à 12 points, et
+**zéro** bascule sous le seuil de 85 — parce que l'appariement décide sur la
+MOYENNE des deux côtés, et qu'un nom faible est toujours rattrapé par son
+partenaire. Exemple : « platense » + « colonsantafe » contre « Platense Res. »
++ « Colón Res. » donne 90,0 compacté contre 93,8 brut. Les deux passent.
+
+C'est donc de la MARGE (90 → 100), pas une réparation. La première version de
+ce constat annonçait des matchs perdus : elle raisonnait par ÉQUIPE alors que
+l'appariement décide par ÉVÉNEMENT.
+
+⚠️ **Et le test qui le « prouvait » passait pour deux mauvaises raisons
+cumulées** : `assert "0 %" in output` est vrai quand la sortie dit « 100 % »
+(sous-chaîne), et le cache `teams._DISPLAY` est GLOBAL au processus —
+`init()` ne le vide pas, donc un test héritait des noms du précédent. Les deux
+défauts se compensaient. Corrigés : assertions sur « où la source manque »,
+qui n'est pas ambigu, et fixture `autouse` qui vide le registre.
+
+Le correctif de FOND — écrire les noms bruts dans `events` — reste ouvert.
+`OddQuote` ne les porte pas (seulement `event_key`, `league`,
+`book_event_key`) : il faudrait les remonter du scraper. Priorité faible
+maintenant qu'on sait que le coût mesuré est nul.
 
 **Ce qui reste à faire, dans l'ordre** :
 1. ~~Mesurer ce que le correctif féminin récupère~~ — fait : **76 %**.
@@ -4959,7 +4981,7 @@ passer par la table `teams`. À ouvrir tête reposée.
 
 | | |
 |---|---|
-| Tests | **824 passés**, 4 ignorés — `pytest tests/`, jamais `pytest` seul (§4) |
+| Tests | **826 passés**, 4 ignorés — `pytest tests/`, jamais `pytest` seul (§4) |
 | `results` | 3 091 lignes (tennis) |
 | Books actifs en ALERTE | unibet, golden_palace, ladbrokes, circus |
 | Books muets (donnée seule) | betano, betfirst, napoleon, starcasino, **magicbetting** — **48 %** (§21.8) |

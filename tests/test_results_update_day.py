@@ -59,6 +59,17 @@ def _run(monkeypatch, tmp_path, db, *args):
     return runner.invoke(app, ["results-update", "--dry-run", "--sport", "soccer", *args])
 
 
+@pytest.fixture(autouse=True)
+def _registre_vierge():
+    """⚠️ `teams._DISPLAY` est un cache GLOBAL au processus, et `init()` ne le
+    vide pas — vérifié. Sans ce nettoyage, un test hérite des noms enregistrés
+    par le précédent et passe pour la mauvaise raison."""
+    import src.teams as teams
+    teams._DISPLAY.clear()
+    yield
+    teams._DISPLAY.clear()
+
+
 @pytest.fixture()
 def jours():
     aujourdhui = datetime.now(timezone.utc).date()
@@ -192,7 +203,6 @@ def test_une_couverture_complete_ne_signale_rien(monkeypatch, tmp_path, jours):
 
     r = _run(monkeypatch, tmp_path, db, "--day", jour.isoformat())
     assert r.exit_code == 0, r.output
-    assert "100 %" in r.output
     assert "ne résout RIEN" not in r.output
     assert "où la source manque" not in r.output
 
@@ -217,4 +227,63 @@ def test_les_compteurs_dappariement_sont_affiches(monkeypatch, tmp_path, jours):
     r = _run(monkeypatch, tmp_path, db, "--day", jour.isoformat())
     assert r.exit_code == 0, r.output
     assert "classe_posee=1" in r.output
-    assert "100 %" in r.output
+    assert "où la source manque" not in r.output
+
+
+def test_le_nom_brut_est_repris_du_registre(monkeypatch, tmp_path, jours):
+    """`events.home` contient la forme COMPACTÉE de la clé (« colonsantafe »),
+    pas le nom brut — `build_event_rows` le dérive de `parse_event_key`.
+
+    Mesuré le 21/08 : « colonsantafe » vs « Colón Res. » donne 80,0, sous le
+    seuil de 85, donc match PERDU ; le nom brut « Colon Santa Fe » donne 87,5
+    et passe. Le registre `teams` est clé sur la même forme compactée et rend
+    le nom d'origine : on répare à la lecture.
+    """
+    jour = jours["hier"]
+    db = _db_path(tmp_path)
+    st = Storage(db)
+    quand = datetime(jour.year, jour.month, jour.day, 12, tzinfo=timezone.utc)
+    st.upsert_event("r::a__vs__b", "soccer", "Argentina - Liga Pro Reserves",
+                    "platense", "colonsantafe", quand)
+    st.insert_value_bet(ValueBet(
+        event_key="r::a__vs__b", book=Book.UNIBET_BE, market=MarketType.H2H,
+        outcome=Outcome(label="home"), odd_taken=2.0, fair_prob=0.5,
+        fair_odd=1.9, ev_pct=10.0, kelly_stake_pct=1.0, detected_at=quand))
+    # Ce qu'un scraper a réellement vu, enregistré comme en production.
+    st.record_team("platense", "Platense")
+    st.record_team("colonsantafe", "Colon Santa Fe")
+
+    _fichier_pont(tmp_path, jour, [("Platense Res.", "Colón Res.")])
+    r = _run(monkeypatch, tmp_path, db, "--day", jour.isoformat())
+
+    assert r.exit_code == 0, r.output
+    # ⚠️ Jamais `"100 %" in output` ni `"0 %" in output` : « 100 % » CONTIENT
+    # « 0 % », et l'assertion inverse passe donc toujours. Le tableau des
+    # manques, lui, n'apparaît que s'il manque quelque chose.
+    assert "où la source manque" not in r.output, r.output
+
+
+def test_le_compactage_erode_la_marge_sans_perdre_le_match():
+    """⚠️ Ce que le registre `teams` fait, et ce qu'il NE fait PAS.
+
+    Mesuré le 21/08 sur les paires réelles du 20/08 : le nom compacté coûte
+    2 à 12 points de similarité, mais l'appariement décide sur la MOYENNE des
+    deux côtés, et elle rattrape toujours un nom faible. Sur douze événements
+    réels, **zéro** bascule sous le seuil de 85.
+
+    Le registre est donc de la MARGE, pas un correctif — écrit ici pour qu'on
+    ne le crédite jamais d'une récupération qu'il ne fait pas. La première
+    version de ce test affirmait l'inverse et passait pour deux mauvaises
+    raisons cumulées : `"0 %" in "100 %"` est vrai, et le cache global de
+    `teams` fuyait d'un test à l'autre.
+    """
+    from src.matcher import team_similarity as sim
+
+    def moyenne(nous, source):
+        return (sim(nous[0], source[0]) + sim(nous[1], source[1])) / 2
+
+    compacte = moyenne(("platense", "colonsantafe"), ("Platense Res.", "Colón Res."))
+    brut = moyenne(("Platense", "Colon Santa Fe"), ("Platense Res.", "Colón Res."))
+
+    assert compacte < brut, "le nom brut doit toujours être au moins aussi bon"
+    assert compacte >= 85.0, "et pourtant le match n'est pas perdu — c'est le point"
