@@ -79,11 +79,42 @@ def test_un_seul_cote_n_est_pas_classe(capsys):
     assert "Directement alignables : aucun" in out
 
 
-def test_la_ligne_zero_n_est_pas_prise_pour_une_convention_signee(capsys):
-    """Un handicap 0 (draw no bet) donne 0 et 0 : opposés au sens arithmétique,
-    mais ça ne prouve aucune convention de signe."""
-    out = _lancer([_q(Book.BETANO_BE, "home", 0.0), _q(Book.BETANO_BE, "away", 0.0)], capsys)
-    assert "miroir" in out, "0/0 est un miroir, pas une preuve de signature"
+def test_la_ligne_zero_est_ECARTEE_et_non_classee(capsys):
+    """Un handicap 0 n'a pas de signe : c'est le même marché des deux côtés.
+
+    Le compter comme « miroir » faisait déclarer Pinnacle « deux conventions
+    mêlées » sur 941 groupes — un faux verdict de refus sur la référence même
+    du projet, relevé le 21/08.
+    """
+    quotes = [_q(Book.BETANO_BE, "home", 0.0), _q(Book.BETANO_BE, "away", 0.0)]
+    out = _lancer(quotes, capsys)
+    assert "ligne 0 écartés" in out
+    assert "betano_be 2" in out
+    assert "conventions mêlées" not in out
+
+
+def test_la_ligne_zero_ne_fait_pas_rejeter_un_book_par_ailleurs_signe(capsys):
+    """Le cas exact de Pinnacle : 6 590 groupes signés et 941 de ligne 0."""
+    quotes = [
+        _q(Book.PINNACLE, "home", -1.0, "e1"), _q(Book.PINNACLE, "away", 1.0, "e1"),
+        _q(Book.PINNACLE, "home", 0.0, "e2"), _q(Book.PINNACLE, "away", 0.0, "e2"),
+    ]
+    out = _lancer(quotes, capsys)
+    assert "signée, alignable directement" in out
+    assert "Directement alignables : pinnacle" in out
+
+
+def test_un_book_sans_handicap_est_distingue_d_un_book_absent(capsys):
+    """« Aucun handicap » et « pas de convention lisible » sont deux
+    diagnostics opposés. Relevé le 21/08 : aucun soft n'apparaissait au
+    tableau, sans qu'on sache si c'était faute de cotes ou faute de lignes."""
+    quotes = [_q(Book.PINNACLE, "home", -1.0), _q(Book.PINNACLE, "away", 1.0),
+              OddQuote(event_key="2030-01-01T20:00|a|b", book=Book.UNIBET_BE,
+                       market=MarketType.H2H, outcome=Outcome(label="home"),
+                       decimal_odd=2.0, fetched_at=datetime.now(timezone.utc),
+                       source_event_id="1")]
+    out = _lancer(quotes, capsys)
+    assert "unibet_be" in out and "son scraper n'en mappe pas" in out
 
 
 def test_aucun_handicap_le_dit_sans_conclure(capsys):

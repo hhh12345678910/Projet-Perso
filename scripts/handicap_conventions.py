@@ -47,8 +47,33 @@ def main() -> None:
 
     from src.main import _fetch_all_parallel
 
-    quotes = [q for q in _fetch_all_parallel(args.sport, keep_handicaps=True)
-              if q.market == MarketType.HANDICAP]
+    tout = _fetch_all_parallel(args.sport, keep_handicaps=True)
+    quotes = [q for q in tout if q.market == MarketType.HANDICAP]
+
+    # Qui produit des handicaps, et qui n'en produit pas ? Sans ce compte,
+    # l'absence d'un book se lit comme « pas de convention » alors qu'elle
+    # signifie « pas de cotes du tout » — deux diagnostics opposés.
+    par_book_total: Counter = Counter()
+    sans_ligne: Counter = Counter()
+    for q in tout:
+        if q.market == MarketType.HANDICAP:
+            par_book_total[q.book.value] += 1
+            if q.outcome.line is None:
+                sans_ligne[q.book.value] += 1
+    tous_books = {q.book.value for q in tout}
+
+    print("\n=== A. Qui produit des handicaps ? ===")
+    for b in sorted(tous_books):
+        n, nul = par_book_total.get(b, 0), sans_ligne.get(b, 0)
+        if n == 0:
+            print(f"  {b:<20s} AUCUN handicap — son scraper n'en mappe pas")
+        elif nul == n:
+            print(f"  {b:<20s} {n:6d} handicaps, TOUS sans ligne — inexploitables")
+        elif nul:
+            print(f"  {b:<20s} {n:6d} handicaps, dont {nul} sans ligne")
+        else:
+            print(f"  {b:<20s} {n:6d} handicaps")
+
     if not quotes:
         print("Aucun handicap collecté. Soit les books n'en rendent pas sur ce\n"
               "sport, soit la collecte a échoué — vérifier ./doctor.sh.")
@@ -57,8 +82,16 @@ def main() -> None:
     # Groupes : un même événement, un même book, un même |ligne|. C'est à ce
     # niveau que les deux côtés d'un handicap se rencontrent.
     groupes: dict[tuple, list] = defaultdict(list)
+    zero: Counter = Counter()
     for q in quotes:
         if q.outcome.line is None:
+            continue
+        if q.outcome.line == 0:
+            # Un handicap 0 n'a PAS de signe : c'est le même marché des deux
+            # côtés. Le compter comme « miroir » faisait déclarer Pinnacle
+            # « deux conventions mêlées » sur 941 groupes — un faux verdict sur
+            # la référence même du projet.
+            zero[q.book.value] += 1
             continue
         groupes[(q.book, q.event_key, abs(q.outcome.line))].append(q)
 
@@ -83,7 +116,11 @@ def main() -> None:
                 f"{ek[:44]}  " + ", ".join(f"{q.outcome.label}@{q.outcome.line:+g}"
                                            for q in sorted(lot, key=lambda x: x.outcome.label)))
 
-    print(f"\n=== Convention de ligne des handicaps — {args.sport} ===\n")
+    print(f"\n=== B. Convention de ligne — {args.sport} ===")
+    if zero:
+        print("  (handicaps de ligne 0 écartés, sans signe par nature : "
+              + ", ".join(f"{b} {n}" for b, n in zero.most_common()) + ")")
+    print()
     print(f"{'book':<20s} {'groupes':>8s} {'SIGNÉE':>8s} {'MIROIR':>8s} "
           f"{'1 côté':>7s}   verdict")
     print("-" * 86)
@@ -115,6 +152,15 @@ def main() -> None:
     print(f"Directement alignables : {', '.join(ok) or 'aucun'}")
     print(f"À déduire du côté      : {', '.join(jaune) or 'aucun'}")
     print(f"À laisser dehors       : {', '.join(dehors) or 'aucun'}")
+    print("\n🔴 MAIS le blocage principal n'est PAS la convention des softs.")
+    print("   `_group_quotes` groupe sur la ligne SIGNÉE (event, market, line).")
+    print("   Pinnacle publiant home@-1 et away@+1, les deux côtés d'un MÊME")
+    print("   marché tombent dans DEUX groupes séparés, d'une issue chacun —")
+    print("   et `_devig_group` en exige au moins deux. Aucun handicap n'est")
+    print("   donc devigable aujourd'hui, y compris chez la référence.")
+    print("   Exploiter les handicaps demande d'abord une clé de groupe")
+    print("   canonique (|ligne| + côté normalisé), AVANT toute question de")
+    print("   convention soft.")
     print("\n⚠️ Un book « MIROIR » n'est pas perdu : il porte le même |ligne| des")
     print("deux côtés, et le signe se déduit alors de home/away. Mais cette")
     print("déduction est une HYPOTHÈSE sur la sémantique du book, pas une")

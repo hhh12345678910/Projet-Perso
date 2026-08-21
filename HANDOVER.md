@@ -4054,6 +4054,36 @@ de normalisation est du côté des softs**, book par book.
 | handicaps (période 0) | 8 876 | +43 % | élevé |
 | handicaps de mi-temps | 4 960 | — | élevé |
 
+### Les handicaps : le blocage n'est pas celui qu'on croyait
+
+**Mesuré le 21/08, et ça change le chantier.** Le commentaire de `main.py`
+attribuait le refus des handicaps aux conventions de signe des books soft.
+C'est vrai mais secondaire. Le vrai obstacle est chez nous :
+
+> `_group_quotes` groupe sur la ligne **SIGNÉE** — `(event, market, line)`.
+> Pinnacle publiant `home@-1` et `away@+1`, les deux côtés d'un MÊME marché
+> tombent dans DEUX groupes séparés, d'une issue chacun. `_devig_group` en
+> exigeant au moins deux, **aucun handicap n'est devigable, y compris chez la
+> référence.**
+
+Exploiter les handicaps demande donc d'abord une **clé de groupe canonique**
+(|ligne| + côté normalisé), avant toute question de convention soft. C'est un
+changement au cœur du devig, pas un mappage de codes — nettement plus lourd que
+les mi-temps.
+
+⚠️ **Deuxième surprise : aucun soft ne produit de handicap aujourd'hui.** Le
+relevé ne fait apparaître que Pinnacle (7 531 groupes). Circus les exclut
+explicitement (`Handicap`, `handicap-TeamNumber` dans ses BetType non
+exploités) ; pour les autres, la sonde le dit désormais book par book — « aucun
+handicap » et « lignes illisibles » sont deux diagnostics opposés qu'elle
+confondait.
+
+**Convention de Pinnacle : SIGNÉE, sans exception** — 6 590 groupes en lignes
+opposées. Les 941 restants sont des handicaps de **ligne 0**, qui n'ont pas de
+signe par nature ; les compter comme « miroir » faisait déclarer Pinnacle
+« deux conventions mêlées », un faux verdict de refus sur la référence même du
+projet. Corrigé.
+
 **Les handicaps — première mesure à faire, 21/08.** Le blocage n'est pas le
 mappage : `betano.py`, `unibet.py`, `goldenpalace.py`, `ladbrokes.py` et
 `betcenter.py` **parsent déjà** les handicaps, ils sont jetés en aval
