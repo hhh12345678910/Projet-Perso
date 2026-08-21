@@ -4222,20 +4222,42 @@ cote plus large.
 réel en volume mais pauvre en valeur aux seuils actuels. À reconsidérer si le
 seuil global du §21.12 bouge.
 
-🔴 **En revanche, 66 % des `h2h_h1` de Circus sont jetés.** 864 cotes sur 1 318
-tombent en « book incomplet sur cette ligne », contre 0 pour les totaux.
-`_h2h_label` traduit les noms d'issues en home/draw/away par **égalité exacte**
-avec les noms d'équipe : un nom suffixé ou abrégé renvoie `None`, la cote est
-jetée, et `find_value_bets` écarte alors le groupe ENTIER au contrôle de
-structure. Rien n'est journalisé. Pour voir les noms réels :
+### Le nul s'écrivait « Egalité » — un mot, 66 % du marché
 
-```bash
-.venv/bin/python -m scripts.discover_half_time --detail 1HalfP1XP2
-.venv/bin/python -m scripts.discover_half_time --detail 1st-half-1x2
+66 % des `h2h_h1` de Circus étaient jetés : 864 cotes sur 1 318 en « book
+incomplet sur cette ligne », contre 0 pour les totaux. `--detail` a donné la
+cause en une ligne :
+
+```
+×499   'Egalité'   🔴 TRADUIT PAR AUCUNE des deux fonctions — cote JETÉE
+×163   'X'         → h2h:draw
 ```
 
-⚠️ Le même mode vaut pour **tout** marché mappé qui rendrait peu : un code
-reconnu ne garantit pas des issues traduites.
+**Gaming1 nomme le nul différemment SELON LE MARCHÉ, pas selon la langue.**
+`P1XP2` et `1st-half-1x2` écrivent « X » ; `1HalfP1XP2` écrit « Egalité », que
+`_DRAW = {"x", "nul", "draw"}` ne connaissait pas. Les 499 cotes de nul
+partaient à la poubelle, et comme `find_value_bets` écarte un groupe amputé
+d'une issue au contrôle de structure, **c'est le marché entier qui
+disparaissait** — 1 497 cotes pour 499 mots manquants. Corrigé.
+
+⚠️ **La cause de fond n'était pas le mot, c'était une asymétrie.** Un BetType
+inconnu était signalé dans les logs ; un NOM D'ISSUE inconnu disparaissait sans
+bruit. `parse_prematch` accepte désormais `unknown_outcomes`, et le daemon
+journalise « noms d'issues non traduits, cotes JETÉES ». Les noms d'équipes en
+sont exclus, sans quoi la liste devient illisible donc ignorée.
+
+**Le mode `--detail` vaut pour TOUT marché mappé qui rendrait peu** — un code
+reconnu ne garantit pas des issues traduites :
+
+```bash
+.venv/bin/python -m scripts.discover_half_time --detail <BetType>
+```
+
+⚠️ **À vérifier sur le match plein.** La fixture de test ne montre que « X »
+pour `P1XP2`, mais rien ne garantit qu'aucun événement réel n'utilise
+« Egalité » sur le marché principal. Si c'est le cas, la perte dure depuis le
+début du projet :
+`.venv/bin/python -m scripts.discover_half_time --detail P1XP2`
 
 🔴 **Betano est MORT depuis deux jours, et ça n'a rien à voir avec les
 mi-temps.** `data/prematch/soccer.json` date du **19/08 09:36**, relevé le

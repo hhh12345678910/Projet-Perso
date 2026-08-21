@@ -298,3 +298,61 @@ def test_circus_ne_confond_pas_mi_temps_et_match_plein():
     assert par_marche[MarketType.TOTALS_H1].outcome.line == 1.5
     assert par_marche[MarketType.TOTALS].decimal_odd == 1.30
     assert par_marche[MarketType.TOTALS_H1].decimal_odd == 3.60
+
+
+# --------------------------------------------------------------------------
+# Le nul de Circus — un mot manquant, 66 % du marché perdu
+# --------------------------------------------------------------------------
+
+def test_le_nul_s_ecrit_egalite_sur_le_marche_de_mi_temps():
+    """Relevé le 21/08 : `1HalfP1XP2` nomme le nul « Egalité », là où `P1XP2`
+    et `1st-half-1x2` écrivent « X ».
+
+    `_DRAW` ne connaissait pas ce mot : 499 cotes de nul sur 1 497 étaient
+    jetées, et comme `find_value_bets` écarte un groupe amputé d'une issue au
+    contrôle de structure, c'est le marché ENTIER qui disparaissait.
+    """
+    from src.scrapers.circus import parse_prematch
+
+    quotes = list(parse_prematch(_circus_dump([
+        {"BetType": "1HalfP1XP2", "Outcomes": [
+            {"Name": "Anderlecht", "Odd": 2.40},
+            {"Name": "Egalité", "Odd": 2.05},
+            {"Name": "Genk", "Odd": 3.60}]}])))
+    assert len(quotes) == 3, "les trois issues, nul compris"
+    assert {q.outcome.label for q in quotes} == {"home", "draw", "away"}
+
+
+def test_les_autres_orthographes_du_nul_marchent_toujours():
+    from src.scrapers.circus import _h2h_label
+    for nom in ("X", "x", "Nul", "Draw", "Egalité", "égalité", "EGALITÉ"):
+        assert _h2h_label(nom, "A", "B") == "draw", nom
+
+
+def test_un_nom_d_issue_non_traduit_est_SIGNALE_et_non_jete_en_silence():
+    """La cause de fond, corrigée : un code de marché inconnu était signalé,
+    un nom d'issue inconnu disparaissait sans bruit. C'est cette asymétrie qui
+    a laissé la panne vivre toute la mise en service.
+    """
+    from src.scrapers.circus import parse_prematch
+
+    inconnus: set[str] = set()
+    list(parse_prematch(_circus_dump([
+        {"BetType": "1HalfP1XP2", "Outcomes": [
+            {"Name": "Anderlecht", "Odd": 2.40},
+            {"Name": "Remis", "Odd": 2.05},       # inconnu
+            {"Name": "Genk", "Odd": 3.60}]}]), unknown_outcomes=inconnus))
+    assert "Remis" in inconnus
+
+
+def test_les_noms_d_equipes_ne_polluent_pas_le_signalement():
+    """Sinon la liste se remplit de noms d'équipes et devient illisible, donc
+    ignorée — et le signalement ne sert plus à rien."""
+    from src.scrapers.circus import parse_prematch
+
+    inconnus: set[str] = set()
+    list(parse_prematch(_circus_dump([
+        {"BetType": "total-goals-OverUnder", "Base": 2.5, "Outcomes": [
+            {"Name": "Anderlecht", "Odd": 2.0, "Base": 2.5},
+            {"Name": "Genk", "Odd": 2.0, "Base": 2.5}]}]), unknown_outcomes=inconnus))
+    assert inconnus == set(), "les noms d'équipes ne sont pas des libellés fautifs"

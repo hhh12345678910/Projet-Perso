@@ -83,7 +83,17 @@ _MARKETS: dict[str, MarketType] = {
 
 _OVER = {"plus de", "over", "meer dan"}
 _UNDER = {"moins de", "under", "minder dan"}
-_DRAW = {"x", "nul", "draw"}
+# ⚠️ Le nul porte plusieurs noms chez Gaming1, SELON LE MARCHÉ et non selon la
+# langue : `P1XP2` et `1st-half-1x2` écrivent « X », mais `1HalfP1XP2` écrit
+# « Egalité ». Relevé le 21/08 : ce seul mot manquant faisait jeter 499 cotes
+# de nul sur 1 497, et comme `find_value_bets` écarte un groupe amputé d'une
+# issue, c'est le marché ENTIER qui disparaissait — 66 % des h2h de mi-temps.
+# Rien dans les logs.
+#
+# N'ajouter ici que des libellés RELEVÉS sur un dump réel
+# (`scripts.discover_half_time --detail <BetType>`). « égalité » accompagne
+# « egalité » : c'est le même mot, et l'accent initial ne doit pas décider.
+_DRAW = {"x", "nul", "draw", "egalité", "égalité"}
 
 
 def _parse_start(raw: str | None) -> datetime | None:
@@ -118,10 +128,18 @@ def _totals_label(name: str) -> str | None:
 def parse_prematch(
     data: dict, *, fetched_at: datetime | None = None,
     unknown_types: set[str] | None = None,
+    unknown_outcomes: set[str] | None = None,
     expect_sport_id: int | None = None,
     foreign: list[int] | None = None,
 ) -> Iterator[OddQuote]:
     """Transforme une réponse GetPrematchSport en OddQuote.
+
+    `unknown_outcomes` recueille les NOMS D'ISSUES qu'aucune traduction ne
+    reconnaît. Un marché peut être parfaitement mappé et perdre quand même ses
+    cotes : les libellés d'issues se traduisent par égalité exacte, eux aussi.
+    Cette asymétrie — code inconnu signalé, issue inconnue jetée en silence —
+    a coûté 66 % des h2h de mi-temps pendant toute leur mise en service, le
+    seul mot « Egalité » manquant à `_DRAW`.
 
     `unknown_types` recueille les BetType non reconnus. Les signaler plutôt que
     les jeter en silence est ce qui avait permis de rattraper un marché oublié
@@ -188,6 +206,14 @@ def parse_prematch(
                             continue
                         line = float(base)
                     if label is None:
+                        # Un nom d'équipe se distingue mal d'un libellé de
+                        # marché mal traduit : on ne signale donc QUE ce qui
+                        # n'est ni l'une ni l'autre équipe. Sans ce filtre, le
+                        # signalement se remplirait de noms d'équipes et
+                        # deviendrait illisible — donc ignoré.
+                        nom = (out.get("Name") or "").strip()
+                        if unknown_outcomes is not None and nom and nom not in (home, away):
+                            unknown_outcomes.add(nom)
                         continue
 
                     yield OddQuote(
@@ -233,6 +259,7 @@ def parse_push(payload: dict | list, **kwargs) -> list[OddQuote]:
 def load_pushed_quotes(path: str, max_age_minutes: float = 30.0,
                        *, print_fn=print,
                        unknown_types: set[str] | None = None,
+                       unknown_outcomes: set[str] | None = None,
                        expect_sport_id: int | None = None) -> list[OddQuote]:
     """Lit le dump sur disque, en refusant ce qui est périmé.
 
@@ -261,6 +288,7 @@ def load_pushed_quotes(path: str, max_age_minutes: float = 30.0,
         return []
     foreign: list[int] = []
     quotes = parse_push(payload, unknown_types=unknown_types,
+                        unknown_outcomes=unknown_outcomes,
                         expect_sport_id=expect_sport_id, foreign=foreign)
     if foreign:
         print_fn(

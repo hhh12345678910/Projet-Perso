@@ -1674,6 +1674,7 @@ CIRCUS_SPORTS = {"soccer": 844, "tennis": 848}
 # rendrait muet le même code en tennis, alors que c'est précisément le signal
 # attendu — les deux sports ne nomment pas leurs marchés pareil.
 _CIRCUS_SEEN_TYPES: set[tuple[str, str]] = set()
+_CIRCUS_SEEN_OUTCOMES: set[tuple[str, str]] = set()
 
 
 # MagicBetting (Digitain) : poussé par le navigateur comme Betano et Circus.
@@ -1711,10 +1712,12 @@ def fetch_circus_quotes(sport: str) -> list[OddQuote]:
     directory = os.getenv("CIRCUS_INGEST_DIR", "data/circus")
     max_age = float(os.getenv("CIRCUS_MAX_AGE_MIN", "30"))
     unknown: set[str] = set()
+    unknown_out: set[str] = set()
     quotes = circus_load_pushed(
         f"{directory}/{sport}.json", max_age,
         print_fn=lambda s: console.print(f"[yellow]{s}[/yellow]"),
         unknown_types=unknown,
+        unknown_outcomes=unknown_out,
         expect_sport_id=CIRCUS_SPORTS.get(sport),
     )
     new_types = {t for t in unknown if (sport, t) not in _CIRCUS_SEEN_TYPES}
@@ -1723,6 +1726,18 @@ def fetch_circus_quotes(sport: str) -> list[OddQuote]:
         console.print(
             f"[yellow]Circus {sport} — BetType non exploités : "
             f"{', '.join(sorted(new_types))}[/yellow]"
+        )
+    # Un marché correctement mappé peut perdre ses cotes sur un simple libellé
+    # d'issue non traduit, et `find_value_bets` écarte alors le groupe ENTIER.
+    # C'est ce qui a coûté 66 % des h2h de mi-temps de Circus jusqu'au 21/08,
+    # sans une ligne dans les logs (§21.15).
+    new_out = {t for t in unknown_out if (sport, t) not in _CIRCUS_SEEN_OUTCOMES}
+    if new_out:
+        _CIRCUS_SEEN_OUTCOMES.update((sport, t) for t in new_out)
+        console.print(
+            f"[yellow]Circus {sport} — noms d'issues non traduits, cotes "
+            f"JETÉES : {', '.join(sorted(new_out))} — à ajouter dans "
+            f"circus.py (_DRAW / _OVER / _UNDER)[/yellow]"
         )
     return quotes
 
