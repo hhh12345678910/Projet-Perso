@@ -4253,11 +4253,11 @@ reconnu ne garantit pas des issues traduites :
 .venv/bin/python -m scripts.discover_half_time --detail <BetType>
 ```
 
-⚠️ **À vérifier sur le match plein.** La fixture de test ne montre que « X »
-pour `P1XP2`, mais rien ne garantit qu'aucun événement réel n'utilise
-« Egalité » sur le marché principal. Si c'est le cas, la perte dure depuis le
-début du projet :
-`.venv/bin/python -m scripts.discover_half_time --detail P1XP2`
+✅ **Le match plein est indemne — vérifié le 21/08 sur le dump réel.**
+`--detail P1XP2` donne « X » sur **979 marchés sur 979**, aucun « Egalité ».
+La panne était donc confinée à `1HalfP1XP2`, et le flux principal n'a jamais
+rien perdu. C'était la seule hypothèse de cette session qui aurait coûté
+rétroactivement ; elle est écartée.
 
 🔴 **Betano est MORT depuis deux jours, et ça n'a rien à voir avec les
 mi-temps.** `data/prematch/soccer.json` date du **19/08 09:36**, relevé le
