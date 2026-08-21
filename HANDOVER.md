@@ -4852,12 +4852,30 @@ Chez eux l'équipe est un nom de club NU → classée `main` ; la nôtre est
 féminin pèse **6,1 % du flux sur 55 ligues**, et les jeunes ont le même défaut
 (`Ukraine - U19 League` était dans le fichier).
 
-Corrigé dans `parse_apifootball_results` : `class_marker_from_league` reporte
-le marqueur de la ligue sur les équipes, avec pliage des accents (« Division 1
-Féminine »). **Dans le parseur et pas dans le matcher, délibérément** : c'est
-une convention de SOURCE, et le matcher ne doit rien savoir d'API-Sports. Huit
-tests, dont deux qui gardent la barrière fermée dans l'autre sens — un
-masculin ne doit toujours JAMAIS matcher un féminin.
+🔴 **Et le sens du décalage était l'INVERSE de ce que j'avais écrit.** Le
+premier correctif est parti du mauvais côté, n'a rien changé, et **seul le
+compteur `classe_reportee=0` l'a dit** — le taux, lui, était identique au point
+près. Relevé sur les deux côtés, noms réels du 20/08 :
+
+| | ligue | équipe |
+|---|---|---|
+| API-Football | `NWSL Women` | `Houston Dash W` ✅ **déjà marqué** |
+| Pinnacle (nous) | `USA - National Womens Soccer League` | `Houston Dash` ❌ **nu** |
+
+Ce sont NOS noms qui sortent « main », les leurs qui sont `xwomen`. Le
+correctif est donc dans `bind_results` : `OurEvent` porte désormais sa
+`league`, et la classe en est reprise avant l'appariement. Le report côté
+source reste en place comme filet idempotent — si une compétition arrive un
+jour avec des équipes nues — mais ce n'est PAS lui qui corrige le féminin.
+
+⚠️ **La leçon, et elle est chère : vérifier LES DEUX CÔTÉS avant de corriger
+un appariement.** J'avais relevé la convention d'un seul, supposé l'autre, et
+écrit la supposition comme un fait dans une docstring et un commit. Un compteur
+l'a rattrapée ; sans lui, le correctif serait passé pour appliqué.
+
+Quatorze tests, dont **trois de non-régression qui comptent plus que le
+correctif** : Rosenborg masculin et Rosenborg féminin jouent le même soir — cas
+réel du 20/08 — et aucun des deux ne doit prendre le résultat de l'autre.
 
 ⚠️ **Et mon propre message de diagnostic était faux.** Il annonçait « trou de
 catalogue, pas d'appariement » sur une ligue à zéro. C'est précisément
@@ -4880,7 +4898,7 @@ qu'une sonde muette** — elle envoie construire un pont dont on n'a pas besoin.
 
 | | |
 |---|---|
-| Tests | **817 passés**, 4 ignorés — `pytest tests/`, jamais `pytest` seul (§4) |
+| Tests | **823 passés**, 4 ignorés — `pytest tests/`, jamais `pytest` seul (§4) |
 | `results` | 3 091 lignes (tennis) |
 | Books actifs en ALERTE | unibet, golden_palace, ladbrokes, circus |
 | Books muets (donnée seule) | betano, betfirst, napoleon, starcasino, **magicbetting** — **48 %** (§21.8) |

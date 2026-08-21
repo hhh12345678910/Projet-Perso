@@ -4470,6 +4470,9 @@ def results_update(
         by_sport[r["sport"]].append(OurEvent(
             event_key=r["event_key"], home=r["home"], away=r["away"],
             start_time=start,
+            # La ligue porte la classe (féminin, jeunes) que Pinnacle ne met
+            # pas sur le nom d'équipe. L'omettre perd tout le féminin.
+            league=r["league"] or "",
         ))
 
     # La fenêtre est dans le titre : un taux se relit des jours plus tard, et

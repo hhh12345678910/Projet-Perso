@@ -18,7 +18,8 @@ from __future__ import annotations
 from datetime import datetime, timezone
 
 from src.matcher import team_similarity
-from src.score_sources import class_marker_from_league, parse_apifootball_results
+from src.matcher import class_marker_from_league
+from src.score_sources import parse_apifootball_results
 
 
 def _payload(league, home, away):
@@ -37,7 +38,7 @@ def test_les_libelles_feminins_reels_sont_reconnus():
     for nom in ("Colombia - Liga Femenina", "USA - NWSL Women",
                 "AFC Women's Champions League", "Iceland - Urvalsdeild Women",
                 "Frauen-Bundesliga", "Division 1 Féminine"):
-        assert class_marker_from_league(nom) == "Women", nom
+        assert class_marker_from_league(nom) == "W", nom
 
 
 def test_une_ligue_masculine_ne_declenche_rien():
@@ -53,8 +54,8 @@ def test_le_marqueur_est_reporte_sur_les_equipes():
         _payload("Colombia - Liga Femenina", "Deportivo Cali", "Atletico Nacional"))
 
     assert counters["classe_reportee"] == 1
-    assert res[0].home == "Deportivo Cali Women"
-    assert res[0].away == "Atletico Nacional Women"
+    assert res[0].home == "Deportivo Cali W"
+    assert res[0].away == "Atletico Nacional W"
 
 
 def test_le_report_rend_le_match_appariable():
@@ -104,3 +105,88 @@ def test_le_masculin_reste_intact():
 
     assert (res[0].home, res[0].away) == ("Real Madrid", "Barcelona")
     assert counters["classe_reportee"] == 0
+
+
+# ---------------------------------------------------------------------------
+# La correction qui compte : NOTRE côté.
+#
+# La première tentative a posé le marqueur sur les équipes de la SOURCE, qui
+# l'avaient déjà — elle n'a rien changé, et seul le compteur `classe_reportee=0`
+# l'a révélé. Les noms ci-dessous sont ceux relevés dans le fichier réel du
+# 20/08 et dans notre base : ne pas les inventer, c'est tout l'intérêt.
+# ---------------------------------------------------------------------------
+from datetime import timedelta
+
+from src.scores import MatchResult, OurEvent, bind_results
+
+T = datetime(2026, 8, 20, 20, 0, tzinfo=timezone.utc)
+
+
+def _leur(home, away, quand=T):
+    return MatchResult(sport="soccer", home=home, away=away, start_time=quand,
+                       winner="home", home_score=2.0, away_score=1.0,
+                       source="api-football", source_id="1")
+
+
+def test_le_feminin_etait_perdu_sans_la_ligue():
+    """Sans `league`, nos noms restent « main » et la barrière rejette tout.
+    C'est l'état d'avant le correctif, gardé sous test."""
+    nous = [OurEvent("k", "Houston Dash", "Chicago Red Stars", T)]
+    liens, c = bind_results(nous, [_leur("Houston Dash W", "Chicago Red Stars W")],
+                            sport="soccer")
+    assert liens == []
+    assert c["sans_candidat"] == 1
+
+
+def test_la_ligue_rend_le_feminin_appariable():
+    """Le correctif. Noms réels des deux côtés, journée du 20/08."""
+    nous = [OurEvent("k", "Houston Dash", "Chicago Red Stars", T,
+                     league="USA - National Womens Soccer League")]
+    liens, c = bind_results(nous, [_leur("Houston Dash W", "Chicago Red Stars W")],
+                            sport="soccer")
+    assert [k for k, _ in liens] == ["k"]
+    assert c["classe_posee"] == 1
+
+
+def test_les_jeunes_aussi():
+    """`Nasjonal U19 Champions League` chez eux, équipes nues chez nous."""
+    nous = [OurEvent("k", "Rosenborg", "HamKam", T,
+                     league="Norway - Nasjonal U19 Champions League")]
+    liens, _ = bind_results(nous, [_leur("Rosenborg U19", "HamKam U19")],
+                            sport="soccer")
+    assert [k for k, _ in liens] == ["k"]
+
+
+def test_le_masculin_ne_vole_pas_le_resultat_du_feminin():
+    """⚠️ LE test de non-régression. Rosenborg masculin et Rosenborg féminin
+    jouent le même soir — c'est le cas réel du 20/08 (`Norway - Toppserien
+    Women` porte « rosenborg »). Le masculin ne doit JAMAIS prendre le
+    résultat du féminin, et c'est ce que la barrière protège."""
+    nous = [OurEvent("m", "Rosenborg", "Lyn", T)]          # masculin, sans ligue
+    liens, c = bind_results(nous, [_leur("Rosenborg W", "Lyn W")], sport="soccer")
+    assert liens == []
+    assert c["sans_candidat"] == 1
+
+
+def test_le_feminin_ne_prend_pas_le_resultat_du_masculin():
+    """Et dans l'autre sens."""
+    nous = [OurEvent("f", "Rosenborg", "Lyn", T, league="Norway - Toppserien Women")]
+    liens, _ = bind_results(nous, [_leur("Rosenborg", "Lyn")], sport="soccer")
+    assert liens == []
+
+
+def test_deux_matchs_le_meme_soir_vont_au_bon_endroit():
+    """Le cas complet : masculin et féminin du même club, même soirée, les
+    deux résultats disponibles. Chacun doit trouver le sien."""
+    nous = [
+        OurEvent("masc", "Rosenborg", "Lyn", T),
+        OurEvent("fem", "Rosenborg", "Lyn", T + timedelta(minutes=5),
+                 league="Norway - Toppserien Women"),
+    ]
+    leurs = [_leur("Rosenborg", "Lyn"),
+             _leur("Rosenborg W", "Lyn W", T + timedelta(minutes=5))]
+    liens, _ = bind_results(nous, leurs, sport="soccer")
+
+    par_cle = {k: (r.home, r.away) for k, r in liens}
+    assert par_cle["masc"] == ("Rosenborg", "Lyn")
+    assert par_cle["fem"] == ("Rosenborg W", "Lyn W")

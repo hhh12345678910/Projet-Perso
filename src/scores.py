@@ -30,11 +30,12 @@ silence, sans lever la moindre erreur :
 """
 from __future__ import annotations
 
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from datetime import date, datetime
 from typing import Iterable, Protocol
 
-from .matcher import match_event, team_similarity, tolerance_for, wide_tolerance_for
+from .matcher import (class_marker_from_league, match_event, team_similarity,
+                      tolerance_for, wide_tolerance_for, with_class_marker)
 
 # Les sports où le total d'un marché « totals » se déduit du score, donc où le
 # vainqueur aussi. Le football en fait partie : plus de buts = victoire. Le
@@ -138,6 +139,13 @@ class OurEvent:
     home: str
     away: str
     start_time: datetime
+    # ⚠️ La ligue n'est pas décorative : c'est elle qui porte la classe
+    # (féminin, jeunes) que Pinnacle NE MET PAS sur le nom d'équipe, alors que
+    # les sources de scores, elles, la mettent. Sans elle, la barrière de
+    # classe rend tout le football féminin inappariable — voir
+    # `class_marker_from_league`. Optionnelle pour ne pas casser les appels
+    # existants, mais un appelant qui l'omet perd le féminin et les jeunes.
+    league: str = ""
 
 
 def tolerance_for_scores(sport: str | None) -> int:
@@ -216,11 +224,23 @@ def bind_results(
         "sans_candidat": 0,      # aucun résultat proche : la source ne l'a pas
         "resultat_inutilisable": 0,  # apparié, mais ni vainqueur ni scores
         "orientation_corrigee": 0,   # apparié à l'envers, vainqueur remis d'aplomb
+        "classe_posee": 0,           # féminin/jeunes : classe reprise de la ligue
     }
     tol = tolerance_for_scores(sport)
     bindings: list[tuple[str, MatchResult]] = []
 
     for ev in events:
+        # Remettre la classe sur NOS noms avant de comparer. Pinnacle la laisse
+        # dans la ligue (« USA - National Womens Soccer League » / « Houston
+        # Dash »), les sources de scores la posent sur l'équipe (« Houston Dash
+        # W ») — et `team_similarity` renvoie 0.0 dès que les classes diffèrent.
+        # Sans cette ligne, le féminin et les jeunes sont perdus EN ENTIER, sans
+        # qu'aucune erreur ne soit levée.
+        marque = class_marker_from_league(ev.league)
+        if marque:
+            ev = replace(ev, home=with_class_marker(ev.home, marque),
+                         away=with_class_marker(ev.away, marque))
+            counters["classe_posee"] += 1
         best = match_event(
             ev, candidates, time_tolerance_minutes=tol, min_score=min_score,
         )

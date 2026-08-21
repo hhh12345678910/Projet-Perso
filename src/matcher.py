@@ -110,6 +110,64 @@ def team_class(normalized: str) -> str:
     return "main"
 
 
+# Les mots qui, dans un nom de LIGUE, disent la classe des équipes qui y jouent.
+# Même famille que `_CLASS_RULES`, plus les formes propres aux noms de
+# compétition (« femenina », « femminile », « Liga Revelação U23 »).
+_LEAGUE_CLASS_RULES = (
+    ("W", re.compile(
+        r"\b(women|womens|women'?s|ladies|feminin\w*|femenin\w*|feminil\w*|"
+        r"femminil\w*|frauen|dames|damen)\b", re.IGNORECASE)),
+    ("U19", re.compile(
+        r"\b(u1[5-9]|u2[0-3]|youth|junior\w*|jugend|revelacao)\b", re.IGNORECASE)),
+)
+
+
+def class_marker_from_league(league: str) -> str:
+    """Le marqueur de classe que porte un nom de LIGUE, ou "".
+
+    ⚠️ Pourquoi ça existe, et pourquoi ça valait 6 % du flux football.
+
+    La barrière de classe de `team_similarity` est juste et doit rester : sans
+    elle, un « Houston Dash » masculin noterait les paris pris sur le féminin.
+    Mais elle lit la classe dans le NOM D'ÉQUIPE, et **les sources ne la
+    mettent pas au même endroit**. Mesuré le 21/08 sur la journée du 20/08 :
+
+    | | ligue | équipe |
+    |---|---|---|
+    | API-Football | `NWSL Women` | `Houston Dash W` ✅ |
+    | Pinnacle (nous) | `USA - National Womens Soccer League` | `Houston Dash` ❌ |
+
+    Nos équipes sortent donc classées « main », les leurs « xwomen », et la
+    barrière les sépare : **aucun match féminin n'était appariable**, en
+    silence. Idem pour les jeunes (`Nasjonal U19 Champions League` chez eux,
+    équipes nues chez nous).
+
+    ⚠️ Le sens du décalage a été supposé À L'ENVERS une première fois, et le
+    correctif est parti du mauvais côté — il n'a rien changé, et seul le
+    compteur `classe_reportee=0` l'a dit. **Vérifier les deux côtés avant de
+    corriger un appariement**, un seul ne prouve rien.
+    """
+    plat = unicodedata.normalize("NFKD", league or "").encode(
+        "ascii", "ignore").decode("ascii")
+    for marker, pat in _LEAGUE_CLASS_RULES:
+        if pat.search(plat):
+            return marker
+    return ""
+
+
+def with_class_marker(team: str, marker: str) -> str:
+    """Poser le marqueur sur un nom d'équipe, sauf s'il y est déjà.
+
+    Idempotent à dessein : les deux côtés du rapprochement passent par ici, et
+    l'un des deux porte souvent déjà sa marque.
+    """
+    if not marker or not team:
+        return team
+    if team_class(normalize_team(team)) != "main":
+        return team
+    return f"{team} {marker}"
+
+
 @lru_cache(maxsize=100_000)
 def _strip_class_tag(normalized: str) -> str:
     for tag in _CLASS_TAGS:
