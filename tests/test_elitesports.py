@@ -156,3 +156,34 @@ def test_un_payload_vide_ne_leve_rien():
     assert list(parse_prematch({})) == []
     assert list(parse_prematch({"content": []})) == []
     assert list(parse_prematch({"content": [{"events": []}]})) == []
+
+
+def test_les_rejets_sont_comptes_et_expliques(payload):
+    """⚠️ « 1 503 annoncés, 1 476 analysés » sans motif laisse 27 événements
+    disparus, et aucun moyen de dire s'ils sont légitimement écartés ou si le
+    parseur en perd. Chaque cause a son compteur, et leur somme doit boucler."""
+    from src.scrapers.elitesports import compte_rejets
+
+    c = compte_rejets(payload)
+    assert c["annonces"] == 10 and c["retenus"] == 10
+
+    payload["content"][0]["events"][0]["status"] = "LIVE"
+    payload["content"][0]["events"][1]["teams"] = []
+    payload["content"][0]["events"][1]["teamNames"] = []
+    payload["content"][0]["events"][2]["dateTime"] = "pas une date"
+    c = compte_rejets(payload)
+    assert c["pas_prematch"] == 1
+    assert c["equipes_manquantes"] == 1
+    assert c["date_illisible"] == 1
+    # Le compte doit BOUCLER : annoncés = retenus + tous les motifs. Sans ça,
+    # un événement peut disparaître sans qu'aucun compteur ne bouge.
+    motifs = sum(v for k, v in c.items() if k not in ("annonces", "retenus"))
+    assert c["annonces"] == c["retenus"] + motifs
+    assert c["retenus"] == 7
+
+
+def test_le_compte_boucle_sur_l_echantillon_intact(payload):
+    from src.scrapers.elitesports import compte_rejets
+    c = compte_rejets(payload)
+    motifs = sum(v for k, v in c.items() if k not in ("annonces", "retenus"))
+    assert c["annonces"] == c["retenus"] + motifs

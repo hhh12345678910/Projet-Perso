@@ -4712,17 +4712,21 @@ def elitesports_check(
     Ce qu'elle vérifie : que la VM est acceptée, que la pagination répond, et
     que le parseur rend des cotes des DEUX marchés attendus.
     """
-    from .scrapers.elitesports import EliteSportsScraper, parse_prematch
+    from .scrapers.elitesports import (
+        EliteSportsScraper, compte_rejets, parse_prematch,
+    )
 
     for sp in [x.strip() for x in sport.split(",") if x.strip()]:
         console.print(f"\n[bold green]══ {sp.upper()} ══[/bold green]")
         quotes, n_pages, total = [], 0, None
+        rejets: Counter = Counter()
         try:
             with EliteSportsScraper() as sc:
                 for payload in sc.fetch_pages(sp):
                     n_pages += 1
                     total = (payload.get("page") or {}).get("totalElements", total)
                     quotes.extend(parse_prematch(payload, sc.book))
+                    rejets.update(compte_rejets(payload))
                     if n_pages >= pages:
                         break
         except Exception as e:                                    # noqa: BLE001
@@ -4737,13 +4741,24 @@ def elitesports_check(
         console.print(f"  événements        : {len(evs)}")
         console.print(f"  cotes             : {len(quotes)}  {dict(par_marche)}")
         console.print(f"  lignes de totaux  : {lignes[:14]}")
+        # ⚠️ L'écart entre annoncés et retenus doit être EXPLIQUÉ, pas constaté.
+        ecartes = {k: v for k, v in sorted(rejets.items())
+                   if k not in ("annonces", "retenus") and v}
+        console.print(f"  écartés           : {sum(ecartes.values())} "
+                      f"{ecartes or '(aucun)'}")
+        manque = rejets.get("annonces", 0) - rejets.get("retenus", 0) - sum(ecartes.values())
+        if manque:
+            console.print(f"[yellow]  ⚠️ {manque} événement(s) perdus sans motif — "
+                          "le parseur en laisse tomber.[/yellow]")
         if not quotes:
             console.print("[yellow]  ⚠️ zéro cote : l'API répond mais le parseur ne "
                           "reconnaît rien — la forme a changé.[/yellow]")
         elif not par_marche.get("h2h"):
             console.print("[yellow]  ⚠️ aucun 1X2 — vérifier marketExternalId=1.[/yellow]")
-    console.print("\n[dim]Sonde seule — rien n'a été écrit, et le book n'est PAS "
-                  "dans le cycle.[/dim]")
+    console.print("\n[dim]Sonde seule — rien n'a été écrit. Le book EST dans le "
+                  "cycle depuis le 22/08 : pour le couper, BOOKS_DISABLED=elitesports "
+                  "(coupe la donnée)\n   ou /book elitesports (ne coupe que les "
+                  "alertes, §15.3).[/dim]")
 
 
 @app.command(name="inspect-betano")

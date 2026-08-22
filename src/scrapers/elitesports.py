@@ -125,6 +125,37 @@ def _team_names(event: dict) -> tuple[str, str] | None:
     return (noms[0], noms[1]) if len(noms) >= 2 else None
 
 
+def compte_rejets(payload: dict) -> dict[str, int]:
+    """Pourquoi des événements de la page n'ont produit aucune cote.
+
+    ⚠️ Sans ces compteurs, « 1 503 annoncés, 1 476 analysés » laisse 27
+    événements disparus et aucun moyen de dire s'ils sont légitimement écartés
+    ou si le parseur en perd. C'est le mode de défaillance dominant du projet
+    (§13.12) : deux causes, un seul symptôme — rien.
+    """
+    c = {"annonces": 0, "retenus": 0, "pas_prematch": 0,
+         "equipes_manquantes": 0, "date_illisible": 0, "bruit": 0}
+    for league in payload.get("content") or []:
+        nom = (league.get("leagueName") or "").strip()
+        for event in league.get("events") or []:
+            c["annonces"] += 1
+            if event.get("status") != "PREMATCH":
+                c["pas_prematch"] += 1
+                continue
+            noms = _team_names(event)
+            if not noms:
+                c["equipes_manquantes"] += 1
+                continue
+            if _parse_dt(event.get("dateTime")) is None:
+                c["date_illisible"] += 1
+                continue
+            if is_noise_event(noms[0], noms[1], nom):
+                c["bruit"] += 1
+                continue
+            c["retenus"] += 1
+    return c
+
+
 def parse_prematch(payload: dict, book: Book = Book.ELITESPORTS) -> Iterator[OddQuote]:
     """Une page de `/sports/{id}/events/prematch` → des `OddQuote`.
 

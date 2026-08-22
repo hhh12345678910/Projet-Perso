@@ -5218,6 +5218,35 @@ d'API rend une liste vide sans emporter le cycle, et qu'une page corrompue en
 cours de balayage ne perd pas les précédentes. C'est le §21.8 (cinq books sur
 huit muets) et le §19.11 (du code parfait qui ne tournait pas) mis sous test.
 
+**Sonde d'acceptation, lancée le 22/08 sur 4 pages de football :**
+
+| | |
+|---|---|
+| Événements | **1 476** retenus sur 1 503 annoncés |
+| Cotes | **31 552** — h2h 4 408, totals 27 144 |
+| Lignes de totaux | 0,5 à 7,0, **aucune ligne en quart** — le filtre tient |
+
+⚠️ **31 552 cotes en 4 appels, c'est le book le plus VOLUMINEUX du
+portefeuille** — Golden Palace en rend 6 729 sur 1 354 événements. La cause est
+l'échelle de totaux complète : ~14 lignes × 2 issues = 28 cotes de totaux par
+match, contre 2 à 6 chez les autres. L'écriture parcimonieuse (§18.5) limite ce
+qui atterrit en base, mais l'appariement et le devig paient le volume à CHAQUE
+cycle. **À mesurer après déploiement** (`scripts.cycle_speed`) : si le cycle
+s'allonge nettement, le levier évident est de borner l'échelle des totaux aux
+lignes que Pinnacle price réellement.
+
+**Les 27 écartés sont désormais EXPLIQUÉS.** La première version de la sonde
+affichait « 1 503 annoncés, 1 476 analysés » et laissait 27 événements disparus
+sans motif — deux causes possibles, un seul symptôme (§13.12). `compte_rejets`
+ventile maintenant par cause (`pas_prematch`, `equipes_manquantes`,
+`date_illisible`, `bruit`), et un test vérifie que **le compte BOUCLE** :
+annoncés = retenus + motifs. Sans cette égalité, un événement pourrait
+disparaître sans qu'aucun compteur ne bouge.
+
+⚠️ Corrigé aussi : la sonde affirmait « le book n'est PAS dans le cycle »,
+vrai une heure plus tôt et faux depuis le câblage. Une sonde qui énonce un état
+périmé est le pire des diagnostics — elle inspire confiance.
+
 **À surveiller au premier cycle** : que le book apparaisse dans
 `→ N quotes EliteSports`, puis sa CLV après quelques jours
 (`clv_split --by book`). Une plateforme neuve peut avoir des prix
@@ -5228,7 +5257,7 @@ systématiquement mauvais — c'est ce que BetFirst a révélé (−3,20 points 
 
 | | |
 |---|---|
-| Tests | **875 passés**, 4 ignorés — `pytest tests/`, jamais `pytest` seul (§4) |
+| Tests | **877 passés**, 4 ignorés — `pytest tests/`, jamais `pytest` seul (§4) |
 | `results` | 3 091 lignes (tennis) |
 | Books actifs en ALERTE | unibet, golden_palace, ladbrokes, circus |
 | Books muets (donnée seule) | betano, betfirst, napoleon, starcasino, **magicbetting** — **48 %** (§21.8) |
