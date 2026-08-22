@@ -22,7 +22,20 @@ runner = CliRunner()
 
 def test_sans_config_telegram_elle_le_dit_et_echoue(monkeypatch):
     """L'échec du §20.10, mais explicite : une config vide doit produire un
-    message clair et un code de sortie non nul, pas un silence."""
+    message clair et un code de sortie non nul, pas un silence.
+
+    ⚠️ Vider `os.environ` NE SUFFIT PAS, et ce test l'a appris à ses dépens.
+    Le callback de `main.py` appelle `load_env_file()` avant CHAQUE commande —
+    c'est voulu (§14.11 : une commande lancée à la main n'a rien dans son
+    environnement et se croyait non configurée). Le jeton revenait donc du
+    fichier `.env` juste après le `delenv`, la commande partait normalement et
+    sortait en 0.
+
+    Résultat : le test passait uniquement sur une machine SANS `.env`, donc
+    jamais sur la VM. Vert en développement, rouge en production — il faut
+    neutraliser le rechargement pour simuler vraiment une machine non
+    configurée."""
+    monkeypatch.setattr("src.main.load_env_file", lambda *a, **k: 0)
     for var in ("TELEGRAM_BOT_TOKEN", "TELEGRAM_CHAT_ID"):
         monkeypatch.delenv(var, raising=False)
     r = runner.invoke(app, ["alert-test-system"])

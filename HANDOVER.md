@@ -5398,6 +5398,42 @@ afficheraient « over 2 ». **Le `.0` est la signature de la ligne entière** �
 gardé tel quel, il reste le moyen le plus rapide de repérer une fuite
 asiatique dans un canal Telegram.
 
+### 21.21 Deux tests verts en développement, rouges sur la VM
+
+Découverts en déployant le §21.20 : `pytest tests/` passait ici et rendait
+**2 échecs sur la VM**. Aucun rapport avec EliteSports — deux tests qui
+dépendaient de l'ÉTAT DE LA MACHINE, donc qui ne prouvaient rien là où ça
+compte. Les deux ont été reproduits en recréant les conditions de la VM avant
+d'être corrigés, jamais diagnostiqués à vue.
+
+**1. `test_alert_test_system.py` — le jeton revenait du fichier.**
+Le test faisait `monkeypatch.delenv("TELEGRAM_BOT_TOKEN")` pour simuler une
+machine non configurée. Mais le callback de `main.py` appelle `load_env_file()`
+**avant chaque commande** — c'est voulu, c'est le correctif du §14.11. Le jeton
+était donc réinjecté depuis `.env` juste après le `delenv`, la commande partait
+normalement et sortait en 0. **Le test ne passait que sur une machine SANS
+`.env`.** Correctif : neutraliser le rechargement (`monkeypatch.setattr` sur
+`src.main.load_env_file`) pour simuler vraiment l'absence de config.
+
+**2. `test_scan_command.py` — le registre d'équipes fuit entre les tests.**
+`src/teams.py` garde `_DISPLAY` et `_STORAGE` en variables de MODULE, et une
+dizaine de commandes de production appellent `teams.init(storage)` sur la vraie
+base. Un test qui invoque l'une d'elles met tous les noms de la base en cache
+**pour les tests suivants**. Le test attendait « Anderlecht » (le repli
+`.capitalize()`) et recevait « RSC Anderlecht », le nom d'affichage réel.
+Invisible sur une base vide, systématique sur la VM.
+
+Correctif : `tests/conftest.py`, fixture `autouse` qui vide le registre autour
+de chaque test. `test_teams.py` avait déjà cette garde pour lui seul — la
+remonter au niveau de la suite la rend systématique plutôt que réservée au
+fichier qui y avait pensé.
+
+⚠️ **La leçon générale**, et elle vaut au-delà de ces deux-là : un test qui
+consulte un état partagé de la machine — fichier `.env`, base de production,
+variable de module — peut être vert chez le développeur et rouge en production,
+ou pire, l'inverse. **La suite doit être rejouée sur la VM avant d'être crue.**
+C'est ce déploiement qui l'a montré.
+
 ### 21.9 État des lieux et à faire — remplace §20.15
 
 | | |
