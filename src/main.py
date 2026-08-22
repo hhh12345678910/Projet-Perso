@@ -41,6 +41,8 @@ from .scrapers.smarkets import (
     SmarketsScraper,
     iter_all_quotes_fast as smarkets_iter_all_quotes_fast,
 )
+from .scrapers.elitesports import EliteSportsScraper
+from .scrapers.elitesports import parse_prematch as elitesports_parse_prematch
 from .scrapers.goldenpalace import GoldenPalaceScraper, parse_get_events as goldenpalace_parse_get_events
 from .scrapers.ladbrokes import LadbrokesScraper, parse_prematch as ladbrokes_parse_prematch
 from .scrapers.circus import load_pushed_quotes as circus_load_pushed
@@ -1653,6 +1655,39 @@ def fetch_goldenpalace_quotes(sport: str) -> list[OddQuote]:
         return []
 
 
+def fetch_elitesports_quotes(sport: str) -> list[OddQuote]:
+    """Toute l'offre prématch d'EliteSports pour un sport.
+
+    Marque blanche FM Gaming, PLATEFORME NEUVE dans le portefeuille : ni Kambi,
+    ni Altenar, ni Gaming1, ni Digitain. Ses prix sont donc réellement
+    indépendants — à l'inverse des jumeaux Kambi (711, Bingoal, Scooore),
+    désactivés plus bas précisément parce qu'ils répètent Unibet.
+
+    Les cotes arrivent DANS la liste des matchs, donc pas d'appel par
+    événement : `size=500` est servi tel quel, soit 4 appels pour les
+    1 523 matchs de football (mesuré le 22/08).
+
+    Une page qui échoue en cours de balayage n'emporte pas celles déjà
+    obtenues — même règle que la pagination de `LiveTennisScores`, et pour la
+    même raison : un book à moitié collecté vaut mieux qu'un book absent.
+    """
+    quotes: list[OddQuote] = []
+    try:
+        with EliteSportsScraper() as es:
+            for page_no, payload in enumerate(es.fetch_pages(sport)):
+                try:
+                    quotes.extend(elitesports_parse_prematch(payload, es.book))
+                except Exception as e:                            # noqa: BLE001
+                    console.print(f"[yellow]EliteSports page {page_no} illisible:"
+                                  f"[/yellow] {e}")
+    except httpx.HTTPError as e:
+        # Une panne sur la première page laisse `quotes` vide et le book est
+        # simplement absent du cycle ; sur une page suivante, on garde ce qui
+        # a été collecté.
+        console.print(f"[yellow]EliteSports skipped:[/yellow] {e}")
+    return quotes
+
+
 def fetch_starcasinosport_quotes(sport: str) -> list[OddQuote]:
     """Bulk-fetch StarCasino Sport via the same Altenar widget."""
     try:
@@ -2025,6 +2060,12 @@ def _fetch_all_parallel(
         # meilleure couverture d'événements de tout le portefeuille. Jamais
         # mesuré en CLV faute de données : il l'est maintenant.
         "GoldenPalace":  lambda: fetch_goldenpalace_quotes(sport),
+        # EliteSports (marque blanche FM Gaming) : PLATEFORME NEUVE, donc prix
+        # indépendants — c'est tout son intérêt face aux jumeaux Kambi ci-dessus.
+        # Aucune authentification, aucun anti-bot, et l'IP de datacenter est
+        # acceptée : pas de pont navigateur, contrairement à Betano, Circus et
+        # MagicBetting. Vérifié depuis la VM le 22/08 (§21.19).
+        "EliteSports":   lambda: fetch_elitesports_quotes(sport),
     }
     # The live dump mixes every sport, so it's parsed once (on the sport that
     # owns include_file_books) to avoid duplicating it across sport threads.

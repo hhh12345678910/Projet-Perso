@@ -124,6 +124,7 @@ _BOOK_NAMES = {
     Book.BETCENTER: "Betcenter",
     Book.SMARKETS: "Smarkets",
     Book.MAGICBETTING: "MagicBetting",
+    Book.ELITESPORTS: "EliteSports",
 }
 
 # Sport key -> emoji prepended to the matchup line in alerts. Keeps the chat

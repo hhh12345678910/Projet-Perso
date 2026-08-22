@@ -13,6 +13,10 @@ redécouvrir le contexte. Dernière mise à jour : 21/08/2026.
 - §21.16 : ⚠️ **le pont API-Football tourne**, mais le premier dry-run (32 %)
   ne mesure rien — `journee_non_pontee=2`, le palier gratuit ne sert que trois
   jours. **Ne rien payer avant un dry-run à `journee_non_pontee=0`.**
+- §21.19 : **EliteSports.be intégré en production** — plateforme NEUVE (ni
+  Kambi, ni Altenar, ni Gaming1, ni Digitain), donc prix indépendants. Aucune
+  auth, aucun anti-bot, IP datacenter acceptée : le premier book depuis
+  Ladbrokes sans pont navigateur. Football 1 523 prématch en 4 appels.
 - §21.16 : 🔴 **la voie RapidAPI est morte** — listing supprimé (« API not
   found », vérifié au navigateur). Troisième échec sur cette piste ; les trois
   fichiers qui la recommandaient sont corrigés pour qu'il n'y ait pas de
@@ -206,6 +210,7 @@ scrapers, pas réécrire le moteur.
 | Bet777 | ❌ | Gaming1/Ardent, aucun scraper. Écarté par l'utilisateur le 06/08 |
 | **Smarkets** | ✅ **2ᵉ référence sharp** | exchange, API publique. Repli STRICT derrière Pinnacle — voir §17.5 |
 | **MagicBetting** | ✅ via navigateur | **Digitain**, payloads chiffrés déchiffrés par leur propre WASM — §18.6. Football seul, 27 matchs |
+| **EliteSports** | ✅ **en production le 22/08** | **Plateforme NEUVE** (marque blanche FM Gaming) — donc prix indépendants. Aucune auth, aucun anti-bot, IP datacenter acceptée : **pas de pont**. Football 1 523 / tennis 35 — §21.19 |
 
 ⚠️ `tools/book_revive_check.py` sonde les books désactivés et dit lesquels
 répondent encore. Leurs motifs vieillissent : « compte limité » pour Golden
@@ -5190,22 +5195,40 @@ l'échelle par pas de 0,25, et « over 2.25 » est un pari FRACTIONNÉ — moiti
 Les lignes en quart sont donc écartées, comme `_is_half_line` le fait déjà dans
 `middle.py` et comme le §18.6 exclut les totaux asiatiques de Digitain.
 
-**État : écrit et testé, PAS dans le cycle.** `src/scrapers/elitesports.py`,
+**État au 22/08 : EN PRODUCTION, câblé comme les autres softbooks.** `src/scrapers/elitesports.py`,
 12 tests contre un échantillon RÉEL extrait du HAR (226 cotes, 10 événements),
 et la sonde d'acceptation `elitesports-check` qui appelle l'API réelle sans
 rien écrire. Le §15.7 veut qu'un book se juge sur ce qu'il rend chez toi avant
 d'entrer dans le cycle — c'est ce qui a évité BetFirst et ses 80 secondes.
 
-**À faire pour le mettre en service** : lancer `elitesports-check`, puis câbler
-le scraper dans `_fetch_all_parallel` et ajouter le book à la rotation. Non
-fait à dessein : ça change ce que le daemon exécute, et la sonde n'a pas encore
-tourné.
+`src/scrapers/elitesports.py`, 12 tests de parsing contre un échantillon RÉEL
+extrait du HAR (226 cotes, 10 événements), 7 tests d'intégration, et la sonde
+d'acceptation `elitesports-check` qui appelle l'API réelle sans rien écrire.
+
+**Câblage effectué**, exactement comme les autres softbooks :
+`fetch_elitesports_quotes` dans le registre de `_fetch_all_parallel`, libellé
+dans `_BOOK_NAMES`, donc suivi des cotes, détection d'EV, alertes, CLV et P&L
+au même titre que Ladbrokes ou Golden Palace. Coupable par `BOOKS_DISABLED`,
+et mutable par `/book` sans couper la collecte (§15.3).
+
+⚠️ **Un scraper qui marche n'est pas un book intégré.** `tests/
+test_elitesports_integration.py` existe pour ça : il vérifie que le book est
+dans le registre ET NON COMMENTÉ, qu'il a un libellé d'alerte, qu'une panne
+d'API rend une liste vide sans emporter le cycle, et qu'une page corrompue en
+cours de balayage ne perd pas les précédentes. C'est le §21.8 (cinq books sur
+huit muets) et le §19.11 (du code parfait qui ne tournait pas) mis sous test.
+
+**À surveiller au premier cycle** : que le book apparaisse dans
+`→ N quotes EliteSports`, puis sa CLV après quelques jours
+(`clv_split --by book`). Une plateforme neuve peut avoir des prix
+systématiquement mauvais — c'est ce que BetFirst a révélé (−3,20 points de CLV
+à sélection identique).
 
 ### 21.9 État des lieux et à faire — remplace §20.15
 
 | | |
 |---|---|
-| Tests | **868 passés**, 4 ignorés — `pytest tests/`, jamais `pytest` seul (§4) |
+| Tests | **875 passés**, 4 ignorés — `pytest tests/`, jamais `pytest` seul (§4) |
 | `results` | 3 091 lignes (tennis) |
 | Books actifs en ALERTE | unibet, golden_palace, ladbrokes, circus |
 | Books muets (donnée seule) | betano, betfirst, napoleon, starcasino, **magicbetting** — **48 %** (§21.8) |
