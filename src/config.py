@@ -102,3 +102,28 @@ class ScanConfig:
     scan_surebets: bool = field(
         default_factory=lambda: _env_flag("SCAN_SUREBETS", default=False)
     )
+
+    # Middles — détection ET diffusion. Coupés le 22/08 sur demande : ils ne
+    # sont plus joués, donc le calcul ne sert plus à rien.
+    #
+    # ⚠️ Le canal n'est PAS touché, et il ne faut surtout pas le toucher : les
+    # middles partent sur le canal CLV, partagé avec les alertes de CLV. Le
+    # couper ferait taire une mesure qu'on veut garder. Ici on coupe le calcul,
+    # et l'absence d'envoi en découle — le canal reste vivant pour la CLV.
+    #
+    # `find_middles` a besoin de `fair`, qui est de toute façon calculé pour
+    # les value bets : le gain est celui de la recherche seule. MESURÉ à
+    # l'échelle réelle (900 événements, 8 books, ~65 000 cotes de totaux,
+    # 5 400 lignes justes) : **0,24 s par sport**.
+    #
+    # Avec les surebets (~1,00 s), le total coupé vaut ~1,24 s par sport, soit
+    # environ 2 % d'un cycle de ~54 s — les sports tournant en parallèle. La
+    # vraie raison de couper n'est pas là : un calcul dont personne ne lit le
+    # résultat est du bruit, quel que soit son prix.
+    #
+    # Rien n'est supprimé : `src/middle.py`, la table `notified_middles`, les
+    # réglages TELEGRAM_MIDDLE_* et le formatage restent en place.
+    # Réactiver avec SCAN_MIDDLES=1 dans .env, puis redémarrer le daemon.
+    scan_middles: bool = field(
+        default_factory=lambda: _env_flag("SCAN_MIDDLES", default=False)
+    )

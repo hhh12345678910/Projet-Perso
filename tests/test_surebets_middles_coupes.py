@@ -1,4 +1,4 @@
-"""Surebets coupés — calcul ET diffusion, réactivables d'un réglage.
+"""Surebets et middles coupés — calcul ET diffusion, réactivables d'un réglage.
 
 Demande du 21/08 : cesser de diffuser les surebets sur les deux canaux
 Telegram (prématch et live) ET cesser de les calculer, en gardant le système
@@ -29,6 +29,7 @@ from src.config import ScanConfig
 @pytest.fixture(autouse=True)
 def _env_propre(monkeypatch):
     monkeypatch.delenv("SCAN_SUREBETS", raising=False)
+    monkeypatch.delenv("SCAN_MIDDLES", raising=False)
     yield
 
 
@@ -92,9 +93,48 @@ def test_vider_le_chat_id_ne_coupe_PAS(monkeypatch):
     assert cfg.effective_live_surebet_chat_id == "-100PRINCIPAL"
 
 
-def test_les_middles_ne_sont_pas_touches():
-    """La demande portait sur les surebets seuls. Les middles continuent."""
+def test_les_middles_ont_leur_propre_interrupteur():
+    """Le 21/08 ce test verrouillait l'ABSENCE d'interrupteur sur les middles —
+    ils n'étaient pas dans la demande. Le 22/08 ils l'ont été, et ce test a
+    échoué comme prévu : c'était son rôle.
+
+    Les deux réglages restent SÉPARÉS. Un seul interrupteur pour les deux
+    empêcherait de rallumer l'un sans l'autre, et c'est justement ce qu'on
+    voudra le jour où l'un des deux redeviendra utile."""
     from src.middle import find_middles
     assert callable(find_middles)
-    assert not hasattr(ScanConfig(), "scan_middles"), \
-        "aucun interrupteur n'a été posé sur les middles — ce n'était pas demandé"
+    cfg = ScanConfig()
+    assert cfg.scan_middles is False
+    assert cfg.scan_surebets is False
+
+
+def test_les_deux_interrupteurs_sont_independants(monkeypatch):
+    monkeypatch.setenv("SCAN_SUREBETS", "1")
+    monkeypatch.setenv("SCAN_MIDDLES", "0")
+    cfg = ScanConfig()
+    assert cfg.scan_surebets is True and cfg.scan_middles is False
+
+    monkeypatch.setenv("SCAN_SUREBETS", "0")
+    monkeypatch.setenv("SCAN_MIDDLES", "1")
+    cfg = ScanConfig()
+    assert cfg.scan_surebets is False and cfg.scan_middles is True
+
+
+def test_le_canal_des_middles_n_est_pas_touche():
+    """⚠️ Les middles partaient sur le canal CLV, PARTAGÉ avec les alertes de
+    CLV. Le couper ferait taire une mesure qu'on garde — d'où une coupure par
+    le calcul et non par le canal."""
+    from src.alerter import TelegramConfig, send_clv_alerts, send_middle_alerts
+
+    cfg = TelegramConfig(bot_token="x", chat_id="y", clv_chat_id="-100CLV")
+    assert cfg.clv_chat_id == "-100CLV"
+    assert callable(send_clv_alerts) and callable(send_middle_alerts)
+
+
+def test_le_systeme_des_middles_est_intact():
+    """Réglages et table de dédup survivent, comme pour les surebets."""
+    from src.alerter import TelegramConfig
+    cfg = TelegramConfig(bot_token="x", chat_id="y")
+    for attr in ("min_middle_ev_pct", "middle_dedup", "middle_ev_delta_pct",
+                 "middle_max_alerts", "middle_max_gap", "middle_stake_eur"):
+        assert hasattr(cfg, attr), attr

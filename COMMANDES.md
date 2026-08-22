@@ -284,20 +284,35 @@ sudo systemctl restart betano-ingest
 
 ---
 
-## 7 bis. Surebets — coupés, et comment les remettre
+## 7 bis. Surebets et middles — coupés, et comment les remettre
 
-**Affiche l'état courant.** Coupés depuis le 21/08 : ni calculés, ni diffusés.
+**Affiche l'état courant des deux.** Surebets coupés le 21/08, middles le
+22/08 : ni calculés, ni diffusés. Absent = coupé (c'est le défaut du code).
 
 ```bash
-grep -E '^SCAN_SUREBETS=' .env || echo "SCAN_SUREBETS absent -> coupés (défaut)"
+grep -E '^SCAN_(SUREBETS|MIDDLES)=' .env || echo "absents -> coupés (défaut)"
 ```
 
 **Remet les surebets en service** — calcul et diffusion sur les deux canaux.
 
 ```bash
-sed -i 's/^SCAN_SUREBETS=.*/SCAN_SUREBETS=1/' .env || echo 'SCAN_SUREBETS=1' >> .env
+grep -q '^SCAN_SUREBETS=' .env && sed -i 's/^SCAN_SUREBETS=.*/SCAN_SUREBETS=1/' .env \
+  || echo 'SCAN_SUREBETS=1' >> .env
 sudo systemctl restart valuebet-daemon
 ```
+
+**Remet les middles en service.** Réglage séparé : on peut rallumer l'un sans
+l'autre.
+
+```bash
+grep -q '^SCAN_MIDDLES=' .env && sed -i 's/^SCAN_MIDDLES=.*/SCAN_MIDDLES=1/' .env \
+  || echo 'SCAN_MIDDLES=1' >> .env
+sudo systemctl restart valuebet-daemon
+```
+
+⚠️ **Le canal des middles est le canal CLV**, partagé avec les alertes de CLV
+qu'on garde. Ne jamais le couper pour faire taire les middles — la coupure
+passe par le calcul.
 
 **Lance une passe manuelle sans rien réactiver.** Cette commande reste opérante
 même à `SCAN_SUREBETS=0` : c'est la façon de vérifier que le système marche

@@ -2795,7 +2795,13 @@ def _daemon_scan_sport(
         # Totals middles priced against Pinnacle's devigged ladder. Uses the
         # remapped soft quotes (aligned to the Pinnacle reference keys) so the
         # gap probability lookup hits the same event_key as `fair`.
-        if tg_cfg is not None:
+        #
+        # Coupés par défaut depuis le 22/08 — voir ScanConfig.scan_middles.
+        # Le canal n'est pas touché : les middles partaient sur le canal CLV,
+        # partagé avec les alertes de CLV qu'on garde.
+        if not cfg.scan_middles:
+            console.print(f"\\[{current_sport}]   middles: coupés (SCAN_MIDDLES=0)")
+        elif tg_cfg is not None:
             middles = find_middles(
                 soft_q, fair,
                 min_ev_pct=tg_cfg.min_middle_ev_pct,

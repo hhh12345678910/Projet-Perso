@@ -5075,7 +5075,7 @@ découper par sport. Si le motif tient sur
 le football aussi, c'est un plafond de cote ; s'il est propre au tennis, c'est
 le devig du tennis qu'il faut regarder — et le §20.4 aura sa réponse.
 
-### 21.18 Surebets coupés — calcul et diffusion, sur demande du 21/08
+### 21.18 Surebets et middles coupés — calcul et diffusion
 
 Demande : cesser de diffuser les surebets sur les deux canaux Telegram
 (prématch et live), cesser de les CALCULER, et garder le système intact pour
@@ -5124,14 +5124,34 @@ déguisée) et un qui garde le piège des identifiants.
 Réactiver : `SCAN_SUREBETS=1` dans `.env`, puis
 `sudo systemctl restart valuebet-daemon`.
 
-⚠️ **Les middles ne sont PAS touchés** — ce n'était pas demandé, et un test le
-verrouille.
+**Les middles, coupés le 22/08 de la même façon.** Réglage `SCAN_MIDDLES`,
+SÉPARÉ du précédent pour qu'on puisse rallumer l'un sans l'autre. Un seul site
+de production (`_daemon_scan_sport`) — `scan` ne calcule pas de middles.
+
+⚠️ **Le canal n'est pas touché, et il ne faut pas le toucher** : les middles
+partaient sur le canal CLV, **partagé avec les alertes de CLV** qu'on garde.
+Le couper ferait taire une mesure qu'on veut. La coupure passe donc par le
+calcul, et l'absence d'envoi en découle.
+
+Coût mesuré de `find_middles` (900 événements, 8 books, ~65 000 cotes de
+totaux, 5 400 lignes justes) : **0,24 s par sport**. ⚠️ J'avais d'abord écrit
+« ~0,05 s » dans le commentaire, au jugé — **cinq fois faux**, corrigé après
+mesure. Un nombre supposé dans un commentaire est exactement ce que cette
+session a passé la journée à débusquer.
+
+**Total coupé : ~1,24 s par sport**, soit ~2 % d'un cycle de ~54 s. La vraie
+raison de couper n'est pas là : un calcul dont personne ne lit le résultat est
+du bruit, quel que soit son prix.
+
+⚠️ Le test du 21/08 verrouillait l'ABSENCE d'interrupteur sur les middles. Il a
+échoué le 22/08 — c'était son rôle — et a été retourné en test de leur
+indépendance.
 
 ### 21.9 État des lieux et à faire — remplace §20.15
 
 | | |
 |---|---|
-| Tests | **853 passés**, 4 ignorés — `pytest tests/`, jamais `pytest` seul (§4) |
+| Tests | **856 passés**, 4 ignorés — `pytest tests/`, jamais `pytest` seul (§4) |
 | `results` | 3 091 lignes (tennis) |
 | Books actifs en ALERTE | unibet, golden_palace, ladbrokes, circus |
 | Books muets (donnée seule) | betano, betfirst, napoleon, starcasino, **magicbetting** — **48 %** (§21.8) |
