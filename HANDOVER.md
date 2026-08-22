@@ -5434,11 +5434,160 @@ variable de module — peut être vert chez le développeur et rouge en producti
 ou pire, l'inverse. **La suite doit être rejouée sur la VM avant d'être crue.**
 C'est ce déploiement qui l'a montré.
 
+### 21.22 Préparation du LIVE — découpage de main.py et inventaire de l'état
+
+Phase d'architecture uniquement. **Aucun moteur LIVE n'a été écrit**, aucun
+second daemon, aucune unité systemd, aucun seuil, aucune source de score. Le
+daemon prématch se comporte exactement comme avant.
+
+#### Le découpage, et pourquoi l'ordre de l'audit a été inversé
+
+L'audit proposait de sortir `orchestration.py` en premier. **Une mesure prise
+avant de toucher au code a dit l'inverse**, et c'est elle qui a décidé. Les
+points d'accroche des tests ont été comptés d'abord :
+
+| couche | monkeypatch | affectations directes | verdict |
+|---|---|---|---|
+| collecte (`PinnacleScraper`, `_PINNACLE_*`, `EliteSportsScraper`, `ThreadPoolExecutor`) | ~30 | 13 | **la plus risquée** |
+| détection (`build_fair_lines`, `find_value_bets`) | 0 | 0 | la plus sûre |
+| référence (jumeaux, remappage) | 0 | 0 | sûre |
+| marchés en retard | 0 | 1 | sûre |
+
+La couche que l'audit jugeait simple à sortir est celle qui porte 47 des 48
+accroches. Trois extractions ont donc été faites, de la plus sûre à la moins :
+
+| module | contenu | lignes |
+|---|---|---|
+| `detection.py` | `build_fair_lines`, `find_value_bets`, devig de groupe, seuils de marge, `_kickoff` | 273 |
+| `late_markets.py` | tout le détecteur de marché en retard + ses trois dictionnaires d'état | ~380 |
+| `reference.py` | books jumeaux, remappage vers la référence, canonicalisation surebet | ~220 |
+| `ui.py` | la console partagée | 15 |
+
+`main.py` : **5 691 → 4 963 lignes** (−12,8 %). Les trois modules sont PURS —
+aucune requête, aucune écriture, aucune alerte sauf pour `late_markets` — donc
+directement importables par le futur moteur LIVE.
+
+⚠️ **Le sens du découpage a été inversé lui aussi.** L'audit proposait de sortir
+la CLI vers `cli.py` ; c'est le MOTEUR qui est sorti, et la CLI qui reste dans
+`main.py`. Raison : le point d'entrée est `python -m src.main`, et 67 fichiers
+de test importent depuis `src.main`. Déplacer la CLI aurait déplacé la surface
+d'import de tout le projet ; déplacer le moteur ne déplace rien, grâce au
+réexport.
+
+**Le réexport n'est pas neutre, et c'est le piège à retenir.** `main.py`
+réimporte tout, donc `from src.main import find_value_bets` marche encore. Mais
+un test qui REMPLACE un nom réexporté modifie la copie de `main` sans toucher
+celle que le module consulte : il passerait sans plus rien remplacer. C'est
+arrivé une fois — `test_a_goal_bypasses_the_reminder_delay` posait un faux
+`send_late_market_alerts` par affectation directe sur `main`. Il a échoué
+BRUYAMMENT, ce qui est le bon comportement, et a été recâblé sur
+`src.late_markets`.
+
+#### Ce qui n'a PAS été fait : `orchestration.py`
+
+Chiffré, pas supposé : **47 points d'accroche répartis sur 9 fichiers de test**,
+pour ~950 lignes qui sont le chemin Pinnacle — le point de défaillance unique
+du système. C'est une refonte à part entière, pas une extraction.
+
+Elle reste faisable et la méthode est connue : déplacer les `fetch_*` et les
+constantes `_PINNACLE_*` vers `orchestration.py`, **ne pas réexporter les noms
+patchés** (pour que chaque test tombe bruyamment plutôt qu'en silence), puis
+recâbler les 47 accroches sur `src.orchestration`. À faire dans son propre
+commit, seule, avec la suite verte avant et après.
+
+#### §3 — Où le futur `market_state` devra s'insérer
+
+Le besoin : dernier prix connu par `(event, market, outcome, book)`, avec
+`odd`, `fetched_at`, `is_live`.
+
+**Ce qui existe déjà et se réutilise :**
+
+- `OddQuote.from_live_feed` — **le drapeau `is_live` existe déjà** dans le
+  modèle. Il n'est simplement pas persisté ;
+- `Storage.insert_quotes_sparse` — la détection de changement par marché EST
+  déjà là, avec son battement de cœur ;
+- la table `quotes` porte 8 des 10 colonnes voulues.
+
+**Ce qui manque :**
+
+- **`quotes` est un journal en AJOUT, pas un état.** Aucun index unique sur
+  `(event_key, book, market, outcome_label, line)` : « le dernier prix » se
+  paie aujourd'hui par un `GROUP BY` sur un journal de plusieurs millions de
+  lignes, purgé à 7 jours. Un moteur LIVE qui raisonne sur les VARIATIONS ne
+  peut pas payer ça à chaque tick ;
+- `from_live_feed` et `league` sont sur `OddQuote` mais **absents des colonnes
+  écrites** — un état live ne saurait pas distinguer une cote live d'une cote
+  prématch oubliée, la distinction même qui fonde `late_markets.py` ;
+- l'état d'écriture creuse `Storage._quote_sig` vit **en mémoire de
+  l'instance** : deux daemons auraient chacun le sien et se réécriraient
+  mutuellement dessus.
+
+**Forme recommandée** (à ne PAS construire avant validation) : une table
+`market_state` à clé primaire naturelle `(event_key, book, market,
+outcome_label, line)`, en UPSERT, portant `decimal_odd`, `fetched_at`,
+`is_live`, `league`. Elle est bornée par l'offre courante et non par le temps —
+quelques centaines de milliers de lignes au lieu d'un journal — et le
+`quotes` actuel reste ce qu'il est, le journal historique.
+
+#### §3 bis — Les verrous SQLite avant DEUX daemons
+
+Trois, relevés :
+
+1. **Écrivain unique.** SQLite en WAL admet plusieurs lecteurs mais **un seul
+   écrivain**. L'audit a chiffré le coût déjà payé à un seul processus : 695
+   collectes perdues sur `database is locked` en 11 heures ;
+2. **Les délais d'attente sont incohérents** — `_conn()` ouvre avec
+   `timeout=10`, deux autres chemins avec `timeout=60`. À deux écrivains, le
+   chemin le plus court lâche en premier, et c'est celui du cycle ;
+3. **`_quote_sig` en mémoire d'instance** (ci-dessus).
+
+⚠️ **Ne pas migrer vers PostgreSQL ou Redis pour autant.** L'ordre sain est :
+d'abord un seul écrivain logique — le moteur LIVE écrit par le même chemin, ou
+n'écrit pas du tout et se contente de lire — puis uniformiser les délais, et
+seulement ensuite se demander si SQLite est le problème. Changer de base pour
+un verrou qu'on n'a pas encore mesuré à deux processus serait une réponse avant
+la question.
+
+#### §4 — Inventaire de l'état de déduplication
+
+**La bonne nouvelle d'abord, et elle est grosse : la déduplication des ALERTES
+est déjà persistée.** Quatre tables la portent — `notified_value_bets`,
+`notified_surebets`, `notified_middles`, `notified_clv_alerts` — plus
+`played_bets` et `book_alerts_off`. Le §4 de la demande supposait le contraire ;
+la vérification dit que l'essentiel est déjà partageable entre deux moteurs.
+
+Ce qui reste en mémoire du processus, et ce que ça coûterait à deux daemons :
+
+| état | rôle | à deux moteurs |
+|---|---|---|
+| `_LATE_ALERTED` | dédup des alertes marché en retard | **doublerait les alertes** — le seul vrai trou |
+| `_PINNACLE_FAILS` / `_ALERTED` / `_DOWN_SINCE` | santé Pinnacle | doublerait les alertes système |
+| `_BOOK_SEEN` / `_FAILS` / `_DOWN_SINCE` / `_ALERTED` | santé des books | idem |
+| `Storage._quote_sig` | écriture creuse | écritures redondantes |
+| `_PINNACLE_CACHE`, `_BETFIRST_CACHE`, `_SMARKETS_CACHE`, `_ELITE_DEEP_CACHE` | caches de collecte | gaspillage, pas corruption |
+| `_thin_reference_seen`, `_CIRCUS_SEEN_*` | anti-répétition de logs | sans conséquence |
+| `_PINNACLE_RECENT`, `_LIVE_SCORES`, `_LATE_EDGES`, `_CURVE_LAST` | état de cycle | recalculés au cycle suivant |
+
+**Stratégie recommandée** : une seule migration, `_LATE_ALERTED` vers une table
+`notified_late_markets` calquée sur les quatre `notified_*` existantes. Le reste
+ne mérite pas de l'être — un cache dupliqué gaspille, il ne ment pas.
+
+⚠️ **Cette migration n'a PAS été faite ici, et c'est délibéré.** Persister
+`_LATE_ALERTED` CHANGE le comportement en production : aujourd'hui un
+redémarrage du daemon rouvre la parole immédiatement, demain le silence
+survivrait au redémarrage. C'est probablement souhaitable, mais c'est une
+décision de produit sur un système en service, pas un effet de bord de
+refactoring.
+
+**Une seule amélioration a été faite**, parce qu'elle est sans effet
+observable : la purge de `_LATE_EDGES` (commit séparé). C'était le seul état du
+module que rien ne vidait.
+
 ### 21.9 État des lieux et à faire — remplace §20.15
 
 | | |
 |---|---|
-| Tests | **900 passés**, 4 ignorés — `pytest tests/`, jamais `pytest` seul (§4) |
+| Tests | **903 passés**, 4 ignorés — `pytest tests/`, jamais `pytest` seul (§4) |
 | `results` | 3 091 lignes (tennis) |
 | Books actifs en ALERTE | unibet, golden_palace, ladbrokes, circus |
 | Books muets (donnée seule) | betano, betfirst, napoleon, starcasino, **magicbetting** — **48 %** (§21.8) |
