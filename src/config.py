@@ -74,3 +74,31 @@ class ScanConfig:
     scan_live_value_bets: bool = field(
         default_factory=lambda: _env_flag("VALUEBET_SCAN_LIVE", default=False)
     )
+
+    # Surebets — détection ET diffusion. Coupés le 21/08 sur demande.
+    #
+    # Coupe TOUT d'un coup, et c'est voulu : le calcul
+    # (`canonicalize_for_surebets` + `find_surebets`), les deux canaux Telegram
+    # dédiés (prématch et live), et la copie vers le canal critique au-delà de
+    # TELEGRAM_MIN_CRITICAL_SUREBET. Laisser le calcul tourner pour n'en couper
+    # que l'envoi garderait le coût sans le service.
+    #
+    # ⚠️ Ne PAS vider TELEGRAM_SUREBET_CHAT_ID pour obtenir le même effet :
+    # `effective_surebet_chat_id` retombe sur le canal PRINCIPAL quand il est
+    # vide, donc les surebets iraient polluer le chat principal au lieu de
+    # disparaître. Ces identifiants servent aussi la liste blanche du listener
+    # (`_allowed_chats`) : les effacer couperait ces canaux de /scan et /book.
+    #
+    # Coût mesuré du calcul, à l'échelle réelle (900 événements, 8 books,
+    # ~44 000 cotes) : 0,89 s pour la canonicalisation et 0,12 s pour la
+    # recherche, soit ~1,0 s par sport. Les sports tournant en PARALLÈLE dans
+    # le daemon, le cycle ne raccourcit que du sport le plus lent — environ
+    # 1 s sur ~54 s, soit ~2 %. Les surebets réutilisent des cotes déjà
+    # téléchargées : il n'y a aucun gain réseau à en attendre.
+    #
+    # Rien n'est supprimé : `src/surebet.py`, la table `notified_surebets`, les
+    # réglages TELEGRAM_* et la commande `scan-surebets` restent en place.
+    # Réactiver avec SCAN_SUREBETS=1 dans .env, puis redémarrer le daemon.
+    scan_surebets: bool = field(
+        default_factory=lambda: _env_flag("SCAN_SUREBETS", default=False)
+    )

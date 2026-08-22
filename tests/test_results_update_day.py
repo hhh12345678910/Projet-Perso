@@ -90,15 +90,53 @@ def test_day_ne_juge_que_la_journee_demandee(monkeypatch, tmp_path, jours):
     assert f"journée {jours['hier'].isoformat()}" in r.output
 
 
-def test_sans_day_la_fenetre_avale_la_journee_en_cours(monkeypatch, tmp_path, jours):
-    """Le défaut d'origine, gardé sous test pour qu'on sache qu'il est
-    STRUCTUREL et non un accident : `--days` inclut toujours aujourd'hui."""
-    db = _base(tmp_path, [jours["hier"], jours["aujourdhui"]])
-    r = _run(monkeypatch, tmp_path, db, "--days", "2")
+def test_days_reclame_chaque_journee_de_la_fenetre(monkeypatch, tmp_path, jours):
+    """`--days` couvre plusieurs journées et compte CHAQUE journée non pontée.
+
+    ⚠️ La première version de ce test posait un événement « aujourd'hui à
+    midi » et attendait `journee_non_pontee=2`. Elle passait le soir et
+    échouait le matin : la fenêtre s'arrête à `maintenant − 2 h`, donc à 6 h
+    du matin un événement de midi est dans le FUTUR et sort du compte. Un test
+    dont le verdict dépend de l'heure qu'il est ne prouve rien.
+
+    Deux journées RÉVOLUES, elles, sont dans la fenêtre à toute heure.
+    """
+    db = _base(tmp_path, [jours["avant_hier"], jours["hier"]])
+    r = _run(monkeypatch, tmp_path, db, "--days", "3")
 
     assert r.exit_code == 0, r.output
-    # Deux journées réclamées, aucune pontée : le compteur le dit.
     assert "journee_non_pontee=2" in r.output
+
+
+def test_la_fenetre_de_days_s_arrete_deux_heures_avant_maintenant(monkeypatch,
+                                                                  tmp_path, jours):
+    """Le défaut STRUCTUREL de `--days`, énoncé là où il est prouvable.
+
+    Un match qui vient de commencer n'a pas de résultat : la fenêtre s'arrête
+    donc à `maintenant − 2 h`. Conséquence, la journée en cours y est toujours
+    PARTIELLEMENT présente et jamais pontée — le fichier du jour n'existe pas
+    encore. C'est pour ça que `--days` ne peut pas mesurer une source, et que
+    `--day` existe (§21.16).
+    """
+    from datetime import datetime as _dt, timedelta as _td, timezone as _tz
+
+    maintenant = _dt.now(_tz.utc)
+    db = _db_path(tmp_path)
+    st = Storage(db)
+    # Un match commencé il y a trois heures : dans la fenêtre à coup sûr,
+    # quelle que soit l'heure qu'il est.
+    debut = maintenant - _td(hours=3)
+    st.upsert_event("récent::a__vs__b", "soccer", "L", "A", "B", debut)
+    st.insert_value_bet(ValueBet(
+        event_key="récent::a__vs__b", book=Book.UNIBET_BE, market=MarketType.H2H,
+        outcome=Outcome(label="home"), odd_taken=2.0, fair_prob=0.5,
+        fair_odd=1.9, ev_pct=10.0, kelly_stake_pct=1.0, detected_at=debut))
+
+    r = _run(monkeypatch, tmp_path, db, "--days", "1")
+    assert r.exit_code == 0, r.output
+    # Il est réclamé, et sa journée n'est pas pontée : le compteur le prouve.
+    assert "journee_non_pontee" in r.output
+    assert "Aucun match en attente" not in r.output
 
 
 def test_une_journee_non_revolue_est_refusee(monkeypatch, tmp_path, jours):

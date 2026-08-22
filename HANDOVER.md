@@ -5075,11 +5075,63 @@ découper par sport. Si le motif tient sur
 le football aussi, c'est un plafond de cote ; s'il est propre au tennis, c'est
 le devig du tennis qu'il faut regarder — et le §20.4 aura sa réponse.
 
+### 21.18 Surebets coupés — calcul et diffusion, sur demande du 21/08
+
+Demande : cesser de diffuser les surebets sur les deux canaux Telegram
+(prématch et live), cesser de les CALCULER, et garder le système intact pour
+pouvoir le réactiver à tout moment.
+
+**Un seul réglage, `SCAN_SUREBETS`, coupé par défaut.** Il coupe d'un coup le
+calcul (`canonicalize_for_surebets` + `find_surebets`), les deux canaux dédiés,
+et la copie vers le canal critique au-delà de `TELEGRAM_MIN_CRITICAL_SUREBET`.
+Même idiome que `VALUEBET_SCAN_LIVE`, qui existait déjà. Deux sites de
+production étaient concernés — `scan` ET `_daemon_scan_sport`, ce dernier étant
+celui qui tourne réellement.
+
+La garde englobe le CALCUL et pas seulement l'envoi : un « coupé » qui calcule
+quand même garderait le coût sans le service, et le prochain profilage
+chercherait longtemps pourquoi.
+
+**Le gain de cycle, mesuré et non supposé.** Benchmark à l'échelle réelle
+(900 événements, 8 books, ~44 000 cotes) :
+
+| | |
+|---|---|
+| `canonicalize_for_surebets` | 0,89 s |
+| `find_surebets` | 0,12 s |
+| **par sport** | **~1,0 s** |
+
+Les sports tournent **en parallèle** dans le daemon (« cycle time equals the
+slowest single-sport fetch »), donc le cycle ne raccourcit que du sport le plus
+lent : **~1 s sur ~54 s, soit ~2 %**. Les surebets réutilisent des cotes déjà
+téléchargées — **aucun gain réseau**, et c'est le réseau qui domine le cycle.
+
+⚠️ **Le piège qu'il ne faut pas retomber dedans : ne PAS vider
+`TELEGRAM_SUREBET_CHAT_ID`.** `effective_surebet_chat_id` retombe sur le canal
+PRINCIPAL quand il est vide — les surebets iraient le polluer au lieu de
+disparaître. Ces identifiants servent en outre la liste blanche du listener
+(`_allowed_chats`) : les effacer couperait ces canaux de `/scan` et `/book`.
+
+**Rien n'est supprimé.** `src/surebet.py`, la table `notified_surebets` (la
+vider ferait re-alerter tout l'historique à la réactivation), les réglages
+`TELEGRAM_SUREBET_*` et la commande `scan-surebets` restent en place. Cette
+dernière **reste opérante** même à `SCAN_SUREBETS=0` — une demande explicite
+n'est pas le cycle automatique — et affiche l'état pour qu'on ne croie jamais
+le daemon en train de faire ce travail. Sept tests, dont un qui vérifie la
+réactivation (une coupure qu'on ne sait pas annuler est une suppression
+déguisée) et un qui garde le piège des identifiants.
+
+Réactiver : `SCAN_SUREBETS=1` dans `.env`, puis
+`sudo systemctl restart valuebet-daemon`.
+
+⚠️ **Les middles ne sont PAS touchés** — ce n'était pas demandé, et un test le
+verrouille.
+
 ### 21.9 État des lieux et à faire — remplace §20.15
 
 | | |
 |---|---|
-| Tests | **845 passés**, 4 ignorés — `pytest tests/`, jamais `pytest` seul (§4) |
+| Tests | **853 passés**, 4 ignorés — `pytest tests/`, jamais `pytest` seul (§4) |
 | `results` | 3 091 lignes (tennis) |
 | Books actifs en ALERTE | unibet, golden_palace, ladbrokes, circus |
 | Books muets (donnée seule) | betano, betfirst, napoleon, starcasino, **magicbetting** — **48 %** (§21.8) |

@@ -284,6 +284,36 @@ sudo systemctl restart betano-ingest
 
 ---
 
+## 7 bis. Surebets — coupés, et comment les remettre
+
+**Affiche l'état courant.** Coupés depuis le 21/08 : ni calculés, ni diffusés.
+
+```bash
+grep -E '^SCAN_SUREBETS=' .env || echo "SCAN_SUREBETS absent -> coupés (défaut)"
+```
+
+**Remet les surebets en service** — calcul et diffusion sur les deux canaux.
+
+```bash
+sed -i 's/^SCAN_SUREBETS=.*/SCAN_SUREBETS=1/' .env || echo 'SCAN_SUREBETS=1' >> .env
+sudo systemctl restart valuebet-daemon
+```
+
+**Lance une passe manuelle sans rien réactiver.** Cette commande reste opérante
+même à `SCAN_SUREBETS=0` : c'est la façon de vérifier que le système marche
+encore avant de le remettre en service.
+
+```bash
+.venv/bin/python -m src.main scan-surebets --sport soccer,tennis
+```
+
+⚠️ **Ne jamais couper en vidant `TELEGRAM_SUREBET_CHAT_ID`** : un identifiant
+vide fait retomber sur le canal PRINCIPAL, donc les surebets iraient le polluer
+au lieu de disparaître. Ces identifiants servent aussi la liste blanche du
+listener — les effacer couperait ces canaux de `/scan`.
+
+---
+
 ## 8. Maintenance
 
 **Affiche la place disque et la taille de la base.** Le projet a déjà connu le

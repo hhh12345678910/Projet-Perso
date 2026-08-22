@@ -2233,9 +2233,14 @@ def scan(
         # rule, so Pinnacle-vs-Pinnacle "arbs" can't slip through.
         # Canonicalize across all books so events Pinnacle doesn't price still
         # yield surebets when two soft books cover both sides.
-        surebets = find_surebets(canonicalize_for_surebets(quotes, raw_soft, current_sport))
-        plausible = [s for s in surebets if not s.suspicious]
-        flagged = [s for s in surebets if s.suspicious]
+        if not cfg.scan_surebets:
+            console.print("  surebets: coupés (SCAN_SUREBETS=0)")
+            surebets, plausible, flagged = [], [], []
+        else:
+            surebets = find_surebets(
+                canonicalize_for_surebets(quotes, raw_soft, current_sport))
+            plausible = [s for s in surebets if not s.suspicious]
+            flagged = [s for s in surebets if s.suspicious]
         console.print(
             f"[bold]Surebets: {len(plausible)} plausible[/bold]"
             + (f" (+ {len(flagged)} flagged as suspicious — likely matching bugs)" if flagged else "")
@@ -2307,11 +2312,30 @@ def scan_surebets(
     """Surebet sweep including Pinnacle, designed to run every 5-15 min.
     Pinnacle quotes are fetched and used as the canonical event-key reference,
     then included in the surebet candidate pool — same as the full `scan`.
-    Comma-separated --sport lets one cron entry cover every sport you care about."""
+    Comma-separated --sport lets one cron entry cover every sport you care about.
+
+    ⚠️ Cette commande reste OPÉRANTE même quand SCAN_SUREBETS=0 : la coupure
+    du 21/08 porte sur le cycle automatique, pas sur une demande explicite.
+    C'est le levier pour regarder ponctuellement sans rien réactiver — et,
+    accessoirement, la seule façon de vérifier que le système marche encore
+    avant de le remettre en service."""
     sports = [s.strip() for s in sport.split(",") if s.strip()]
     storage = Storage(ScanConfig().db_path)
     teams.init(storage)
     tg_cfg = TelegramConfig.from_env()
+
+    if not ScanConfig().scan_surebets:
+        # Dire l'état, sinon on croit le daemon en train de faire ce travail
+        # alors qu'il ne le fait plus — et c'est exactement le genre d'écart
+        # silencieux entre l'état supposé et l'état réel que le projet paie
+        # cher (§11).
+        console.print(
+            "[yellow]⚠️ SCAN_SUREBETS=0 : le daemon ne calcule NI ne diffuse "
+            "plus de surebets.[/yellow]\n"
+            "[dim]   Cette passe manuelle tourne quand même et peut alerter. "
+            "Pour remettre en service :\n"
+            "   SCAN_SUREBETS=1 dans .env, puis "
+            "sudo systemctl restart valuebet-daemon[/dim]")
 
     for current_sport in sports:
         console.print()
@@ -2725,10 +2749,21 @@ def _daemon_scan_sport(
         # ── Surebets ─────────────────────────────────────────────────
         # Surebets use a wider pool than value bets: events Pinnacle doesn't
         # price still count, as long as two distinct books cover both sides.
-        surebet_pool = canonicalize_for_surebets(pinnacle_q, soft_raw, current_sport)
-        surebets = find_surebets(surebet_pool)
-        plausible = [s for s in surebets if not s.suspicious]
-        console.print(f"\\[{current_sport}]   surebets: {len(plausible)} plausible")
+        #
+        # Coupés par défaut depuis le 21/08 — voir ScanConfig.scan_surebets.
+        # La garde englobe le CALCUL, pas seulement l'envoi : la
+        # canonicalisation coûte ~0,9 s par sport et n'a aucun autre usage.
+        # Un « coupé » qui calcule quand même garderait le coût sans le
+        # service, et le prochain profilage chercherait longtemps pourquoi.
+        if not cfg.scan_surebets:
+            console.print(f"\\[{current_sport}]   surebets: coupés (SCAN_SUREBETS=0)")
+            surebets = []
+            plausible = []
+        else:
+            surebet_pool = canonicalize_for_surebets(pinnacle_q, soft_raw, current_sport)
+            surebets = find_surebets(surebet_pool)
+            plausible = [s for s in surebets if not s.suspicious]
+            console.print(f"\\[{current_sport}]   surebets: {len(plausible)} plausible")
         if tg_cfg is not None and surebets:
             sb_pool = surebets if tg_cfg.include_suspicious_surebets else plausible
             # Same dedup model as value bets: a hard alert cap that ALWAYS
