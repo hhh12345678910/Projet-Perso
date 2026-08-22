@@ -4656,6 +4656,55 @@ def results_update(
                       "[dim]Relance `track-update` pour recalculer les P&L.[/dim]")
 
 
+@app.command(name="elitesports-check")
+def elitesports_check(
+    sport: str = typer.Option("soccer,tennis", "--sport"),
+    pages: int = typer.Option(1, "--pages", help="Pages à récupérer par sport."),
+):
+    """Sonde d'acceptation d'EliteSports — APPELLE l'API réelle, n'écrit rien.
+
+    À lancer AVANT de mettre ce book dans le cycle. C'est la règle du §15.7,
+    celle qui a évité de mettre BetFirst en production avec ses 80 secondes de
+    collecte : un book se juge sur ce qu'il rend chez toi, pas sur ce que sa
+    capture laissait espérer.
+
+    Ce qu'elle vérifie : que la VM est acceptée, que la pagination répond, et
+    que le parseur rend des cotes des DEUX marchés attendus.
+    """
+    from .scrapers.elitesports import EliteSportsScraper, parse_prematch
+
+    for sp in [x.strip() for x in sport.split(",") if x.strip()]:
+        console.print(f"\n[bold green]══ {sp.upper()} ══[/bold green]")
+        quotes, n_pages, total = [], 0, None
+        try:
+            with EliteSportsScraper() as sc:
+                for payload in sc.fetch_pages(sp):
+                    n_pages += 1
+                    total = (payload.get("page") or {}).get("totalElements", total)
+                    quotes.extend(parse_prematch(payload, sc.book))
+                    if n_pages >= pages:
+                        break
+        except Exception as e:                                    # noqa: BLE001
+            console.print(f"[red]  injoignable — {type(e).__name__}: {e}[/red]")
+            continue
+
+        evs = {q.event_key for q in quotes}
+        par_marche = Counter(q.market.value for q in quotes)
+        lignes = sorted({q.outcome.line for q in quotes if q.outcome.line is not None})
+        console.print(f"  pages lues        : {n_pages}"
+                      f"   (offre annoncée : {total} événements)")
+        console.print(f"  événements        : {len(evs)}")
+        console.print(f"  cotes             : {len(quotes)}  {dict(par_marche)}")
+        console.print(f"  lignes de totaux  : {lignes[:14]}")
+        if not quotes:
+            console.print("[yellow]  ⚠️ zéro cote : l'API répond mais le parseur ne "
+                          "reconnaît rien — la forme a changé.[/yellow]")
+        elif not par_marche.get("h2h"):
+            console.print("[yellow]  ⚠️ aucun 1X2 — vérifier marketExternalId=1.[/yellow]")
+    console.print("\n[dim]Sonde seule — rien n'a été écrit, et le book n'est PAS "
+                  "dans le cycle.[/dim]")
+
+
 @app.command(name="inspect-betano")
 def inspect_betano(path: str):
     """Inspect a saved Betano overview JSON dump (DevTools → Response → save).

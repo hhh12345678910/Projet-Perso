@@ -46,6 +46,9 @@ class Book(str, Enum):
     SMARKETS = "smarkets"        # London exchange, used as a secondary sharp reference
     MAGICBETTING = "magicbetting"  # Magicbetting.be — plateforme Digitain, prix
                                    # réellement indépendants des Kambi et Altenar
+    ELITESPORTS = "elitesports"    # Elitesports.be — marque blanche FM Gaming,
+                                   # API REST publique sans authentification ni
+                                   # anti-bot, et l'IP de datacenter est acceptée
 
 
 BETANO_OPERATOR_ID = "22"

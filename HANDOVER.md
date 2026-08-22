@@ -5147,11 +5147,65 @@ du bruit, quel que soit son prix.
 échoué le 22/08 — c'était son rôle — et a été retourné en test de leur
 indépendance.
 
+### 21.19 EliteSports.be — le book le plus simple du portefeuille
+
+Découvert le 22/08 par un HAR de l'utilisateur. **Ce book n'était dans aucune
+liste** — ni actif, ni écarté : c'est une découverte, pas une réactivation.
+
+**Ce que la capture puis la VM ont établi :**
+
+| Critère | Constat |
+|---|---|
+| Authentification | **aucune** — 0 cookie sur 132 requêtes, aucun `Authorization` |
+| Anti-bot | **aucun** — ni `cf-ray`, ni DataDome, ni `set-cookie`, ni limitation |
+| Statuts | 111/111 en 200 dans la capture |
+| **IP de datacenter** | **ACCEPTÉE — la VM reçoit 200** |
+| Pagination | `size=500` servi tel quel → **4 appels pour 1 523 matchs** |
+
+C'est le premier book depuis Ladbrokes qui ne demande **aucun pont
+navigateur**. À comparer aux quatre anti-bots du projet : DataDome (Betano),
+Gaming1 (Circus), Cloudflare (MagicBetting), API-Sports (résultats).
+
+⚠️ **Marque blanche** : front sur `elit.fmgaming.dev`, API sur
+`api.lisaparyaj.com`, en-tête `tenant-code: elitebet` pour l'enseigne. Le même
+back-end sert d'autres marques, et une plateforme tierce change d'hôte sans
+prévenir — profil type du book qui casse en silence. L'alerte « softbook
+muet » (§20.6) est la garde qui compte ici, et elle n'est **toujours pas
+vérifiée de bout en bout** (§21.9 pt 6).
+
+**Le point qui le rend bon marché** : les cotes sont DANS la liste des matchs
+(`markets → periods → lines → odds`). Pas d'appel par événement — le piège du
+§18.6 évité. Les deux marchés utiles y sont en ligne : `marketExternalId=1`
+(« Résultat du match ») et `7` (« Total de buts », échelle complète, 65
+événements sur 85 portent la ligne 2,5).
+
+**Volume** : football 1 523 prématch / 34 live — au niveau des meilleurs books.
+Tennis **35 seulement**, à mettre en face du plafond connu (Pinnacle ne price
+que ~71 matchs de tennis).
+
+⚠️ **Le piège que le parseur écarte : les totaux ASIATIQUES.** EliteSports sert
+l'échelle par pas de 0,25, et « over 2.25 » est un pari FRACTIONNÉ — moitié sur
+2,0, moitié sur 2,5. `settle()` le réglerait comme un total simple et noterait
+« lost » là où la réalité est un demi-remboursement, **sans lever d'erreur**.
+Les lignes en quart sont donc écartées, comme `_is_half_line` le fait déjà dans
+`middle.py` et comme le §18.6 exclut les totaux asiatiques de Digitain.
+
+**État : écrit et testé, PAS dans le cycle.** `src/scrapers/elitesports.py`,
+12 tests contre un échantillon RÉEL extrait du HAR (226 cotes, 10 événements),
+et la sonde d'acceptation `elitesports-check` qui appelle l'API réelle sans
+rien écrire. Le §15.7 veut qu'un book se juge sur ce qu'il rend chez toi avant
+d'entrer dans le cycle — c'est ce qui a évité BetFirst et ses 80 secondes.
+
+**À faire pour le mettre en service** : lancer `elitesports-check`, puis câbler
+le scraper dans `_fetch_all_parallel` et ajouter le book à la rotation. Non
+fait à dessein : ça change ce que le daemon exécute, et la sonde n'a pas encore
+tourné.
+
 ### 21.9 État des lieux et à faire — remplace §20.15
 
 | | |
 |---|---|
-| Tests | **856 passés**, 4 ignorés — `pytest tests/`, jamais `pytest` seul (§4) |
+| Tests | **868 passés**, 4 ignorés — `pytest tests/`, jamais `pytest` seul (§4) |
 | `results` | 3 091 lignes (tennis) |
 | Books actifs en ALERTE | unibet, golden_palace, ladbrokes, circus |
 | Books muets (donnée seule) | betano, betfirst, napoleon, starcasino, **magicbetting** — **48 %** (§21.8) |
