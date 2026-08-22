@@ -1,0 +1,1474 @@
+{
+ "content": [
+  {
+   "leagueId": "fe33243c-36b8-4c8d-a2c7-3fcce4fabb73",
+   "leagueName": "Monde. ATP. Cincinnati. Doubles",
+   "countryLogo": "/public/countries/85d84d3b-337c-40d4-ad1a-fa6674cf2928/World.png",
+   "sportId": "c3986677-aa20-4232-bcf0-3b1cd434daac",
+   "sportName": "Tennis",
+   "originalSportName": "Tennis",
+   "events": [
+    {
+     "eventId": "00b4685a-0424-4a59-9be1-25ab15c992f4",
+     "eventName": "Frantzen, Constantin/Haase, Robin - Granollers, Marcel/Zeballos, Horacio",
+     "sportId": "c3986677-aa20-4232-bcf0-3b1cd434daac",
+     "sportName": "Tennis",
+     "originalSportName": "Tennis",
+     "leagueId": "fe33243c-36b8-4c8d-a2c7-3fcce4fabb73",
+     "leagueName": "Monde. ATP. Cincinnati. Doubles",
+     "countryLogo": "/public/countries/85d84d3b-337c-40d4-ad1a-fa6674cf2928/World.png",
+     "teamNames": [
+      "Frantzen, Constantin/Haase, Robin",
+      "Granollers, Marcel/Zeballos, Horacio"
+     ],
+     "teams": [
+      {
+       "teamId": "7b9d14ed-a7ad-470f-b274-119eecc45ee7",
+       "teamName": "Frantzen, Constantin/Haase, Robin"
+      },
+      {
+       "teamId": "06885e3e-30f6-41a9-baf1-265c1cb78784",
+       "teamName": "Granollers, Marcel/Zeballos, Horacio"
+      }
+     ],
+     "dateTime": "2026-08-22T15:00:00Z",
+     "status": "PREMATCH",
+     "isFavorite": false,
+     "markets": [
+      {
+       "marketId": "69b37c83-34de-4877-a22c-f0763fc14088",
+       "marketExternalId": 5,
+       "marketName": "Vainqueur",
+       "locked": false,
+       "betBuilder": false,
+       "marketLinesCount": 2,
+       "hasCoefficient": false,
+       "periods": [
+        {
+         "periodName": "Match",
+         "periodIdentifier": 0,
+         "locked": false,
+         "betBuilder": false,
+         "lines": [
+          {
+           "odds": [
+            {
+             "betTypeId": "747aa9e7-eea4-42e2-8148-a5df70a8c552",
+             "betTypeName": "Home team wins",
+             "periodName": "Match",
+             "outcomeId": "aa2b641e-4d3c-482b-ad0f-00d117db1064",
+             "oddsValue": 3.2,
+             "boostedOddsApplied": false,
+             "locked": false
+            },
+            {
+             "betTypeId": "d1e1166d-0678-40fc-b99d-785c1e9529cf",
+             "betTypeName": "Away team wins",
+             "periodName": "Match",
+             "outcomeId": "c748b59f-a477-4a8b-9d8a-3abac70ba5ef",
+             "oddsValue": 1.25,
+             "boostedOddsApplied": false,
+             "locked": false
+            }
+           ]
+          }
+         ]
+        }
+       ]
+      },
+      {
+       "marketId": "00000000-0000-0000-0000-000000000000",
+       "marketExternalId": 7,
+       "marketName": "Total",
+       "locked": true,
+       "betBuilder": false,
+       "marketLinesCount": 2,
+       "periods": [
+        {
+         "periodName": "Match",
+         "locked": true,
+         "betBuilder": false,
+         "lines": []
+        }
+       ]
+      }
+     ],
+     "betLimits": {
+      "id": "0f86d26b-697a-41e6-aa8d-54044def977c",
+      "title": "Tennis T1 Prematch",
+      "minBet": 1.0,
+      "maxBet": 25.0,
+      "maxAmount": 25000.0,
+      "minOdds": 1.01,
+      "maxOdds": 10000.0,
+      "maxStake": 0.0,
+      "maxLiability": 0.0,
+      "overwriteTypes": true,
+      "betslipLimits": [
+       {
+        "id": "3544cf9d-794e-4f87-970a-d6fa973550ab",
+        "type": "SINGLE",
+        "minBet": 1.0,
+        "maxBet": 250.0,
+        "maxAmount": 25000.0,
+        "minOdds": 1.01,
+        "maxOdds": 10000.0,
+        "maxStake": 0.0,
+        "maxLiability": 0.0
+       },
+       {
+        "id": "57e2a6cb-3e0b-4b83-ba87-e325007f13b6",
+        "type": "MULTIPLE",
+        "minBet": 1.0,
+        "maxBet": 100.0,
+        "maxAmount": 25000.0,
+        "minOdds": 1.01,
+        "maxOdds": 10000.0,
+        "maxStake": 0.0,
+        "maxLiability": 0.0
+       },
+       {
+        "id": "fafd1ba8-422d-4f78-801b-98bc902d864d",
+        "type": "SYSTEM",
+        "minBet": 1.0,
+        "maxBet": 100.0,
+        "maxAmount": 25000.0,
+        "minOdds": 1.01,
+        "maxOdds": 10000.0,
+        "maxStake": 0.0,
+        "maxLiability": 0.0
+       },
+       {
+        "id": "d8563cb6-4c3e-4ab6-8517-e82bc434150f",
+        "type": "BET_BUILDER",
+        "minBet": 1.0,
+        "maxBet": 150.0,
+        "maxAmount": 25000.0,
+        "minOdds": 1.01,
+        "maxOdds": 10000.0,
+        "maxStake": 0.0,
+        "maxLiability": 0.0
+       }
+      ]
+     }
+    },
+    {
+     "eventId": "556ed27f-3a7b-47db-98ae-d025bbc9d0a3",
+     "eventName": "Nys, Hugo/Roger-Vasselin, Edouard - Luz, Orlando/Matos, Rafael",
+     "sportId": "c3986677-aa20-4232-bcf0-3b1cd434daac",
+     "sportName": "Tennis",
+     "originalSportName": "Tennis",
+     "leagueId": "fe33243c-36b8-4c8d-a2c7-3fcce4fabb73",
+     "leagueName": "Monde. ATP. Cincinnati. Doubles",
+     "countryLogo": "/public/countries/85d84d3b-337c-40d4-ad1a-fa6674cf2928/World.png",
+     "teamNames": [
+      "Nys, Hugo/Roger-Vasselin, Edouard",
+      "Luz, Orlando/Matos, Rafael"
+     ],
+     "teams": [
+      {
+       "teamId": "1e8cde8a-1398-4144-93f1-3d84a3513a19",
+       "teamName": "Nys, Hugo/Roger-Vasselin, Edouard"
+      },
+      {
+       "teamId": "a2a4dc7d-6d30-4cc0-9f10-6c5108974197",
+       "teamName": "Luz, Orlando/Matos, Rafael"
+      }
+     ],
+     "dateTime": "2026-08-22T16:30:00Z",
+     "status": "PREMATCH",
+     "isFavorite": false,
+     "markets": [
+      {
+       "marketId": "69b37c83-34de-4877-a22c-f0763fc14088",
+       "marketExternalId": 5,
+       "marketName": "Vainqueur",
+       "locked": false,
+       "betBuilder": false,
+       "marketLinesCount": 2,
+       "hasCoefficient": false,
+       "periods": [
+        {
+         "periodName": "Match",
+         "periodIdentifier": 0,
+         "locked": false,
+         "betBuilder": false,
+         "lines": [
+          {
+           "odds": [
+            {
+             "betTypeId": "747aa9e7-eea4-42e2-8148-a5df70a8c552",
+             "betTypeName": "Home team wins",
+             "periodName": "Match",
+             "outcomeId": "a3d4fcda-0661-4314-b271-52d24e9dd5cb",
+             "oddsValue": 1.8,
+             "boostedOddsApplied": false,
+             "locked": false
+            },
+            {
+             "betTypeId": "d1e1166d-0678-40fc-b99d-785c1e9529cf",
+             "betTypeName": "Away team wins",
+             "periodName": "Match",
+             "outcomeId": "bd70dbd6-e3dd-4ede-9a5d-843e89b9d73e",
+             "oddsValue": 1.8,
+             "boostedOddsApplied": false,
+             "locked": false
+            }
+           ]
+          }
+         ]
+        }
+       ]
+      },
+      {
+       "marketId": "00000000-0000-0000-0000-000000000000",
+       "marketExternalId": 7,
+       "marketName": "Total",
+       "locked": true,
+       "betBuilder": false,
+       "marketLinesCount": 2,
+       "periods": [
+        {
+         "periodName": "Match",
+         "locked": true,
+         "betBuilder": false,
+         "lines": []
+        }
+       ]
+      }
+     ],
+     "betLimits": {
+      "id": "0f86d26b-697a-41e6-aa8d-54044def977c",
+      "title": "Tennis T1 Prematch",
+      "minBet": 1.0,
+      "maxBet": 25.0,
+      "maxAmount": 25000.0,
+      "minOdds": 1.01,
+      "maxOdds": 10000.0,
+      "maxStake": 0.0,
+      "maxLiability": 0.0,
+      "overwriteTypes": true,
+      "betslipLimits": [
+       {
+        "id": "3544cf9d-794e-4f87-970a-d6fa973550ab",
+        "type": "SINGLE",
+        "minBet": 1.0,
+        "maxBet": 250.0,
+        "maxAmount": 25000.0,
+        "minOdds": 1.01,
+        "maxOdds": 10000.0,
+        "maxStake": 0.0,
+        "maxLiability": 0.0
+       },
+       {
+        "id": "57e2a6cb-3e0b-4b83-ba87-e325007f13b6",
+        "type": "MULTIPLE",
+        "minBet": 1.0,
+        "maxBet": 100.0,
+        "maxAmount": 25000.0,
+        "minOdds": 1.01,
+        "maxOdds": 10000.0,
+        "maxStake": 0.0,
+        "maxLiability": 0.0
+       },
+       {
+        "id": "fafd1ba8-422d-4f78-801b-98bc902d864d",
+        "type": "SYSTEM",
+        "minBet": 1.0,
+        "maxBet": 100.0,
+        "maxAmount": 25000.0,
+        "minOdds": 1.01,
+        "maxOdds": 10000.0,
+        "maxStake": 0.0,
+        "maxLiability": 0.0
+       },
+       {
+        "id": "d8563cb6-4c3e-4ab6-8517-e82bc434150f",
+        "type": "BET_BUILDER",
+        "minBet": 1.0,
+        "maxBet": 150.0,
+        "maxAmount": 25000.0,
+        "minOdds": 1.01,
+        "maxOdds": 10000.0,
+        "maxStake": 0.0,
+        "maxLiability": 0.0
+       }
+      ]
+     }
+    }
+   ],
+   "topLeague": false,
+   "weight": 0
+  },
+  {
+   "leagueId": "a8d0e471-8b34-4f3c-b27e-709e14185c88",
+   "leagueName": "Monde. ATP. Winston Salem. Singles",
+   "countryLogo": "/public/countries/85d84d3b-337c-40d4-ad1a-fa6674cf2928/World.png",
+   "sportId": "c3986677-aa20-4232-bcf0-3b1cd434daac",
+   "sportName": "Tennis",
+   "originalSportName": "Tennis",
+   "events": [
+    {
+     "eventId": "21a9d656-03ed-4765-9827-4dd3d49294be",
+     "eventName": "Grenier, Hugo - Oberleitner, Neil",
+     "sportId": "c3986677-aa20-4232-bcf0-3b1cd434daac",
+     "sportName": "Tennis",
+     "originalSportName": "Tennis",
+     "leagueId": "a8d0e471-8b34-4f3c-b27e-709e14185c88",
+     "leagueName": "Monde. ATP. Winston Salem. Singles",
+     "countryLogo": "/public/countries/85d84d3b-337c-40d4-ad1a-fa6674cf2928/World.png",
+     "teamNames": [
+      "Grenier, Hugo",
+      "Oberleitner, Neil"
+     ],
+     "teams": [
+      {
+       "teamId": "c440cbae-842a-41a8-9f53-0bbc3a01147c",
+       "teamName": "Grenier, Hugo"
+      },
+      {
+       "teamId": "82f475a0-71eb-4569-b4a5-44f31511a8cd",
+       "teamName": "Oberleitner, Neil"
+      }
+     ],
+     "dateTime": "2026-08-22T15:00:00Z",
+     "status": "PREMATCH",
+     "isFavorite": false,
+     "markets": [
+      {
+       "marketId": "69b37c83-34de-4877-a22c-f0763fc14088",
+       "marketExternalId": 5,
+       "marketName": "Vainqueur",
+       "locked": false,
+       "betBuilder": false,
+       "marketLinesCount": 2,
+       "hasCoefficient": false,
+       "periods": [
+        {
+         "periodName": "Match",
+         "periodIdentifier": 0,
+         "locked": false,
+         "betBuilder": false,
+         "lines": [
+          {
+           "odds": [
+            {
+             "betTypeId": "747aa9e7-eea4-42e2-8148-a5df70a8c552",
+             "betTypeName": "Home team wins",
+             "periodName": "Match",
+             "outcomeId": "661cc06b-a2dc-4f92-b721-4fccbca5a1e7",
+             "oddsValue": 1.15,
+             "boostedOddsApplied": false,
+             "locked": false
+            },
+            {
+             "betTypeId": "d1e1166d-0678-40fc-b99d-785c1e9529cf",
+             "betTypeName": "Away team wins",
+             "periodName": "Match",
+             "outcomeId": "0ea2505f-7b86-4ac1-a25d-ecbbfd5b768d",
+             "oddsValue": 4.07,
+             "boostedOddsApplied": false,
+             "locked": false
+            }
+           ]
+          }
+         ]
+        }
+       ]
+      },
+      {
+       "marketId": "00000000-0000-0000-0000-000000000000",
+       "marketExternalId": 7,
+       "marketName": "Total",
+       "locked": true,
+       "betBuilder": false,
+       "marketLinesCount": 2,
+       "periods": [
+        {
+         "periodName": "Match",
+         "locked": true,
+         "betBuilder": false,
+         "lines": []
+        }
+       ]
+      }
+     ],
+     "betLimits": {
+      "id": "0f86d26b-697a-41e6-aa8d-54044def977c",
+      "title": "Tennis T1 Prematch",
+      "minBet": 1.0,
+      "maxBet": 25.0,
+      "maxAmount": 25000.0,
+      "minOdds": 1.01,
+      "maxOdds": 10000.0,
+      "maxStake": 0.0,
+      "maxLiability": 0.0,
+      "overwriteTypes": true,
+      "betslipLimits": [
+       {
+        "id": "3544cf9d-794e-4f87-970a-d6fa973550ab",
+        "type": "SINGLE",
+        "minBet": 1.0,
+        "maxBet": 250.0,
+        "maxAmount": 25000.0,
+        "minOdds": 1.01,
+        "maxOdds": 10000.0,
+        "maxStake": 0.0,
+        "maxLiability": 0.0
+       },
+       {
+        "id": "57e2a6cb-3e0b-4b83-ba87-e325007f13b6",
+        "type": "MULTIPLE",
+        "minBet": 1.0,
+        "maxBet": 100.0,
+        "maxAmount": 25000.0,
+        "minOdds": 1.01,
+        "maxOdds": 10000.0,
+        "maxStake": 0.0,
+        "maxLiability": 0.0
+       },
+       {
+        "id": "fafd1ba8-422d-4f78-801b-98bc902d864d",
+        "type": "SYSTEM",
+        "minBet": 1.0,
+        "maxBet": 100.0,
+        "maxAmount": 25000.0,
+        "minOdds": 1.01,
+        "maxOdds": 10000.0,
+        "maxStake": 0.0,
+        "maxLiability": 0.0
+       },
+       {
+        "id": "d8563cb6-4c3e-4ab6-8517-e82bc434150f",
+        "type": "BET_BUILDER",
+        "minBet": 1.0,
+        "maxBet": 150.0,
+        "maxAmount": 25000.0,
+        "minOdds": 1.01,
+        "maxOdds": 10000.0,
+        "maxStake": 0.0,
+        "maxLiability": 0.0
+       }
+      ]
+     }
+    },
+    {
+     "eventId": "6f7a2542-c083-465c-8db7-9191e3ec2a43",
+     "eventName": "Balshaw, Felix - Pow, Luca",
+     "sportId": "c3986677-aa20-4232-bcf0-3b1cd434daac",
+     "sportName": "Tennis",
+     "originalSportName": "Tennis",
+     "leagueId": "a8d0e471-8b34-4f3c-b27e-709e14185c88",
+     "leagueName": "Monde. ATP. Winston Salem. Singles",
+     "countryLogo": "/public/countries/85d84d3b-337c-40d4-ad1a-fa6674cf2928/World.png",
+     "teamNames": [
+      "Balshaw, Felix",
+      "Pow, Luca"
+     ],
+     "teams": [
+      {
+       "teamId": "a6fb542e-e8ca-48bd-9335-2105b06ae1b6",
+       "teamName": "Balshaw, Felix"
+      },
+      {
+       "teamId": "c3742ce5-a4a9-4426-a769-4dcee793fbfd",
+       "teamName": "Pow, Luca"
+      }
+     ],
+     "dateTime": "2026-08-22T15:00:00Z",
+     "status": "PREMATCH",
+     "isFavorite": false,
+     "markets": [
+      {
+       "marketId": "69b37c83-34de-4877-a22c-f0763fc14088",
+       "marketExternalId": 5,
+       "marketName": "Vainqueur",
+       "locked": false,
+       "betBuilder": false,
+       "marketLinesCount": 2,
+       "hasCoefficient": false,
+       "periods": [
+        {
+         "periodName": "Match",
+         "periodIdentifier": 0,
+         "locked": false,
+         "betBuilder": false,
+         "lines": [
+          {
+           "odds": [
+            {
+             "betTypeId": "747aa9e7-eea4-42e2-8148-a5df70a8c552",
+             "betTypeName": "Home team wins",
+             "periodName": "Match",
+             "outcomeId": "9779004c-6671-4ce1-aca5-1356d44f2eaa",
+             "oddsValue": 1.2,
+             "boostedOddsApplied": false,
+             "locked": false
+            },
+            {
+             "betTypeId": "d1e1166d-0678-40fc-b99d-785c1e9529cf",
+             "betTypeName": "Away team wins",
+             "periodName": "Match",
+             "outcomeId": "fe74e6c8-e12c-4038-b60c-328e07a9eaef",
+             "oddsValue": 3.58,
+             "boostedOddsApplied": false,
+             "locked": false
+            }
+           ]
+          }
+         ]
+        }
+       ]
+      },
+      {
+       "marketId": "00000000-0000-0000-0000-000000000000",
+       "marketExternalId": 7,
+       "marketName": "Total",
+       "locked": true,
+       "betBuilder": false,
+       "marketLinesCount": 2,
+       "periods": [
+        {
+         "periodName": "Match",
+         "locked": true,
+         "betBuilder": false,
+         "lines": []
+        }
+       ]
+      }
+     ],
+     "betLimits": {
+      "id": "0f86d26b-697a-41e6-aa8d-54044def977c",
+      "title": "Tennis T1 Prematch",
+      "minBet": 1.0,
+      "maxBet": 25.0,
+      "maxAmount": 25000.0,
+      "minOdds": 1.01,
+      "maxOdds": 10000.0,
+      "maxStake": 0.0,
+      "maxLiability": 0.0,
+      "overwriteTypes": true,
+      "betslipLimits": [
+       {
+        "id": "3544cf9d-794e-4f87-970a-d6fa973550ab",
+        "type": "SINGLE",
+        "minBet": 1.0,
+        "maxBet": 250.0,
+        "maxAmount": 25000.0,
+        "minOdds": 1.01,
+        "maxOdds": 10000.0,
+        "maxStake": 0.0,
+        "maxLiability": 0.0
+       },
+       {
+        "id": "57e2a6cb-3e0b-4b83-ba87-e325007f13b6",
+        "type": "MULTIPLE",
+        "minBet": 1.0,
+        "maxBet": 100.0,
+        "maxAmount": 25000.0,
+        "minOdds": 1.01,
+        "maxOdds": 10000.0,
+        "maxStake": 0.0,
+        "maxLiability": 0.0
+       },
+       {
+        "id": "fafd1ba8-422d-4f78-801b-98bc902d864d",
+        "type": "SYSTEM",
+        "minBet": 1.0,
+        "maxBet": 100.0,
+        "maxAmount": 25000.0,
+        "minOdds": 1.01,
+        "maxOdds": 10000.0,
+        "maxStake": 0.0,
+        "maxLiability": 0.0
+       },
+       {
+        "id": "d8563cb6-4c3e-4ab6-8517-e82bc434150f",
+        "type": "BET_BUILDER",
+        "minBet": 1.0,
+        "maxBet": 150.0,
+        "maxAmount": 25000.0,
+        "minOdds": 1.01,
+        "maxOdds": 10000.0,
+        "maxStake": 0.0,
+        "maxLiability": 0.0
+       }
+      ]
+     }
+    },
+    {
+     "eventId": "a99ccdf5-056a-4cb6-ac2a-8f198968359d",
+     "eventName": "Herbert, Pierre-Hugues - Miyoshi, Kenta",
+     "sportId": "c3986677-aa20-4232-bcf0-3b1cd434daac",
+     "sportName": "Tennis",
+     "originalSportName": "Tennis",
+     "leagueId": "a8d0e471-8b34-4f3c-b27e-709e14185c88",
+     "leagueName": "Monde. ATP. Winston Salem. Singles",
+     "countryLogo": "/public/countries/85d84d3b-337c-40d4-ad1a-fa6674cf2928/World.png",
+     "teamNames": [
+      "Herbert, Pierre-Hugues",
+      "Miyoshi, Kenta"
+     ],
+     "teams": [
+      {
+       "teamId": "07997b91-9237-4804-9442-d4962f565807",
+       "teamName": "Herbert, Pierre-Hugues"
+      },
+      {
+       "teamId": "6c5e9870-b676-4b5b-93dc-94e5f45404dd",
+       "teamName": "Miyoshi, Kenta"
+      }
+     ],
+     "dateTime": "2026-08-22T15:00:00Z",
+     "status": "PREMATCH",
+     "isFavorite": false,
+     "markets": [
+      {
+       "marketId": "69b37c83-34de-4877-a22c-f0763fc14088",
+       "marketExternalId": 5,
+       "marketName": "Vainqueur",
+       "locked": false,
+       "betBuilder": false,
+       "marketLinesCount": 2,
+       "hasCoefficient": false,
+       "periods": [
+        {
+         "periodName": "Match",
+         "periodIdentifier": 0,
+         "locked": false,
+         "betBuilder": false,
+         "lines": [
+          {
+           "odds": [
+            {
+             "betTypeId": "747aa9e7-eea4-42e2-8148-a5df70a8c552",
+             "betTypeName": "Home team wins",
+             "periodName": "Match",
+             "outcomeId": "18ad9f2f-6da3-4320-b286-6277fc7bbdfb",
+             "oddsValue": 1.74,
+             "boostedOddsApplied": false,
+             "locked": false
+            },
+            {
+             "betTypeId": "d1e1166d-0678-40fc-b99d-785c1e9529cf",
+             "betTypeName": "Away team wins",
+             "periodName": "Match",
+             "outcomeId": "7cc0932b-bd31-40f7-928e-28539d5063b1",
+             "oddsValue": 1.86,
+             "boostedOddsApplied": false,
+             "locked": false
+            }
+           ]
+          }
+         ]
+        }
+       ]
+      },
+      {
+       "marketId": "00000000-0000-0000-0000-000000000000",
+       "marketExternalId": 7,
+       "marketName": "Total",
+       "locked": true,
+       "betBuilder": false,
+       "marketLinesCount": 2,
+       "periods": [
+        {
+         "periodName": "Match",
+         "locked": true,
+         "betBuilder": false,
+         "lines": []
+        }
+       ]
+      }
+     ],
+     "betLimits": {
+      "id": "0f86d26b-697a-41e6-aa8d-54044def977c",
+      "title": "Tennis T1 Prematch",
+      "minBet": 1.0,
+      "maxBet": 25.0,
+      "maxAmount": 25000.0,
+      "minOdds": 1.01,
+      "maxOdds": 10000.0,
+      "maxStake": 0.0,
+      "maxLiability": 0.0,
+      "overwriteTypes": true,
+      "betslipLimits": [
+       {
+        "id": "3544cf9d-794e-4f87-970a-d6fa973550ab",
+        "type": "SINGLE",
+        "minBet": 1.0,
+        "maxBet": 250.0,
+        "maxAmount": 25000.0,
+        "minOdds": 1.01,
+        "maxOdds": 10000.0,
+        "maxStake": 0.0,
+        "maxLiability": 0.0
+       },
+       {
+        "id": "57e2a6cb-3e0b-4b83-ba87-e325007f13b6",
+        "type": "MULTIPLE",
+        "minBet": 1.0,
+        "maxBet": 100.0,
+        "maxAmount": 25000.0,
+        "minOdds": 1.01,
+        "maxOdds": 10000.0,
+        "maxStake": 0.0,
+        "maxLiability": 0.0
+       },
+       {
+        "id": "fafd1ba8-422d-4f78-801b-98bc902d864d",
+        "type": "SYSTEM",
+        "minBet": 1.0,
+        "maxBet": 100.0,
+        "maxAmount": 25000.0,
+        "minOdds": 1.01,
+        "maxOdds": 10000.0,
+        "maxStake": 0.0,
+        "maxLiability": 0.0
+       },
+       {
+        "id": "d8563cb6-4c3e-4ab6-8517-e82bc434150f",
+        "type": "BET_BUILDER",
+        "minBet": 1.0,
+        "maxBet": 150.0,
+        "maxAmount": 25000.0,
+        "minOdds": 1.01,
+        "maxOdds": 10000.0,
+        "maxStake": 0.0,
+        "maxLiability": 0.0
+       }
+      ]
+     }
+    },
+    {
+     "eventId": "61f1b383-560f-4884-bdb8-65fce817eb76",
+     "eventName": "Heck, Hunter - Rottgering, Mees",
+     "sportId": "c3986677-aa20-4232-bcf0-3b1cd434daac",
+     "sportName": "Tennis",
+     "originalSportName": "Tennis",
+     "leagueId": "a8d0e471-8b34-4f3c-b27e-709e14185c88",
+     "leagueName": "Monde. ATP. Winston Salem. Singles",
+     "countryLogo": "/public/countries/85d84d3b-337c-40d4-ad1a-fa6674cf2928/World.png",
+     "teamNames": [
+      "Heck, Hunter",
+      "Rottgering, Mees"
+     ],
+     "teams": [
+      {
+       "teamId": "b8977087-224d-41e5-9aba-0fc24da54429",
+       "teamName": "Heck, Hunter"
+      },
+      {
+       "teamId": "ee9ac556-5866-492b-9998-a97108a9c24c",
+       "teamName": "Rottgering, Mees"
+      }
+     ],
+     "dateTime": "2026-08-22T16:10:00Z",
+     "status": "PREMATCH",
+     "isFavorite": false,
+     "markets": [
+      {
+       "marketId": "69b37c83-34de-4877-a22c-f0763fc14088",
+       "marketExternalId": 5,
+       "marketName": "Vainqueur",
+       "locked": false,
+       "betBuilder": false,
+       "marketLinesCount": 2,
+       "hasCoefficient": false,
+       "periods": [
+        {
+         "periodName": "Match",
+         "periodIdentifier": 0,
+         "locked": false,
+         "betBuilder": false,
+         "lines": [
+          {
+           "odds": [
+            {
+             "betTypeId": "747aa9e7-eea4-42e2-8148-a5df70a8c552",
+             "betTypeName": "Home team wins",
+             "periodName": "Match",
+             "outcomeId": "d387654e-5f8c-4f60-8c9c-5e4763b08efe",
+             "oddsValue": 4.85,
+             "boostedOddsApplied": false,
+             "locked": false
+            },
+            {
+             "betTypeId": "d1e1166d-0678-40fc-b99d-785c1e9529cf",
+             "betTypeName": "Away team wins",
+             "periodName": "Match",
+             "outcomeId": "e6dd5917-d04d-487b-a769-f87cc6833d6e",
+             "oddsValue": 1.09,
+             "boostedOddsApplied": false,
+             "locked": false
+            }
+           ]
+          }
+         ]
+        }
+       ]
+      },
+      {
+       "marketId": "00000000-0000-0000-0000-000000000000",
+       "marketExternalId": 7,
+       "marketName": "Total",
+       "locked": true,
+       "betBuilder": false,
+       "marketLinesCount": 2,
+       "periods": [
+        {
+         "periodName": "Match",
+         "locked": true,
+         "betBuilder": false,
+         "lines": []
+        }
+       ]
+      }
+     ],
+     "betLimits": {
+      "id": "0f86d26b-697a-41e6-aa8d-54044def977c",
+      "title": "Tennis T1 Prematch",
+      "minBet": 1.0,
+      "maxBet": 25.0,
+      "maxAmount": 25000.0,
+      "minOdds": 1.01,
+      "maxOdds": 10000.0,
+      "maxStake": 0.0,
+      "maxLiability": 0.0,
+      "overwriteTypes": true,
+      "betslipLimits": [
+       {
+        "id": "3544cf9d-794e-4f87-970a-d6fa973550ab",
+        "type": "SINGLE",
+        "minBet": 1.0,
+        "maxBet": 250.0,
+        "maxAmount": 25000.0,
+        "minOdds": 1.01,
+        "maxOdds": 10000.0,
+        "maxStake": 0.0,
+        "maxLiability": 0.0
+       },
+       {
+        "id": "57e2a6cb-3e0b-4b83-ba87-e325007f13b6",
+        "type": "MULTIPLE",
+        "minBet": 1.0,
+        "maxBet": 100.0,
+        "maxAmount": 25000.0,
+        "minOdds": 1.01,
+        "maxOdds": 10000.0,
+        "maxStake": 0.0,
+        "maxLiability": 0.0
+       },
+       {
+        "id": "fafd1ba8-422d-4f78-801b-98bc902d864d",
+        "type": "SYSTEM",
+        "minBet": 1.0,
+        "maxBet": 100.0,
+        "maxAmount": 25000.0,
+        "minOdds": 1.01,
+        "maxOdds": 10000.0,
+        "maxStake": 0.0,
+        "maxLiability": 0.0
+       },
+       {
+        "id": "d8563cb6-4c3e-4ab6-8517-e82bc434150f",
+        "type": "BET_BUILDER",
+        "minBet": 1.0,
+        "maxBet": 150.0,
+        "maxAmount": 25000.0,
+        "minOdds": 1.01,
+        "maxOdds": 10000.0,
+        "maxStake": 0.0,
+        "maxLiability": 0.0
+       }
+      ]
+     }
+    },
+    {
+     "eventId": "73425136-35f8-4ec7-a98b-af3224b59e8f",
+     "eventName": "Gorzny, Sebastian - Polmans, Marc",
+     "sportId": "c3986677-aa20-4232-bcf0-3b1cd434daac",
+     "sportName": "Tennis",
+     "originalSportName": "Tennis",
+     "leagueId": "a8d0e471-8b34-4f3c-b27e-709e14185c88",
+     "leagueName": "Monde. ATP. Winston Salem. Singles",
+     "countryLogo": "/public/countries/85d84d3b-337c-40d4-ad1a-fa6674cf2928/World.png",
+     "teamNames": [
+      "Gorzny, Sebastian",
+      "Polmans, Marc"
+     ],
+     "teams": [
+      {
+       "teamId": "f0e95321-dd7c-4747-9e28-b5e605f6b7c0",
+       "teamName": "Gorzny, Sebastian"
+      },
+      {
+       "teamId": "0a16bced-1396-460d-85b9-09555f79765b",
+       "teamName": "Polmans, Marc"
+      }
+     ],
+     "dateTime": "2026-08-22T16:10:00Z",
+     "status": "PREMATCH",
+     "isFavorite": false,
+     "markets": [
+      {
+       "marketId": "69b37c83-34de-4877-a22c-f0763fc14088",
+       "marketExternalId": 5,
+       "marketName": "Vainqueur",
+       "locked": false,
+       "betBuilder": false,
+       "marketLinesCount": 2,
+       "hasCoefficient": false,
+       "periods": [
+        {
+         "periodName": "Match",
+         "periodIdentifier": 0,
+         "locked": false,
+         "betBuilder": false,
+         "lines": [
+          {
+           "odds": [
+            {
+             "betTypeId": "747aa9e7-eea4-42e2-8148-a5df70a8c552",
+             "betTypeName": "Home team wins",
+             "periodName": "Match",
+             "outcomeId": "571e4b17-d59d-4e8a-83df-dde3434be950",
+             "oddsValue": 1.66,
+             "boostedOddsApplied": false,
+             "locked": false
+            },
+            {
+             "betTypeId": "d1e1166d-0678-40fc-b99d-785c1e9529cf",
+             "betTypeName": "Away team wins",
+             "periodName": "Match",
+             "outcomeId": "f593669a-bb8b-4280-ac51-11bbbbbd2c02",
+             "oddsValue": 1.98,
+             "boostedOddsApplied": false,
+             "locked": false
+            }
+           ]
+          }
+         ]
+        }
+       ]
+      },
+      {
+       "marketId": "00000000-0000-0000-0000-000000000000",
+       "marketExternalId": 7,
+       "marketName": "Total",
+       "locked": true,
+       "betBuilder": false,
+       "marketLinesCount": 2,
+       "periods": [
+        {
+         "periodName": "Match",
+         "locked": true,
+         "betBuilder": false,
+         "lines": []
+        }
+       ]
+      }
+     ],
+     "betLimits": {
+      "id": "0f86d26b-697a-41e6-aa8d-54044def977c",
+      "title": "Tennis T1 Prematch",
+      "minBet": 1.0,
+      "maxBet": 25.0,
+      "maxAmount": 25000.0,
+      "minOdds": 1.01,
+      "maxOdds": 10000.0,
+      "maxStake": 0.0,
+      "maxLiability": 0.0,
+      "overwriteTypes": true,
+      "betslipLimits": [
+       {
+        "id": "3544cf9d-794e-4f87-970a-d6fa973550ab",
+        "type": "SINGLE",
+        "minBet": 1.0,
+        "maxBet": 250.0,
+        "maxAmount": 25000.0,
+        "minOdds": 1.01,
+        "maxOdds": 10000.0,
+        "maxStake": 0.0,
+        "maxLiability": 0.0
+       },
+       {
+        "id": "57e2a6cb-3e0b-4b83-ba87-e325007f13b6",
+        "type": "MULTIPLE",
+        "minBet": 1.0,
+        "maxBet": 100.0,
+        "maxAmount": 25000.0,
+        "minOdds": 1.01,
+        "maxOdds": 10000.0,
+        "maxStake": 0.0,
+        "maxLiability": 0.0
+       },
+       {
+        "id": "fafd1ba8-422d-4f78-801b-98bc902d864d",
+        "type": "SYSTEM",
+        "minBet": 1.0,
+        "maxBet": 100.0,
+        "maxAmount": 25000.0,
+        "minOdds": 1.01,
+        "maxOdds": 10000.0,
+        "maxStake": 0.0,
+        "maxLiability": 0.0
+       },
+       {
+        "id": "d8563cb6-4c3e-4ab6-8517-e82bc434150f",
+        "type": "BET_BUILDER",
+        "minBet": 1.0,
+        "maxBet": 150.0,
+        "maxAmount": 25000.0,
+        "minOdds": 1.01,
+        "maxOdds": 10000.0,
+        "maxStake": 0.0,
+        "maxLiability": 0.0
+       }
+      ]
+     }
+    },
+    {
+     "eventId": "b03e8b42-ff7f-43d5-a7bb-fd6470f202fa",
+     "eventName": "Tu, Li - Vandecasteele, Quinn",
+     "sportId": "c3986677-aa20-4232-bcf0-3b1cd434daac",
+     "sportName": "Tennis",
+     "originalSportName": "Tennis",
+     "leagueId": "a8d0e471-8b34-4f3c-b27e-709e14185c88",
+     "leagueName": "Monde. ATP. Winston Salem. Singles",
+     "countryLogo": "/public/countries/85d84d3b-337c-40d4-ad1a-fa6674cf2928/World.png",
+     "teamNames": [
+      "Tu, Li",
+      "Vandecasteele, Quinn"
+     ],
+     "teams": [
+      {
+       "teamId": "1e5a2242-3244-4503-9c28-b3b3dc3f9fe0",
+       "teamName": "Tu, Li"
+      },
+      {
+       "teamId": "9a25403b-e71d-441d-a465-d0dd72510011",
+       "teamName": "Vandecasteele, Quinn"
+      }
+     ],
+     "dateTime": "2026-08-22T16:10:00Z",
+     "status": "PREMATCH",
+     "isFavorite": false,
+     "markets": [
+      {
+       "marketId": "69b37c83-34de-4877-a22c-f0763fc14088",
+       "marketExternalId": 5,
+       "marketName": "Vainqueur",
+       "locked": false,
+       "betBuilder": false,
+       "marketLinesCount": 2,
+       "hasCoefficient": false,
+       "periods": [
+        {
+         "periodName": "Match",
+         "periodIdentifier": 0,
+         "locked": false,
+         "betBuilder": false,
+         "lines": [
+          {
+           "odds": [
+            {
+             "betTypeId": "747aa9e7-eea4-42e2-8148-a5df70a8c552",
+             "betTypeName": "Home team wins",
+             "periodName": "Match",
+             "outcomeId": "e0358707-ed80-4f56-83f7-7900e14f4f97",
+             "oddsValue": 1.78,
+             "boostedOddsApplied": false,
+             "locked": false
+            },
+            {
+             "betTypeId": "d1e1166d-0678-40fc-b99d-785c1e9529cf",
+             "betTypeName": "Away team wins",
+             "periodName": "Match",
+             "outcomeId": "3b29dfd3-5df1-4dec-9be4-1db415c20614",
+             "oddsValue": 1.78,
+             "boostedOddsApplied": false,
+             "locked": false
+            }
+           ]
+          }
+         ]
+        }
+       ]
+      },
+      {
+       "marketId": "00000000-0000-0000-0000-000000000000",
+       "marketExternalId": 7,
+       "marketName": "Total",
+       "locked": true,
+       "betBuilder": false,
+       "marketLinesCount": 2,
+       "periods": [
+        {
+         "periodName": "Match",
+         "locked": true,
+         "betBuilder": false,
+         "lines": []
+        }
+       ]
+      }
+     ],
+     "betLimits": {
+      "id": "0f86d26b-697a-41e6-aa8d-54044def977c",
+      "title": "Tennis T1 Prematch",
+      "minBet": 1.0,
+      "maxBet": 25.0,
+      "maxAmount": 25000.0,
+      "minOdds": 1.01,
+      "maxOdds": 10000.0,
+      "maxStake": 0.0,
+      "maxLiability": 0.0,
+      "overwriteTypes": true,
+      "betslipLimits": [
+       {
+        "id": "3544cf9d-794e-4f87-970a-d6fa973550ab",
+        "type": "SINGLE",
+        "minBet": 1.0,
+        "maxBet": 250.0,
+        "maxAmount": 25000.0,
+        "minOdds": 1.01,
+        "maxOdds": 10000.0,
+        "maxStake": 0.0,
+        "maxLiability": 0.0
+       },
+       {
+        "id": "57e2a6cb-3e0b-4b83-ba87-e325007f13b6",
+        "type": "MULTIPLE",
+        "minBet": 1.0,
+        "maxBet": 100.0,
+        "maxAmount": 25000.0,
+        "minOdds": 1.01,
+        "maxOdds": 10000.0,
+        "maxStake": 0.0,
+        "maxLiability": 0.0
+       },
+       {
+        "id": "fafd1ba8-422d-4f78-801b-98bc902d864d",
+        "type": "SYSTEM",
+        "minBet": 1.0,
+        "maxBet": 100.0,
+        "maxAmount": 25000.0,
+        "minOdds": 1.01,
+        "maxOdds": 10000.0,
+        "maxStake": 0.0,
+        "maxLiability": 0.0
+       },
+       {
+        "id": "d8563cb6-4c3e-4ab6-8517-e82bc434150f",
+        "type": "BET_BUILDER",
+        "minBet": 1.0,
+        "maxBet": 150.0,
+        "maxAmount": 25000.0,
+        "minOdds": 1.01,
+        "maxOdds": 10000.0,
+        "maxStake": 0.0,
+        "maxLiability": 0.0
+       }
+      ]
+     }
+    },
+    {
+     "eventId": "4aa5fb28-3da1-4ff8-900b-2f4e5802d299",
+     "eventName": "Pascual Ferra, Roger - Suresh, Dhakshineswar",
+     "sportId": "c3986677-aa20-4232-bcf0-3b1cd434daac",
+     "sportName": "Tennis",
+     "originalSportName": "Tennis",
+     "leagueId": "a8d0e471-8b34-4f3c-b27e-709e14185c88",
+     "leagueName": "Monde. ATP. Winston Salem. Singles",
+     "countryLogo": "/public/countries/85d84d3b-337c-40d4-ad1a-fa6674cf2928/World.png",
+     "teamNames": [
+      "Pascual Ferra, Roger",
+      "Suresh, Dhakshineswar"
+     ],
+     "teams": [
+      {
+       "teamId": "0ded6097-fb4a-4e9b-9e94-23c628daeb08",
+       "teamName": "Pascual Ferra, Roger"
+      },
+      {
+       "teamId": "e993fb79-11d1-4f3c-9930-97390ff4a84b",
+       "teamName": "Suresh, Dhakshineswar"
+      }
+     ],
+     "dateTime": "2026-08-22T17:20:00Z",
+     "status": "PREMATCH",
+     "isFavorite": false,
+     "markets": [
+      {
+       "marketId": "69b37c83-34de-4877-a22c-f0763fc14088",
+       "marketExternalId": 5,
+       "marketName": "Vainqueur",
+       "locked": false,
+       "betBuilder": false,
+       "marketLinesCount": 2,
+       "hasCoefficient": false,
+       "periods": [
+        {
+         "periodName": "Match",
+         "periodIdentifier": 0,
+         "locked": false,
+         "betBuilder": false,
+         "lines": [
+          {
+           "odds": [
+            {
+             "betTypeId": "747aa9e7-eea4-42e2-8148-a5df70a8c552",
+             "betTypeName": "Home team wins",
+             "periodName": "Match",
+             "outcomeId": "da017b04-b07c-43f3-8894-b571765a4494",
+             "oddsValue": 3.29,
+             "boostedOddsApplied": false,
+             "locked": false
+            },
+            {
+             "betTypeId": "d1e1166d-0678-40fc-b99d-785c1e9529cf",
+             "betTypeName": "Away team wins",
+             "periodName": "Match",
+             "outcomeId": "0f4eb41f-281b-44ed-a890-e8a9e5151279",
+             "oddsValue": 1.24,
+             "boostedOddsApplied": false,
+             "locked": false
+            }
+           ]
+          }
+         ]
+        }
+       ]
+      },
+      {
+       "marketId": "00000000-0000-0000-0000-000000000000",
+       "marketExternalId": 7,
+       "marketName": "Total",
+       "locked": true,
+       "betBuilder": false,
+       "marketLinesCount": 2,
+       "periods": [
+        {
+         "periodName": "Match",
+         "locked": true,
+         "betBuilder": false,
+         "lines": []
+        }
+       ]
+      }
+     ],
+     "betLimits": {
+      "id": "0f86d26b-697a-41e6-aa8d-54044def977c",
+      "title": "Tennis T1 Prematch",
+      "minBet": 1.0,
+      "maxBet": 25.0,
+      "maxAmount": 25000.0,
+      "minOdds": 1.01,
+      "maxOdds": 10000.0,
+      "maxStake": 0.0,
+      "maxLiability": 0.0,
+      "overwriteTypes": true,
+      "betslipLimits": [
+       {
+        "id": "3544cf9d-794e-4f87-970a-d6fa973550ab",
+        "type": "SINGLE",
+        "minBet": 1.0,
+        "maxBet": 250.0,
+        "maxAmount": 25000.0,
+        "minOdds": 1.01,
+        "maxOdds": 10000.0,
+        "maxStake": 0.0,
+        "maxLiability": 0.0
+       },
+       {
+        "id": "57e2a6cb-3e0b-4b83-ba87-e325007f13b6",
+        "type": "MULTIPLE",
+        "minBet": 1.0,
+        "maxBet": 100.0,
+        "maxAmount": 25000.0,
+        "minOdds": 1.01,
+        "maxOdds": 10000.0,
+        "maxStake": 0.0,
+        "maxLiability": 0.0
+       },
+       {
+        "id": "fafd1ba8-422d-4f78-801b-98bc902d864d",
+        "type": "SYSTEM",
+        "minBet": 1.0,
+        "maxBet": 100.0,
+        "maxAmount": 25000.0,
+        "minOdds": 1.01,
+        "maxOdds": 10000.0,
+        "maxStake": 0.0,
+        "maxLiability": 0.0
+       },
+       {
+        "id": "d8563cb6-4c3e-4ab6-8517-e82bc434150f",
+        "type": "BET_BUILDER",
+        "minBet": 1.0,
+        "maxBet": 150.0,
+        "maxAmount": 25000.0,
+        "minOdds": 1.01,
+        "maxOdds": 10000.0,
+        "maxStake": 0.0,
+        "maxLiability": 0.0
+       }
+      ]
+     }
+    },
+    {
+     "eventId": "f711a3b1-e5d7-4235-bbc5-10b4b5b1e706",
+     "eventName": "Shelbayh, Abdullah - Seggerman, Ryan",
+     "sportId": "c3986677-aa20-4232-bcf0-3b1cd434daac",
+     "sportName": "Tennis",
+     "originalSportName": "Tennis",
+     "leagueId": "a8d0e471-8b34-4f3c-b27e-709e14185c88",
+     "leagueName": "Monde. ATP. Winston Salem. Singles",
+     "countryLogo": "/public/countries/85d84d3b-337c-40d4-ad1a-fa6674cf2928/World.png",
+     "teamNames": [
+      "Shelbayh, Abdullah",
+      "Seggerman, Ryan"
+     ],
+     "teams": [
+      {
+       "teamId": "5ae0f0c0-f7b6-4259-bf35-b7e5805611da",
+       "teamName": "Shelbayh, Abdullah"
+      },
+      {
+       "teamId": "230ec8a7-38f7-47e9-9c62-35ebedbc4e02",
+       "teamName": "Seggerman, Ryan"
+      }
+     ],
+     "dateTime": "2026-08-22T17:20:00Z",
+     "status": "PREMATCH",
+     "isFavorite": false,
+     "markets": [
+      {
+       "marketId": "69b37c83-34de-4877-a22c-f0763fc14088",
+       "marketExternalId": 5,
+       "marketName": "Vainqueur",
+       "locked": false,
+       "betBuilder": false,
+       "marketLinesCount": 2,
+       "hasCoefficient": false,
+       "periods": [
+        {
+         "periodName": "Match",
+         "periodIdentifier": 0,
+         "locked": false,
+         "betBuilder": false,
+         "lines": [
+          {
+           "odds": [
+            {
+             "betTypeId": "747aa9e7-eea4-42e2-8148-a5df70a8c552",
+             "betTypeName": "Home team wins",
+             "periodName": "Match",
+             "outcomeId": "89448ac4-765f-4eb1-8c94-ae8bacce7f54",
+             "oddsValue": 1.49,
+             "boostedOddsApplied": false,
+             "locked": false
+            },
+            {
+             "betTypeId": "d1e1166d-0678-40fc-b99d-785c1e9529cf",
+             "betTypeName": "Away team wins",
+             "periodName": "Match",
+             "outcomeId": "0a5cd396-6eaa-4bda-9689-e2bf1e4b1dab",
+             "oddsValue": 2.23,
+             "boostedOddsApplied": false,
+             "locked": false
+            }
+           ]
+          }
+         ]
+        }
+       ]
+      },
+      {
+       "marketId": "00000000-0000-0000-0000-000000000000",
+       "marketExternalId": 7,
+       "marketName": "Total",
+       "locked": true,
+       "betBuilder": false,
+       "marketLinesCount": 2,
+       "periods": [
+        {
+         "periodName": "Match",
+         "locked": true,
+         "betBuilder": false,
+         "lines": []
+        }
+       ]
+      }
+     ],
+     "betLimits": {
+      "id": "0f86d26b-697a-41e6-aa8d-54044def977c",
+      "title": "Tennis T1 Prematch",
+      "minBet": 1.0,
+      "maxBet": 25.0,
+      "maxAmount": 25000.0,
+      "minOdds": 1.01,
+      "maxOdds": 10000.0,
+      "maxStake": 0.0,
+      "maxLiability": 0.0,
+      "overwriteTypes": true,
+      "betslipLimits": [
+       {
+        "id": "3544cf9d-794e-4f87-970a-d6fa973550ab",
+        "type": "SINGLE",
+        "minBet": 1.0,
+        "maxBet": 250.0,
+        "maxAmount": 25000.0,
+        "minOdds": 1.01,
+        "maxOdds": 10000.0,
+        "maxStake": 0.0,
+        "maxLiability": 0.0
+       },
+       {
+        "id": "57e2a6cb-3e0b-4b83-ba87-e325007f13b6",
+        "type": "MULTIPLE",
+        "minBet": 1.0,
+        "maxBet": 100.0,
+        "maxAmount": 25000.0,
+        "minOdds": 1.01,
+        "maxOdds": 10000.0,
+        "maxStake": 0.0,
+        "maxLiability": 0.0
+       },
+       {
+        "id": "fafd1ba8-422d-4f78-801b-98bc902d864d",
+        "type": "SYSTEM",
+        "minBet": 1.0,
+        "maxBet": 100.0,
+        "maxAmount": 25000.0,
+        "minOdds": 1.01,
+        "maxOdds": 10000.0,
+        "maxStake": 0.0,
+        "maxLiability": 0.0
+       },
+       {
+        "id": "d8563cb6-4c3e-4ab6-8517-e82bc434150f",
+        "type": "BET_BUILDER",
+        "minBet": 1.0,
+        "maxBet": 150.0,
+        "maxAmount": 25000.0,
+        "minOdds": 1.01,
+        "maxOdds": 10000.0,
+        "maxStake": 0.0,
+        "maxLiability": 0.0
+       }
+      ]
+     }
+    }
+   ],
+   "topLeague": false,
+   "weight": 0
+  }
+ ],
+ "page": {
+  "size": 10,
+  "number": 0,
+  "totalElements": 35,
+  "totalPages": 4
+ }
+}

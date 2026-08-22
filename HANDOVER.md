@@ -210,7 +210,7 @@ scrapers, pas réécrire le moteur.
 | Bet777 | ❌ | Gaming1/Ardent, aucun scraper. Écarté par l'utilisateur le 06/08 |
 | **Smarkets** | ✅ **2ᵉ référence sharp** | exchange, API publique. Repli STRICT derrière Pinnacle — voir §17.5 |
 | **MagicBetting** | ✅ via navigateur | **Digitain**, payloads chiffrés déchiffrés par leur propre WASM — §18.6. Football seul, 27 matchs |
-| **EliteSports** | ✅ **en production le 22/08** | **Plateforme NEUVE** (marque blanche FM Gaming) — donc prix indépendants. Aucune auth, aucun anti-bot, IP datacenter acceptée : **pas de pont**. Football 1 523 / tennis 35 — §21.19 |
+| **EliteSports** | ✅ **en production le 22/08** | **Plateforme NEUVE** (marque blanche FM Gaming) — donc prix indépendants. Aucune auth, aucun anti-bot, IP datacenter acceptée : **pas de pont**. Football 1 523 / tennis 35 (h2h seul, aucun total) — §21.19 |
 
 ⚠️ `tools/book_revive_check.py` sonde les books désactivés et dit lesquels
 répondent encore. Leurs motifs vieillissent : « compte limité » pour Golden
@@ -5247,6 +5247,34 @@ disparaître sans qu'aucun compteur ne bouge.
 vrai une heure plus tôt et faux depuis le câblage. Une sonde qui énonce un état
 périmé est le pire des diagnostics — elle inspire confiance.
 
+🔴 **PANNE TROUVÉE EN PRODUCTION LE 22/08 : le tennis rendait ZÉRO.** Le
+football produisait 31 600 cotes par cycle, le tennis rien — et **rien ne le
+signalait**, le log n'imprimant que les books qui produisent. L'absence est
+invisible par construction.
+
+Cause : les identifiants de marché ont été relevés sur des échantillons de
+FOOTBALL puis appliqués au tennis. Deux écarts, un seul mot chacun :
+
+| | marché | libellé de l'issue domicile |
+|---|---|---|
+| football | `marketExternalId=1` « Résultat du match » | `Home wins` |
+| **tennis** | **`marketExternalId=5`** « Vainqueur » | **`Home team wins`** |
+
+C'est très exactement ce que le §10 interdit — *« un Id de marché se confirme
+par égalité exacte, jamais par ressemblance ; une supposition qui tombe à côté
+ne lève aucune erreur, elle rend simplement un book muet »* — et la docstring
+du scraper CITAIT cette règle tout en la violant. Les deux payloads tennis
+étaient dans le HAR depuis le début ; ils n'avaient pas été ouverts.
+
+Corrigé, avec un échantillon tennis réel et `tests/
+test_elitesports_tennis.py` : 10 matchs, 20 cotes, `home`/`away` sans nul.
+
+⚠️ **Le marché « Total » du tennis est un PLACEHOLDER VIDE** — `marketId` à
+zéro, `locked: true`, `lines: []`. Il n'y a donc aucun total de tennis chez ce
+book, et par chance aucun risque de confondre jeux et sets (§19.2). Un test
+verrouille ce constat : si EliteSports se met à servir des totaux de tennis,
+il faudra d'abord établir l'unité AVANT de les mapper.
+
 **À surveiller au premier cycle** : que le book apparaisse dans
 `→ N quotes EliteSports`, puis sa CLV après quelques jours
 (`clv_split --by book`). Une plateforme neuve peut avoir des prix
@@ -5257,7 +5285,7 @@ systématiquement mauvais — c'est ce que BetFirst a révélé (−3,20 points 
 
 | | |
 |---|---|
-| Tests | **877 passés**, 4 ignorés — `pytest tests/`, jamais `pytest` seul (§4) |
+| Tests | **884 passés**, 4 ignorés — `pytest tests/`, jamais `pytest` seul (§4) |
 | `results` | 3 091 lignes (tennis) |
 | Books actifs en ALERTE | unibet, golden_palace, ladbrokes, circus |
 | Books muets (donnée seule) | betano, betfirst, napoleon, starcasino, **magicbetting** — **48 %** (§21.8) |

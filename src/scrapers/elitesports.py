@@ -48,14 +48,21 @@ ORIGIN = "https://elit.fmgaming.dev"
 # qui tombe à côté ne lève aucune erreur, elle rend simplement un book muet.
 SPORT_IDS = {
     "soccer": "d4fa6462-c2d1-4389-ac34-f32e6fc75425",   # « Football », 1 523 prématch
-    "tennis": "c3986677-aa20-4232-bcf0-3b1cd434daac",   # 35 prématch seulement
+    "tennis": "c3986677-aa20-4232-bcf0-3b1cd434daac",   # 35 prématch seulement,
+                                                        # et AUCUN total : le
+                                                        # marché 7 y est vide
 }
 
 # `marketExternalId` → type de marché. Deux seulement nous intéressent, et ce
 # sont exactement les deux que la liste sert en ligne.
+# ⚠️ Les identifiants DIFFÈRENT d'un sport à l'autre, et la première version de
+# ce fichier ne connaissait que ceux du football — le tennis rendait donc ZÉRO
+# cote, en silence, exactement la panne que le §10 décrit. Relevés le 22/08 sur
+# les deux payloads de la capture, football ET tennis.
 MARKET_IDS = {
-    1: MarketType.H2H,      # « Résultat du match »
-    7: MarketType.TOTALS,   # « Total de buts »
+    1: MarketType.H2H,      # football — « Résultat du match » (1X2)
+    5: MarketType.H2H,      # tennis   — « Vainqueur » (2 issues, pas de nul)
+    7: MarketType.TOTALS,   # « Total de buts » au football
 }
 
 # `betTypeName` → notre libellé d'issue. Relevé exhaustivement sur la capture :
@@ -63,10 +70,15 @@ MARKET_IDS = {
 # Traduction par ÉGALITÉ EXACTE, jamais par ressemblance — les libellés
 # arrivent en anglais alors que `marketName` est en français, donc ils ne
 # suivent pas `x-locale` et pourraient changer sans prévenir.
+# ⚠️ « Home wins » au football mais « Home **team** wins » au tennis. Un seul
+# mot d'écart, et c'est la moitié d'un marché qui disparaît sans erreur. Les
+# deux formes sont donc listées, relevées et non déduites.
 BET_TYPES = {
-    "Home wins": "home",
+    "Home wins": "home",          # football
+    "Home team wins": "home",     # tennis
     "Draw": "draw",
-    "Away team wins": "away",
+    "Away team wins": "away",     # les deux sports emploient cette forme-ci
+    "Away wins": "away",          # symétrie défensive, jamais observée
     "Total over": "over",
     "Total under": "under",
 }
@@ -75,6 +87,12 @@ BET_TYPES = {
 # Sans ce filtre, une mi-temps entrerait dans la même clé (event, marché,
 # ligne) qu'un marché de match entier et serait comparée à la mauvaise ligne
 # juste — c'est la famille de bug du §21.14, silencieuse par construction.
+# Au tennis la période s'appelle « Match » et porte le même identifiant 0 : le
+# filtre vaut donc pour les deux sports. Le seul `periodIdentifier` nul observé
+# est celui du marché « Total » du tennis, qui est un PLACEHOLDER — `marketId`
+# à zéro, `locked: true`, `lines: []`. Il n'y a rien à en tirer, et la garde
+# `locked` l'écarte déjà. On garde donc l'égalité stricte : accepter `None`
+# ouvrirait la porte à des périodes qu'on n'a pas relevées.
 FULL_TIME_PERIOD = 0
 
 
