@@ -366,25 +366,32 @@ def test_a_message_without_score_says_so_rather_than_implying_0_0():
     assert "inconnu" in msg
 
 
-def test_a_goal_bypasses_the_reminder_delay():
+def test_a_goal_bypasses_the_reminder_delay(monkeypatch):
     """C'est tout l'intérêt : attendre le rappel suivant ferait manquer la
-    seule minute qui compte."""
-    import src.main as m
-    m._LATE_ALERTED.clear(); m._LIVE_SCORES.clear()
+    seule minute qui compte.
+
+    ⚠️ Le remplacement vise `src.late_markets`, pas `src.main`. Depuis que
+    `_report_late_markets` habite `late_markets.py`, c'est LÀ que le nom
+    `send_late_market_alerts` est résolu ; poser un faux sur `main` ne
+    changerait que la copie réexportée et laisserait tourner le vrai envoi.
+    Ce test l'a prouvé en tombant bruyamment au moment du découpage — ce qui
+    est le bon comportement : le mode de panne à craindre était l'inverse, un
+    test qui continue de passer sans plus rien remplacer."""
+    import src.late_markets as lm
+    lm._LATE_ALERTED.clear(); lm._LIVE_SCORES.clear()
     late = {(EK, Book.CIRCUS_BE): [_soft()]}
     sent = []
-    m.send_late_market_alerts = lambda items, cfg, **kw: (sent.extend(items) or items)
+    monkeypatch.setattr(lm, "send_late_market_alerts",
+                        lambda items, cfg, **kw: (sent.extend(items) or items))
     try:
-        m._report_late_markets(late, "soccer", object())
+        lm._report_late_markets(late, "soccer", object())
         assert len(sent) == 1, "première alerte"
-        m._report_late_markets(late, "soccer", object())
+        lm._report_late_markets(late, "soccer", object())
         assert len(sent) == 1, "silence pendant le délai"
-        m._report_late_markets(late, "soccer", object(), goals={EK})
+        lm._report_late_markets(late, "soccer", object(), goals={EK})
         assert len(sent) == 2, "un but doit rouvrir la parole immédiatement"
     finally:
-        m._LATE_ALERTED.clear()
-        import importlib
-        importlib.reload(m)
+        lm._LATE_ALERTED.clear()
 
 
 # ── La règle du consensus live ────────────────────────────────────────────
