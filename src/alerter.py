@@ -15,6 +15,7 @@ try:
 except ImportError:  # Python < 3.9 fallback — sandbox is 3.11 so this is safety net only
     ZoneInfo = None  # type: ignore[assignment]
 
+from .config import SQLITE_BUSY_TIMEOUT_SEC
 from .matcher import parse_event_key
 from .models import Book, ValueBet, is_half_time
 from .surebet import Surebet
@@ -598,9 +599,9 @@ def _record_pending_play(payload: dict) -> str:
     import uuid
 
     token = uuid.uuid4().hex[:12]
-    con = sqlite3.connect(str(_PLAYS_DB))
+    con = sqlite3.connect(str(_PLAYS_DB), timeout=SQLITE_BUSY_TIMEOUT_SEC)
     try:
-        con.execute("PRAGMA busy_timeout=5000")
+        con.execute(f"PRAGMA busy_timeout={int(SQLITE_BUSY_TIMEOUT_SEC * 1000)}")
         con.execute(
             "CREATE TABLE IF NOT EXISTS pending_plays("
             "token TEXT PRIMARY KEY, sport TEXT, match TEXT, book TEXT, "
@@ -675,8 +676,8 @@ def _load_books_alert_off() -> set[str]:
     collectées, stockées, suivies en courbe et exportées — c'est tout l'intérêt
     du réglage : faire taire sans jamais cesser de mesurer."""
     try:
-        con = sqlite3.connect(str(_PLAYS_DB))
-        con.execute("PRAGMA busy_timeout=3000")
+        con = sqlite3.connect(str(_PLAYS_DB), timeout=SQLITE_BUSY_TIMEOUT_SEC)
+        con.execute(f"PRAGMA busy_timeout={int(SQLITE_BUSY_TIMEOUT_SEC * 1000)}")
         con.execute(
             "CREATE TABLE IF NOT EXISTS book_alerts_off "
             "(book TEXT PRIMARY KEY, disabled_at TEXT NOT NULL)"
@@ -696,8 +697,8 @@ def _load_played_keys() -> tuple[set, set]:
     Markets are returned alongside the exact selections so one click silences
     every competing outcome, not just the one that was backed."""
     try:
-        con = sqlite3.connect(str(_PLAYS_DB))
-        con.execute("PRAGMA busy_timeout=3000")
+        con = sqlite3.connect(str(_PLAYS_DB), timeout=SQLITE_BUSY_TIMEOUT_SEC)
+        con.execute(f"PRAGMA busy_timeout={int(SQLITE_BUSY_TIMEOUT_SEC * 1000)}")
         con.execute(
             "CREATE TABLE IF NOT EXISTS played_bets (dedup_key TEXT PRIMARY KEY, played_at TEXT)"
         )

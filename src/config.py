@@ -43,6 +43,31 @@ def _env_flag(name: str, default: bool = True) -> bool:
     return raw not in ("0", "false", "no", "off", "non")
 
 
+# ── Attente maximale sur un verrou d'écriture SQLite ──────────────────────
+#
+# Une seule valeur pour TOUS les chemins qui ouvrent `data/valuebet.db`. Il y en
+# avait cinq : 3 s et 5 s dans `alerter.py`, 10 s sur le chemin chaud de
+# `Storage._conn`, 60 s pour la purge et pour VACUUM.
+#
+# Le choix de 60 s, et pas d'une moyenne :
+#
+# - **le timeout est INERTE hors contention.** SQLite ne l'attend que sur
+#   SQLITE_BUSY ; en fonctionnement normal, avec WAL et des transactions
+#   courtes, il ne coûte rien. L'élever ne ralentit donc pas le cycle ;
+# - **les coûts ne sont pas symétriques.** Une écriture perdue est perdue pour
+#   de bon — les lignes de clôture ne se rattrapent pas une fois la purge
+#   passée (§21.22). Une attente ne coûte que de la latence, une fois ;
+# - **695 collectes ont déjà été perdues en 11 h sur `database is locked`, à UN
+#   seul processus.** Le chemin le plus court était celui du cycle ;
+# - 60 s est la valeur déjà retenue pour les deux chemins qui avaient été
+#   réfléchis (purge, VACUUM). On s'aligne sur la valeur pensée plutôt que d'en
+#   inventer une sixième.
+#
+# ⚠️ Ce réglage est ce qui rendra deux processus viables sans changer de moteur
+# de base. Le baisser rouvrirait exactement la panne du §21.22.
+SQLITE_BUSY_TIMEOUT_SEC = float(os.getenv("SQLITE_BUSY_TIMEOUT_SEC", "60"))
+
+
 # ── Smarkets : deux drapeaux globaux, une seule source de vérité ──────────
 #
 # Ils vivaient dans la couche de collecte, et `main.py` en importait une copie.

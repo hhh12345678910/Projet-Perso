@@ -8,6 +8,7 @@ from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from typing import Callable, Iterable, Iterator, Optional
 
+from .config import SQLITE_BUSY_TIMEOUT_SEC
 from .models import Book, MarketType, OddQuote, Outcome, ValueBet
 
 
@@ -354,10 +355,11 @@ class Storage:
 
     @contextmanager
     def _conn(self) -> Iterator[sqlite3.Connection]:
-        # timeout=10 s : attend jusqu'à 10 s si une autre connexion écrit.
-        # WAL activé au premier appel (persisté dans le fichier) : permet les
-        # lectures concurrentes pendant les écritures → plus de "database is locked".
-        conn = sqlite3.connect(str(self.path), timeout=10)
+        # Attente unique du projet (`config.SQLITE_BUSY_TIMEOUT_SEC`) : ce
+        # chemin-ci portait 10 s quand la purge en portait 60. WAL activé au
+        # premier appel (persisté dans le fichier) : les lectures restent
+        # possibles pendant une écriture.
+        conn = sqlite3.connect(str(self.path), timeout=SQLITE_BUSY_TIMEOUT_SEC)
         conn.row_factory = sqlite3.Row
         conn.execute("PRAGMA journal_mode=WAL")
         conn.execute("PRAGMA synchronous=NORMAL")
@@ -549,10 +551,10 @@ class Storage:
         cutoff = (datetime.now(timezone.utc) - timedelta(days=retention_days)).isoformat()
         removed = 0
         started = time.monotonic()
-        conn = sqlite3.connect(str(self.path), timeout=60)
+        conn = sqlite3.connect(str(self.path), timeout=SQLITE_BUSY_TIMEOUT_SEC)
         try:
             conn.execute("PRAGMA journal_mode=WAL")
-            conn.execute("PRAGMA busy_timeout=60000")
+            conn.execute(f"PRAGMA busy_timeout={int(SQLITE_BUSY_TIMEOUT_SEC * 1000)}")
             while True:
                 cur = conn.execute(
                     "DELETE FROM quotes WHERE rowid IN "
@@ -759,7 +761,7 @@ class Storage:
 
         _prev = _os.environ.get("SQLITE_TMPDIR")
         _os.environ["SQLITE_TMPDIR"] = str(self.path.parent)
-        conn = sqlite3.connect(str(self.path), timeout=60)
+        conn = sqlite3.connect(str(self.path), timeout=SQLITE_BUSY_TIMEOUT_SEC)
         conn.isolation_level = None  # autocommit — VACUUM can't run in a tx
         try:
             conn.execute("VACUUM")
