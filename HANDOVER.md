@@ -5275,6 +5275,27 @@ book, et par chance aucun risque de confondre jeux et sets (§19.2). Un test
 verrouille ce constat : si EliteSports se met à servir des totaux de tennis,
 il faudra d'abord établir l'unité AVANT de les mapper.
 
+⚠️ **`totalPages` ment aux grandes pages — arrêt corrigé.** Mesuré le 22/08 :
+à `size=10` le tennis annonce `totalElements: 35, totalPages: 4`, cohérent ; à
+`size=500` il annonce **6** pour **35** événements réellement servis. Se fier
+au compteur tronque le balayage, et c'est très probablement la cause des
+**1 476 événements de football rendus sur 1 503 annoncés** — pas un filtre.
+
+`fetch_pages` s'arrête donc sur une page **VIDE**, jamais sur `totalPages`.
+Coût : un appel de plus par sport et par cycle, la page vide qui prouve la fin.
+Ce book n'a ni quota ni authentification, c'est gratuit. Et si `MAX_PAGES` est
+atteint sans page vide, un `warning` le dit — **un book silencieusement tronqué
+est pire qu'un book absent**.
+
+**Vérifié en production le 22/08**, après correction du tennis :
+
+    [soccer]   → 31 378 quotes  EliteSports
+    [tennis]   →     70 quotes  EliteSports
+
+Le tennis rend 70 cotes (35 matchs × 2 issues), le football ~31 400. En base,
+`elitesports` est **deuxième derrière Pinnacle** (44 388 cotes). Le cycle n'a
+pas bougé : médiane 30 s après contre 32 s avant.
+
 **À surveiller au premier cycle** : que le book apparaisse dans
 `→ N quotes EliteSports`, puis sa CLV après quelques jours
 (`clv_split --by book`). Une plateforme neuve peut avoir des prix
@@ -5285,7 +5306,7 @@ systématiquement mauvais — c'est ce que BetFirst a révélé (−3,20 points 
 
 | | |
 |---|---|
-| Tests | **884 passés**, 4 ignorés — `pytest tests/`, jamais `pytest` seul (§4) |
+| Tests | **886 passés**, 4 ignorés — `pytest tests/`, jamais `pytest` seul (§4) |
 | `results` | 3 091 lignes (tennis) |
 | Books actifs en ALERTE | unibet, golden_palace, ladbrokes, circus |
 | Books muets (donnée seule) | betano, betfirst, napoleon, starcasino, **magicbetting** — **48 %** (§21.8) |

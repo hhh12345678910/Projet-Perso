@@ -100,3 +100,42 @@ def test_un_sport_non_couvert_ne_fait_pas_d_appel():
     from src.scrapers.elitesports import EliteSportsScraper
     sc = EliteSportsScraper.__new__(EliteSportsScraper)   # sans client HTTP
     assert list(sc.fetch_pages("hockey")) == []
+
+
+def test_la_pagination_s_arrete_sur_une_page_vide_pas_sur_totalPages():
+    """⚠️ Mesuré le 22/08 : à `size=10` le tennis annonce `totalPages: 4`,
+    cohérent ; à `size=500` il annonce `totalElements: 6` pour 35 événements
+    servis. Se fier au compteur tronque le balayage — probablement la cause
+    des 1 476 événements de football rendus sur 1 503 annoncés."""
+    from src.scrapers.elitesports import EliteSportsScraper
+
+    pleine = {"content": [{"leagueName": "L", "events": [{"eventId": "x"}]}],
+              "page": {"totalPages": 1, "totalElements": 6}}   # ment : dit « fini »
+    vide = {"content": [], "page": {"totalPages": 1}}
+    appels = []
+
+    sc = EliteSportsScraper.__new__(EliteSportsScraper)
+    sc._get = lambda path, params: (appels.append(params["page"]),
+                                    pleine if params["page"] < 3 else vide)[1]
+
+    pages = list(sc.fetch_pages("soccer"))
+    assert len(pages) == 3, "le balayage s'est arrêté sur totalPages au lieu du vide"
+    assert appels == [0, 1, 2, 3], "la page vide doit être demandée pour prouver la fin"
+
+
+def test_la_borne_dure_previent_au_lieu_de_tronquer_en_silence():
+    """Si MAX_PAGES est atteint sans page vide, l'offre est peut-être
+    incomplète. Un book silencieusement tronqué est pire qu'un book absent."""
+    import warnings
+
+    from src.scrapers.elitesports import EliteSportsScraper
+
+    pleine = {"content": [{"leagueName": "L", "events": [{"eventId": "x"}]}]}
+    sc = EliteSportsScraper.__new__(EliteSportsScraper)
+    sc._get = lambda path, params: pleine
+
+    with warnings.catch_warnings(record=True) as capté:
+        warnings.simplefilter("always")
+        pages = list(sc.fetch_pages("soccer"))
+    assert len(pages) == EliteSportsScraper.MAX_PAGES
+    assert capté and "tronquée" in str(capté[0].message)

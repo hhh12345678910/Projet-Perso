@@ -305,6 +305,19 @@ class EliteSportsScraper:
 
         Rendues une par une plutôt qu'assemblées : une page qui échoue en
         cours de balayage ne doit pas emporter celles déjà obtenues.
+
+        ⚠️ **L'arrêt se fait sur une page VIDE, jamais sur `totalPages`.**
+        Mesuré le 22/08 : à `size=10` le tennis annonce `totalElements: 35,
+        totalPages: 4`, cohérent ; à `size=500` il annonce **6** pour 35
+        événements réellement servis. Le compteur de pages n'est donc pas
+        fiable aux grandes tailles, et s'y fier tronque le balayage — c'est
+        très probablement ce qui faisait rendre 1 476 événements de football
+        sur 1 503 annoncés, pas un filtre.
+
+        Une source qui se trompe sur sa propre taille n'est pas une raison de
+        perdre des cotes en silence. Le coût est UN appel de plus par sport et
+        par cycle — la page vide qui prouve la fin — et ce book n'a ni quota
+        ni authentification.
         """
         sport_id = SPORT_IDS.get(sport)
         if sport_id is None:
@@ -314,11 +327,19 @@ class EliteSportsScraper:
                 f"/sports/{sport_id}/events/prematch",
                 {"page": page, "size": self.PAGE_SIZE, "sort": "dateTime,ASC,id,ASC"},
             )
+            n = sum(len(l.get("events") or [])
+                    for l in payload.get("content") or [])
+            if not n:
+                return                      # page vide : la fin, pour de bon
             yield payload
-            infos = payload.get("page") or {}
-            total = infos.get("totalPages")
-            if not isinstance(total, int) or page + 1 >= total:
-                return
+        # La borne dure est atteinte : on a peut-être tronqué. Le dire, plutôt
+        # que de rendre un book silencieusement incomplet.
+        import warnings
+        warnings.warn(
+            f"EliteSports {sport}: {self.MAX_PAGES} pages lues sans page vide — "
+            "l'offre est peut-être tronquée, relever MAX_PAGES.",
+            stacklevel=2,
+        )
 
     def fetch_quotes(self, sport: str = "soccer") -> list[OddQuote]:
         out: list[OddQuote] = []
