@@ -237,6 +237,12 @@ def parse_prematch(payload: dict, book: Book = Book.ELITESPORTS) -> Iterator[Odd
                             )
 
 
+def leagues_seen(payload: dict) -> dict[str, str]:
+    """Les `leagueId` d'une page, avec leur nom. Sert au balayage profond."""
+    return {lg["leagueId"]: (lg.get("leagueName") or "")
+            for lg in payload.get("content") or [] if lg.get("leagueId")}
+
+
 def _is_retryable(exc: BaseException) -> bool:
     if isinstance(exc, httpx.TransportError):
         return True
@@ -340,6 +346,32 @@ class EliteSportsScraper:
             "l'offre est peut-être tronquée, relever MAX_PAGES.",
             stacklevel=2,
         )
+
+    def fetch_league_pages(self, sport: str, league_id: str) -> Iterator[dict]:
+        """L'offre prématch d'UNE compétition.
+
+        ⚠️ **Cette route ne pose pas la même fenêtre que la route globale**, et
+        c'est tout son intérêt. Mesuré le 22/08 : la route globale s'arrête à
+        J+2 (1 480 événements du 22 au 24/08), alors que la Coupe d'Allemagne
+        interrogée ligue par ligue rend des matchs jusqu'au **2 septembre**.
+
+        Balayer les 302 ligues du football coûte 302 appels et 55 s, et rend
+        **255 événements exploitables de plus** (J+0 à J+8, au-delà Pinnacle ne
+        price plus rien donc aucune ligne juste n'existe). Les deux tiers
+        tombent au-delà de 48 h, la tranche que le §9 mesure à +6,38 % de CLV,
+        significative — pas dans le creux 24-48 h.
+        """
+        sport_id = SPORT_IDS.get(sport)
+        if sport_id is None:
+            return
+        for page in range(self.MAX_PAGES):
+            payload = self._get(
+                f"/sports/{sport_id}/leagues/{league_id}/events/prematch",
+                {"page": page, "size": self.PAGE_SIZE},
+            )
+            if not sum(len(l.get("events") or []) for l in payload.get("content") or []):
+                return
+            yield payload
 
     def fetch_quotes(self, sport: str = "soccer") -> list[OddQuote]:
         out: list[OddQuote] = []

@@ -1656,6 +1656,91 @@ def fetch_goldenpalace_quotes(sport: str) -> list[OddQuote]:
         return []
 
 
+# ── EliteSports : balayage PROFOND, en cache de fond ────────────────────────
+#
+# La route globale d'EliteSports pose une fenêtre de ~2 jours : 1 480
+# événements du 22 au 24/08, mesuré. La route PAR LIGUE ne la pose pas — la
+# Coupe d'Allemagne y va jusqu'au 2 septembre.
+#
+# Balayer les 302 ligues coûte 302 appels et 55 s, et rend 255 événements
+# exploitables de plus (J+0 à J+8 ; au-delà Pinnacle ne price plus, donc aucune
+# ligne juste n'existe et la détection est impossible). Répartition :
+#   J+1-J+2 :  78 → le creux du §9, CLV −2,70 % (n=35, non significatif)
+#   J+3-J+8 : 166 → la tranche >48 h, CLV +6,38 %, significative à +3,0 σ
+#
+# Les deux tiers du gain tombent donc dans une zone mesurée RENTABLE.
+#
+# ⚠️ 55 s DANS le cycle silencieraient le sport entier — c'est très exactement
+# ce qui avait fait retirer Smarkets en juillet (§5). Donc cache de fond, même
+# motif que BetFirst : le cycle lit ce qui est prêt et repart aussitôt, il
+# n'attend JAMAIS le balayage profond. Des cotes à J+5 ne bougent pas en trente
+# secondes ; un rafraîchissement au quart d'heure suffit.
+_ELITE_DEEP_TTL = float(os.getenv("ELITESPORTS_DEEP_REFRESH_SEC", "900"))
+# Au-delà, on préfère RIEN à des cotes mortes — la leçon de la garde de
+# fraîcheur du §5. Un flux périmé traité comme frais fabrique des value bets
+# contre des prix qui n'existent plus, en silence.
+_ELITE_DEEP_MAX_AGE = float(os.getenv("ELITESPORTS_DEEP_MAX_AGE_SEC", "3600"))
+# Coupe-circuit : à 0, le balayage profond ne part jamais et le book reste sur
+# sa route globale, comme avant le 22/08.
+_ELITE_DEEP_ENABLED = os.getenv("ELITESPORTS_DEEP_ENABLED", "1").strip().lower() \
+    not in ("0", "false", "no", "off", "non")
+_ELITE_DEEP_CACHE: dict[str, tuple[float, list[OddQuote]]] = {}
+_ELITE_DEEP_REFRESHING: set[str] = set()
+_ELITE_DEEP_LOCK = threading.Lock()
+
+
+def _elitesports_deep_refresh(sport: str) -> None:
+    """Balaye EliteSports ligue par ligue, en fond.
+
+    Ne lève JAMAIS : c'est un thread détaché, une exception y serait perdue et
+    emporterait le drapeau de rafraîchissement, laissant le cache figé pour
+    toujours sans que rien ne le dise.
+    """
+    try:
+        from .scrapers.elitesports import leagues_seen
+
+        quotes: list[OddQuote] = []
+        with EliteSportsScraper() as es:
+            ligues: dict[str, str] = {}
+            for payload in es.fetch_pages(sport):
+                ligues.update(leagues_seen(payload))
+            echecs = 0
+            for lid in ligues:
+                try:
+                    for payload in es.fetch_league_pages(sport, lid):
+                        quotes.extend(elitesports_parse_prematch(payload, es.book))
+                except Exception:                                 # noqa: BLE001
+                    # Une ligue qui casse ne doit pas emporter les 301 autres.
+                    echecs += 1
+        with _ELITE_DEEP_LOCK:
+            _ELITE_DEEP_CACHE[sport] = (time.monotonic(), quotes)
+        console.print(f"\\[{sport}]   EliteSports profond : {len(quotes)} cotes "
+                      f"sur {len(ligues)} ligues"
+                      + (f" ({echecs} ligues en échec)" if echecs else ""))
+    except Exception as e:                                        # noqa: BLE001
+        console.print(f"[yellow]EliteSports profond échoué : {e}[/yellow]")
+    finally:
+        with _ELITE_DEEP_LOCK:
+            _ELITE_DEEP_REFRESHING.discard(sport)
+
+
+def _elitesports_deep_quotes(sport: str) -> list[OddQuote]:
+    """Ce que le balayage profond a en réserve. Ne bloque JAMAIS le cycle."""
+    if not _ELITE_DEEP_ENABLED:
+        return []
+    now = time.monotonic()
+    with _ELITE_DEEP_LOCK:
+        ts, quotes = _ELITE_DEEP_CACHE.get(sport, (0.0, []))
+        age = now - ts if ts else float("inf")
+        lancer = age > _ELITE_DEEP_TTL and sport not in _ELITE_DEEP_REFRESHING
+        if lancer:
+            _ELITE_DEEP_REFRESHING.add(sport)
+    if lancer:
+        threading.Thread(target=_elitesports_deep_refresh,
+                         args=(sport,), daemon=True).start()
+    return [] if age > _ELITE_DEEP_MAX_AGE else quotes
+
+
 def fetch_elitesports_quotes(sport: str) -> list[OddQuote]:
     """Toute l'offre prématch d'EliteSports pour un sport.
 
@@ -1686,6 +1771,24 @@ def fetch_elitesports_quotes(sport: str) -> list[OddQuote]:
         # simplement absent du cycle ; sur une page suivante, on garde ce qui
         # a été collecté.
         console.print(f"[yellow]EliteSports skipped:[/yellow] {e}")
+
+    # ── Fusion avec le balayage profond ──────────────────────────────────
+    # La route globale est FRAÎCHE (ce cycle) mais bornée à ~J+2 ; le cache
+    # profond est plus vieux (≤ 15 min) mais va jusqu'à J+8. Sur un marché
+    # présent des deux côtés, **la route globale gagne** : entre deux prix,
+    # celui de maintenant vaut mieux que celui d'il y a un quart d'heure, et
+    # une cote périmée traitée comme fraîche fabrique des value bets contre
+    # des prix qui n'existent plus (§5).
+    profond = _elitesports_deep_quotes(sport)
+    if profond:
+        vus = {(q.event_key, q.market, q.outcome.label, q.outcome.line)
+               for q in quotes}
+        ajout = [q for q in profond
+                 if (q.event_key, q.market, q.outcome.label, q.outcome.line) not in vus]
+        if ajout:
+            console.print(f"\\[{sport}]   EliteSports +{len(ajout)} cotes "
+                          f"du balayage profond")
+            quotes.extend(ajout)
     return quotes
 
 

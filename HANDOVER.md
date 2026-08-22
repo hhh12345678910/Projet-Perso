@@ -5296,6 +5296,41 @@ Le tennis rend 70 cotes (35 matchs × 2 issues), le football ~31 400. En base,
 `elitesports` est **deuxième derrière Pinnacle** (44 388 cotes). Le cycle n'a
 pas bougé : médiane 30 s après contre 32 s avant.
 
+**L'HORIZON ÉLARGI — balayage profond, mesuré puis construit le 22/08.**
+
+La route globale pose une fenêtre de ~2 jours : 1 480 événements du 22 au
+24/08 (1015 / 456 / 9). ⚠️ Ce n'est PAS un plafond de pagination — le compte
+n'est pas rond, `totalElements` annonce ~1 503, et on lit jusqu'à la page
+vide. C'est la route elle-même qui borne.
+
+**La route PAR LIGUE ne borne pas.** Relevé : Coupe d'Allemagne jusqu'au
+2 septembre là où la route globale s'arrête au 23/08.
+
+| | |
+|---|---|
+| Coût | **302 appels, 55 s**, 0 échec |
+| Gain | **+255 événements exploitables** (J+0 à J+8) |
+| J+1-J+2 (le creux du §9, −2,70 %) | 78 |
+| **J+3-J+8 (>48 h, +6,38 % à 3,0 σ)** | **166** |
+
+Au-delà de J+8, Pinnacle ne price plus : aucune ligne juste n'existe, donc
+aucune détection n'est possible. Les 26 événements à J+9…J+15 sont hors
+portée par construction.
+
+⚠️ **55 s DANS le cycle silencieraient le sport entier** — c'est très
+exactement ce qui avait fait retirer Smarkets en juillet (§5). D'où un **cache
+de fond**, motif de BetFirst : le cycle lit ce qui est prêt et repart
+aussitôt. Rafraîchissement au quart d'heure (`ELITESPORTS_DEEP_REFRESH_SEC`),
+cotes jetées au-delà d'une heure (`ELITESPORTS_DEEP_MAX_AGE_SEC`) — RIEN vaut
+mieux que des cotes mortes. Coupe-circuit : `ELITESPORTS_DEEP_ENABLED=0`.
+
+**Sur un marché présent des deux côtés, la route globale l'emporte** : entre le
+prix de maintenant et celui d'il y a un quart d'heure, le frais gagne. Sept
+tests gardent le motif, dont « le cycle n'attend jamais », « un cache trop
+vieux rend RIEN » et « le rafraîchissement ne lève jamais » — un thread
+détaché qui lèverait emporterait son drapeau et figerait le cache pour
+toujours, sans que rien ne le dise.
+
 **À surveiller au premier cycle** : que le book apparaisse dans
 `→ N quotes EliteSports`, puis sa CLV après quelques jours
 (`clv_split --by book`). Une plateforme neuve peut avoir des prix
@@ -5306,7 +5341,7 @@ systématiquement mauvais — c'est ce que BetFirst a révélé (−3,20 points 
 
 | | |
 |---|---|
-| Tests | **890 passés**, 4 ignorés — `pytest tests/`, jamais `pytest` seul (§4) |
+| Tests | **897 passés**, 4 ignorés — `pytest tests/`, jamais `pytest` seul (§4) |
 | `results` | 3 091 lignes (tennis) |
 | Books actifs en ALERTE | unibet, golden_palace, ladbrokes, circus |
 | Books muets (donnée seule) | betano, betfirst, napoleon, starcasino, **magicbetting** — **48 %** (§21.8) |
