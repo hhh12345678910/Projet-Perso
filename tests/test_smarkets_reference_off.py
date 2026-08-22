@@ -14,6 +14,9 @@ from __future__ import annotations
 from datetime import datetime, timezone
 
 import src.main as m
+# Les deux drapeaux sont DÉFINIS dans la couche de collecte : c'est là qu'on les
+# lit, pas sur la copie que `main` en importe.
+import src.orchestration as orch
 from src.models import Book, MarketType, OddQuote, Outcome
 
 NOW = datetime(2026, 8, 16, 12, 0, tzinfo=timezone.utc)
@@ -30,7 +33,7 @@ def test_the_fallback_is_off_by_default():
 
     Un réglage dangereux doit demander un geste explicite ; l'oubli doit
     retomber du côté sûr."""
-    assert m._SMARKETS_AS_REFERENCE is False
+    assert orch.SMARKETS_AS_REFERENCE is False
 
 
 def test_without_a_secondary_no_fallback_line_exists():
@@ -45,8 +48,8 @@ def test_smarkets_is_off_entirely():
 
     `fetch_smarkets_quotes` rend une liste vide sans lancer de fil de
     rafraîchissement, donc le cycle ne paie plus rien pour lui."""
-    assert m._SMARKETS_ENABLED is False
-    assert m.fetch_smarkets_quotes("tennis") == []
+    assert orch.SMARKETS_ENABLED is False
+    assert orch.fetch_smarkets_quotes("tennis") == []
 
 
 def test_smarkets_stays_a_sharp_book():

@@ -358,7 +358,7 @@ def _write_prematch(dirpath, sport: str, age_minutes: float) -> None:
 
 
 def test_fresh_prematch_file_is_used(tmp_path, monkeypatch):
-    from src.main import fetch_betano_quotes
+    from src.orchestration import fetch_betano_quotes
 
     monkeypatch.setenv("BETANO_PREMATCH_DIR", str(tmp_path))
     _write_prematch(tmp_path, "volleyball", age_minutes=1)
@@ -366,7 +366,7 @@ def test_fresh_prematch_file_is_used(tmp_path, monkeypatch):
 
 
 def test_stale_prematch_file_is_refused(tmp_path, monkeypatch):
-    from src.main import fetch_betano_quotes
+    from src.orchestration import fetch_betano_quotes
 
     monkeypatch.setenv("BETANO_PREMATCH_DIR", str(tmp_path))
     monkeypatch.setenv("BETANO_PREMATCH_MAX_AGE_MIN", "30")
@@ -375,7 +375,7 @@ def test_stale_prematch_file_is_refused(tmp_path, monkeypatch):
 
 
 def test_staleness_threshold_is_configurable(tmp_path, monkeypatch):
-    from src.main import fetch_betano_quotes
+    from src.orchestration import fetch_betano_quotes
 
     monkeypatch.setenv("BETANO_PREMATCH_DIR", str(tmp_path))
     monkeypatch.setenv("BETANO_PREMATCH_MAX_AGE_MIN", "120")
@@ -385,7 +385,7 @@ def test_staleness_threshold_is_configurable(tmp_path, monkeypatch):
 
 def test_staleness_check_can_be_disabled(tmp_path, monkeypatch):
     """0 disables the guard — useful when replaying a captured dump offline."""
-    from src.main import fetch_betano_quotes
+    from src.orchestration import fetch_betano_quotes
 
     monkeypatch.setenv("BETANO_PREMATCH_DIR", str(tmp_path))
     monkeypatch.setenv("BETANO_PREMATCH_MAX_AGE_MIN", "0")

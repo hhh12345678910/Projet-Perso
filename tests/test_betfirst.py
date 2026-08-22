@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+import threading
+
 import json
 from pathlib import Path
 
@@ -153,45 +155,45 @@ def test_the_horizon_defaults_to_three_days():
 # fraîcheur n'a aucune valeur : il offre les pires prix du portefeuille.
 
 def _reset_betfirst_cache():
-    import src.main as m
-    m._BETFIRST_CACHE.clear()
-    m._BETFIRST_REFRESHING.clear()
+    import src.orchestration as orch
+    orch._BETFIRST_CACHE.clear()
+    orch._BETFIRST_REFRESHING.clear()
 
 
 def test_the_cycle_never_waits_for_betfirst(monkeypatch):
     """Le premier appel rend la main immédiatement, même si le rafraîchissement
     prend des dizaines de secondes."""
     import time as _t
-    import src.main as m
+    import src.orchestration as orch
     _reset_betfirst_cache()
 
     def slow(sport):
         _t.sleep(1.0)
-        with m._BETFIRST_LOCK:
-            m._BETFIRST_CACHE[sport] = (_t.monotonic(), ["cote"])
-        with m._BETFIRST_LOCK:
-            m._BETFIRST_REFRESHING.discard(sport)
+        with orch._BETFIRST_LOCK:
+            orch._BETFIRST_CACHE[sport] = (_t.monotonic(), ["cote"])
+        with orch._BETFIRST_LOCK:
+            orch._BETFIRST_REFRESHING.discard(sport)
 
-    monkeypatch.setattr(m, "_betfirst_refresh", slow)
+    monkeypatch.setattr(orch, "_betfirst_refresh", slow)
     t0 = _t.monotonic()
-    out = m.fetch_betfirst_quotes("soccer")
+    out = orch.fetch_betfirst_quotes("soccer")
     assert _t.monotonic() - t0 < 0.2, "le cycle a attendu BetFirst"
     assert out == [], "premier cycle : cache vide, sans conséquence"
     _t.sleep(1.3)
-    assert m.fetch_betfirst_quotes("soccer") == ["cote"]
+    assert orch.fetch_betfirst_quotes("soccer") == ["cote"]
     _reset_betfirst_cache()
 
 
 def test_only_one_refresh_runs_at_a_time(monkeypatch):
     """Sans ce garde, chaque cycle lancerait un thread de plus sur un book déjà
     lent — et c'est ainsi qu'on se refait bloquer par un anti-bot."""
-    import src.main as m
+    import src.orchestration as orch
     _reset_betfirst_cache()
     started = []
-    monkeypatch.setattr(m.threading, "Thread",
+    monkeypatch.setattr(threading, "Thread",
                         lambda **kw: type("T", (), {"start": lambda s: started.append(1)})())
     for _ in range(5):
-        m.fetch_betfirst_quotes("soccer")
+        orch.fetch_betfirst_quotes("soccer")
     assert len(started) == 1
     _reset_betfirst_cache()
 
@@ -200,15 +202,15 @@ def test_odds_too_old_are_dropped_rather_than_served(monkeypatch):
     """La leçon de la garde de fraîcheur du §5 : un flux périmé traité comme
     frais fabrique des value bets contre des prix qui n'existent plus."""
     import time as _t
-    import src.main as m
+    import src.orchestration as orch
     _reset_betfirst_cache()
-    monkeypatch.setattr(m, "_BETFIRST_MAX_AGE", 10.0)
-    monkeypatch.setattr(m.threading, "Thread",
+    monkeypatch.setattr(orch, "_BETFIRST_MAX_AGE", 10.0)
+    monkeypatch.setattr(threading, "Thread",
                         lambda **kw: type("T", (), {"start": lambda s: None})())
-    m._BETFIRST_CACHE["soccer"] = (_t.monotonic() - 60, ["vieille cote"])
-    assert m.fetch_betfirst_quotes("soccer") == []
-    m._BETFIRST_CACHE["soccer"] = (_t.monotonic() - 2, ["cote fraîche"])
-    assert m.fetch_betfirst_quotes("soccer") == ["cote fraîche"]
+    orch._BETFIRST_CACHE["soccer"] = (_t.monotonic() - 60, ["vieille cote"])
+    assert orch.fetch_betfirst_quotes("soccer") == []
+    orch._BETFIRST_CACHE["soccer"] = (_t.monotonic() - 2, ["cote fraîche"])
+    assert orch.fetch_betfirst_quotes("soccer") == ["cote fraîche"]
     _reset_betfirst_cache()
 
 

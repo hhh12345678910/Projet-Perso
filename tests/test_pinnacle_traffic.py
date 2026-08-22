@@ -13,6 +13,9 @@ from unittest.mock import patch
 import httpx
 import pytest
 
+# Tout ce fichier porte sur la COLLECTE : espacement des appels, recul,
+# réutilisation du cache. Ces noms vivent dans `src.orchestration`.
+
 
 _MATCHUP = {
     "id": 1,
@@ -105,13 +108,13 @@ def test_backoff_ceiling_stays_under_cache_reuse():
     Dès qu'il la dépasse, le cache meurt pendant le recul et plus rien n'est
     ni détecté ni capturé — c'est ce qui a produit 60 + 120 + 240 + 480 +
     600 + 600 = 2100 s d'aveuglement pour six tentatives."""
-    import src.main as m
+    import src.orchestration as orch
 
-    assert m._PINNACLE_BACKOFF_MAX < m._PINNACLE_MAX_REUSE, (
-        f"plafond de recul {m._PINNACLE_BACKOFF_MAX}s >= réutilisation "
-        f"{m._PINNACLE_MAX_REUSE}s : une limitation créera un trou de détection"
+    assert orch._PINNACLE_BACKOFF_MAX < orch._PINNACLE_MAX_REUSE, (
+        f"plafond de recul {orch._PINNACLE_BACKOFF_MAX}s >= réutilisation "
+        f"{orch._PINNACLE_MAX_REUSE}s : une limitation créera un trou de détection"
     )
-    assert m._PINNACLE_BACKOFF_START <= m._PINNACLE_BACKOFF_MAX
+    assert orch._PINNACLE_BACKOFF_START <= orch._PINNACLE_BACKOFF_MAX
 
 
 def test_spacing_never_returns_a_silent_empty():
@@ -119,11 +122,11 @@ def test_spacing_never_returns_a_silent_empty():
     déjà mort quand l'espacement court encore. Renvoyer [] serait lu plus haut
     comme « hors-saison » — aucune alerte, aucune détection, rien dans les
     logs. Il faut retourner chercher."""
-    import src.main as m
+    import src.orchestration as orch
 
-    m._PINNACLE_CACHE.clear(); m._PINNACLE_BLOCKED_UNTIL.clear()
-    m._PINNACLE_BACKOFF.clear(); m._PINNACLE_SERVED_FROM_CACHE.clear()
-    m._PINNACLE_FAILED.clear(); m._PINNACLE_EMPTY_STREAK.clear()
+    orch._PINNACLE_CACHE.clear(); orch._PINNACLE_BLOCKED_UNTIL.clear()
+    orch._PINNACLE_BACKOFF.clear(); orch._PINNACLE_SERVED_FROM_CACHE.clear()
+    orch._PINNACLE_FAILED.clear(); orch._PINNACLE_EMPTY_STREAK.clear()
 
     sentinel = ["une-cote"]
 
@@ -132,21 +135,21 @@ def test_spacing_never_returns_a_silent_empty():
         def __exit__(self, *a): return False
         def fetch_market_quotes(self, sport): return sentinel
 
-    old_gap, m._PINNACLE_GAP = m._PINNACLE_GAP, 0.0
-    old_min, m._PINNACLE_MIN_INTERVAL = m._PINNACLE_MIN_INTERVAL, 600.0
-    old_reuse, m._PINNACLE_MAX_REUSE = m._PINNACLE_MAX_REUSE, 0.0
-    old_cls, m.PinnacleScraper = m.PinnacleScraper, _Pin
+    old_gap, orch._PINNACLE_GAP = orch._PINNACLE_GAP, 0.0
+    old_min, orch._PINNACLE_MIN_INTERVAL = orch._PINNACLE_MIN_INTERVAL, 600.0
+    old_reuse, orch._PINNACLE_MAX_REUSE = orch._PINNACLE_MAX_REUSE, 0.0
+    old_cls, orch.PinnacleScraper = orch.PinnacleScraper, _Pin
     try:
-        assert m.fetch_pinnacle_quotes("soccer") == sentinel
+        assert orch.fetch_pinnacle_quotes("soccer") == sentinel
         # Cache périmé d'office : le second appel doit refaire une requête
         # plutôt que renvoyer un vide muet.
-        assert m.fetch_pinnacle_quotes("soccer") == sentinel
+        assert orch.fetch_pinnacle_quotes("soccer") == sentinel
     finally:
-        m.PinnacleScraper = old_cls
-        m._PINNACLE_GAP = old_gap
-        m._PINNACLE_MIN_INTERVAL = old_min
-        m._PINNACLE_MAX_REUSE = old_reuse
-        m._PINNACLE_CACHE.clear()
+        orch.PinnacleScraper = old_cls
+        orch._PINNACLE_GAP = old_gap
+        orch._PINNACLE_MIN_INTERVAL = old_min
+        orch._PINNACLE_MAX_REUSE = old_reuse
+        orch._PINNACLE_CACHE.clear()
 
 
 def test_backoff_resets_when_the_call_succeeds_even_if_empty():
@@ -154,30 +157,30 @@ def test_backoff_resets_when_the_call_succeeds_even_if_empty():
     recul n'était remis à zéro que sur une réponse non vide, un tel sport
     gardait le recul hérité de son dernier 403 et repartait du plafond au
     refus suivant."""
-    import src.main as m
+    import src.orchestration as orch
 
-    m._PINNACLE_CACHE.clear(); m._PINNACLE_BLOCKED_UNTIL.clear()
-    m._PINNACLE_BACKOFF.clear(); m._PINNACLE_SERVED_FROM_CACHE.clear()
-    m._PINNACLE_FAILED.clear(); m._PINNACLE_EMPTY_STREAK.clear()
-    m._PINNACLE_BACKOFF["hockey"] = 120.0
+    orch._PINNACLE_CACHE.clear(); orch._PINNACLE_BLOCKED_UNTIL.clear()
+    orch._PINNACLE_BACKOFF.clear(); orch._PINNACLE_SERVED_FROM_CACHE.clear()
+    orch._PINNACLE_FAILED.clear(); orch._PINNACLE_EMPTY_STREAK.clear()
+    orch._PINNACLE_BACKOFF["hockey"] = 120.0
 
     class _Pin:
         def __enter__(self): return self
         def __exit__(self, *a): return False
         def fetch_market_quotes(self, sport): return []
 
-    old_gap, m._PINNACLE_GAP = m._PINNACLE_GAP, 0.0
-    old_cls, m.PinnacleScraper = m.PinnacleScraper, _Pin
+    old_gap, orch._PINNACLE_GAP = orch._PINNACLE_GAP, 0.0
+    old_cls, orch.PinnacleScraper = orch.PinnacleScraper, _Pin
     try:
-        assert m.fetch_pinnacle_quotes("hockey") == []
-        assert "hockey" not in m._PINNACLE_BACKOFF
-        assert not m.pinnacle_fetch_failed("hockey"), \
+        assert orch.fetch_pinnacle_quotes("hockey") == []
+        assert "hockey" not in orch._PINNACLE_BACKOFF
+        assert not orch.pinnacle_fetch_failed("hockey"), \
             "une réponse vide n'est pas une panne — voir le hockey d'août"
     finally:
-        m.PinnacleScraper = old_cls
-        m._PINNACLE_GAP = old_gap
-        m._PINNACLE_BACKOFF.clear()
-        m._PINNACLE_EMPTY_STREAK.clear()
+        orch.PinnacleScraper = old_cls
+        orch._PINNACLE_GAP = old_gap
+        orch._PINNACLE_BACKOFF.clear()
+        orch._PINNACLE_EMPTY_STREAK.clear()
 
 
 def test_idle_probing_does_not_report_a_phantom_outage():
@@ -192,11 +195,11 @@ def test_idle_probing_does_not_report_a_phantom_outage():
     machine."""
     import time as _t
     import httpx
-    import src.main as m
+    import src.orchestration as orch
 
-    for d in (m._PINNACLE_CACHE, m._PINNACLE_BLOCKED_UNTIL, m._PINNACLE_BACKOFF,
-              m._PINNACLE_SERVED_FROM_CACHE, m._PINNACLE_FAILED,
-              m._PINNACLE_EMPTY_STREAK, m._PINNACLE_LAST_PROBE):
+    for d in (orch._PINNACLE_CACHE, orch._PINNACLE_BLOCKED_UNTIL, orch._PINNACLE_BACKOFF,
+              orch._PINNACLE_SERVED_FROM_CACHE, orch._PINNACLE_FAILED,
+              orch._PINNACLE_EMPTY_STREAK, orch._PINNACLE_LAST_PROBE):
         d.clear()
 
     class _Pin:
@@ -207,32 +210,32 @@ def test_idle_probing_does_not_report_a_phantom_outage():
                 "403", request=httpx.Request("GET", "https://x"),
                 response=httpx.Response(403))
 
-    old_gap, m._PINNACLE_GAP = m._PINNACLE_GAP, 0.0
-    old_cls, m.PinnacleScraper = m.PinnacleScraper, _Pin
+    old_gap, orch._PINNACLE_GAP = orch._PINNACLE_GAP, 0.0
+    old_cls, orch.PinnacleScraper = orch.PinnacleScraper, _Pin
     try:
         # Dix réponses vides : le tennis est en sondage espacé, et sa sonde
         # est due maintenant.
-        m._PINNACLE_EMPTY_STREAK["tennis"] = m._PINNACLE_IDLE_AFTER
-        m._PINNACLE_LAST_PROBE["tennis"] = _t.monotonic() - m._PINNACLE_IDLE_INTERVAL - 1
+        orch._PINNACLE_EMPTY_STREAK["tennis"] = orch._PINNACLE_IDLE_AFTER
+        orch._PINNACLE_LAST_PROBE["tennis"] = _t.monotonic() - orch._PINNACLE_IDLE_INTERVAL - 1
 
-        assert m.fetch_pinnacle_quotes("tennis") == []
-        assert m.pinnacle_fetch_failed("tennis") is True, "la sonde a bien échoué"
+        assert orch.fetch_pinnacle_quotes("tennis") == []
+        assert orch.pinnacle_fetch_failed("tennis") is True, "la sonde a bien échoué"
 
         # Les cycles suivants tombent entre deux sondages : aucune requête
         # n'est émise, donc aucune panne ne peut être constatée. C'est vrai dès
         # le cycle suivant — avant le correctif, la garde de recul s'exécutait
         # d'abord et remettait le drapeau à vrai.
         for _ in range(5):
-            assert m.fetch_pinnacle_quotes("tennis") == []
-            assert not m.pinnacle_fetch_failed("tennis"), (
+            assert orch.fetch_pinnacle_quotes("tennis") == []
+            assert not orch.pinnacle_fetch_failed("tennis"), (
                 "un cycle qui ne demande rien ne doit pas compter comme une panne"
             )
     finally:
-        m.PinnacleScraper = old_cls
-        m._PINNACLE_GAP = old_gap
-        for d in (m._PINNACLE_FAILED, m._PINNACLE_EMPTY_STREAK,
-                  m._PINNACLE_LAST_PROBE, m._PINNACLE_BLOCKED_UNTIL,
-                  m._PINNACLE_BACKOFF):
+        orch.PinnacleScraper = old_cls
+        orch._PINNACLE_GAP = old_gap
+        for d in (orch._PINNACLE_FAILED, orch._PINNACLE_EMPTY_STREAK,
+                  orch._PINNACLE_LAST_PROBE, orch._PINNACLE_BLOCKED_UNTIL,
+                  orch._PINNACLE_BACKOFF):
             d.clear()
 
 
@@ -241,11 +244,11 @@ def test_a_real_outage_on_a_sport_with_fixtures_still_alerts():
     sport qui a des matchs n'entre jamais en sondage espacé, puisqu'il faut dix
     réponses vides ET réussies pour y arriver."""
     import httpx
-    import src.main as m
+    import src.orchestration as orch
 
-    for d in (m._PINNACLE_CACHE, m._PINNACLE_BLOCKED_UNTIL, m._PINNACLE_BACKOFF,
-              m._PINNACLE_SERVED_FROM_CACHE, m._PINNACLE_FAILED,
-              m._PINNACLE_EMPTY_STREAK, m._PINNACLE_LAST_PROBE):
+    for d in (orch._PINNACLE_CACHE, orch._PINNACLE_BLOCKED_UNTIL, orch._PINNACLE_BACKOFF,
+              orch._PINNACLE_SERVED_FROM_CACHE, orch._PINNACLE_FAILED,
+              orch._PINNACLE_EMPTY_STREAK, orch._PINNACLE_LAST_PROBE):
         d.clear()
 
     class _Pin:
@@ -256,13 +259,13 @@ def test_a_real_outage_on_a_sport_with_fixtures_still_alerts():
                 "403", request=httpx.Request("GET", "https://x"),
                 response=httpx.Response(403))
 
-    old_gap, m._PINNACLE_GAP = m._PINNACLE_GAP, 0.0
-    old_cls, m.PinnacleScraper = m.PinnacleScraper, _Pin
+    old_gap, orch._PINNACLE_GAP = orch._PINNACLE_GAP, 0.0
+    old_cls, orch.PinnacleScraper = orch.PinnacleScraper, _Pin
     try:
-        assert m.fetch_pinnacle_quotes("soccer") == []
-        assert m.pinnacle_fetch_failed("soccer") is True
+        assert orch.fetch_pinnacle_quotes("soccer") == []
+        assert orch.pinnacle_fetch_failed("soccer") is True
     finally:
-        m.PinnacleScraper = old_cls
-        m._PINNACLE_GAP = old_gap
-        for d in (m._PINNACLE_FAILED, m._PINNACLE_BLOCKED_UNTIL, m._PINNACLE_BACKOFF):
+        orch.PinnacleScraper = old_cls
+        orch._PINNACLE_GAP = old_gap
+        for d in (orch._PINNACLE_FAILED, orch._PINNACLE_BLOCKED_UNTIL, orch._PINNACLE_BACKOFF):
             d.clear()

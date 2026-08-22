@@ -11,6 +11,11 @@ import pytest
 
 from src import main
 
+# Deux modules, deux responsabilités : `main` porte la SURVEILLANCE
+# (_pinnacle_health décide d'alerter), `orchestration` porte la COLLECTE
+# (fetch_pinnacle_quotes, cache, recul après 403). Depuis le découpage, un
+# faux posé sur `main` ne toucherait plus le nom que la collecte consulte.
+
 
 @pytest.fixture(autouse=True)
 def _reset():
@@ -109,7 +114,7 @@ def test_quotes_reused_during_a_backoff_are_never_restored(monkeypatch):
     doublé, ligne de clôture fausse, aucun signe extérieur."""
     from datetime import datetime, timezone
     import httpx
-    import src.main as m
+    import src.orchestration as orch
     from src.models import Book, MarketType, OddQuote, Outcome
 
     q = [OddQuote(event_key="202608011200::a__vs__b", book=Book.PINNACLE,
@@ -128,26 +133,26 @@ def test_quotes_reused_during_a_backoff_are_never_restored(monkeypatch):
                     response=httpx.Response(403))
             return iter(q)
 
-    monkeypatch.setattr(m, "PinnacleScraper", _Pin)
-    monkeypatch.setattr(m, "_PINNACLE_GAP", 0.0)   # l'écartement n'est pas l'objet ici
-    for d in (m._PINNACLE_CACHE, m._PINNACLE_BLOCKED_UNTIL,
-              m._PINNACLE_BACKOFF, m._PINNACLE_SERVED_FROM_CACHE):
+    monkeypatch.setattr(orch, "PinnacleScraper", _Pin)
+    monkeypatch.setattr(orch, "_PINNACLE_GAP", 0.0)   # l'écartement n'est pas l'objet ici
+    for d in (orch._PINNACLE_CACHE, orch._PINNACLE_BLOCKED_UNTIL,
+              orch._PINNACLE_BACKOFF, orch._PINNACLE_SERVED_FROM_CACHE):
         d.clear()
 
     # Succès : les cotes sont neuves, donc à enregistrer.
-    assert m.fetch_pinnacle_quotes("soccer") == q
-    assert m.pinnacle_was_cached("soccer") is False
+    assert orch.fetch_pinnacle_quotes("soccer") == q
+    assert orch.pinnacle_was_cached("soccer") is False
 
     # 403 : on retombe sur le cache, et il ne faut surtout pas le réenregistrer.
     state["fail"] = True
-    assert m.fetch_pinnacle_quotes("soccer") == q
-    assert m.pinnacle_was_cached("soccer") is True
+    assert orch.fetch_pinnacle_quotes("soccer") == q
+    assert orch.pinnacle_was_cached("soccer") is True
 
 
 def test_pinnacle_is_queried_every_cycle_by_default(monkeypatch):
     """Pas d'espacement imposé : seule une limitation avérée met en pause."""
     from datetime import datetime, timezone
-    import src.main as m
+    import src.orchestration as orch
     from src.models import Book, MarketType, OddQuote, Outcome
 
     calls = {"n": 0}
@@ -163,24 +168,24 @@ def test_pinnacle_is_queried_every_cycle_by_default(monkeypatch):
             calls["n"] += 1
             return iter(q)
 
-    monkeypatch.setattr(m, "PinnacleScraper", _Pin)
-    monkeypatch.setattr(m, "_PINNACLE_MIN_INTERVAL", 0.0)
-    monkeypatch.setattr(m, "_PINNACLE_GAP", 0.0)
-    for d in (m._PINNACLE_CACHE, m._PINNACLE_BLOCKED_UNTIL,
-              m._PINNACLE_BACKOFF, m._PINNACLE_SERVED_FROM_CACHE):
+    monkeypatch.setattr(orch, "PinnacleScraper", _Pin)
+    monkeypatch.setattr(orch, "_PINNACLE_MIN_INTERVAL", 0.0)
+    monkeypatch.setattr(orch, "_PINNACLE_GAP", 0.0)
+    for d in (orch._PINNACLE_CACHE, orch._PINNACLE_BLOCKED_UNTIL,
+              orch._PINNACLE_BACKOFF, orch._PINNACLE_SERVED_FROM_CACHE):
         d.clear()
 
     for _ in range(3):
-        m.fetch_pinnacle_quotes("soccer")
+        orch.fetch_pinnacle_quotes("soccer")
     assert calls["n"] == 3
-    assert m.pinnacle_was_cached("soccer") is False
+    assert orch.pinnacle_was_cached("soccer") is False
 
 
 def test_a_403_backs_off_instead_of_retrying_every_cycle():
     """Redemander toutes les 20 s pendant une limitation la prolonge."""
     import time
     import httpx
-    import src.main as m
+    import src.orchestration as orch
 
     class _Pin:
         def __enter__(self): return self
@@ -190,18 +195,18 @@ def test_a_403_backs_off_instead_of_retrying_every_cycle():
                 "403", request=httpx.Request("GET", "https://x"),
                 response=httpx.Response(403))
 
-    m._PINNACLE_CACHE.clear(); m._PINNACLE_BLOCKED_UNTIL.clear()
-    m._PINNACLE_BACKOFF.clear(); m._PINNACLE_SERVED_FROM_CACHE.clear()
-    old_gap, m._PINNACLE_GAP = m._PINNACLE_GAP, 0.0
-    old = m.PinnacleScraper
-    m.PinnacleScraper = _Pin
+    orch._PINNACLE_CACHE.clear(); orch._PINNACLE_BLOCKED_UNTIL.clear()
+    orch._PINNACLE_BACKOFF.clear(); orch._PINNACLE_SERVED_FROM_CACHE.clear()
+    old_gap, orch._PINNACLE_GAP = orch._PINNACLE_GAP, 0.0
+    old = orch.PinnacleScraper
+    orch.PinnacleScraper = _Pin
     try:
-        assert m.fetch_pinnacle_quotes("soccer") == []
-        assert m._PINNACLE_BACKOFF["soccer"] >= m._PINNACLE_BACKOFF_START
-        assert m._PINNACLE_BLOCKED_UNTIL["soccer"] > time.monotonic()
+        assert orch.fetch_pinnacle_quotes("soccer") == []
+        assert orch._PINNACLE_BACKOFF["soccer"] >= orch._PINNACLE_BACKOFF_START
+        assert orch._PINNACLE_BLOCKED_UNTIL["soccer"] > time.monotonic()
     finally:
-        m.PinnacleScraper = old
-        m._PINNACLE_GAP = old_gap
+        orch.PinnacleScraper = old
+        orch._PINNACLE_GAP = old_gap
 
 
 def test_pinnacle_calls_are_serialised_across_sports(monkeypatch):
@@ -210,7 +215,7 @@ def test_pinnacle_calls_are_serialised_across_sports(monkeypatch):
     sanctionne bien plus durement que le même volume étalé."""
     import threading
     from datetime import datetime, timezone
-    import src.main as m
+    import src.orchestration as orch
     from src.models import Book, MarketType, OddQuote, Outcome
 
     import time
@@ -234,13 +239,13 @@ def test_pinnacle_calls_are_serialised_across_sports(monkeypatch):
                 decimal_odd=2.0, fetched_at=datetime.now(timezone.utc),
                 source_event_id="1")])
 
-    monkeypatch.setattr(m, "PinnacleScraper", _Pin)
-    monkeypatch.setattr(m, "_PINNACLE_GAP", 0.0)
-    for d in (m._PINNACLE_CACHE, m._PINNACLE_BLOCKED_UNTIL,
-              m._PINNACLE_BACKOFF, m._PINNACLE_SERVED_FROM_CACHE):
+    monkeypatch.setattr(orch, "PinnacleScraper", _Pin)
+    monkeypatch.setattr(orch, "_PINNACLE_GAP", 0.0)
+    for d in (orch._PINNACLE_CACHE, orch._PINNACLE_BLOCKED_UNTIL,
+              orch._PINNACLE_BACKOFF, orch._PINNACLE_SERVED_FROM_CACHE):
         d.clear()
 
-    threads = [threading.Thread(target=m.fetch_pinnacle_quotes, args=(s,))
+    threads = [threading.Thread(target=orch.fetch_pinnacle_quotes, args=(s,))
                for s in ("soccer", "tennis", "hockey")]
     for t in threads:
         t.start()
@@ -255,7 +260,7 @@ def test_an_empty_response_is_not_an_outage(monkeypatch):
     il n'y a pas un seul match de hockey. Confondre ça avec une panne faisait
     alerter en permanence sur les sports sans calendrier — l'essentiel du bruit
     relevé une nuit entière sur le canal critique."""
-    import src.main as m
+    import src.orchestration as orch
 
     class _Empty:
         def __enter__(self): return self
@@ -263,19 +268,19 @@ def test_an_empty_response_is_not_an_outage(monkeypatch):
         def fetch_market_quotes(self, sport):
             return iter([])
 
-    monkeypatch.setattr(m, "PinnacleScraper", _Empty)
-    monkeypatch.setattr(m, "_PINNACLE_GAP", 0.0)
-    for d in (m._PINNACLE_CACHE, m._PINNACLE_BLOCKED_UNTIL, m._PINNACLE_BACKOFF,
-              m._PINNACLE_SERVED_FROM_CACHE, m._PINNACLE_FAILED):
+    monkeypatch.setattr(orch, "PinnacleScraper", _Empty)
+    monkeypatch.setattr(orch, "_PINNACLE_GAP", 0.0)
+    for d in (orch._PINNACLE_CACHE, orch._PINNACLE_BLOCKED_UNTIL, orch._PINNACLE_BACKOFF,
+              orch._PINNACLE_SERVED_FROM_CACHE, orch._PINNACLE_FAILED):
         d.clear()
 
-    assert m.fetch_pinnacle_quotes("hockey") == []
-    assert m.pinnacle_fetch_failed("hockey") is False
+    assert orch.fetch_pinnacle_quotes("hockey") == []
+    assert orch.pinnacle_fetch_failed("hockey") is False
 
 
 def test_a_403_is_an_outage(monkeypatch):
     import httpx
-    import src.main as m
+    import src.orchestration as orch
 
     class _Blocked:
         def __enter__(self): return self
@@ -285,14 +290,14 @@ def test_a_403_is_an_outage(monkeypatch):
                 "403", request=httpx.Request("GET", "https://x"),
                 response=httpx.Response(403))
 
-    monkeypatch.setattr(m, "PinnacleScraper", _Blocked)
-    monkeypatch.setattr(m, "_PINNACLE_GAP", 0.0)
-    for d in (m._PINNACLE_CACHE, m._PINNACLE_BLOCKED_UNTIL, m._PINNACLE_BACKOFF,
-              m._PINNACLE_SERVED_FROM_CACHE, m._PINNACLE_FAILED):
+    monkeypatch.setattr(orch, "PinnacleScraper", _Blocked)
+    monkeypatch.setattr(orch, "_PINNACLE_GAP", 0.0)
+    for d in (orch._PINNACLE_CACHE, orch._PINNACLE_BLOCKED_UNTIL, orch._PINNACLE_BACKOFF,
+              orch._PINNACLE_SERVED_FROM_CACHE, orch._PINNACLE_FAILED):
         d.clear()
 
-    assert m.fetch_pinnacle_quotes("soccer") == []
-    assert m.pinnacle_fetch_failed("soccer") is True
+    assert orch.fetch_pinnacle_quotes("soccer") == []
+    assert orch.pinnacle_fetch_failed("soccer") is True
 
 
 def _raising(exc):
@@ -304,10 +309,10 @@ def _raising(exc):
     return _Boom
 
 
-def _clean(m):
-    for d in (m._PINNACLE_CACHE, m._PINNACLE_BLOCKED_UNTIL, m._PINNACLE_BACKOFF,
-              m._PINNACLE_SERVED_FROM_CACHE, m._PINNACLE_FAILED,
-              m._PINNACLE_EMPTY_STREAK, m._PINNACLE_LAST_PROBE):
+def _clean(orch):
+    for d in (orch._PINNACLE_CACHE, orch._PINNACLE_BLOCKED_UNTIL, orch._PINNACLE_BACKOFF,
+              orch._PINNACLE_SERVED_FROM_CACHE, orch._PINNACLE_FAILED,
+              orch._PINNACLE_EMPTY_STREAK, orch._PINNACLE_LAST_PROBE):
         d.clear()
 
 
@@ -322,7 +327,7 @@ def test_a_maintenance_503_is_an_outage_not_an_empty_calendar(monkeypatch):
     système s'est découverte à l'absence de notifications de value."""
     import httpx
     from tenacity import RetryError
-    import src.main as m
+    import src.orchestration as orch
 
     inner = httpx.HTTPStatusError(
         "503", request=httpx.Request("GET", "https://x"),
@@ -331,22 +336,22 @@ def test_a_maintenance_503_is_an_outage_not_an_empty_calendar(monkeypatch):
     class _Attempt:
         def exception(self): return inner
 
-    monkeypatch.setattr(m, "PinnacleScraper", _raising(RetryError(_Attempt())))
-    monkeypatch.setattr(m, "_PINNACLE_GAP", 0.0)
-    _clean(m)
+    monkeypatch.setattr(orch, "PinnacleScraper", _raising(RetryError(_Attempt())))
+    monkeypatch.setattr(orch, "_PINNACLE_GAP", 0.0)
+    _clean(orch)
 
-    assert m.fetch_pinnacle_quotes("soccer") == []
-    assert m.pinnacle_fetch_failed("soccer") is True, \
+    assert orch.fetch_pinnacle_quotes("soccer") == []
+    assert orch.pinnacle_fetch_failed("soccer") is True, \
         "un 503 est une panne, pas un calendrier vide"
     # Et il doit reculer : marteler une API en maintenance ne sert à rien.
-    assert m._PINNACLE_BACKOFF.get("soccer", 0) > 0
+    assert orch._PINNACLE_BACKOFF.get("soccer", 0) > 0
 
 
 def test_a_retry_wrapped_403_still_backs_off(monkeypatch):
     """Le déballage doit servir tous les codes, pas seulement le 503."""
     import httpx
     from tenacity import RetryError
-    import src.main as m
+    import src.orchestration as orch
 
     inner = httpx.HTTPStatusError(
         "403", request=httpx.Request("GET", "https://x"),
@@ -355,13 +360,13 @@ def test_a_retry_wrapped_403_still_backs_off(monkeypatch):
     class _Attempt:
         def exception(self): return inner
 
-    monkeypatch.setattr(m, "PinnacleScraper", _raising(RetryError(_Attempt())))
-    monkeypatch.setattr(m, "_PINNACLE_GAP", 0.0)
-    _clean(m)
+    monkeypatch.setattr(orch, "PinnacleScraper", _raising(RetryError(_Attempt())))
+    monkeypatch.setattr(orch, "_PINNACLE_GAP", 0.0)
+    _clean(orch)
 
-    assert m.fetch_pinnacle_quotes("soccer") == []
-    assert m.pinnacle_fetch_failed("soccer") is True
-    assert m._PINNACLE_BACKOFF.get("soccer", 0) > 0
+    assert orch.fetch_pinnacle_quotes("soccer") == []
+    assert orch.pinnacle_fetch_failed("soccer") is True
+    assert orch._PINNACLE_BACKOFF.get("soccer", 0) > 0
 
 
 def test_a_network_failure_is_reported_as_an_outage(monkeypatch):
@@ -369,25 +374,25 @@ def test_a_network_failure_is_reported_as_an_outage(monkeypatch):
     quand même poser le drapeau : elle remonte, mais pas en silence."""
     import httpx
     from tenacity import RetryError
-    import src.main as m
+    import src.orchestration as orch
 
     class _Attempt:
         def exception(self): return httpx.ConnectError("dns")
 
-    monkeypatch.setattr(m, "PinnacleScraper", _raising(RetryError(_Attempt())))
-    monkeypatch.setattr(m, "_PINNACLE_GAP", 0.0)
-    _clean(m)
+    monkeypatch.setattr(orch, "PinnacleScraper", _raising(RetryError(_Attempt())))
+    monkeypatch.setattr(orch, "_PINNACLE_GAP", 0.0)
+    _clean(orch)
 
     with pytest.raises(Exception):
-        m.fetch_pinnacle_quotes("soccer")
-    assert m.pinnacle_fetch_failed("soccer") is True
+        orch.fetch_pinnacle_quotes("soccer")
+    assert orch.pinnacle_fetch_failed("soccer") is True
 
 
 def test_an_out_of_season_sport_stops_burning_the_quota(monkeypatch):
     """Quatre sports scannés font huit requêtes Pinnacle par cycle, dont
     quatre pour des calendriers vides en août. C'est ce quota qui manque au
     football, bloqué 20 à 70 cycles par heure."""
-    import src.main as m
+    import src.orchestration as orch
 
     calls = {"n": 0}
 
@@ -398,26 +403,26 @@ def test_an_out_of_season_sport_stops_burning_the_quota(monkeypatch):
             calls["n"] += 1
             return iter([])
 
-    monkeypatch.setattr(m, "PinnacleScraper", _Empty)
-    monkeypatch.setattr(m, "_PINNACLE_GAP", 0.0)
-    monkeypatch.setattr(m, "_PINNACLE_IDLE_AFTER", 3)
-    for d in (m._PINNACLE_CACHE, m._PINNACLE_BLOCKED_UNTIL, m._PINNACLE_BACKOFF,
-              m._PINNACLE_SERVED_FROM_CACHE, m._PINNACLE_FAILED,
-              m._PINNACLE_EMPTY_STREAK, m._PINNACLE_LAST_PROBE):
+    monkeypatch.setattr(orch, "PinnacleScraper", _Empty)
+    monkeypatch.setattr(orch, "_PINNACLE_GAP", 0.0)
+    monkeypatch.setattr(orch, "_PINNACLE_IDLE_AFTER", 3)
+    for d in (orch._PINNACLE_CACHE, orch._PINNACLE_BLOCKED_UNTIL, orch._PINNACLE_BACKOFF,
+              orch._PINNACLE_SERVED_FROM_CACHE, orch._PINNACLE_FAILED,
+              orch._PINNACLE_EMPTY_STREAK, orch._PINNACLE_LAST_PROBE):
         d.clear()
 
     for _ in range(12):
-        assert m.fetch_pinnacle_quotes("hockey") == []
+        assert orch.fetch_pinnacle_quotes("hockey") == []
     # Trois tentatives, puis le sport passe en sondage espacé.
     assert calls["n"] == 3
     # Et surtout : jamais compté comme une panne.
-    assert m.pinnacle_fetch_failed("hockey") is False
+    assert orch.pinnacle_fetch_failed("hockey") is False
 
 
 def test_the_sport_comes_back_on_its_own_when_the_season_starts(monkeypatch):
     """Sans ça il faudrait penser à rééditer SPORT_LIST en octobre."""
     from datetime import datetime, timezone
-    import src.main as m
+    import src.orchestration as orch
     from src.models import Book, MarketType, OddQuote, Outcome
 
     state = {"events": False}
@@ -432,17 +437,17 @@ def test_the_sport_comes_back_on_its_own_when_the_season_starts(monkeypatch):
         def fetch_market_quotes(self, sport):
             return iter(q if state["events"] else [])
 
-    monkeypatch.setattr(m, "PinnacleScraper", _Seasonal)
-    monkeypatch.setattr(m, "_PINNACLE_GAP", 0.0)
-    monkeypatch.setattr(m, "_PINNACLE_IDLE_AFTER", 2)
-    monkeypatch.setattr(m, "_PINNACLE_IDLE_INTERVAL", 0.0)   # sondage dû
-    for d in (m._PINNACLE_CACHE, m._PINNACLE_BLOCKED_UNTIL, m._PINNACLE_BACKOFF,
-              m._PINNACLE_SERVED_FROM_CACHE, m._PINNACLE_FAILED,
-              m._PINNACLE_EMPTY_STREAK, m._PINNACLE_LAST_PROBE):
+    monkeypatch.setattr(orch, "PinnacleScraper", _Seasonal)
+    monkeypatch.setattr(orch, "_PINNACLE_GAP", 0.0)
+    monkeypatch.setattr(orch, "_PINNACLE_IDLE_AFTER", 2)
+    monkeypatch.setattr(orch, "_PINNACLE_IDLE_INTERVAL", 0.0)   # sondage dû
+    for d in (orch._PINNACLE_CACHE, orch._PINNACLE_BLOCKED_UNTIL, orch._PINNACLE_BACKOFF,
+              orch._PINNACLE_SERVED_FROM_CACHE, orch._PINNACLE_FAILED,
+              orch._PINNACLE_EMPTY_STREAK, orch._PINNACLE_LAST_PROBE):
         d.clear()
 
     for _ in range(5):
-        m.fetch_pinnacle_quotes("hockey")
+        orch.fetch_pinnacle_quotes("hockey")
     state["events"] = True
-    assert m.fetch_pinnacle_quotes("hockey") == q
-    assert m._PINNACLE_EMPTY_STREAK["hockey"] == 0
+    assert orch.fetch_pinnacle_quotes("hockey") == q
+    assert orch._PINNACLE_EMPTY_STREAK["hockey"] == 0

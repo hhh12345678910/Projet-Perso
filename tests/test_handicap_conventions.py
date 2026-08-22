@@ -22,7 +22,7 @@ def _q(book, label, line, ek="2030-01-01T20:00|a|b"):
 
 def _lancer(quotes, capsys):
     from scripts.handicap_conventions import main
-    with patch("src.main._fetch_all_parallel", return_value=quotes), \
+    with patch("src.orchestration.fetch_all_parallel", return_value=quotes), \
          patch.object(sys, "argv", ["handicap_conventions"]):
         main()
     return capsys.readouterr().out

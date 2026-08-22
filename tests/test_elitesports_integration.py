@@ -25,8 +25,8 @@ def test_le_book_existe_dans_l_enum():
 
 def test_il_est_dans_le_registre_du_cycle():
     """S'il n'y est pas, le scraper est du code mort et rien ne le dirait."""
-    from src.main import _fetch_all_parallel
-    src = inspect.getsource(_fetch_all_parallel)
+    from src.orchestration import fetch_all_parallel
+    src = inspect.getsource(fetch_all_parallel)
     assert '"EliteSports"' in src
     assert "fetch_elitesports_quotes" in src
     # Et il ne doit pas être commenté, contrairement aux jumeaux Kambi.
@@ -42,9 +42,9 @@ def test_il_est_nommable_dans_les_alertes():
 
 def test_il_est_coupable_par_BOOKS_DISABLED():
     """Le coupe-circuit sans déploiement doit fonctionner sur lui aussi. La
-    comparaison se fait en minuscules dans `_fetch_all_parallel`."""
-    from src.main import _fetch_all_parallel
-    src = inspect.getsource(_fetch_all_parallel)
+    comparaison se fait en minuscules dans `fetch_all_parallel`."""
+    from src.orchestration import fetch_all_parallel
+    src = inspect.getsource(fetch_all_parallel)
     assert "BOOKS_DISABLED" in src
     assert "elitesports" == "EliteSports".lower()
 
@@ -54,7 +54,7 @@ def test_une_panne_d_api_rend_une_liste_vide_sans_lever(monkeypatch):
     continuent. C'est la règle de tout le registre."""
     import httpx
 
-    from src import main as m
+    from src import orchestration as orch
 
     class Cassé:
         book = Book.ELITESPORTS
@@ -64,8 +64,8 @@ def test_une_panne_d_api_rend_une_liste_vide_sans_lever(monkeypatch):
             raise httpx.ConnectError("injoignable")
             yield  # pragma: no cover
 
-    monkeypatch.setattr(m, "EliteSportsScraper", Cassé)
-    assert m.fetch_elitesports_quotes("soccer") == []
+    monkeypatch.setattr(orch, "EliteSportsScraper", Cassé)
+    assert orch.fetch_elitesports_quotes("soccer") == []
 
 
 def test_une_page_illisible_ne_perd_pas_les_precedentes(monkeypatch):
@@ -75,7 +75,7 @@ def test_une_page_illisible_ne_perd_pas_les_precedentes(monkeypatch):
     import json
     from pathlib import Path
 
-    from src import main as m
+    from src import orchestration as orch
 
     reel = json.loads((Path(__file__).parent / "fixtures" /
                        "elitesports_prematch_sample.json").read_text(encoding="utf-8"))
@@ -88,8 +88,8 @@ def test_une_page_illisible_ne_perd_pas_les_precedentes(monkeypatch):
             yield reel                 # page saine
             yield {"content": "pas une liste"}   # page corrompue
 
-    monkeypatch.setattr(m, "EliteSportsScraper", Bancal)
-    quotes = m.fetch_elitesports_quotes("soccer")
+    monkeypatch.setattr(orch, "EliteSportsScraper", Bancal)
+    quotes = orch.fetch_elitesports_quotes("soccer")
     assert len(quotes) == 138, "la page saine doit survivre à la page corrompue"
     assert {q.book for q in quotes} == {Book.ELITESPORTS}
 

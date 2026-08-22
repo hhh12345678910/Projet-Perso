@@ -55,8 +55,11 @@ def test_an_unknown_sport_is_not_blocked():
 
 def test_ids_stay_aligned_with_the_daemon():
     """Deux tables de SportId dans deux fichiers : elles divergeront un jour,
-    et le symptôme serait un book qui disparaît en silence."""
-    from src.main import CIRCUS_SPORTS
+    et le symptôme serait un book qui disparaît en silence.
+
+    La table du daemon vit dans la couche de collecte depuis le découpage —
+    c'est `fetch_circus_quotes` qui la consulte, pas la CLI."""
+    from src.orchestration import CIRCUS_SPORTS
 
     assert server.CIRCUS_SPORT_IDS == dict(CIRCUS_SPORTS)
 

@@ -3,7 +3,7 @@
 Pourquoi cet outil existe
 -------------------------
 Les handicaps représentent **26,9 % du payload de Pinnacle au football** et
-36,7 % au tennis, et ils sont jetés à la source (`main.py`, `_fetch_all_parallel`).
+36,7 % au tennis, et ils sont jetés à la source (`main.py`, `fetch_all_parallel`).
 Le motif est réel : Pinnacle SIGNE chaque côté (home −1.0 / away +1.0) là où
 les books soft portent souvent les deux côtés au même |ligne|. Apparier ces
 deux conventions ne lève aucune erreur — le groupe a ses deux côtés, la marge
@@ -45,9 +45,9 @@ def main() -> None:
     ap.add_argument("--sport", default="soccer")
     args = ap.parse_args()
 
-    from src.main import _fetch_all_parallel
+    from src.orchestration import fetch_all_parallel
 
-    tout = _fetch_all_parallel(args.sport, keep_handicaps=True)
+    tout = fetch_all_parallel(args.sport, keep_handicaps=True)
     quotes = [q for q in tout if q.market == MarketType.HANDICAP]
 
     # Qui produit des handicaps, et qui n'en produit pas ? Sans ce compte,

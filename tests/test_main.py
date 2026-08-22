@@ -43,8 +43,18 @@ def test_prune_retention_reads_the_environment(monkeypatch):
 # ── BOOKS_DISABLED — coupe-circuit par book, sans déploiement ─────────────
 
 def _tasks_for(monkeypatch, disabled: str) -> set[str]:
-    """Quels books le cycle interroge, sous un BOOKS_DISABLED donné."""
-    import src.main as m
+    """Quels books le cycle interroge, sous un BOOKS_DISABLED donné.
+
+    ⚠️ Le remplacement vise `src.orchestration`, et c'est le seul cas du
+    découpage où viser `src.main` aurait échoué EN SILENCE. `main` importe
+    toujours ThreadPoolExecutor pour son propre usage — il parallélise les
+    SPORTS pendant que la collecte parallélise les BOOKS. L'attribut existe
+    donc des deux côtés : `monkeypatch.setattr(main, ...)` réussirait sans
+    lever, ne toucherait pas l'exécuteur employé par `fetch_all_parallel`, et
+    ce test passerait en interrogeant les vrais books par le réseau.
+
+    Vérifié en visant délibérément `main` : le test échoue (§21.23)."""
+    import src.orchestration as orch
     monkeypatch.setenv("BOOKS_DISABLED", disabled)
     seen: set[str] = set()
 
@@ -57,9 +67,10 @@ def _tasks_for(monkeypatch, disabled: str) -> set[str]:
                 def result(self_inner): return []
             return _F()
 
-    monkeypatch.setattr(m, "ThreadPoolExecutor", _Pool)
-    monkeypatch.setattr(m, "as_completed", lambda futures: (seen.update(futures.values()), [])[1])
-    m._fetch_all_parallel("soccer", betano_file=None)
+    monkeypatch.setattr(orch, "ThreadPoolExecutor", _Pool)
+    monkeypatch.setattr(orch, "as_completed",
+                        lambda futures: (seen.update(futures.values()), [])[1])
+    orch.fetch_all_parallel("soccer", betano_file=None)
     return seen
 
 
