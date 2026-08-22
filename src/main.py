@@ -5,6 +5,7 @@ from collections import Counter, defaultdict
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from dataclasses import replace
 from datetime import datetime, timedelta, timezone
+from types import SimpleNamespace
 from pathlib import Path
 from typing import Callable, Iterable
 
@@ -2953,6 +2954,87 @@ def daemon(
         elapsed = (datetime.now(timezone.utc) - t0).total_seconds()
         console.print(f"\n[dim]Cycle {cycle} done in {elapsed:.0f}s — next in {breather}s[/dim]")
         time.sleep(breather)
+
+
+@app.command(name="alert-test-system")
+def alert_test_system(
+    book: str = typer.Option("elitesports", "--book", help="Nom du book simulé."),
+    sport: str = typer.Option("soccer", "--sport"),
+):
+    """Prouver de bout en bout l'alerte « softbook muet » (§20.6, §21.9 pt 6).
+
+    ⚠️ Cette vérification manquait depuis le 18/08, et pour une raison bête :
+    `alert-test` couvre les canaux value / surebet / CLV, **jamais les alertes
+    SYSTÈME**. `send_system_alert` n'avait donc aucune commande qui la
+    déclenche, et la seule tentative manuelle est morte sur une config
+    Telegram vide (§20.10). La logique, elle, est testée depuis toujours —
+    neuf tests dans `tests/test_book_health.py`. C'est le DERNIER MAILLON, la
+    livraison, qui n'était pas prouvé.
+
+    On ne fabrique pas un message à la main : on pilote le VRAI `_book_health`
+    avec une horloge avancée, pour que ce soit le code de production qui
+    décide d'envoyer et qui envoie. Un test qui emprunte un autre chemin que
+    la production ne prouve pas la production (§17.7).
+
+    Trois messages doivent arriver dans le canal critique — ou le canal
+    principal s'il n'est pas configuré : la mise sous surveillance est
+    silencieuse, puis « muet », puis « de retour ».
+    """
+    cfg = TelegramConfig.from_env()
+    if cfg is None:
+        console.print("[yellow]TELEGRAM_BOT_TOKEN / TELEGRAM_CHAT_ID absents — "
+                      "rien à envoyer. C'est exactement l'échec du §20.10.[/yellow]")
+        raise typer.Exit(1)
+
+    destination = cfg.effective_critical_chat_id or cfg.chat_id
+    console.print(f"[bold]Destination :[/bold] "
+                  f"{'canal critique' if cfg.effective_critical_chat_id else 'canal PRINCIPAL (critique non configuré)'}"
+                  f" — {destination}")
+    console.print(f"[dim]Seuils en vigueur : {_BOOK_ALERT_AFTER_MIN:g} min ET "
+                  f"{_BOOK_ALERT_AFTER_CYCLES} cycles.[/dim]\n")
+
+    faux = Book.PINNACLE          # objet Book quelconque, on réécrit sa valeur
+    class _Faux:
+        value = book
+    quote = SimpleNamespace(book=_Faux())
+
+    # État isolé : on ne touche pas aux compteurs d'un daemon qui tournerait.
+    sauve = (dict(m_fails := _BOOK_FAILS), set(_BOOK_SEEN),
+             dict(_BOOK_DOWN_SINCE), set(_BOOK_ALERTED))
+    cle = (book, sport)
+    for conteneur in (_BOOK_SEEN, _BOOK_ALERTED):
+        conteneur.discard(cle)
+    _BOOK_FAILS.pop(cle, None)
+    _BOOK_DOWN_SINCE.pop(cle, None)
+
+    try:
+        t = 0.0
+        console.print("1. le book produit → il entre sous surveillance")
+        _book_health(sport, [quote], cfg, now=t)
+
+        console.print(f"2. silence de {_BOOK_ALERT_AFTER_CYCLES + 1} cycles et "
+                      f"{_BOOK_ALERT_AFTER_MIN:g} minutes → l'alerte doit partir")
+        for i in range(_BOOK_ALERT_AFTER_CYCLES + 1):
+            t += (_BOOK_ALERT_AFTER_MIN * 60) / _BOOK_ALERT_AFTER_CYCLES
+            _book_health(sport, [], cfg, now=t)
+        if cle not in _BOOK_ALERTED:
+            console.print("[red]   ✗ aucune alerte déclenchée — la LOGIQUE est en "
+                          "cause, pas la livraison.[/red]")
+            raise typer.Exit(1)
+        console.print("[green]   ✓ `_book_health` a décidé d'alerter[/green]")
+
+        console.print("3. le book revient → l'alerte de retour doit partir")
+        _book_health(sport, [quote], cfg, now=t + 60)
+    finally:
+        _BOOK_FAILS.clear(); _BOOK_FAILS.update(sauve[0])
+        _BOOK_SEEN.clear(); _BOOK_SEEN.update(sauve[1])
+        _BOOK_DOWN_SINCE.clear(); _BOOK_DOWN_SINCE.update(sauve[2])
+        _BOOK_ALERTED.clear(); _BOOK_ALERTED.update(sauve[3])
+
+    console.print("\n[bold]Va regarder Telegram.[/bold] Deux messages attendus : "
+                  f"« 🚨 {book} muet » puis « ✅ {book} de retour ».")
+    console.print("[dim]Si rien n'arrive, le défaut est dans la LIVRAISON — "
+                  "jeton, identifiant de canal, ou bot absent du canal.[/dim]")
 
 
 @app.command(name="alert-test")

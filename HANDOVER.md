@@ -5306,7 +5306,7 @@ systématiquement mauvais — c'est ce que BetFirst a révélé (−3,20 points 
 
 | | |
 |---|---|
-| Tests | **886 passés**, 4 ignorés — `pytest tests/`, jamais `pytest` seul (§4) |
+| Tests | **890 passés**, 4 ignorés — `pytest tests/`, jamais `pytest` seul (§4) |
 | `results` | 3 091 lignes (tennis) |
 | Books actifs en ALERTE | unibet, golden_palace, ladbrokes, circus |
 | Books muets (donnée seule) | betano, betfirst, napoleon, starcasino, **magicbetting** — **48 %** (§21.8) |
@@ -5405,8 +5405,30 @@ systématiquement mauvais — c'est ce que BetFirst a révélé (−3,20 points 
    attendue n'est que +1,0 % à EV 5 % et +1,9 % à 6 %, contre +6,40 % de
    moyenne — le gros du volume vaut bien moins que la moyenne ne le suggère.
    Arbitrage volume/qualité, non fait.
-6. **Vérifier l'alerte softbook de bout en bout** (§20.6) — le test manuel avait
-   échoué sur une config Telegram vide, la chaîne de livraison n'est pas prouvée.
+6. ~~**Vérifier l'alerte softbook de bout en bout**~~ — **la commande existe
+   depuis le 22/08** : `alert-test-system`. Il restait à la LANCER.
+
+   ⚠️ **Pourquoi c'était resté ouvert quatre jours, et la vraie raison est
+   bête** : `alert-test` couvre les canaux value / surebet / CLV et **JAMAIS
+   les alertes système**. `send_system_alert` n'avait donc aucune commande qui
+   la déclenche, et la tentative manuelle du §20.10 est morte sur une config
+   Telegram vide. La LOGIQUE, elle, était testée depuis toujours — neuf tests
+   dans `tests/test_book_health.py` couvrant les deux seuils, l'alerte unique,
+   le retour du book, l'indice « onglet », l'indépendance par sport et le
+   réarmement. **Seul le dernier maillon manquait : la livraison.**
+
+   `alert-test-system` ne fabrique pas de message : elle pilote le VRAI
+   `_book_health` avec une horloge avancée, pour que ce soit le code de
+   production qui décide d'alerter et qui envoie (§17.7 — une sonde qui
+   emprunte un autre chemin que la production ne prouve pas la production).
+
+   ⚠️ Destination : `send_system_alert` part sur le canal critique, et
+   **retombe sur le canal PRINCIPAL** si `TELEGRAM_CRITICAL_CHAT_ID` est vide
+   — ce qu'il est dans `.env.example`. La commande affiche la destination
+   retenue avant d'envoyer, pour qu'on sache où regarder.
+
+   Cette alerte aurait attrapé le tennis d'EliteSports à zéro en quinze
+   minutes (§21.19), au lieu d'attendre qu'on le remarque à l'œil.
 7. **Élargir le premium** (§17.4, +39 % de volume) — et cette fois avec un œil
    sur le §21.10 : élargir le premium change ce que tu vendrais.
 8. **`PRUNE_DAYS=7`** — ⚠️ **cette ligne date d'AVANT les mi-temps.** Le volume

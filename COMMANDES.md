@@ -329,6 +329,32 @@ listener — les effacer couperait ces canaux de `/scan`.
 
 ---
 
+## 7 ter. Les alertes arrivent-elles vraiment ?
+
+**Envoie une alerte de test sur chaque canal d'OPPORTUNITÉ** — value bet,
+surebet, CLV — en passant par le vrai routage.
+
+```bash
+.venv/bin/python -m src.main alert-test
+```
+
+**Prouve la chaîne des alertes SYSTÈME** (book muet, Pinnacle muet, marchés en
+retard). ⚠️ `alert-test` ne les couvre PAS : c'est pour ça que le §20.6 est
+resté non vérifié depuis le 18/08. Cette commande pilote le vrai
+`_book_health` avec une horloge avancée, donc c'est le code de production qui
+décide et qui envoie.
+
+```bash
+.venv/bin/python -m src.main alert-test-system
+.venv/bin/python -m src.main alert-test-system --book betano_be   # avec l'indice « onglet »
+```
+
+Deux messages doivent arriver : « 🚨 muet » puis « ✅ de retour ». Si rien
+n'arrive, le défaut est dans la livraison — jeton, identifiant de canal, ou
+bot absent du canal.
+
+---
+
 ## 8. Maintenance
 
 **Affiche la place disque et la taille de la base.** Le projet a déjà connu le
