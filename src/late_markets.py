@@ -131,6 +131,11 @@ def find_late_markets(
     d'un horaire faux, et le pari ne serait pas payé."""
     recent = _PINNACLE_RECENT if recent is None else recent
     stats = Counter() if stats is None else stats
+    # Purge au cycle : voir `forget_old_edges`. Ici plutôt qu'au moment de
+    # l'écriture, pour que le nettoyage tourne même sur un cycle qui ne détecte
+    # aucun marché en retard — c'est justement le cas où le dictionnaire n'est
+    # pas retouché et où il resterait tel quel.
+    forget_old_edges(now)
     # Sans réponse de Pinnacle à ce cycle, `live_now` est vide et TOUT événement
     # mémorisé passe pour disparu : le veto « Pinnacle le price encore » saute
     # sans bruit, au moment précis où l'on est le moins sûr de soi. Un recul
@@ -263,6 +268,31 @@ _LATE_EDGES: dict[tuple, float] = {}
 def late_market_edge(ref_key: str, book: Book, q: OddQuote) -> float | None:
     return _LATE_EDGES.get(
         (ref_key, book, q.market.value, q.outcome.label, q.outcome.line))
+
+
+def forget_old_edges(now: datetime, max_age_h: float = 6.0) -> int:
+    """Oublier les écarts des matchs terminés. Renvoie le nombre d'entrées ôtées.
+
+    ⚠️ `_LATE_EDGES` était le SEUL état de ce module à ne jamais être purgé —
+    `_PINNACLE_RECENT` a son TTL, `_LIVE_SCORES` a `forget_finished_scores`,
+    `_LATE_ALERTED` est nettoyé à chaque rapport. Celui-ci grossissait tant que
+    le daemon tournait, d'une entrée par cote de marché en retard jamais
+    relâchée. Sur un processus qui tourne des semaines, c'est une fuite lente.
+
+    Six heures, le même seuil que partout ailleurs ici, et la purge est sans
+    effet observable par construction : `late_market_edge` n'est consulté que
+    pour les événements du dictionnaire `late` du cycle courant, or ceux-ci
+    sont par définition dans la fenêtre de détection (10 à 75 minutes après le
+    coup d'envoi). Rien de ce qui est encore consultable ne peut être ôté.
+    """
+    vieux = []
+    for cle in _LATE_EDGES:
+        parsed = parse_event_key(cle[0])
+        if parsed is None or (now - parsed[0]).total_seconds() > max_age_h * 3600:
+            vieux.append(cle)
+    for cle in vieux:
+        del _LATE_EDGES[cle]
+    return len(vieux)
 
 
 # (event_key, book) déjà signalés, avec l'instant de la dernière alerte. Un

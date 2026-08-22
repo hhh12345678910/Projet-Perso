@@ -457,3 +457,53 @@ def test_an_incomplete_market_is_not_devigged():
     assert book_probs({"home": 2.0, "draw": 3.5}) is None       # somme 0.79
     assert book_probs({"home": 2.0}) is None                     # une seule issue
     assert book_probs({"home": 2.0, "draw": 3.5, "away": 3.4}) is not None
+
+
+# ── La fuite de _LATE_EDGES ───────────────────────────────────────────────
+# Ce dictionnaire était le SEUL état du module à ne jamais être purgé.
+# `_PINNACLE_RECENT` a son TTL, `_LIVE_SCORES` a `forget_finished_scores`,
+# `_LATE_ALERTED` est nettoyé à chaque rapport — celui-ci grossissait tant que
+# le daemon tournait. Relevé pendant la préparation du LIVE (§21.22).
+
+def test_les_ecarts_des_matchs_termines_sont_oublies():
+    import src.late_markets as lm
+    lm._LATE_EDGES.clear()
+
+    vieux_ko = NOW - timedelta(hours=9)
+    vieux_ek = event_key("Vieux", "Match", vieux_ko)
+    lm._LATE_EDGES[(vieux_ek, Book.CIRCUS_BE, "h2h", "home", None)] = 42.0
+    lm._LATE_EDGES[(EK, Book.CIRCUS_BE, "h2h", "home", None)] = 21.0
+
+    otes = lm.forget_old_edges(NOW)
+
+    assert otes == 1, "seul le match de neuf heures doit partir"
+    assert (EK, Book.CIRCUS_BE, "h2h", "home", None) in lm._LATE_EDGES, \
+        "un match dans la fenêtre de détection doit survivre"
+    assert lm.late_market_edge(EK, Book.CIRCUS_BE, _soft()) == 21.0
+    lm._LATE_EDGES.clear()
+
+
+def test_une_cle_illisible_ne_reste_pas_coincee():
+    """Une clé qu'on ne sait plus dater ne pourra plus jamais être consultée :
+    la garder serait une fuite que rien ne viderait."""
+    import src.late_markets as lm
+    lm._LATE_EDGES.clear()
+    lm._LATE_EDGES[("pas-une-cle", Book.CIRCUS_BE, "h2h", "home", None)] = 1.0
+    assert lm.forget_old_edges(NOW) == 1
+    assert not lm._LATE_EDGES
+
+
+def test_la_purge_tourne_meme_sans_detection():
+    """⚠️ Le cas qui compte. Un cycle sans marché en retard ne retouche pas le
+    dictionnaire — c'est précisément là qu'il resterait tel quel si la purge
+    était posée au moment de l'écriture plutôt qu'au début du cycle."""
+    import src.late_markets as lm
+    lm._LATE_EDGES.clear()
+    vieux_ek = event_key("Vieux", "Match", NOW - timedelta(hours=9))
+    lm._LATE_EDGES[(vieux_ek, Book.CIRCUS_BE, "h2h", "home", None)] = 42.0
+
+    # Aucun événement disparu → aucune détection, et le retour est vide.
+    assert lm.find_late_markets([_pin()], [], "soccer", NOW,
+                                prior_odds=lambda *a, **k: {},
+                                recent=_recent()) == {}
+    assert not lm._LATE_EDGES, "la purge doit avoir tourné malgré zéro détection"
