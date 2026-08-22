@@ -280,6 +280,52 @@ CREATE INDEX IF NOT EXISTS idx_oh_bet ON odds_history(value_bet_id, book, seen_a
 -- CLV et tous les exports continuent pour tous les books sans exception —
 -- c'est la condition posée par l'utilisateur : couper le bruit sans jamais
 -- perdre de données.
+-- ── market_state : le dernier prix connu, par sélection ───────────────────
+--
+-- `quotes` est un JOURNAL en ajout : « le dernier prix » s'y paie par un
+-- GROUP BY sur des millions de lignes, purgées à 7 jours. Le futur moteur LIVE
+-- raisonne sur les VARIATIONS et ne peut pas payer ça à chaque tick.
+--
+-- Cette table-ci est bornée par l'OFFRE COURANTE et non par le temps : une
+-- ligne par sélection réellement proposée, mise à jour en place. Elle ne
+-- duplique pas `quotes`, elle en est la projection « état courant ».
+--
+-- ⚠️ LE PIÈGE, mesuré avant d'écrire ce schéma : `line` vaut NULL sur tout
+-- 1X2, et SQLite considère deux NULL comme DISTINCTS dans un index unique.
+-- Une PRIMARY KEY (event_key, market, outcome_label, line, book) laisse donc
+-- l'UPSERT ne jamais se déclencher — vérifié : trois UPSERT identiques sur une
+-- ligne NULL produisent TROIS lignes, en silence. D'où l'index unique sur
+-- EXPRESSION avec COALESCE ci-dessous, qui rend les NULL comparables tout en
+-- gardant `line` lisible en NULL. Le sentinel -1e9 ne peut être une vraie
+-- ligne de but ou de jeu.
+--
+-- `fetched_at` est l'instant de la dernière ÉCRITURE, pas de la dernière
+-- observation : l'écriture creuse ne réécrit un marché que s'il a changé, ou
+-- au battement de cœur. La péremption est donc bornée par QUOTES_HEARTBEAT_SEC
+-- (1 800 s par défaut), et c'est ce que le LIVE devra savoir lire.
+CREATE TABLE IF NOT EXISTS market_state (
+    event_key     TEXT    NOT NULL,
+    book          TEXT    NOT NULL,
+    market        TEXT    NOT NULL,
+    outcome_label TEXT    NOT NULL,
+    line          REAL,
+    odd           REAL    NOT NULL,
+    fetched_at    TEXT    NOT NULL,
+    is_live       INTEGER NOT NULL DEFAULT 0,
+    league        TEXT
+);
+-- Clé naturelle. L'ordre des colonnes sert les lectures du LIVE, pas
+-- l'esthétique : `event_key` d'abord (tous les prix d'un match), puis
+-- `market`, `outcome_label`, `line` (tous les books d'une sélection donnée
+-- sont alors CONTIGUS), et `book` en dernier.
+CREATE UNIQUE INDEX IF NOT EXISTS ux_market_state
+    ON market_state (event_key, market, outcome_label, COALESCE(line, -1e9), book);
+-- « Les dernières mises à jour » : le LIVE lira par fenêtre de temps.
+CREATE INDEX IF NOT EXISTS idx_ms_fetched ON market_state (fetched_at);
+-- « Filtrer les marchés LIVE ». Index PARTIEL : les cotes live sont une
+-- fraction du total, l'index ne porte donc que sur elles et reste petit.
+CREATE INDEX IF NOT EXISTS idx_ms_live ON market_state (event_key) WHERE is_live = 1;
+
 CREATE TABLE IF NOT EXISTS book_alerts_off (
     book        TEXT PRIMARY KEY,
     disabled_at TEXT NOT NULL
@@ -333,6 +379,10 @@ class Storage:
         # En mémoire seulement — un redémarrage repart d'un instantané complet,
         # ce qui est correct et sans conséquence.
         self._quote_sig: dict[tuple, tuple[tuple, datetime]] = {}
+        # Chargé depuis `market_state` au premier appel de `insert_quotes_sparse`,
+        # jamais dans __init__ : une instance qui n'écrit pas de cotes — la
+        # plupart des commandes CLI — ne doit pas payer cette requête.
+        self._quote_sig_amorce = False
         self._heartbeat = (
             quote_heartbeat_sec if quote_heartbeat_sec is not None
             else float(os.getenv("QUOTES_HEARTBEAT_SEC", "1800"))
@@ -424,12 +474,51 @@ class Storage:
     def _market_key(self, q: "OddQuote") -> tuple:
         return (q.book.value, q.event_key, q.market.value, q.outcome.line)
 
+    def _amorcer_quote_sig(self) -> int:
+        """Reconstruire `_quote_sig` depuis `market_state`. Une requête, une fois.
+
+        ⚠️ C'est CE point qui rend l'écriture creuse compatible avec plusieurs
+        processus. Avant, l'état ne vivait qu'en mémoire d'instance : une
+        seconde instance partait d'un dictionnaire vide et réécrivait tout
+        l'instantané, y compris ce que la première venait d'écrire.
+
+        La signature est reconstruite à l'IDENTIQUE — mêmes clés, même arrondi à
+        quatre décimales, même `seen_at` (le maximum du groupe). C'est la preuve
+        que `market_state` ne duplique pas cet état : il le contient, en plus
+        durable. Si la reconstruction n'était pas exacte, un marché inchangé
+        paraîtrait changé (écriture inutile) ou l'inverse (écriture perdue) —
+        d'où le test qui compare les deux dictionnaires terme à terme.
+        """
+        groupes: dict[tuple, list[tuple[str, float, str]]] = {}
+        with self._conn() as c:
+            for r in c.execute(
+                "SELECT event_key, book, market, outcome_label, line, odd, fetched_at "
+                "FROM market_state"
+            ):
+                cle = (r["book"], r["event_key"], r["market"], r["line"])
+                groupes.setdefault(cle, []).append(
+                    (r["outcome_label"], r["odd"], r["fetched_at"]))
+        for cle, lignes in groupes.items():
+            sig = tuple(sorted((lab, round(odd, 4)) for lab, odd, _ in lignes))
+            vu = max(datetime.fromisoformat(t) for _, _, t in lignes)
+            self._quote_sig[cle] = (sig, vu)
+        self._quote_sig_amorce = True
+        return len(groupes)
+
     def insert_quotes_sparse(self, quotes: "Iterable[OddQuote]") -> int:
         """Comme `insert_quotes`, mais n'écrit que les marchés qui ont changé.
 
-        Renvoie le nombre de lignes réellement écrites. L'état est en mémoire :
-        au redémarrage il est vide, donc le premier cycle réécrit tout — ce qui
-        est correct (c'est un instantané complet) et se répare tout seul."""
+        Renvoie le nombre de lignes réellement écrites.
+
+        L'état de comparaison vient de `market_state`, chargé une fois au
+        premier appel puis tenu en mémoire. Deux conséquences, toutes deux
+        voulues : un redémarrage ne réécrit plus l'instantané complet, et deux
+        processus qui partagent la base partagent la décision. Le cache en
+        mémoire reste devant, parce que la relire à chaque cycle coûterait une
+        requête sur des dizaines de milliers de lignes pour une information
+        qu'on vient d'écrire soi-même."""
+        if not self._quote_sig_amorce:
+            self._amorcer_quote_sig()
         by_market: dict[tuple, list[OddQuote]] = {}
         for q in quotes:
             by_market.setdefault(self._market_key(q), []).append(q)
@@ -454,11 +543,41 @@ class Storage:
             to_write.extend(group)
         return self.insert_quotes(to_write)
 
+    # UPSERT sur l'index UNIQUE À EXPRESSION : la cible du ON CONFLICT doit
+    # reprendre l'expression telle quelle, COALESCE compris. Sans ça SQLite ne
+    # reconnaît pas l'index et l'UPSERT devient un INSERT — donc un doublon par
+    # cycle sur chaque 1X2, sans la moindre erreur.
+    _UPSERT_MARKET_STATE = (
+        "INSERT INTO market_state "
+        "(event_key, book, market, outcome_label, line, odd, fetched_at, is_live, league) "
+        "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?) "
+        "ON CONFLICT (event_key, market, outcome_label, COALESCE(line, -1e9), book) "
+        "DO UPDATE SET odd = excluded.odd, "
+        "              fetched_at = excluded.fetched_at, "
+        "              is_live = excluded.is_live, "
+        "              league = COALESCE(excluded.league, market_state.league)"
+    )
+
+    @staticmethod
+    def _market_state_rows(quotes: "list[OddQuote]") -> list[tuple]:
+        return [
+            (q.event_key, q.book.value, q.market.value, q.outcome.label,
+             q.outcome.line, q.decimal_odd, q.fetched_at.isoformat(),
+             1 if q.from_live_feed else 0, q.league)
+            for q in quotes
+        ]
+
     def insert_quotes(self, quotes: "Iterable[OddQuote]") -> int:
         """Batch-insert quotes in a SINGLE transaction. The per-quote insert_quote
         opens a fresh connection and fsync-commits each row, which is catastrophic
         for the thousands of quotes a cycle produces — this does one connection,
-        one executemany, one commit. Returns the number of rows inserted."""
+        one executemany, one commit. Returns the number of rows inserted.
+
+        Met aussi `market_state` à jour, DANS LA MÊME TRANSACTION. Deux
+        transactions séparées laisseraient, sur une coupure entre les deux, un
+        état courant qui affirme un prix que le journal n'a pas — et c'est
+        précisément l'état courant que le futur LIVE croira sur parole."""
+        quotes = list(quotes)
         rows = [
             (q.event_key, q.book.value, q.market.value, q.outcome.label,
              q.outcome.line, q.decimal_odd, q.fetched_at.isoformat(), q.source_event_id)
@@ -472,7 +591,67 @@ class Storage:
                 "fetched_at, source_event_id) VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
                 rows,
             )
+            c.executemany(self._UPSERT_MARKET_STATE, self._market_state_rows(quotes))
         return len(rows)
+
+    def prune_market_state(self, max_age_days: float = 2.0,
+                           now: "datetime | None" = None) -> int:
+        """Oublier l'état des matchs finis. Renvoie le nombre de lignes ôtées.
+
+        ⚠️ Sans ça, `market_state` est bornée par l'OFFRE COURANTE en théorie et
+        par RIEN en pratique : un match joué hier y garde sa ligne pour
+        toujours. Le §21.22 a relevé exactement ce défaut sur `_LATE_EDGES` —
+        une fuite lente sur un processus qui tourne des semaines, et ici elle
+        alourdirait en plus l'amorçage de `_quote_sig` à chaque démarrage.
+
+        Le critère est le COUP D'ENVOI lu dans la clé, pas `fetched_at` : un
+        marché qu'on ne cote plus n'est plus rafraîchi, donc son `fetched_at`
+        se fige et le rendrait immortel au moment même où il devient inutile.
+        Une clé qu'on ne sait pas dater part aussi — elle ne pourra plus jamais
+        être appariée à un événement.
+        """
+        from .matcher import parse_event_key
+
+        now = now or datetime.now(timezone.utc)
+        limite = now - timedelta(days=max_age_days)
+        with self._conn() as c:
+            cles = [r[0] for r in c.execute(
+                "SELECT DISTINCT event_key FROM market_state")]
+            perimes = []
+            for ek in cles:
+                parsed = parse_event_key(ek)
+                if parsed is None or parsed[0] < limite:
+                    perimes.append((ek,))
+            if perimes:
+                c.executemany("DELETE FROM market_state WHERE event_key = ?", perimes)
+        # Le cache en mémoire suivrait sinon un état que la base n'a plus.
+        partis = {e[0] for e in perimes}
+        for cle in [k for k in self._quote_sig if k[1] in partis]:
+            del self._quote_sig[cle]
+        return len(perimes)
+
+    def market_state(self, event_key: str | None = None, *,
+                     live_only: bool = False,
+                     since: "datetime | None" = None) -> list[sqlite3.Row]:
+        """Le dernier prix connu, filtré par les trois accès que le LIVE fera.
+
+        Sans argument : tout l'état courant. Les trois filtres correspondent aux
+        trois index posés sur la table, et à rien d'autre — un quatrième mode
+        de lecture demanderait un quatrième index, et il faudra le justifier."""
+        clauses, args = [], []
+        if event_key is not None:
+            clauses.append("event_key = ?")
+            args.append(event_key)
+        if live_only:
+            clauses.append("is_live = 1")
+        if since is not None:
+            clauses.append("fetched_at > ?")
+            args.append(since.isoformat())
+        sql = "SELECT * FROM market_state"
+        if clauses:
+            sql += " WHERE " + " AND ".join(clauses)
+        with self._conn() as c:
+            return c.execute(sql, args).fetchall()
 
     def upsert_events(self, rows: "Iterable[tuple]") -> None:
         """Batch INSERT OR IGNORE events in one transaction.

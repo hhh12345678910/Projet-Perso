@@ -5583,11 +5583,124 @@ refactoring.
 observable : la purge de `_LATE_EDGES` (commit séparé). C'était le seul état du
 module que rien ne vidait.
 
+### 21.23 market_state — l'état courant du marché, et SQLite à deux processus
+
+Phase 2 de la préparation LIVE. **Aucun moteur LIVE écrit**, `live_consensus`
+non touché, seuils et calculs inchangés. Le daemon prématch se comporte à
+l'identique — vérifié au dixième de décimale, voir plus bas.
+
+#### Le piège qui décide de tout le schéma
+
+⚠️ **`line` vaut NULL sur tout 1X2, et SQLite considère deux NULL comme
+DISTINCTS dans un index unique.** Le schéma évident — `PRIMARY KEY (event_key,
+market, outcome_label, line, book)` — laisse donc l'UPSERT ne jamais se
+déclencher. Mesuré avant d'écrire quoi que ce soit : **trois UPSERT identiques
+sur une ligne NULL produisent TROIS lignes**, sans la moindre erreur. Sur le
+marché le plus courant du projet, la table aurait grossi d'une ligne par
+sélection et par cycle.
+
+La parade est un index unique sur EXPRESSION :
+
+```sql
+CREATE UNIQUE INDEX ux_market_state ON market_state
+    (event_key, market, outcome_label, COALESCE(line, -1e9), book);
+```
+
+et la cible du `ON CONFLICT` doit reprendre l'expression telle quelle,
+`COALESCE` compris — sinon SQLite ne reconnaît pas l'index et l'UPSERT
+redevient un INSERT, en silence. `line` reste lisible en NULL.
+
+#### L'ordre des colonnes de l'index sert les lectures, pas l'esthétique
+
+`event_key` d'abord (tous les prix d'un match), puis `market`,
+`outcome_label`, `line` — les books d'une même sélection sont alors CONTIGUS —
+et `book` en dernier. Deux index de plus, et pas un de plus : `idx_ms_fetched`
+pour « les dernières mises à jour », et `idx_ms_live`, **partiel**
+(`WHERE is_live = 1`), les cotes live n'étant qu'une fraction du total.
+
+Mesuré sur 75 000 lignes d'état :
+
+| accès | plan | durée |
+|---|---|---|
+| dernier prix d'un événement | `ux_market_state (event_key=?)` | 0,12 ms |
+| tous les prix d'un marché | `ux_market_state (event_key=? AND market=?)` | 0,07 ms |
+| tous les books d'une sélection | `ux_market_state (…4 colonnes)` | 0,04 ms |
+| filtrer les marchés LIVE | `idx_ms_live` (partiel) | 3,70 ms |
+| dernières mises à jour (fenêtre d'un cycle) | `idx_ms_fetched (fetched_at>?)` | 2,99 ms |
+
+#### `_quote_sig` : dérivé de la table, pas supprimé
+
+Il vivait en mémoire d'INSTANCE. Une seconde instance partait d'un
+dictionnaire vide et réécrivait tout l'instantané, y compris ce que la
+première venait d'écrire.
+
+Il est désormais **reconstruit depuis `market_state`** au premier appel de
+`insert_quotes_sparse`, puis tenu en cache. La reconstruction est exacte —
+mêmes clés, même arrondi à quatre décimales, même `seen_at` — et c'est
+précisément ce qui prouve que la table ne duplique pas cet état : elle le
+contient, en plus durable. Un test compare les deux dictionnaires terme à terme.
+
+Deux conséquences, toutes deux voulues : un redémarrage ne réécrit plus
+l'instantané complet, et deux processus partagent la décision d'écriture.
+
+| | avant | après |
+|---|---|---|
+| source de la comparaison | mémoire d'instance | `market_state`, puis cache |
+| après redémarrage | réécrit tout | ne réécrit que ce qui a bougé |
+| deuxième instance | réécrit tout | voit ce que la première a écrit |
+| cycle sans changement | 0 écriture | 0 écriture *(inchangé)* |
+
+Coût mesuré sur 1 500 événements × 10 books : amorçage 437 ms **une fois au
+démarrage** ; cycle sans changement 73 ms ; cycle à 5 % de variation 113 ms.
+
+⚠️ `market_state` et `quotes` sont écrits dans **la MÊME transaction**. Deux
+transactions séparées laisseraient, sur une coupure entre les deux, un état
+courant qui affirme un prix que le journal n'a pas — et c'est cet état-là que
+le LIVE croira sur parole.
+
+⚠️ **La table se purge** (`prune_market_state`, branchée sur la commande
+`prune`). Le critère est le COUP D'ENVOI lu dans la clé, pas `fetched_at` : un
+marché qu'on ne cote plus n'est plus rafraîchi, son `fetched_at` se fige, et le
+prendre pour critère le rendrait immortel au moment même où il devient inutile.
+C'est exactement le défaut relevé sur `_LATE_EDGES` au §21.22.
+
+#### SQLite : cinq attentes devenues une
+
+Le relevé de la phase 1B en avait manqué deux. Il y en avait **cinq** sur le
+même fichier : 3 s et 5 s dans `alerter.py` (PRAGMA explicite), 10 s sur le
+chemin chaud de `Storage._conn`, 60 s pour la purge et pour VACUUM.
+
+Le défaut n'était pas la valeur, c'était d'en avoir cinq : **un seul chemin
+impatient suffit à perdre une écriture, et c'était celui du cycle.**
+
+`SQLITE_BUSY_TIMEOUT_SEC = 60`, dans `config.py`. Trois raisons : le timeout
+est INERTE hors contention (SQLite ne l'attend que sur SQLITE_BUSY — mesuré,
+3 000 cotes en 18,5 ms, inchangé) ; les coûts sont asymétriques (une écriture
+perdue l'est pour de bon, une attente ne coûte que de la latence) ; 60 s est
+déjà la valeur des deux chemins qui avaient été réfléchis.
+
+WAL était **déjà actif et persisté** dans le fichier : rien n'a été changé, mais
+rien ne le vérifiait non plus. Un test l'affirme désormais — sans WAL, un
+lecteur bloquerait un écrivain et l'attente unifiée ne suffirait pas.
+
+#### Vérifications
+
+Chaîne prématch comparée avant/après **au dixième de décimale** : 138 cotes
+scrapées, `fair_home=0.4639477523`, somme `1.0000000000`,
+`ev=20.6264156018`, `kelly=3.2228774378`, message Telegram identique
+caractère pour caractère. Registre des books identique sur les deux sports.
+27 commandes CLI. Migration sur une COPIE de la base réelle : une table de
+plus, **aucune ligne perdue**, `integrity_check` à `ok`, idempotente sur trois
+ré-ouvertures.
+
+`pytest tests/` : **928 passés, 4 ignorés** (903 + 25 nouveaux), y compris en
+conditions VM.
+
 ### 21.9 État des lieux et à faire — remplace §20.15
 
 | | |
 |---|---|
-| Tests | **903 passés**, 4 ignorés — `pytest tests/`, jamais `pytest` seul (§4) |
+| Tests | **928 passés**, 4 ignorés — `pytest tests/`, jamais `pytest` seul (§4) |
 | `results` | 3 091 lignes (tennis) |
 | Books actifs en ALERTE | unibet, golden_palace, ladbrokes, circus |
 | Books muets (donnée seule) | betano, betfirst, napoleon, starcasino, **magicbetting** — **48 %** (§21.8) |

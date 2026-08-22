@@ -1894,6 +1894,14 @@ def prune(
         )
 
     _t0 = time.monotonic()
+    # `market_state` est bornée par l'offre courante — mais seulement si on
+    # ôte les matchs finis. Fait AVANT la purge des cotes : c'est mille fois
+    # plus rapide, et ça laisse une trace même si le budget de temps coupe la
+    # suite.
+    _ms = storage.prune_market_state(max_age_days=max(1.0, float(retention_days)))
+    if _ms:
+        console.print(f"market_state : {_ms} événement(s) terminé(s) oublié(s)")
+
     q = storage.prune_quotes(
         retention_days,
         max_seconds=max_seconds if max_seconds > 0 else None,
