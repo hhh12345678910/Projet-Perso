@@ -43,6 +43,28 @@ def _env_flag(name: str, default: bool = True) -> bool:
     return raw not in ("0", "false", "no", "off", "non")
 
 
+# ── Smarkets : deux drapeaux globaux, une seule source de vérité ──────────
+#
+# Ils vivaient dans la couche de collecte, et `main.py` en importait une copie.
+# `SMARKETS_ENABLED` était donc lu dans DEUX espaces de noms : un futur
+# changement aurait dû penser aux deux, et n'en aurait probablement changé qu'un.
+#
+# Ce sont des constantes de MODULE, pas des champs de `ScanConfig` : elles sont
+# évaluées à l'import, avant que la CLI n'appelle `load_env_file()`. Le daemon
+# les reçoit par `scan-daemon.sh`, qui source `.env` avant de lancer Python.
+# En faire des champs de `ScanConfig` changerait ce moment-là, donc le
+# comportement.
+#
+# ⚠️ L'expression est reprise TELLE QUELLE, sans passer par `_env_flag`. Les
+# deux ne sont pas équivalentes : `_env_flag` replie la casse, donc
+# `SMARKETS_ENABLED=FALSE` y vaut faux, alors qu'ici il vaut VRAI (« FALSE »
+# n'est pas dans la liste). C'est probablement un défaut, mais le corriger
+# serait un changement de comportement — il se décide à part.
+SMARKETS_ENABLED = os.getenv("SMARKETS_ENABLED", "0") not in ("0", "false", "False", "")
+SMARKETS_AS_REFERENCE = os.getenv("SMARKETS_AS_REFERENCE", "0") not in (
+    "0", "false", "False", "")
+
+
 @dataclass
 class ScanConfig:
     sport: str = "soccer"

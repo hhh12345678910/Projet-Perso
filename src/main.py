@@ -14,7 +14,8 @@ import typer
 from rich.console import Console
 from rich.table import Table
 
-from .config import ScanConfig, load_env_file
+from .config import (SMARKETS_AS_REFERENCE, SMARKETS_ENABLED, ScanConfig,
+                     load_env_file)
 from .devig import devig, overround as _overround
 from .live_consensus import consensus_probs, edge_pct
 from .ev import ev_pct, fair_odd, kelly_fraction, kelly_stake
@@ -66,8 +67,6 @@ from . import teams, track
 # Pinnacle — est privé à la collecte, et les tests qui le remplacent visent
 # désormais `src.orchestration`.
 from .orchestration import (
-    SMARKETS_AS_REFERENCE,
-    SMARKETS_ENABLED,
     fetch_all_parallel,
     fetch_smarkets_quotes,
     pinnacle_fetch_failed,

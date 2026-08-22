@@ -48,6 +48,7 @@ from typing import Callable
 import httpx
 from tenacity import RetryError
 
+from .config import SMARKETS_ENABLED
 from .models import MarketType, OddQuote
 from .scrapers.betano import (
     BetanoAuthError,
@@ -342,7 +343,7 @@ def fetch_betfirst_quotes(sport: str) -> list[OddQuote]:
 # Le code du scraper et ses tests restent en place — rallumer demande
 # SMARKETS_ENABLED=1, et la mesure se refera si sa liquidité change. Mais tant
 # que ce drapeau vaut 0, rien ne tourne et le cycle ne paie rien.
-SMARKETS_ENABLED = os.getenv("SMARKETS_ENABLED", "0") not in ("0", "false", "False", "")
+# Défini dans `config.py` : voir l'import en tête de module.
 # Smarkets sert-il de RÉFÉRENCE de repli, ou seulement d'observateur ?
 #
 # ⛔ Par défaut NON, et c'est une décision prise sur mesure, le 16/08.
@@ -369,9 +370,7 @@ SMARKETS_ENABLED = os.getenv("SMARKETS_ENABLED", "0") not in ("0", "false", "Fal
 # ⚠️ Smarkets continue d'être collecté, stocké, tracé dans odds_history et
 # comparé : rien n'est perdu, et si sa liquidité s'améliore la mesure le dira.
 # Seule la fabrication de lignes JUSTES lui est retirée.
-SMARKETS_AS_REFERENCE = os.getenv("SMARKETS_AS_REFERENCE", "0") not in (
-    "0", "false", "False", ""
-)
+# Défini dans `config.py` : voir l'import en tête de module.
 _SMARKETS_TTL = float(os.getenv("SMARKETS_REFRESH_SEC", "300"))
 # Une référence périmée est pire que pas de référence : elle fabriquerait des
 # value bets contre une ligne juste qui n'existe plus. Même leçon que la garde
