@@ -7,7 +7,11 @@ vraiment, jamais contre une forme inventée.
 
 Trois pièges sont gardés ici, et chacun serait SILENCIEUX :
 
-1. les totaux asiatiques (lignes en quart) réglés comme des totaux simples ;
+1. les totaux ASIATIQUES publiés comme des over/under simples — le marché 7
+   sert l'échelle complète par pas de 0,25, et deux familles y sont à écarter :
+   les quarts (paris fractionnés) et les ENTIÈRES (paris remboursables). Les
+   entières sont passées en production : 6 des 8 détections totals EliteSports
+   étaient dessus, introuvables sur le site donc injouables ;
 2. une mi-temps prise pour un marché de match entier ;
 3. une cote verrouillée publiée comme jouable.
 """
@@ -21,7 +25,7 @@ import pytest
 
 from src.models import Book, MarketType
 from src.scrapers.elitesports import (
-    SPORT_IDS, _is_quarter_line, _team_names, parse_prematch,
+    SPORT_IDS, _is_playable_total, _team_names, parse_prematch,
 )
 
 ECHANTILLON = Path(__file__).parent / "fixtures" / "elitesports_prematch_sample.json"
@@ -34,11 +38,12 @@ def payload():
 
 def test_l_echantillon_reel_produit_des_cotes(payload):
     qs = list(parse_prematch(payload))
-    assert len(qs) == 226
+    assert len(qs) == 138
     par_marche = Counter(q.market for q in qs)
     # 10 événements × 3 issues : le 1X2 est complet partout.
     assert par_marche[MarketType.H2H] == 30
-    assert par_marche[MarketType.TOTALS] == 196
+    # 108 et non 196 : l'échelle asiatique est ramenée à ses seules demies.
+    assert par_marche[MarketType.TOTALS] == 108
     assert {q.book for q in qs} == {Book.ELITESPORTS}
 
 
@@ -51,33 +56,80 @@ def test_les_trois_issues_du_1x2_sont_traduites(payload):
     assert all(q.outcome.line is None for q in h2h), "un 1X2 n'a pas de ligne"
 
 
-def test_les_lignes_en_quart_sont_ecartees(payload):
-    """⚠️ LE piège. EliteSports sert l'échelle complète par pas de 0,25, et
-    « over 2.25 » est un pari FRACTIONNÉ — moitié sur 2,0, moitié sur 2,5.
-    `settle()` le réglerait comme un total simple et noterait « lost » là où
-    la réalité est un demi-remboursement, sans lever la moindre erreur."""
-    lignes = {q.outcome.line for q in parse_prematch(payload)
-              if q.market is MarketType.TOTALS}
-    assert lignes, "aucun total extrait — l'échantillon a changé de forme ?"
-    for ligne in lignes:
-        assert not _is_quarter_line(ligne), f"ligne en quart passée : {ligne}"
-    # Et la source EN CONTIENT bien : le test ne passe pas faute de matière.
-    brutes = {
+def _lignes_brutes_du_marche_7(payload):
+    """Toutes les lignes que la SOURCE sert, filtre non appliqué."""
+    return {
         ln.get("coefficientValue")
         for lg in payload["content"] for ev in lg["events"]
         for m in ev.get("markets") or [] if m.get("marketExternalId") == 7
         for p in m.get("periods") or [] for ln in p.get("lines") or []
+        if ln.get("coefficientValue") is not None
     }
-    assert any(_is_quarter_line(v) for v in brutes if v is not None), \
-        "l'échantillon ne contient aucune ligne en quart — le filtre n'est pas prouvé"
 
 
-def test_le_filtre_de_quart_est_juste():
-    for entiere_ou_demie in (0.5, 1.0, 1.5, 2.0, 2.5, 3.0, 16.5, 28.0):
-        assert not _is_quarter_line(entiere_ou_demie)
+def test_seules_les_demies_sortent_du_parseur(payload):
+    """⚠️ LE piège, et il a deux moitiés.
+
+    Le marché 7 n'est pas un over/under européen : il sert l'échelle ASIATIQUE
+    complète (0,25 → 5,5 par pas de 0,25). La preuve tient dans le pas — un
+    over/under classique n'a que des lignes en « ,5 ». Ne doivent donc sortir
+    QUE les demies."""
+    lignes = {q.outcome.line for q in parse_prematch(payload)
+              if q.market is MarketType.TOTALS}
+    assert lignes, "aucun total extrait — l'échantillon a changé de forme ?"
+    assert lignes == {0.5, 1.5, 2.5, 3.5, 4.5, 5.5}
+
+
+def test_les_lignes_en_quart_sont_ecartees(payload):
+    """Un quart (« over 2,25 ») est un pari FRACTIONNÉ : moitié sur 2,0,
+    moitié sur 2,5. `settle()` le réglerait comme un total simple et noterait
+    « lost » là où la réalité est un demi-remboursement."""
+    for q in parse_prematch(payload):
+        if q.market is MarketType.TOTALS:
+            assert q.outcome.line * 4 % 2 == 0, f"quart passé : {q.outcome.line}"
+    # Et la source EN CONTIENT bien : le test ne passe pas faute de matière.
+    brutes = _lignes_brutes_du_marche_7(payload)
+    assert any(float(v) * 4 % 2 == 1 for v in brutes), \
+        "l'échantillon ne contient aucun quart — le filtre n'est pas prouvé"
+
+
+def test_les_lignes_entieres_sont_ecartees(payload):
+    """⚠️ La moitié du piège qui est PARTIE EN PRODUCTION.
+
+    Le filtre d'origine ne coupait que les quarts. Une ligne entière (« over
+    3 ») est pourtant tout aussi asiatique : elle est REMBOURSABLE — sur un
+    total de 3 exact, la mise est rendue. Elles ne sont pas cliquables sur le
+    site, et 6 des 8 détections totals EliteSports du 22/08 étaient dessus.
+
+    Elles font en plus mentir l'EV : la devig ne price que deux issues alors
+    qu'il y en a trois, donc l'EV affichée est surévaluée du facteur
+    1 / (1 - p_remboursement)."""
+    for q in parse_prematch(payload):
+        if q.market is MarketType.TOTALS:
+            assert not float(q.outcome.line).is_integer(), \
+                f"ligne entière publiée : {q.outcome.line}"
+    # Et la source EN CONTIENT bien — sinon ce test passerait pour rien.
+    brutes = _lignes_brutes_du_marche_7(payload)
+    assert any(float(v).is_integer() for v in brutes), \
+        "l'échantillon ne contient aucune entière — le filtre n'est pas prouvé"
+
+
+def test_le_filtre_de_ligne_est_juste():
+    for demie in (0.5, 1.5, 2.5, 3.5, 4.5, 5.5, 16.5, 28.5):
+        assert _is_playable_total(demie)
     for quart in (0.25, 0.75, 1.25, 2.25, 5.75):
-        assert _is_quarter_line(quart)
-    assert not _is_quarter_line(None)
+        assert not _is_playable_total(quart)
+    for entiere in (1.0, 2.0, 3.0, 4.0, 28.0):
+        assert not _is_playable_total(entiere)
+    assert not _is_playable_total(None)
+
+
+def test_le_predicat_est_celui_de_middle_pas_une_copie():
+    """Une deuxième définition dériverait de la première sans que rien ne le
+    signale — c'est le mode de panne silencieuse que le projet traque."""
+    from src.middle import is_half_line
+    for v in (None, 0.25, 0.5, 1.0, 2.25, 2.5, 3.0, 3.5):
+        assert _is_playable_total(v) == is_half_line(v)
 
 
 def test_seul_le_temps_reglementaire_est_pris(payload):
@@ -135,7 +187,7 @@ def test_un_evenement_live_n_est_pas_pris(payload):
     prématch — le motif du §config, `scan_live_value_bets`."""
     payload["content"][0]["events"][0]["status"] = "LIVE"
     qs = list(parse_prematch(payload))
-    assert len(qs) < 226
+    assert len(qs) < 138
 
 
 def test_la_ligue_est_portee(payload):

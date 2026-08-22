@@ -7,10 +7,16 @@ from typing import Iterable
 from .models import Book, FairLine, MarketType, OddQuote
 
 
-def _is_half_line(line: float | None) -> bool:
-    """Middles only make sense on half-integer total lines (2.5, 3.5, …): a
-    whole-number line (3.0) can push, and quarter lines (2.25) are split bets —
-    neither is modelled by the balanced-stake EV maths below."""
+def is_half_line(line: float | None) -> bool:
+    """Is this total line a plain two-way over/under?
+
+    Only half-integer lines (2.5, 3.5, …) are: a whole-number line (3.0) can
+    push, and quarter lines (2.25) are split bets. Neither is modelled by the
+    balanced-stake EV maths below.
+
+    Public because the same question is asked at the SOURCE by scrapers whose
+    book serves a full Asian ladder — see `scrapers/elitesports.py`. Keeping
+    one definition means the answer cannot drift between the two places."""
     if line is None:
         return False
     doubled = line * 2
@@ -79,7 +85,7 @@ def find_middles(
         if q.market != MarketType.TOTALS:
             continue
         line = q.outcome.line
-        if not _is_half_line(line):
+        if not is_half_line(line):
             continue
         key = (q.event_key, float(line))
         if q.outcome.label == "over":

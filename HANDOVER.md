@@ -5337,11 +5337,72 @@ toujours, sans que rien ne le dise.
 systématiquement mauvais — c'est ce que BetFirst a révélé (−3,20 points de CLV
 à sélection identique).
 
+### 21.20 EliteSports servait des lignes ASIATIQUES — 6 détections sur 8 injouables
+
+**Le symptôme, remonté par l'utilisateur :** « Over 2.0 », « Over 3.0 » sur
+EliteSports, et la cote est introuvable sur le site.
+
+**Ce n'était pas une erreur de parsing.** Le prix existe bel et bien dans le
+payload. C'est le CHOIX DE MARCHÉ qui était faux : le marché 7 (« Total de »)
+n'est pas un over/under européen, il sert l'échelle **asiatique** complète —
+0,25 à 5,5 **par pas de 0,25**. Le pas est la preuve : un over/under classique
+n'a que des lignes en « ,5 ».
+
+Deux familles sont à écarter, pour deux raisons différentes :
+
+| famille | exemple | pourquoi | traitée avant ? |
+|---|---|---|---|
+| **quarts** | 2,25 | pari FRACTIONNÉ (moitié 2,0, moitié 2,5) | ✅ oui |
+| **entières** | 3 | pari REMBOURSABLE (total de 3 exact → mise rendue) | ❌ **non** |
+
+Le filtre d'origine (`_is_quarter_line`) ne coupait que la première. Les
+entières partaient donc en alerte — **44,9 % des cotes totals publiées** sur
+l'échantillon réel.
+
+**Mesuré en base le 22/08**, sur `value_bets` où `line = CAST(line AS INT)` :
+
+| book | entières | total | part |
+|---|---|---|---|
+| magicbetting | 62 | 114 | 54,4 % |
+| **elitesports** | **6** | **8** | **75,0 %** |
+| unibet_be | 4 | 2 210 | 0,2 % |
+| *tous les autres* | 0 | — | 0 % |
+
+⚠️ **Le premier réflexe — un garde global dans `find_value_bets` — était le
+mauvais**, et c'est la mesure qui l'a dit. MagicBetting pèse 62 des 72
+détections entières, mais l'utilisateur a vérifié sur le site : **il les
+sert et les honore**. Un filtre global aurait supprimé 62 détections
+légitimes pour en corriger 6. **Le filtre reste donc LOCAL à EliteSports.**
+La leçon est celle du §10 : une convention de marché se vérifie book par
+book, jamais par extrapolation depuis un book voisin.
+
+**Le correctif** — `_is_quarter_line` devient `_is_playable_total`, un test
+POSITIF qui délègue à `is_half_line` (promu public dans `middle.py`, une
+seule définition pour le projet). Sortie sur l'échantillon : 226 → 138 cotes,
+totals 196 → 108, lignes retenues `{0,5 ; 1,5 ; 2,5 ; 3,5 ; 4,5 ; 5,5}`.
+
+**Conséquence secondaire, réelle :** sur une ligne entière l'EV affichée était
+**surévaluée**. La devig ne price que deux issues alors qu'il y en a trois ;
+l'EV vraie vaut `(1 - p_remboursement) × EV_affichée`, soit ~11 à 18 % de
+moins sur un total de buts au football.
+
+**Ce qui n'a PAS été cassé, vérifié avant de conclure :** `settle()` traite
+déjà le remboursement en `void` (`clv.py:44`, `total == line → void`). Ni le
+P&L ni la CLV historiques ne sont faussés — il n'y a rien à rattraper en
+base, seulement à arrêter d'en produire.
+
+**Le format de l'alerte a servi d'indice** : `format_value_bet`
+(`alerter.py:529`) écrit la ligne en brut (`f" {line}"`), donc un `2.0` sort
+en « over 2.0 » là où les autres formats du projet utilisent `:g` et
+afficheraient « over 2 ». **Le `.0` est la signature de la ligne entière** —
+gardé tel quel, il reste le moyen le plus rapide de repérer une fuite
+asiatique dans un canal Telegram.
+
 ### 21.9 État des lieux et à faire — remplace §20.15
 
 | | |
 |---|---|
-| Tests | **897 passés**, 4 ignorés — `pytest tests/`, jamais `pytest` seul (§4) |
+| Tests | **900 passés**, 4 ignorés — `pytest tests/`, jamais `pytest` seul (§4) |
 | `results` | 3 091 lignes (tennis) |
 | Books actifs en ALERTE | unibet, golden_palace, ladbrokes, circus |
 | Books muets (donnée seule) | betano, betfirst, napoleon, starcasino, **magicbetting** — **48 %** (§21.8) |

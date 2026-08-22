@@ -90,7 +90,7 @@ def test_une_page_illisible_ne_perd_pas_les_precedentes(monkeypatch):
 
     monkeypatch.setattr(m, "EliteSportsScraper", Bancal)
     quotes = m.fetch_elitesports_quotes("soccer")
-    assert len(quotes) == 226, "la page saine doit survivre à la page corrompue"
+    assert len(quotes) == 138, "la page saine doit survivre à la page corrompue"
     assert {q.book for q in quotes} == {Book.ELITESPORTS}
 
 

@@ -36,6 +36,7 @@ from tenacity import retry, retry_if_exception, stop_after_attempt, wait_exponen
 
 from ..filter import is_noise_event
 from ..matcher import event_key
+from ..middle import is_half_line
 from ..models import Book, MarketType, OddQuote, Outcome
 from ..teams import record_pair
 
@@ -96,24 +97,34 @@ BET_TYPES = {
 FULL_TIME_PERIOD = 0
 
 
-def _is_quarter_line(line: float | None) -> bool:
-    """Une ligne en quart (2,25 ; 0,75) est-elle en jeu ?
+def _is_playable_total(line: float | None) -> bool:
+    """Cette ligne de total est-elle un over/under que le joueur peut cliquer ?
 
-    ⚠️ Ces lignes sont des TOTAUX ASIATIQUES : parier « over 2.25 », c'est
-    miser la moitié sur 2,0 et la moitié sur 2,5. `settle()` les réglerait
-    comme un total simple — sur un total de 2 exact, il rendrait « lost » là
-    où la réalité est un demi-remboursement. Le pari serait noté faux sans
-    qu'aucune erreur ne soit levée.
+    ⚠️ Le marché 7 d'EliteSports n'est PAS un over/under européen : il sert
+    l'échelle ASIATIQUE complète, de 0,25 à 5,5 par pas de 0,25. La preuve est
+    dans le pas lui-même — un over/under classique n'a que des lignes en « ,5 ».
+    Deux familles y sont donc à écarter, et pour deux raisons différentes :
 
-    Le projet les écarte déjà partout : `_is_half_line` dans `middle.py` le
-    dit explicitement, et le §18.6 exclut les totaux asiatiques de Digitain
-    pour la même raison. EliteSports en sert beaucoup (0,25 à 6,25 par pas de
-    0,25), d'où ce filtre.
+    - **les quarts** (2,25 ; 0,75) sont des paris FRACTIONNÉS — miser « over
+      2,25 » c'est miser moitié sur 2,0 et moitié sur 2,5 ;
+    - **les entières** (2 ; 3) sont des lignes à REMBOURSEMENT — sur un total
+      de 2 exact, « over 2 » rend la mise.
+
+    Les entières sont celles qui ont coûté cher : le filtre d'origine ne
+    coupait que les quarts, donc elles partaient en alerte. Relevé le 22/08 en
+    base : **6 des 8** détections totals EliteSports étaient sur une ligne
+    entière — et introuvables sur le site, donc injouables. Le même relevé a
+    montré que MagicBetting, lui, sert et HONORE ses lignes entières : le
+    filtre reste donc local à ce book, il ne monte pas dans `find_value_bets`.
+
+    Conséquence secondaire, réelle : sur une ligne entière l'EV affichée est
+    surévaluée. La devig ne price que deux issues alors qu'il y en a trois, et
+    l'EV vraie vaut `(1 - p_remboursement) x EV_affichée`.
+
+    Le prédicat vient de `middle.py` : une seule définition pour le projet,
+    donc pas de dérive possible entre les deux endroits qui posent la question.
     """
-    if line is None:
-        return False
-    quarts = line * 4
-    return abs(quarts - round(quarts)) < 1e-9 and round(quarts) % 2 == 1
+    return is_half_line(line)
 
 
 def _parse_dt(raw: object) -> datetime | None:
@@ -213,7 +224,7 @@ def parse_prematch(payload: dict, book: Book = Book.ELITESPORTS) -> Iterator[Odd
                         ligne = line.get("coefficientValue")
                         ligne = float(ligne) if ligne is not None else None
                         if market_type is MarketType.TOTALS:
-                            if ligne is None or _is_quarter_line(ligne):
+                            if not _is_playable_total(ligne):
                                 continue
                         for odd in line.get("odds") or []:
                             if odd.get("locked"):
