@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+from datetime import datetime, timedelta, timezone
+
 import httpx
 import pytest
 
@@ -23,6 +25,14 @@ def test_american_to_decimal_invalid():
     assert _american_to_decimal("x") is None
 
 
+# ⚠️ Date RELATIVE, et pas une date en dur. Depuis que `fetch_market_quotes`
+# écarte les matchs dont le coup d'envoi est passé, une fixture figée dans le
+# passé ferait tomber ces tests — qui ne portent pourtant pas sur le coup
+# d'envoi. Le calcul les rend insensibles au calendrier.
+_PLUS_TARD = (datetime.now(timezone.utc) + timedelta(hours=6)) \
+    .isoformat().replace("+00:00", "Z")
+
+
 def _status_error(code: int) -> httpx.HTTPStatusError:
     req = httpx.Request("GET", "https://x")
     resp = httpx.Response(code, request=req)
@@ -41,7 +51,7 @@ def test_fetch_market_quotes_separates_periods_and_drops_second_half():
     fake_leagues = [{"id": 1, "name": "Test League"}]
     fake_matchups = [{
         "id": matchup_id,
-        "startTime": "2026-06-01T20:00:00Z",
+        "startTime": _PLUS_TARD,
         "participants": [
             {"name": "Team A", "alignment": "home"},
             {"name": "Team B", "alignment": "away"},

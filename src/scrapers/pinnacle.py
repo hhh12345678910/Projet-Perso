@@ -396,7 +396,33 @@ class PinnacleScraper:
             if market.get("status") not in (None, "open"):
                 continue
             matchup = matchups_by_id.get(market.get("matchupId"))
-            if matchup is None or matchup.is_live:
+            # ⚠️ `isLive` NE SUFFIT PAS, et c'est mesuré : le 22/08, sur 21
+            # matchs de football commencés depuis 5 à 240 minutes, `isLive`
+            # valait False sur 21. Le garde ne gardait rien, et 576 marchés de
+            # matchs en cours entraient dans la chaîne prématch à chaque cycle.
+            #
+            # Or ces prix-là sont MORTS. Mesuré dans la même réponse, avec
+            # témoin interne : sur 180 s, 15 % des prix prématch bougent
+            # (2 077 sur 13 785) et **0 sur 354** des prix de matchs commencés.
+            # `markets/straight` est un catalogue prématch ; Pinnacle n'y
+            # reprice pas après le coup d'envoi, il y laisse le dernier prix
+            # avec un `status: open` qui ne veut plus rien dire.
+            #
+            # Le coût était réel : rejoué sur les cotes stockées, Pinnacle est
+            # une jambe dans 218 des 277 surebets live reconstitués (79 %),
+            # avec 4,60 % de marge médiane — un arbitrage qui n'existe pas,
+            # fabriqué par l'écart entre un prix gelé et un book qui a repricé.
+            #
+            # `start_time` est la seule information fiable ici : toujours
+            # présente (sans elle `_read_matchup` rend None), toujours en UTC,
+            # et stable — contrairement à `isLive`, elle ne dérive pas pendant
+            # les 5 min de cache du calendrier. Égalité comprise : au coup
+            # d'envoi le prix prématch est déjà périmé, et c'est déjà la
+            # convention de `find_value_bets` (`start <= now: continue`).
+            #
+            # `is_live` est conservé : la condition ne peut ainsi qu'écarter
+            # davantage, jamais moins.
+            if matchup is None or matchup.is_live or matchup.start_time <= now:
                 continue
 
             market_type = self._map_market(market.get("type"))

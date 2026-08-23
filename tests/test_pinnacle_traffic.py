@@ -8,6 +8,8 @@ en découlent, parce qu'aucune ne se voit dans les logs si elle casse.
 """
 from __future__ import annotations
 
+from datetime import datetime, timedelta, timezone
+
 from unittest.mock import patch
 
 import httpx
@@ -17,9 +19,16 @@ import pytest
 # réutilisation du cache. Ces noms vivent dans `src.orchestration`.
 
 
+# ⚠️ Date RELATIVE, et pas une date en dur. Depuis que `fetch_market_quotes`
+# écarte les matchs dont le coup d'envoi est passé, une fixture figée dans le
+# passé ferait tomber ces tests — qui ne portent pourtant pas sur le coup
+# d'envoi. Le calcul les rend insensibles au calendrier.
+_PLUS_TARD = (datetime.now(timezone.utc) + timedelta(hours=6)) \
+    .isoformat().replace("+00:00", "Z")
+
 _MATCHUP = {
     "id": 1,
-    "startTime": "2026-06-01T20:00:00Z",
+    "startTime": _PLUS_TARD,
     "participants": [
         {"name": "Team A", "alignment": "home"},
         {"name": "Team B", "alignment": "away"},

@@ -23,6 +23,8 @@ laquelle ces tests parlent d'échelles plutôt que de comptages.
 """
 from __future__ import annotations
 
+from datetime import datetime, timedelta, timezone
+
 from unittest.mock import patch
 
 import pytest
@@ -34,7 +36,12 @@ from src.scrapers.pinnacle import PinnacleScraper, matchups_cache_clear
 ROOT_ID = 1634269141
 GAMES_ID = 1634278449
 SETS_ID = 1634278999
-START = "2026-08-20T09:30:00Z"
+# ⚠️ Date RELATIVE, et pas une date en dur. Depuis que `fetch_market_quotes`
+# écarte les matchs dont le coup d'envoi est passé, une fixture figée dans le
+# passé ferait tomber ces tests — qui ne portent pourtant pas sur le coup
+# d'envoi. Le calcul les rend insensibles au calendrier.
+START = (datetime.now(timezone.utc) + timedelta(hours=6)) \
+    .isoformat().replace("+00:00", "Z")
 
 _PARENT_BLOCK = {
     "id": ROOT_ID,
