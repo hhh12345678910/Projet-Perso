@@ -372,3 +372,53 @@ def test_le_taux_ignore_les_derives():
     assert "dérivés=60" in s.resume()
     assert "appariés=30 (75.0 %)" in s.resume(), \
         "le taux doit porter sur les 40 vrais matchs, pas sur les 100"
+
+
+# ── couverture comptée par match, pas par message ────────────────────────
+def test_la_couverture_compte_les_matchs_pas_les_messages(tmp_path):
+    """Un match liquide reprice 200 fois, un calme 3 fois. Pondéré par
+    message, le taux décrirait surtout les gros matchs."""
+    now = datetime(2026, 8, 23, 19, 0, tzinfo=timezone.utc)
+    db = _db_avec_match(tmp_path, now)
+    # 50 messages pour le MÊME match : un seul match, pas cinquante.
+    session = _FausseSession([{"EVF": EVF_DECIMAL} for _ in range(50)])
+
+    stats = collect(db, "u", "p", dry_run=True,
+                    session_factory=lambda: session,
+                    now_fn=lambda: now, log=lambda *a: None)
+
+    assert stats.evf == 50
+    assert len(stats.matchs_vus) == 1
+    assert len(stats.matchs_apparies) == 1
+    assert len(stats.evenements_couverts) == 1
+    assert "matchs AsianOdds reels=1 apparies=1 (100.0 %)" in stats.couverture()
+
+
+def test_la_couverture_de_nos_evenements_est_le_taux_annonce(tmp_path):
+    """Trois de nos matchs en cours, AsianOdds n'en cote qu'un : 33 %."""
+    now = datetime(2026, 8, 23, 19, 0, tzinfo=timezone.utc)
+    db = Storage(tmp_path / "t.db")
+    db.upsert_events([
+        (KEY, "soccer", "L", "Crvena Zvezda", "Cukaricki",
+         (now - timedelta(hours=1)).isoformat()),
+        ("k2", "soccer", "L", "Partizan", "Vojvodina",
+         (now - timedelta(hours=1)).isoformat()),
+        ("k3", "soccer", "L", "Radnicki", "Novi Pazar",
+         (now - timedelta(hours=1)).isoformat()),
+    ])
+    stats = collect(db, "u", "p", dry_run=True,
+                    session_factory=lambda: _FausseSession([{"EVF": EVF_DECIMAL}]),
+                    now_fn=lambda: now, log=lambda *a: None)
+
+    assert stats.candidats_connus == 3
+    assert len(stats.evenements_couverts) == 1
+    assert "couverts par AsianOdds=1 (33.3 %)" in stats.couverture()
+
+
+def test_les_derives_ne_comptent_dans_aucune_couverture(tmp_path):
+    now = datetime(2026, 8, 23, 19, 0, tzinfo=timezone.utc)
+    db = _db_avec_match(tmp_path, now)
+    stats = collect(db, "u", "p", dry_run=True,
+                    session_factory=lambda: _FausseSession([{"EVF": TEAM_TOTALS}]),
+                    now_fn=lambda: now, log=lambda *a: None)
+    assert stats.matchs_vus == set() and stats.evenements_couverts == set()

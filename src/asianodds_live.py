@@ -45,7 +45,7 @@ import socket
 import ssl
 import struct
 import time
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from datetime import datetime, timedelta, timezone
 from typing import Iterable, Iterator, Optional
 
@@ -522,6 +522,14 @@ class Stats:
     sans_event_key: int = 0          # match AsianOdds inconnu chez nous
     sans_selection: int = 0          # EVF sans une seule cote exploitable
     reconnexions: int = 0
+    # Comptes PAR MATCH, et non par message. Un match liquide reprice 200
+    # fois quand un match calme reprice 3 fois : pondere par message, le
+    # taux d'appariement decrit surtout les gros matchs. Ce sont ces
+    # ensembles-la qui repondent a « combien de matchs sait-on lire ».
+    matchs_vus: set = field(default_factory=set)
+    matchs_apparies: set = field(default_factory=set)
+    evenements_couverts: set = field(default_factory=set)
+    candidats_connus: int = 0
 
     def resume(self) -> str:
         # Taux calcule sur les VRAIS matchs : inclure les derives le
@@ -534,6 +542,22 @@ class Stats:
                 f"sélections={self.normalises} écrites={self.ecrits} "
                 f"sans_match={self.sans_event_key} vides={self.sans_selection} "
                 f"reconnexions={self.reconnexions}")
+
+    def couverture(self) -> str:
+        """Les deux taux qui decident, comptes par MATCH.
+
+        Le second est le plus important : un match qu'AsianOdds cote et que
+        nous ignorons n'est pas une perte, puisque nos books belges ne le
+        proposent pas non plus et qu'aucune value n'y est jouable. La vraie
+        question est l'inverse : de NOS matchs en cours, combien AsianOdds
+        nous en donne-t-il un prix ?"""
+        vus, app = len(self.matchs_vus), len(self.matchs_apparies)
+        t1 = f"{100 * app / vus:.1f} %" if vus else "n/a"
+        couv, cand = len(self.evenements_couverts), self.candidats_connus
+        t2 = f"{100 * couv / cand:.1f} %" if cand else "n/a"
+        return (f"matchs AsianOdds reels={vus} apparies={app} ({t1})\n"
+                f"       NOS evenements en cours={cand} couverts par "
+                f"AsianOdds={couv} ({t2})   <<< le taux qui compte")
 
 
 # Cadence d'écriture. Le flux pousse ~30 messages/s ; écrire chaque message
@@ -605,6 +629,8 @@ def collect(storage, username: str, password: str, *,
 
             if maintenant >= prochain_refresh:
                 candidats = candidats_en_cours(storage, now_fn())
+                stats.candidats_connus = max(stats.candidats_connus,
+                                             len(candidats))
                 prochain_refresh = maintenant + REFRESH_CANDIDATS_SEC
 
             evf = msg.get("EVF") if msg else None
@@ -616,11 +642,14 @@ def collect(storage, username: str, password: str, *,
                 if str(evf.get("SPMT", "")) != SPMT_VRAI_MATCH:
                     stats.derives += 1
                     continue
+                stats.matchs_vus.add(evf.get("MTCHID"))
                 cible = match_live_event(
                     evf.get("HN") or "", evf.get("AN") or "", candidats)
                 if cible is None:
                     stats.sans_event_key += 1
                 else:
+                    stats.matchs_apparies.add(evf.get("MTCHID"))
+                    stats.evenements_couverts.add(cible.event_key)
                     lignes = normalise_evf(evf, cible.event_key)
                     if not lignes:
                         stats.sans_selection += 1

@@ -73,9 +73,11 @@ def main() -> int:
     duree = (datetime.now(timezone.utc) - debut).total_seconds()
     print(f"[ao] terminé en {duree:.0f} s")
     print(f"[ao] {stats.resume()}")
-    if stats.evf and stats.sans_event_key / stats.evf > 0.5:
-        print("[ao] ⚠ plus de la moitié des matchs AsianOdds ne sont pas "
-              "retrouvés chez nous : le flux est peu exploitable en l'état.")
+    print(f"[ao] {stats.couverture()}")
+    couv, cand = len(stats.evenements_couverts), stats.candidats_connus
+    if cand and couv / cand < 0.5:
+        print("[ao] ⚠ AsianOdds couvre moins de la moitié de NOS événements "
+              "en cours : c'est ce taux-là qui limite le moteur LIVE.")
     return 0
 
 
