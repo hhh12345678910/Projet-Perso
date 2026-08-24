@@ -49,6 +49,12 @@ class Book(str, Enum):
     ELITESPORTS = "elitesports"    # Elitesports.be — marque blanche FM Gaming,
                                    # API REST publique sans authentification ni
                                    # anti-bot, et l'IP de datacenter est acceptée
+    ASIANODDS = "asianodds"        # AsianOdds — courtier agrégeant 9 books
+                                   # asiatiques. Source LIVE uniquement : le
+                                   # prématch ne l'interroge pas, aucun scraper
+                                   # de cycle ne le produit. Mesuré : 76 ms de
+                                   # latence médiane, prix estampillé du score
+                                   # (FID), Asian Handicap natif.
 
 
 BETANO_OPERATOR_ID = "22"

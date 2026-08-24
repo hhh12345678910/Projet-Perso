@@ -1,0 +1,313 @@
+"""Collecteur LIVE AsianOdds : décodage, rapprochement, boucle.
+
+Tous ces tests tournent SANS RÉSEAU. Les messages sont ceux réellement
+capturés le 23/08 sur la VM — pas des inventions : un test bâti sur un format
+imaginé ne prouve rien du format réel.
+"""
+from datetime import datetime, timedelta, timezone
+
+import pytest
+
+from src.asianodds_live import (
+    Candidat, Stats, candidats_en_cours, collect, decode_feed_score,
+    match_live_event, normalise_evf, parse_line, signed_handicap)
+from src.models import Book, MarketType
+from src.storage import Storage
+
+# Message EVF réel (Crvena Zvezda — Cukaricki, capture du 23/08).
+EVF_REEL = {
+    "LID": -406813183, "GID": "163460123421", "HN": "Crvena Zvezda",
+    "AN": "Cukaricki", "LGID": -1145077806, "LN": "SERBIA SUPER LIGA",
+    "MTID": 0, "MTCHID": "1634601234", "MT": "Live",
+    "SO": "08/23/2026 07:00:00.000 PM", "ST": 1787511600000,
+    "HS": 0, "AS": 0, "EL": 45, "IGM": 67, "RCA": 0, "RCH": 0, "P": 0,
+    "F": 1, "FFT": 1, "FHT": 1, "S": 1787505194297, "PID": "", "SPMT": "0",
+    "IPL": False, "FTHDIFF": "1.699", "FTOUDIFF": "1.075",
+    "FTID": "1577081", "FTHDP": "1.5", "FTGOAL": "2.5-3",
+    "FTHDPID": "1577081_FT_1.51", "FTOUID": "1634601234_FT_2.5-3OU",
+    "HTID": "1634601234_x", "HTHDP": "0.5", "HTGOAL": "0.5-1",
+    "FTXHODD": "1.261", "FTXAODD": "8.741", "FTXDODD": "5.93",
+    "FTHHODD": "0.763", "FTHAODD": "-0.936",
+    "FTOODDS": "0.442", "FTOUODDS": "-0.633",
+    "HTXHODD": "1.662", "HTXAODD": "8.26", "HTXDODD": "2.70",
+    "HTHHODD": "0.662", "HTHAODD": "-0.855",
+    "HTOODD": "0.344", "HTUODD": "-0.491",
+    "PC": "0", "STP": 1, "OF": "00", "LSID": 1150698481, "FID": "MDow",
+    "ISUPC": 0, "CVAL": "", "OSTP": 1, "OLN": "SERBIA - SUPER LIGA",
+    "OHN": "Crvena Zvezda", "OAN": "Cukaricki",
+    "OKO": "8/24/2026 1:00:00 AM", "MIML": False,
+}
+
+# Le même, en décimal (état normal du flux) : ce sont les valeurs décimales
+# observées sur les mêmes marchés quelques secondes plus tard.
+EVF_DECIMAL = dict(EVF_REEL, **{
+    "FTXHODD": "1.261", "FTXAODD": "8.741", "FTXDODD": "5.93",
+    "FTHHODD": "1.763", "FTHAODD": "2.040",
+    "FTOODDS": "1.442", "FTOUODDS": "2.633",
+    "HTXHODD": "1.662", "HTXAODD": "8.26", "HTXDODD": "2.70",
+    "HTHHODD": "1.662", "HTHAODD": "1.855",
+    "HTOODD": "1.344", "HTUODD": "2.491",
+})
+
+KEY = "2026-08-23T17:00|crvena|cukaricki"
+
+
+# ── décodage élémentaire ─────────────────────────────────────────────────
+def test_decode_feed_score():
+    assert decode_feed_score("MDow") == "0:0"
+    assert decode_feed_score("MToy") == "1:2"
+    assert decode_feed_score("MToxMQ==") == "1:11"
+
+
+@pytest.mark.parametrize("brut", [None, "", "pas du base64!!", "YWJj"])
+def test_decode_feed_score_refuse_au_lieu_d_inventer(brut):
+    assert decode_feed_score(brut) is None
+
+
+def test_fid_correspond_bien_au_score_du_message():
+    """La propriété qui fait tout l'intérêt du champ, sur un message réel."""
+    assert decode_feed_score(EVF_REEL["FID"]) == \
+        f"{EVF_REEL['HS']}:{EVF_REEL['AS']}"
+
+
+@pytest.mark.parametrize("brut,attendu", [
+    ("2.5", 2.5), ("0.0", 0.0), ("1.5-2", 1.75), ("2.5-3", 2.75),
+    ("0-0.5", 0.25), ("3.5-4", 3.75), ("", None), (None, None), ("x", None),
+])
+def test_parse_line(brut, attendu):
+    assert parse_line(brut) == attendu
+
+
+@pytest.mark.parametrize("ligne,favori,attendu", [
+    (1.5, 1, -1.5),      # domicile favori => handicap négatif pour lui
+    (1.5, 2, 1.5),       # extérieur favori
+    (0.0, 0, 0.0),       # pick'em
+    (0.25, 1, -0.25),    # ligne quart
+    (None, 1, None),
+])
+def test_signed_handicap_suit_la_convention_pinnacle(ligne, favori, attendu):
+    assert signed_handicap(ligne, favori) == attendu
+
+
+# ── normalisation ────────────────────────────────────────────────────────
+def test_rejette_l_echelle_malay_au_lieu_de_la_convertir():
+    """Piège mesuré : 42 lignes sur 1955 arrivent en Malay au tout début d'un
+    abonnement. Une conversion silencieuse ferait entrer un prix faux."""
+    lignes = normalise_evf(EVF_REEL, KEY)
+    marches = {l.market for l in lignes}
+    # Le 1X2 est en décimal dans ce message et doit passer...
+    assert MarketType.H2H in marches
+    # ...mais le handicap et l'O/U sont en Malay et doivent être écartés.
+    assert MarketType.HANDICAP not in marches
+    assert MarketType.TOTALS not in marches
+
+
+def test_normalise_un_message_decimal_complet():
+    lignes = {(l.market, l.outcome_label): l for l in normalise_evf(EVF_DECIMAL, KEY)}
+
+    assert lignes[(MarketType.H2H, "home")].odd == 1.261
+    assert lignes[(MarketType.H2H, "draw")].odd == 5.93
+    assert lignes[(MarketType.H2H, "away")].odd == 8.741
+    assert lignes[(MarketType.H2H, "home")].line is None
+
+    # FTGOAL "2.5-3" => ligne quart à 2.75, même ligne des deux côtés.
+    assert lignes[(MarketType.TOTALS, "over")].line == 2.75
+    assert lignes[(MarketType.TOTALS, "under")].line == 2.75
+    assert lignes[(MarketType.TOTALS, "over")].odd == 1.442
+
+    # FTHDP "1.5" + FFT=1 (domicile favori) => home -1.5 / away +1.5
+    assert lignes[(MarketType.HANDICAP, "home")].line == -1.5
+    assert lignes[(MarketType.HANDICAP, "away")].line == 1.5
+    assert lignes[(MarketType.HANDICAP, "home")].odd == 1.763
+
+
+def test_le_handicap_mi_temps_est_ignore_et_non_invente():
+    """`MarketType` n'a pas de HANDICAP_H1. Le message en porte pourtant un
+    (HTHDP/HTHHODD/HTHAODD) : il ne doit produire AUCUNE ligne."""
+    lignes = normalise_evf(EVF_DECIMAL, KEY)
+    assert all(l.market != MarketType.HANDICAP or l.line in (-1.5, 1.5)
+               for l in lignes)
+    assert {l.market for l in lignes} <= {
+        MarketType.H2H, MarketType.H2H_H1, MarketType.TOTALS,
+        MarketType.TOTALS_H1, MarketType.HANDICAP}
+
+
+def test_le_contexte_live_est_porte_par_chaque_ligne():
+    l = normalise_evf(EVF_DECIMAL, KEY)[0]
+    assert l.feed_score == "0:0"
+    assert l.home_score == 0 and l.away_score == 0
+    assert l.igm == 67
+    assert l.league == "SERBIA SUPER LIGA"
+    assert l.observed_at == datetime.fromtimestamp(
+        EVF_DECIMAL["S"] / 1000, tz=timezone.utc)
+
+
+def test_un_1x2_ampute_est_rejete_en_entier():
+    """Deux issues sur trois ne sont pas déviguables : mieux vaut rien."""
+    ampute = dict(EVF_DECIMAL, FTXDODD="")
+    assert not [l for l in normalise_evf(ampute, KEY)
+                if l.market == MarketType.H2H]
+
+
+@pytest.mark.parametrize("champ", ["S", "HS", "AS"])
+def test_message_sans_contexte_indispensable_ne_produit_rien(champ):
+    casse = dict(EVF_DECIMAL)
+    casse.pop(champ)
+    assert normalise_evf(casse, KEY) == []
+
+
+def test_as_upsert_row_a_la_forme_attendue_par_storage(tmp_path):
+    """Le contrat entre les deux modules, vérifié en écrivant vraiment."""
+    db = Storage(tmp_path / "t.db")
+    t = datetime(2026, 8, 23, 17, 0, tzinfo=timezone.utc)
+    rows = [l.as_upsert_row(t) for l in normalise_evf(EVF_DECIMAL, KEY)]
+    assert db.upsert_live_state(rows) == len(rows)
+
+    etat = db.market_state(event_key=KEY)
+    assert len(etat) == len(rows)
+    assert {r["book"] for r in etat} == {Book.ASIANODDS.value}
+    assert all(r["is_live"] == 1 for r in etat)
+    assert all(r["feed_score"] == "0:0" for r in etat)
+
+
+# ── rapprochement ────────────────────────────────────────────────────────
+def test_rapproche_sur_les_noms_pas_sur_l_horaire():
+    cands = [Candidat("k1", "Crvena Zvezda", "Cukaricki"),
+             Candidat("k2", "Partizan", "Vojvodina")]
+    assert match_live_event("Crvena Zvezda", "Cukaricki", cands).event_key == "k1"
+
+
+def test_rapprochement_tolere_l_inversion_domicile_exterieur():
+    cands = [Candidat("k1", "Cukaricki", "Crvena Zvezda")]
+    assert match_live_event("Crvena Zvezda", "Cukaricki", cands).event_key == "k1"
+
+
+def test_rapprochement_refuse_un_inconnu():
+    cands = [Candidat("k1", "Partizan", "Vojvodina")]
+    assert match_live_event("Crvena Zvezda", "Cukaricki", cands) is None
+
+
+def test_rapprochement_refuse_de_deviner_si_ambigu():
+    """Deux candidats presque aussi bons : on ne tranche pas."""
+    cands = [Candidat("k1", "Manchester United", "Liverpool"),
+             Candidat("k2", "Manchester United", "Liverpool")]
+    assert match_live_event("Manchester United", "Liverpool", cands) is None
+
+
+def test_candidats_en_cours_ne_lit_que_la_fenetre(tmp_path):
+    db = Storage(tmp_path / "t.db")
+    now = datetime(2026, 8, 23, 19, 0, tzinfo=timezone.utc)
+    db.upsert_events([
+        ("k_encours", "soccer", "L", "A", "B", (now - timedelta(hours=1)).isoformat()),
+        ("k_vieux", "soccer", "L", "C", "D", (now - timedelta(hours=9)).isoformat()),
+        ("k_demain", "soccer", "L", "E", "F", (now + timedelta(hours=5)).isoformat()),
+    ])
+    cles = {c.event_key for c in candidats_en_cours(db, now)}
+    assert cles == {"k_encours"}
+
+
+# ── boucle de collecte, sans réseau ──────────────────────────────────────
+class _FausseSession:
+    """Rejoue une liste de messages, puis se termine. Compte les PING."""
+
+    def __init__(self, messages):
+        self._messages = messages
+        self.base_bookie = "PIN"
+        self.ouverte = self.abonnee = self.fermee = False
+        self.pings = 0
+
+    def open(self):
+        self.ouverte = True
+
+    def subscribe(self, sport=1):
+        self.abonnee = True
+
+    def ping(self):
+        self.pings += 1
+
+    def messages(self, timeout=5.0):
+        yield from self._messages
+
+    def close(self):
+        self.fermee = True
+
+
+def _db_avec_match(tmp_path, now):
+    db = Storage(tmp_path / "t.db")
+    db.upsert_events([(KEY, "soccer", "SERBIA SUPER LIGA", "Crvena Zvezda",
+                       "Cukaricki", (now - timedelta(hours=1)).isoformat())])
+    return db
+
+
+def test_collect_ecrit_les_selections_appariees(tmp_path):
+    now = datetime(2026, 8, 23, 19, 0, tzinfo=timezone.utc)
+    db = _db_avec_match(tmp_path, now)
+    session = _FausseSession([{"EVF": EVF_DECIMAL}, {"EVF": EVF_DECIMAL}])
+
+    stats = collect(db, "u", "p", session_factory=lambda: session,
+                    now_fn=lambda: now, log=lambda *a: None)
+
+    assert session.ouverte and session.abonnee and session.fermee
+    assert stats.evf == 2
+    assert stats.sans_event_key == 0
+    etat = db.market_state(event_key=KEY)
+    assert len(etat) == 12, "1X2 FT 3 + 1X2 HT 3 + O/U FT 2 + O/U HT 2 + AH FT 2"
+    assert all(r["book"] == Book.ASIANODDS.value for r in etat)
+
+
+def test_collect_compte_les_matchs_non_apparies_sans_ecrire(tmp_path):
+    now = datetime(2026, 8, 23, 19, 0, tzinfo=timezone.utc)
+    db = Storage(tmp_path / "t.db")            # aucun événement connu
+    session = _FausseSession([{"EVF": EVF_DECIMAL}])
+
+    stats = collect(db, "u", "p", session_factory=lambda: session,
+                    now_fn=lambda: now, log=lambda *a: None)
+
+    assert stats.evf == 1 and stats.sans_event_key == 1
+    assert db.market_state() == [], "une ligne non appariée a été écrite"
+
+
+def test_dry_run_n_ecrit_rien(tmp_path):
+    now = datetime(2026, 8, 23, 19, 0, tzinfo=timezone.utc)
+    db = _db_avec_match(tmp_path, now)
+    session = _FausseSession([{"EVF": EVF_DECIMAL}])
+
+    stats = collect(db, "u", "p", dry_run=True,
+                    session_factory=lambda: session,
+                    now_fn=lambda: now, log=lambda *a: None)
+
+    assert stats.normalises == 12
+    assert db.market_state() == [], "dry_run a écrit en base"
+
+
+def test_collect_dedoublonne_le_lot_avant_ecriture(tmp_path):
+    """Un marché repricé N fois dans l'intervalle ne coûte qu'une écriture."""
+    now = datetime(2026, 8, 23, 19, 0, tzinfo=timezone.utc)
+    db = _db_avec_match(tmp_path, now)
+    variantes = [{"EVF": dict(EVF_DECIMAL, FTXHODD=str(1.20 + i / 100),
+                              S=EVF_DECIMAL["S"] + i * 1000)}
+                 for i in range(5)]
+    session = _FausseSession(variantes)
+
+    stats = collect(db, "u", "p", session_factory=lambda: session,
+                    now_fn=lambda: now, log=lambda *a: None)
+
+    assert stats.evf == 5
+    assert stats.ecrits == 12, "le lot n'a pas été dédoublonné"
+    (home,) = [r for r in db.market_state(event_key=KEY)
+               if r["market"] == "h2h" and r["outcome_label"] == "home"]
+    assert home["odd"] == 1.24, "la dernière valeur du lot doit gagner"
+
+
+def test_collect_n_ecrit_jamais_dans_quotes(tmp_path):
+    now = datetime(2026, 8, 23, 19, 0, tzinfo=timezone.utc)
+    db = _db_avec_match(tmp_path, now)
+    collect(db, "u", "p", session_factory=lambda: _FausseSession(
+        [{"EVF": EVF_DECIMAL}]), now_fn=lambda: now, log=lambda *a: None)
+    with db._conn() as c:
+        assert c.execute("SELECT COUNT(*) FROM quotes").fetchone()[0] == 0
+
+
+def test_stats_resume_est_lisible():
+    s = Stats(messages=10, evf=8, normalises=40, ecrits=40, sans_event_key=2)
+    assert "appariés=6" in s.resume() and "75.0 %" in s.resume()

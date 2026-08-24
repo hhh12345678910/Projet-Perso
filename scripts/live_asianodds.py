@@ -1,0 +1,66 @@
+"""Collecteur LIVE AsianOdds — lanceur autonome. §PHASE 4
+
+DÉLIBÉRÉMENT HORS DE `main.py` ET HORS DE systemd. Tant que ce collecteur
+n'a pas tourné assez longtemps pour qu'on connaisse son taux d'appariement et
+son impact réel sur SQLite, il ne doit pas pouvoir démarrer par accident avec
+le daemon prématch.
+
+    export AO_USER=... AO_PASS=...
+
+    # 1. À blanc : mesure le taux d'appariement, n'écrit RIEN.
+    .venv/bin/python -m scripts.live_asianodds --minutes 5 --dry-run
+
+    # 2. Écriture réelle, une fois le taux jugé acceptable.
+    .venv/bin/python -m scripts.live_asianodds --minutes 30
+
+Le mode --dry-run est le mode par défaut de la première utilisation : il
+répond à « combien de matchs AsianOdds retrouve-t-on chez nous », qui est la
+seule question qui décide si ce flux vaut quelque chose pour EQUODDS.
+"""
+from __future__ import annotations
+
+import argparse
+import os
+import sys
+from datetime import datetime, timezone
+
+from src.asianodds_live import SPORT_FOOTBALL, collect
+from src.storage import Storage
+
+
+def main() -> int:
+    p = argparse.ArgumentParser(description=__doc__,
+                                formatter_class=argparse.RawDescriptionHelpFormatter)
+    p.add_argument("--minutes", type=float, default=5.0,
+                   help="durée de collecte (défaut : 5)")
+    p.add_argument("--db", default="data/valuebet.db")
+    p.add_argument("--sport", type=int, default=SPORT_FOOTBALL,
+                   help="1=foot 2=basket 3=tennis (défaut : 1)")
+    p.add_argument("--dry-run", action="store_true",
+                   help="normalise et rapproche sans écrire une seule ligne")
+    a = p.parse_args()
+
+    user, pwd = os.environ.get("AO_USER"), os.environ.get("AO_PASS")
+    if not user or not pwd:
+        print("ERREUR : exporte AO_USER et AO_PASS.", file=sys.stderr)
+        return 2
+
+    debut = datetime.now(timezone.utc)
+    print(f"[ao] démarrage {debut.isoformat()} "
+          f"({'À BLANC' if a.dry_run else 'ÉCRITURE'}, {a.minutes:.0f} min)")
+
+    stats = collect(Storage(a.db), user, pwd,
+                    duration_sec=a.minutes * 60,
+                    sport=a.sport, dry_run=a.dry_run)
+
+    duree = (datetime.now(timezone.utc) - debut).total_seconds()
+    print(f"[ao] terminé en {duree:.0f} s")
+    print(f"[ao] {stats.resume()}")
+    if stats.evf and stats.sans_event_key / stats.evf > 0.5:
+        print("[ao] ⚠ plus de la moitié des matchs AsianOdds ne sont pas "
+              "retrouvés chez nous : le flux est peu exploitable en l'état.")
+    return 0
+
+
+if __name__ == "__main__":
+    raise SystemExit(main())
