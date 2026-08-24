@@ -78,6 +78,11 @@ AMBIGUITY_MARGIN = 4.0
 LIVE_WINDOW_BEFORE = timedelta(hours=4)
 LIVE_WINDOW_AFTER = timedelta(minutes=15)
 
+# Nos `events.sport` <- le `sportstype` de l'abonnement AsianOdds. Sans ce
+# lien, on compare du football a TOUS nos sports confondus et le taux de
+# couverture est mecaniquement sous-estime.
+SPORT_VERS_NOTRE_NOM = {1: "soccer", 2: "basketball", 3: "tennis"}
+
 # SpecialMatchType : "0" = vrai match. Tout le reste est un PSEUDO-EVENEMENT
 # derive — "1" corners, "2" cartons, "3" to advance, "4" to win, "5"/"6"
 # team totals domicile/exterieur, "7"/"8" team totals corners.
@@ -380,14 +385,25 @@ def match_live_event(home: str, away: str,
     return meilleur
 
 
-def candidats_en_cours(storage, now: datetime) -> list[Candidat]:
-    """Nos événements plausiblement en cours. LECTURE SEULE sur `events`."""
+def candidats_en_cours(storage, now: datetime,
+                       sport: int = SPORT_FOOTBALL) -> list[Candidat]:
+    """Nos événements plausiblement en cours, DU SPORT ABONNÉ.
+
+    LECTURE SEULE sur `events`. Le filtre de sport n'est pas cosmétique :
+    sans lui, un abonnement football se compare aussi à nos matchs de tennis
+    et de basket, qu'AsianOdds ne peut par construction pas couvrir — le taux
+    de couverture s'effondre pour une raison qui n'a rien à voir avec la
+    source."""
     debut = (now - LIVE_WINDOW_BEFORE).isoformat()
     fin = (now + LIVE_WINDOW_AFTER).isoformat()
+    notre_sport = SPORT_VERS_NOTRE_NOM.get(sport)
+    sql = "SELECT event_key, home, away FROM events WHERE start_time BETWEEN ? AND ?"
+    args: list = [debut, fin]
+    if notre_sport:
+        sql += " AND sport = ?"
+        args.append(notre_sport)
     with storage._conn() as c:
-        lignes = c.execute(
-            "SELECT event_key, home, away FROM events "
-            "WHERE start_time BETWEEN ? AND ?", (debut, fin)).fetchall()
+        lignes = c.execute(sql, args).fetchall()
     return [Candidat(r["event_key"], r["home"], r["away"]) for r in lignes]
 
 
@@ -530,6 +546,10 @@ class Stats:
     matchs_apparies: set = field(default_factory=set)
     evenements_couverts: set = field(default_factory=set)
     candidats_connus: int = 0
+    # event_key revendique par PLUSIEURS matchs AsianOdds : signe qu'au moins
+    # un rapprochement est faux.
+    origine_par_event: dict = field(default_factory=dict)
+    collisions: set = field(default_factory=set)
 
     def resume(self) -> str:
         # Taux calcule sur les VRAIS matchs : inclure les derives le
@@ -555,9 +575,12 @@ class Stats:
         t1 = f"{100 * app / vus:.1f} %" if vus else "n/a"
         couv, cand = len(self.evenements_couverts), self.candidats_connus
         t2 = f"{100 * couv / cand:.1f} %" if cand else "n/a"
+        col = (f"\n       /!\\ {len(self.collisions)} de nos evenements "
+               f"revendiques par PLUSIEURS matchs AsianOdds : au moins un "
+               f"rapprochement est faux" if self.collisions else "")
         return (f"matchs AsianOdds reels={vus} apparies={app} ({t1})\n"
                 f"       NOS evenements en cours={cand} couverts par "
-                f"AsianOdds={couv} ({t2})   <<< le taux qui compte")
+                f"AsianOdds={couv} ({t2})   <<< le taux qui compte" + col)
 
 
 # Cadence d'écriture. Le flux pousse ~30 messages/s ; écrire chaque message
@@ -628,7 +651,7 @@ def collect(storage, username: str, password: str, *,
                 bookie_annonce = True
 
             if maintenant >= prochain_refresh:
-                candidats = candidats_en_cours(storage, now_fn())
+                candidats = candidats_en_cours(storage, now_fn(), sport)
                 stats.candidats_connus = max(stats.candidats_connus,
                                              len(candidats))
                 prochain_refresh = maintenant + REFRESH_CANDIDATS_SEC
@@ -648,6 +671,13 @@ def collect(storage, username: str, password: str, *,
                 if cible is None:
                     stats.sans_event_key += 1
                 else:
+                    # Deux matchs AsianOdds DIFFERENTS qui tombent sur le meme
+                    # event_key : au moins l'un des deux est un mauvais
+                    # rapprochement. Compte, pas devine.
+                    deja = stats.origine_par_event.setdefault(
+                        cible.event_key, evf.get("MTCHID"))
+                    if deja != evf.get("MTCHID"):
+                        stats.collisions.add(cible.event_key)
                     stats.matchs_apparies.add(evf.get("MTCHID"))
                     stats.evenements_couverts.add(cible.event_key)
                     lignes = normalise_evf(evf, cible.event_key)

@@ -422,3 +422,51 @@ def test_les_derives_ne_comptent_dans_aucune_couverture(tmp_path):
                     session_factory=lambda: _FausseSession([{"EVF": TEAM_TOTALS}]),
                     now_fn=lambda: now, log=lambda *a: None)
     assert stats.matchs_vus == set() and stats.evenements_couverts == set()
+
+
+# ── filtre de sport et collisions ────────────────────────────────────────
+def test_les_candidats_sont_filtres_par_sport(tmp_path):
+    """Sans ce filtre, un abonnement football se compare aussi à nos matchs
+    de tennis, qu'AsianOdds ne peut par construction pas couvrir : le taux
+    s'effondre pour une raison étrangère à la source."""
+    now = datetime(2026, 8, 23, 19, 0, tzinfo=timezone.utc)
+    db = Storage(tmp_path / "t.db")
+    debut = (now - timedelta(hours=1)).isoformat()
+    db.upsert_events([
+        ("foot", "soccer", "L", "A", "B", debut),
+        ("tennis", "tennis", "ATP", "C", "D", debut),
+        ("basket", "basketball", "NBA", "E", "F", debut),
+    ])
+    from src.asianodds_live import SPORT_FOOTBALL
+    cles = {c.event_key for c in candidats_en_cours(db, now, SPORT_FOOTBALL)}
+    assert cles == {"foot"}, "le tennis et le basket polluent le dénominateur"
+    assert {c.event_key for c in candidats_en_cours(db, now, 3)} == {"tennis"}
+
+
+def test_deux_matchs_asianodds_sur_un_seul_de_nos_evenements(tmp_path):
+    """Collision : au moins un des deux rapprochements est faux. On la
+    compte au lieu de la laisser passer sous un taux flatteur."""
+    now = datetime(2026, 8, 23, 19, 0, tzinfo=timezone.utc)
+    db = _db_avec_match(tmp_path, now)
+    autre = dict(EVF_DECIMAL, MTCHID="9999999")   # autre match, mêmes noms
+    session = _FausseSession([{"EVF": EVF_DECIMAL}, {"EVF": autre}])
+
+    stats = collect(db, "u", "p", dry_run=True,
+                    session_factory=lambda: session,
+                    now_fn=lambda: now, log=lambda *a: None)
+
+    assert len(stats.matchs_apparies) == 2
+    assert len(stats.evenements_couverts) == 1
+    assert stats.collisions == {KEY}
+    assert "au moins un rapprochement est faux" in stats.couverture()
+
+
+def test_pas_de_collision_signalee_quand_tout_va_bien(tmp_path):
+    now = datetime(2026, 8, 23, 19, 0, tzinfo=timezone.utc)
+    db = _db_avec_match(tmp_path, now)
+    stats = collect(db, "u", "p", dry_run=True,
+                    session_factory=lambda: _FausseSession(
+                        [{"EVF": EVF_DECIMAL}] * 3),
+                    now_fn=lambda: now, log=lambda *a: None)
+    assert stats.collisions == set()
+    assert "rapprochement est faux" not in stats.couverture()
