@@ -42,6 +42,7 @@ import hashlib
 import json
 import secrets
 import socket
+import sqlite3
 import ssl
 import struct
 import time
@@ -785,6 +786,25 @@ class Stats:
     #: Nos evenements pour lesquels `events` porte plusieurs cles. Le prix
     #: est ecrit sous chacune : le defaut est chez nous, pas dans la source.
     doublons_events: set = field(default_factory=set)
+    #: Mesure de l'ECRITURE. Le collecteur partage sa base SQLite avec le
+    #: daemon prematch, qui souffre deja de « database is locked » : ces
+    #: chiffres sont la seule facon de savoir si on aggrave son sort.
+    transactions: int = 0
+    sqlite_busy: int = 0
+    sqlite_echecs: int = 0
+    ecritures_ms: list = field(default_factory=list)
+
+    def ecriture_resume(self) -> str:
+        if not self.ecritures_ms:
+            return "aucune transaction"
+        v = sorted(self.ecritures_ms)
+        n = len(v)
+        p = lambda q: v[min(n - 1, int(q * n))]  # noqa: E731
+        return (f"transactions={self.transactions} "
+                f"lignes={self.ecrits} "
+                f"p50={p(0.50):.1f} ms p95={p(0.95):.1f} ms "
+                f"max={v[-1]:.1f} ms total={sum(v) / 1000:.2f} s "
+                f"busy={self.sqlite_busy} echecs={self.sqlite_echecs}")
     # Comptes PAR MATCH, et non par message. Un match liquide reprice 200
     # fois quand un match calme reprice 3 fois : pondere par message, le
     # taux d'appariement decrit surtout les gros matchs. Ce sont ces
@@ -884,6 +904,11 @@ REFRESH_CANDIDATS_SEC = 60.0
 # Reconnexion. Le flux se fait couper : mesure le 24/08, une session de
 # 5 min s'est arretee a 34 s. Sans reprise, le collecteur s'arrete au premier
 # incident et le silence qui suit ressemble a « AsianOdds ne cote plus rien ».
+#: Ecriture SQLite. La base est partagee avec le daemon prematch : un
+#: `database is locked` est attendu, pas exceptionnel.
+SQLITE_TENTATIVES = 4
+SQLITE_ATTENTE_SEC = 0.25
+
 RECONNEXION_DELAI_INITIAL = 2.0
 RECONNEXION_DELAI_MAX = 30.0
 #: Au-dela, on abandonne : s'acharner sur un serveur qui refuse n'aide pas et
@@ -938,11 +963,38 @@ def collect(storage, username: str, password: str, *,
 
     def vider() -> None:
         nonlocal lot
-        if lot and not dry_run:
-            stats.ecrits += storage.upsert_live_state(list(lot.values()))
-        elif lot:
-            stats.ecrits += len(lot)
+        if not lot:
+            return
+        rows = list(lot.values())
         lot = {}
+        if dry_run:
+            stats.ecrits += len(rows)
+            return
+        # `database is locked` n'est pas une erreur du collecteur : c'est le
+        # daemon prematch qui tient la base. On reessaie brievement plutot
+        # que de perdre le lot, et on COMPTE — c'est ce chiffre qui dira si
+        # le collecteur peut cohabiter avec le prematch.
+        for tentative in range(SQLITE_TENTATIVES):
+            t0 = time.perf_counter()
+            try:
+                n = storage.upsert_live_state(rows)
+            except sqlite3.OperationalError as e:
+                if "locked" not in str(e) and "busy" not in str(e).lower():
+                    stats.sqlite_echecs += 1
+                    log(f"[ao] écriture refusée : {e!r}")
+                    return
+                stats.sqlite_busy += 1
+                if tentative == SQLITE_TENTATIVES - 1:
+                    stats.sqlite_echecs += 1
+                    log(f"[ao] lot de {len(rows)} lignes PERDU après "
+                        f"{SQLITE_TENTATIVES} tentatives : {e!r}")
+                    return
+                dormir(SQLITE_ATTENTE_SEC * (tentative + 1))
+                continue
+            stats.ecritures_ms.append((time.perf_counter() - t0) * 1000)
+            stats.transactions += 1
+            stats.ecrits += n
+            return
 
     def temps_restant() -> bool:
         if fin is None:

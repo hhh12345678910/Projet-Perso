@@ -1070,3 +1070,97 @@ def test_le_lot_est_ecrit_avant_de_reconnecter(tmp_path):
             session_factory=_SessionsSuccessives([[{"EVF": EVF_DECIMAL}], []]),
             now_fn=lambda: now, dormir=lambda _: None, log=lambda *a: None)
     assert len(db.market_state(event_key=KEY)) == 12
+
+
+# ── mesure et robustesse de l'écriture ───────────────────────────────────
+class _BaseQuiBloque:
+    """Une base qui refuse les N premières écritures comme le fait SQLite
+    quand le daemon prématch tient le verrou."""
+
+    def __init__(self, vraie, refus, message="database is locked"):
+        self._vraie = vraie
+        self._refus = refus
+        self._message = message
+        self.appels = 0
+
+    def __getattr__(self, nom):
+        return getattr(self._vraie, nom)
+
+    def upsert_live_state(self, rows):
+        import sqlite3 as _s
+        self.appels += 1
+        if self.appels <= self._refus:
+            raise _s.OperationalError(self._message)
+        return self._vraie.upsert_live_state(rows)
+
+
+def test_un_verrou_sqlite_est_reessaye_et_compte(tmp_path):
+    """`database is locked` vient du daemon prématch, pas du collecteur :
+    perdre le lot serait absurde. Mais il faut le COMPTER — c'est ce chiffre
+    qui dit si les deux peuvent cohabiter."""
+    now = datetime(2026, 8, 23, 19, 0, tzinfo=timezone.utc)
+    db = _BaseQuiBloque(_db_avec_match(tmp_path, now), refus=2)
+    attentes = []
+    stats = collect(db, "u", "p",
+                    session_factory=lambda: _FausseSession([{"EVF": EVF_DECIMAL}]),
+                    now_fn=lambda: now, dormir=attentes.append,
+                    log=lambda *a: None)
+
+    assert stats.sqlite_busy == 2
+    assert stats.sqlite_echecs == 0
+    assert stats.transactions == 1
+    assert stats.ecrits == 12, "le lot a été perdu au lieu d'être réessayé"
+    assert len(db.market_state(event_key=KEY)) == 12
+    assert attentes == [0.25, 0.5], "l'attente doit croître entre les essais"
+
+
+def test_un_verrou_qui_ne_lache_pas_est_signale_et_non_masque(tmp_path):
+    from src.asianodds_live import SQLITE_TENTATIVES
+    now = datetime(2026, 8, 23, 19, 0, tzinfo=timezone.utc)
+    db = _BaseQuiBloque(_db_avec_match(tmp_path, now), refus=99)
+    messages = []
+    stats = collect(db, "u", "p",
+                    session_factory=lambda: _FausseSession([{"EVF": EVF_DECIMAL}]),
+                    now_fn=lambda: now, dormir=lambda _: None,
+                    log=messages.append)
+
+    assert stats.sqlite_busy == SQLITE_TENTATIVES
+    assert stats.sqlite_echecs == 1
+    assert stats.ecrits == 0
+    assert any("PERDU" in m for m in messages), "une perte silencieuse"
+
+
+def test_une_erreur_sqlite_qui_n_est_pas_un_verrou_ne_boucle_pas(tmp_path):
+    """Une colonne manquante ne se résout pas en réessayant : réessayer
+    quatre fois masquerait un vrai défaut de schéma derrière une latence."""
+    now = datetime(2026, 8, 23, 19, 0, tzinfo=timezone.utc)
+    db = _BaseQuiBloque(_db_avec_match(tmp_path, now), refus=99,
+                        message="no such column: igm")
+    stats = collect(db, "u", "p",
+                    session_factory=lambda: _FausseSession([{"EVF": EVF_DECIMAL}]),
+                    now_fn=lambda: now, dormir=lambda _: None,
+                    log=lambda *a: None)
+    assert db.appels == 1, "une erreur de schéma a été réessayée"
+    assert stats.sqlite_busy == 0 and stats.sqlite_echecs == 1
+
+
+def test_la_latence_d_ecriture_est_mesuree(tmp_path):
+    now = datetime(2026, 8, 23, 19, 0, tzinfo=timezone.utc)
+    db = _db_avec_match(tmp_path, now)
+    stats = collect(db, "u", "p",
+                    session_factory=lambda: _FausseSession([{"EVF": EVF_DECIMAL}]),
+                    now_fn=lambda: now, log=lambda *a: None)
+    assert stats.transactions == 1
+    assert len(stats.ecritures_ms) == 1 and stats.ecritures_ms[0] > 0
+    assert "p50=" in stats.ecriture_resume() and "busy=0" in stats.ecriture_resume()
+
+
+def test_le_mode_a_blanc_ne_compte_aucune_transaction(tmp_path):
+    now = datetime(2026, 8, 23, 19, 0, tzinfo=timezone.utc)
+    db = _db_avec_match(tmp_path, now)
+    stats = collect(db, "u", "p", dry_run=True,
+                    session_factory=lambda: _FausseSession([{"EVF": EVF_DECIMAL}]),
+                    now_fn=lambda: now, log=lambda *a: None)
+    assert stats.ecrits == 12 and stats.transactions == 0
+    assert stats.ecriture_resume() == "aucune transaction"
+    assert db.market_state() == []
