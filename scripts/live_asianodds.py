@@ -44,6 +44,23 @@ def main() -> int:
     if not user or not pwd:
         print("ERREUR : exporte AO_USER et AO_PASS.", file=sys.stderr)
         return 2
+    # Un exemple collé tel quel produit un « Invalid userid or password »
+    # incompréhensible, alors que la vraie cause est un copier-coller. Le
+    # motif générique <...> attrape n'importe quel placeholder ; la liste ne
+    # sert que pour ceux qui n'en portent pas.
+    for nom, valeur in (("AO_USER", user), ("AO_PASS", pwd)):
+        exemple = (valeur.startswith("<") and valeur.endswith(">")) or \
+            valeur.strip().lower() in {
+                "ton_mot_de_passe", "ton mot de passe", "mot_de_passe",
+                "ton_nouveau_mot_de_passe", "le_vrai", "password", "xxxx",
+                "...", "ton_identifiant", "ton_mdp"}
+        if exemple:
+            print(f"ERREUR : {nom} vaut {valeur!r}, qui est un exemple et non "
+                  f"ta vraie valeur.\n"
+                  f"Pour éviter de le retaper en clair :\n"
+                  f"  read -rsp 'Mot de passe AsianOdds : ' AO_PASS && "
+                  f"export AO_PASS && echo", file=sys.stderr)
+            return 2
 
     debut = datetime.now(timezone.utc)
     print(f"[ao] démarrage {debut.isoformat()} "
