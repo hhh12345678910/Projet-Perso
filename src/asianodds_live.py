@@ -45,6 +45,7 @@ import socket
 import ssl
 import struct
 import time
+from collections import Counter
 from dataclasses import dataclass, field
 from datetime import datetime, timedelta, timezone
 from typing import Iterable, Iterator, Optional
@@ -191,7 +192,11 @@ class _WS:
             if opcode == 0xA:                       # pong
                 continue
             if opcode == 0x8:                       # close
-                return 0x8, b""
+                # Le payload porte le code (2 octets) et le motif. Il etait
+                # jete : une fermeture serveur devenait alors indiscernable
+                # d'une fin normale, ce qui a fait passer un run vide de
+                # 34 s pour un run reussi de 5 min.
+                return 0x8, data
             if premier is None and opcode != 0x0:
                 premier = opcode
             frames.append(data)
@@ -425,6 +430,29 @@ def candidats_en_cours(storage, now: datetime,
 # ══════════════════════════════════════════════════════════════════════════
 # Session : LOGIN → REGISTER → SUBSCRIBE
 # ══════════════════════════════════════════════════════════════════════════
+#: Codes RFC 6455 et codes applicatifs vus sur ce flux. Un code seul ne dit
+#: rien a la lecture ; ce sont ces libelles qui distinguent « le serveur nous
+#: a jetes » de « le reseau a laché ».
+_CODES_FERMETURE = {
+    1000: "fermeture normale", 1001: "serveur en arret",
+    1002: "erreur de protocole", 1003: "type de donnee refuse",
+    1006: "fermeture anormale (aucune trame recue)",
+    1008: "regle violee — souvent une session ouverte ailleurs",
+    1011: "erreur interne du serveur", 1012: "redemarrage du serveur",
+    1013: "reessayer plus tard (surcharge)",
+}
+
+
+def decrire_fermeture(payload: bytes) -> str:
+    """Le code et le motif d'une trame de fermeture, en clair."""
+    if not payload or len(payload) < 2:
+        return "fermeture sans code"
+    code = struct.unpack(">H", payload[:2])[0]
+    motif = payload[2:].decode("utf-8", errors="replace").strip()
+    libelle = _CODES_FERMETURE.get(code, "code inconnu")
+    return f"fermeture {code} ({libelle})" + (f" : {motif}" if motif else "")
+
+
 class AsianOddsSession:
     """Une connexion authentifiée au flux. Ne fait RIEN d'autre que lire.
 
@@ -440,6 +468,9 @@ class AsianOddsSession:
         self.ws: _WS | None = None
         self.token: str | None = None
         self.base_bookie: str | None = None
+        #: Renseigne quand le serveur ferme, ou que la connexion se perd.
+        #: `None` tant que le flux vit.
+        self.fermeture: str | None = None
 
     # `timezoneoffset` déclaré à 0 : la source décale ses horaires selon cette
     # valeur, et nous n'utilisons de toute façon pas son horaire (piège 1).
@@ -521,7 +552,11 @@ class AsianOddsSession:
             except socket.timeout:
                 yield {}                       # tick d'inactivité
                 continue
+            except (ConnectionError, ssl.SSLError, OSError) as e:
+                self.fermeture = f"connexion perdue : {e!r}"
+                return
             if op == 0x8:
+                self.fermeture = decrire_fermeture(data)
                 return
             try:
                 d = json.loads(data.decode(errors="replace"))
@@ -586,6 +621,14 @@ class Stats:
     sans_event_key: int = 0          # match AsianOdds inconnu chez nous
     sans_selection: int = 0          # EVF sans une seule cote exploitable
     reconnexions: int = 0
+    #: Le TYPE des messages recus, pas seulement leur nombre. « msg=31
+    #: evf=0 » ne dit pas si le serveur a envoye 31 battements de coeur ou
+    #: 31 refus ; ce compteur le dit.
+    types_messages: Counter = field(default_factory=Counter)
+    #: Pourquoi la boucle s'est arretee. Une fin prematuree ressemblait a
+    #: une fin normale, avec un taux de couverture de 0 % qui accusait la
+    #: couverture d'AsianOdds au lieu de la connexion.
+    fin_raison: str = "boucle jamais entree"
     # Comptes PAR MATCH, et non par message. Un match liquide reprice 200
     # fois quand un match calme reprice 3 fois : pondere par message, le
     # taux d'appariement decrit surtout les gros matchs. Ce sont ces
@@ -616,7 +659,15 @@ class Stats:
                 f"appariés={appariés} ({taux}) "
                 f"sélections={self.normalises} écrites={self.ecrits} "
                 f"sans_match={self.sans_event_key} vides={self.sans_selection} "
-                f"reconnexions={self.reconnexions}")
+                f"reconnexions={self.reconnexions}\n"
+                f"       fin : {self.fin_raison}\n"
+                f"       types recus : {self.types_recus()}")
+
+    def types_recus(self) -> str:
+        if not self.types_messages:
+            return "aucun"
+        return " ".join(f"{k}={n}" for k, n in
+                        self.types_messages.most_common())
 
     def couverture(self) -> str:
         """Les deux taux qui decident, comptes par MATCH.
@@ -626,6 +677,13 @@ class Stats:
         proposent pas non plus et qu'aucune value n'y est jouable. La vraie
         question est l'inverse : de NOS matchs en cours, combien AsianOdds
         nous en donne-t-il un prix ?"""
+        # Sans un seul EVF, « 0,0 % de couverture » accuse AsianOdds de ne
+        # pas coter nos matchs alors que le flux n'a rien envoye du tout.
+        # Deux causes opposees, un seul chiffre : il faut le dire.
+        if self.evf == 0:
+            return (f"AUCUN EVF RECU — le taux de couverture ne veut rien "
+                    f"dire ici.\n       {self.candidats_connus} de nos "
+                    f"evenements etaient en cours ; le flux n'a rien cote.")
         vus, app = len(self.matchs_vus), len(self.matchs_apparies)
         t1 = f"{100 * app / vus:.1f} %" if vus else "n/a"
         couv, cand = len(self.evenements_couverts), self.candidats_connus
@@ -696,9 +754,13 @@ def collect(storage, username: str, password: str, *,
         for msg in session.messages():
             maintenant = time.monotonic()
             if fin is not None and maintenant > fin:
+                stats.fin_raison = "durée demandée atteinte"
                 break
             if msg:
                 stats.messages += 1
+                stats.types_messages.update(msg.keys())
+            else:
+                stats.types_messages["(silence)"] += 1
             # `base_bookie` n'est renseigne qu'a la lecture du message US, donc
             # apres subscribe() : l'annoncer avant affichait toujours None.
             if not bookie_annonce and session.base_bookie:
@@ -765,6 +827,12 @@ def collect(storage, username: str, password: str, *,
             if maintenant - dernier_ping >= PING_SEC:
                 session.ping()
                 dernier_ping = maintenant
+        else:
+            # Le generateur s'est epuise : c'est le SERVEUR qui a mis fin au
+            # flux, pas nous. Sans cette branche, une fermeture a 34 s d'un
+            # run de 5 min sortait exactement comme un run complet.
+            stats.fin_raison = (getattr(session, "fermeture", None)
+                                or "flux fermé par le serveur (motif inconnu)")
     finally:
         vider()
         session.close()

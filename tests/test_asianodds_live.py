@@ -596,3 +596,105 @@ def test_stp_texte_est_accepte_comme_nombre(tmp_path):
     from src.asianodds_live import _meme_sport
     assert _meme_sport("1", 1) and _meme_sport(1, 1)
     assert not _meme_sport("3", 1) and not _meme_sport(3, 1)
+
+
+# ── pourquoi le flux s'est arrêté ────────────────────────────────────────
+def test_decrire_fermeture_rend_le_code_et_le_motif():
+    from src.asianodds_live import decrire_fermeture
+    import struct
+    assert "1000" in decrire_fermeture(struct.pack(">H", 1000))
+    assert "fermeture normale" in decrire_fermeture(struct.pack(">H", 1000))
+    avec_motif = struct.pack(">H", 1008) + "Session ailleurs".encode()
+    d = decrire_fermeture(avec_motif)
+    assert "1008" in d and "Session ailleurs" in d
+    assert "session ouverte ailleurs" in d, "le libellé du code manque"
+
+
+def test_decrire_fermeture_ne_plante_pas_sur_un_payload_absurde():
+    from src.asianodds_live import decrire_fermeture
+    import struct
+    assert decrire_fermeture(b"") == "fermeture sans code"
+    assert decrire_fermeture(b"\x03") == "fermeture sans code"
+    # Octets non-UTF8 dans le motif : on remplace, on ne lève pas.
+    assert "9999" in decrire_fermeture(struct.pack(">H", 9999) + b"\xff\xfe")
+
+
+def test_le_ws_ne_jette_plus_le_payload_de_fermeture():
+    """Il était remplacé par b"" : le motif de la fermeture, seule
+    information utile quand un run de 5 min s'arrête à 34 s, était perdu."""
+    import struct
+    from src.asianodds_live import _WS
+    ws = _WS.__new__(_WS)
+    payload = struct.pack(">H", 1008) + b"go away"
+    ws._buf = bytes([0x88, len(payload)]) + payload
+    ws.sock = None                      # tout est déjà dans le tampon
+    op, data = ws.recv()
+    assert op == 0x8
+    assert data == payload
+
+
+class _SessionQuiFerme(_FausseSession):
+    """Le serveur coupe après ses messages, comme le 24/08 à 34 s."""
+
+    def __init__(self, messages, motif="fermeture 1008 (règle violée)"):
+        super().__init__(messages)
+        self.fermeture = motif
+
+
+def test_une_fermeture_serveur_est_nommee_et_non_confondue_avec_la_fin(tmp_path):
+    now = datetime(2026, 8, 23, 19, 0, tzinfo=timezone.utc)
+    db = _db_avec_match(tmp_path, now)
+    stats = collect(db, "u", "p", dry_run=True, duration_sec=300,
+                    session_factory=lambda: _SessionQuiFerme(
+                        [{"EVF": EVF_DECIMAL}]),
+                    now_fn=lambda: now, log=lambda *a: None)
+    assert stats.fin_raison == "fermeture 1008 (règle violée)"
+    assert "fermeture 1008" in stats.resume()
+
+
+def test_une_fin_par_duree_est_nommee_comme_telle(tmp_path):
+    """Sinon l'utilisateur ne peut pas distinguer les deux, et c'est
+    exactement ce qui a fait prendre un run vide pour un run complet."""
+    now = datetime(2026, 8, 23, 19, 0, tzinfo=timezone.utc)
+    db = _db_avec_match(tmp_path, now)
+    # duration_sec=0 : la garde de durée tombe dès le premier message.
+    stats = collect(db, "u", "p", dry_run=True, duration_sec=0,
+                    session_factory=lambda: _FausseSession(
+                        [{"EVF": EVF_DECIMAL}] * 5),
+                    now_fn=lambda: now, log=lambda *a: None)
+    assert stats.fin_raison == "durée demandée atteinte"
+
+
+def test_les_types_de_messages_sont_comptes(tmp_path):
+    """« msg=31 evf=0 » ne dit pas si le serveur a envoyé 31 battements de
+    cœur ou 31 refus."""
+    now = datetime(2026, 8, 23, 19, 0, tzinfo=timezone.utc)
+    db = _db_avec_match(tmp_path, now)
+    stats = collect(db, "u", "p", dry_run=True,
+                    session_factory=lambda: _FausseSession(
+                        [{"PI": {}}, {"PI": {}}, {"ABS": {}},
+                         {"EVF": EVF_DECIMAL}, {}]),
+                    now_fn=lambda: now, log=lambda *a: None)
+    assert stats.types_messages["PI"] == 2
+    assert stats.types_messages["ABS"] == 1
+    assert stats.types_messages["EVF"] == 1
+    assert stats.types_messages["(silence)"] == 1
+    assert "PI=2" in stats.types_recus()
+
+
+def test_sans_aucun_evf_la_couverture_refuse_d_annoncer_un_taux(tmp_path):
+    """0,0 % accuse AsianOdds de ne pas coter nos matchs ; la vraie cause
+    peut être que le flux n'a rien envoyé. Deux causes opposées, un seul
+    chiffre — donc pas de chiffre."""
+    now = datetime(2026, 8, 23, 19, 0, tzinfo=timezone.utc)
+    db = Storage(tmp_path / "t.db")
+    db.upsert_events([(f"k{i}", "soccer", "L", f"A{i}", f"B{i}",
+                       (now - timedelta(hours=1)).isoformat())
+                      for i in range(85)])
+    stats = collect(db, "u", "p", dry_run=True,
+                    session_factory=lambda: _FausseSession([{"PI": {}}]),
+                    now_fn=lambda: now, log=lambda *a: None)
+    texte = stats.couverture()
+    assert "0.0 %" not in texte, "un taux trompeur est annoncé"
+    assert "AUCUN EVF" in texte
+    assert "85" in texte, "le nombre de candidats reste utile"

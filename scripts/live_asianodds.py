@@ -106,6 +106,7 @@ def main() -> int:
                     sport=a.sport, dry_run=a.dry_run)
 
     duree = (datetime.now(timezone.utc) - debut).total_seconds()
+    demande = a.minutes * 60
     print(f"[ao] terminé en {duree:.0f} s")
     print(f"[ao] {stats.resume()}")
     print(f"[ao] {stats.couverture()}")
@@ -116,6 +117,21 @@ def main() -> int:
         with open(a.diagnostic, "w", encoding="utf-8") as f:
             f.write(diagnostic_appariement(stats, limite=None) + "\n")
         print(f"[ao] listes complètes écrites dans {a.diagnostic}")
+    # Un run vide n'est pas un run reussi. Il sortait en code 0, avec un
+    # « 0.0 % » qui accusait la couverture d'AsianOdds alors que le flux
+    # n'avait rien envoye du tout.
+    if stats.evf == 0:
+        print(f"[ao] ✖ ÉCHEC : aucune cote reçue en {duree:.0f} s.\n"
+              f"[ao]   Ce n'est PAS un résultat de couverture — le flux n'a "
+              f"rien coté.\n"
+              f"[ao]   fin : {stats.fin_raison}\n"
+              f"[ao]   types reçus : {stats.types_recus()}", file=sys.stderr)
+        return 1
+    if demande and duree < 0.8 * demande:
+        print(f"[ao] ⚠ arrêt après {duree:.0f} s sur {demande:.0f} s "
+              f"demandées — {stats.fin_raison}. Les chiffres ci-dessus ne "
+              f"portent que sur cette fraction.", file=sys.stderr)
+
     couv, cand = len(stats.evenements_couverts), stats.candidats_connus
     if cand and couv / cand < 0.5:
         print("[ao] ⚠ AsianOdds couvre moins de la moitié de NOS événements "
