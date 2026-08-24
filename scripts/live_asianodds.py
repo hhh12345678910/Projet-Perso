@@ -28,6 +28,45 @@ from src.asianodds_live import SPORT_FOOTBALL, collect
 from src.storage import Storage
 
 
+# Un exemple collé tel quel produit un « Invalid userid or password »
+# incompréhensible, alors que la vraie cause est un copier-coller. La
+# première version listait des chaînes exactes : elle a laissé passer
+# `ton_identifiant_asianodds` parce qu'elle ne connaissait que
+# `ton_identifiant`. Une liste ne rattrapera jamais toutes les variantes —
+# c'est le PRÉFIXE possessif qui est le signal, pas la chaîne entière.
+_PREFIXES_EXEMPLE = ("ton_", "ton ", "ta_", "ta ", "tes_", "votre_", "votre ",
+                     "vos_", "mon_", "mon ", "ma_", "mes_",
+                     "your_", "your ", "my_", "my ")
+_VALEURS_EXEMPLE = {
+    "mot_de_passe", "mot de passe", "motdepasse", "mdp", "identifiant",
+    "login", "user", "username", "password", "passwd", "pass",
+    "le_vrai", "xxx", "xxxx", "...", "changeme", "todo",
+}
+
+
+def est_un_exemple(valeur: str) -> bool:
+    """La valeur est-elle un placeholder plutôt qu'un vrai identifiant ?
+
+    Faux positif possible : quelqu'un dont le mot de passe commencerait par
+    « ton_ ». Le coût est un message d'erreur explicite ; le coût de l'inverse
+    est un « Invalid userid or password » qu'on met dix minutes à comprendre.
+    """
+    v = valeur.strip().lower()
+    if not v:
+        return True
+    if valeur.startswith("<") and valeur.endswith(">"):
+        return True
+    return v in _VALEURS_EXEMPLE or v.startswith(_PREFIXES_EXEMPLE)
+
+
+#: Rien à remplacer dedans : c'est tout l'intérêt. `-s` sur le mot de passe
+#: pour qu'il ne s'affiche pas et n'entre pas dans ~/.bash_history.
+INVITE_SAISIE = (
+    "  read -rp  'Identifiant AsianOdds : ' AO_USER && export AO_USER\n"
+    "  read -rsp 'Mot de passe AsianOdds : ' AO_PASS && export AO_PASS && echo"
+)
+
+
 def main() -> int:
     p = argparse.ArgumentParser(description=__doc__,
                                 formatter_class=argparse.RawDescriptionHelpFormatter)
@@ -47,24 +86,15 @@ def main() -> int:
 
     user, pwd = os.environ.get("AO_USER"), os.environ.get("AO_PASS")
     if not user or not pwd:
-        print("ERREUR : exporte AO_USER et AO_PASS.", file=sys.stderr)
+        print(f"ERREUR : AO_USER et AO_PASS ne sont pas définis.\n"
+              f"{INVITE_SAISIE}", file=sys.stderr)
         return 2
-    # Un exemple collé tel quel produit un « Invalid userid or password »
-    # incompréhensible, alors que la vraie cause est un copier-coller. Le
-    # motif générique <...> attrape n'importe quel placeholder ; la liste ne
-    # sert que pour ceux qui n'en portent pas.
     for nom, valeur in (("AO_USER", user), ("AO_PASS", pwd)):
-        exemple = (valeur.startswith("<") and valeur.endswith(">")) or \
-            valeur.strip().lower() in {
-                "ton_mot_de_passe", "ton mot de passe", "mot_de_passe",
-                "ton_nouveau_mot_de_passe", "le_vrai", "password", "xxxx",
-                "...", "ton_identifiant", "ton_mdp"}
-        if exemple:
+        if est_un_exemple(valeur):
             print(f"ERREUR : {nom} vaut {valeur!r}, qui est un exemple et non "
                   f"ta vraie valeur.\n"
-                  f"Pour éviter de le retaper en clair :\n"
-                  f"  read -rsp 'Mot de passe AsianOdds : ' AO_PASS && "
-                  f"export AO_PASS && echo", file=sys.stderr)
+                  f"Saisis les deux sans rien avoir à remplacer :\n"
+                  f"{INVITE_SAISIE}", file=sys.stderr)
             return 2
 
     debut = datetime.now(timezone.utc)
