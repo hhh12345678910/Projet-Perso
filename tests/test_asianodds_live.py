@@ -698,3 +698,111 @@ def test_sans_aucun_evf_la_couverture_refuse_d_annoncer_un_taux(tmp_path):
     assert "0.0 %" not in texte, "un taux trompeur est annoncé"
     assert "AUCUN EVF" in texte
     assert "85" in texte, "le nombre de candidats reste utile"
+
+
+# ── POURQUOI un rapprochement échoue ─────────────────────────────────────
+def test_l_ambiguite_est_distinguee_d_un_score_trop_bas():
+    """Les deux produisaient le même silence. « Torpedo Zhodino — Dnepr
+    Mogilev » figurait dans NOS orphelins ET dans les non-rapprochés
+    d'AsianOdds : isolé il s'apparie à 96, donc l'échec venait d'un second
+    candidat trop proche — un doublon chez nous, pas un trou de couverture."""
+    from src.asianodds_live import evaluer_appariement
+    vrai = Candidat("k1", "torpedozhodino", "dneprmogilev")
+    doublon = Candidat("k2", "torpedozhodino", "dneprmogilev")
+
+    seul = evaluer_appariement("Torpedo Zhodino", "Dnepr Mogilev", [vrai])
+    assert seul.reussi and seul.cible is vrai and seul.motif == "apparié"
+    assert seul.score > 90
+
+    ambigu = evaluer_appariement("Torpedo Zhodino", "Dnepr Mogilev",
+                                 [vrai, doublon])
+    assert not ambigu.reussi
+    assert "ambiguïté" in ambigu.motif
+    assert "doublon" in ambigu.motif, "le motif doit nommer la piste"
+
+    loin = evaluer_appariement("Kawasaki Frontale", "Urawa Reds", [vrai])
+    assert not loin.reussi
+    assert "aucun candidat assez proche" in loin.motif
+
+
+def test_le_motif_d_ambiguite_nomme_les_deux_rivaux():
+    from src.asianodds_live import evaluer_appariement
+    a = Candidat("a", "Manchester United", "Ipswich Town")
+    b = Candidat("b", "Manchester United", "Ipswich")
+    m = evaluer_appariement("Manchester United", "Ipswich Town", [a, b]).motif
+    assert "Ipswich Town" in m and "Ipswich" in m
+
+
+def test_match_live_event_garde_son_contrat():
+    """L'ancienne fonction reste la porte d'entrée quand le motif n'importe
+    pas : aucun appelant existant ne doit avoir à changer."""
+    c = Candidat("k", "Crvena Zvezda", "Cukaricki")
+    assert match_live_event("Crvena Zvezda", "Cukaricki", [c]) is c
+    assert match_live_event("Kawasaki", "Urawa", [c]) is None
+
+
+def test_les_motifs_d_echec_sont_comptes_dans_le_diagnostic(tmp_path):
+    from src.asianodds_live import diagnostic_appariement
+    now = datetime(2026, 8, 23, 19, 0, tzinfo=timezone.utc)
+    db = Storage(tmp_path / "t.db")
+    debut = (now - timedelta(hours=1)).isoformat()
+    # Le MÊME match deux fois : exactement le doublon soupçonné en base.
+    db.upsert_events([
+        ("k1", "soccer", "L", "Crvena Zvezda", "Cukaricki", debut),
+        ("k2", "soccer", "L", "Crvena Zvezda", "Cukaricki FK", debut),
+    ])
+    stats = collect(db, "u", "p", dry_run=True,
+                    session_factory=lambda: _FausseSession([{"EVF": EVF_DECIMAL}]),
+                    now_fn=lambda: now, log=lambda *a: None)
+
+    assert stats.sans_event_key == 1
+    assert sum(stats.motifs_echec.values()) == 1
+    assert "ambiguïté" in "".join(stats.motifs_echec)
+    rapport = diagnostic_appariement(stats)
+    assert "Motifs d'échec" in rapport
+    assert "ambiguïté" in rapport
+
+
+# ── ancienneté du coup d'envoi ───────────────────────────────────────────
+def test_un_orphelin_termine_depuis_longtemps_est_signale(tmp_path, monkeypatch):
+    """LIVE_WINDOW_BEFORE vaut 4 h alors qu'un match de football en dure 2 :
+    une partie de nos « événements en cours » est finie et gonfle le
+    dénominateur sans qu'AsianOdds y soit pour quelque chose."""
+    from src.asianodds_live import diagnostic_appariement, Stats
+    maintenant = datetime(2026, 8, 23, 19, 0, tzinfo=timezone.utc)
+    stats = Stats()
+    stats.evf = 1
+    stats.derniers_candidats = [
+        Candidat("vieux", "A", "B", maintenant - timedelta(hours=3, minutes=30)),
+        Candidat("encours", "C", "D", maintenant - timedelta(minutes=40)),
+        Candidat("apres", "E", "F", maintenant + timedelta(minutes=10)),
+        Candidat("sans", "G", "H", None),
+    ]
+    monkeypatch.setattr("src.asianodds_live.datetime",
+                        _Horloge(maintenant))
+    rapport = diagnostic_appariement(stats)
+    assert "A — B   (débuté il y a 3 h 30)  ⟵ probablement TERMINÉ" in rapport
+    assert "C — D   (débuté il y a 0 h 40)" in rapport
+    assert "TERMINÉ" not in rapport.split("C — D")[1].split("\n")[0]
+    assert "E — F   (débute dans 10 min)" in rapport
+    assert "G — H" in rapport, "un horaire absent ne doit pas faire disparaître"
+
+
+class _Horloge(datetime):
+    """`datetime` figé : le diagnostic lit l'heure réelle, pas `now_fn`."""
+
+    def __new__(cls, fige):
+        obj = super().__new__(cls, fige.year, fige.month, fige.day,
+                              fige.hour, fige.minute, tzinfo=fige.tzinfo)
+        return obj
+
+    @classmethod
+    def now(cls, tz=None):
+        return datetime(2026, 8, 23, 19, 0, tzinfo=tz or timezone.utc)
+
+
+def test_un_horaire_illisible_ne_fait_pas_tomber_le_diagnostic():
+    from src.asianodds_live import _horaire
+    assert _horaire(None) is None
+    assert _horaire("pas une date") is None
+    assert _horaire("2026-08-23T19:00:00+00:00") is not None

@@ -376,10 +376,32 @@ class Candidat:
     event_key: str
     home: str
     away: str
+    #: L'heure annoncee par NOTRE reference. Sert uniquement au diagnostic :
+    #: un « orphelin » qui a debute il y a 3 h est fini depuis longtemps et
+    #: gonfle le denominateur sans qu'AsianOdds y soit pour quelque chose.
+    start_time: Optional[datetime] = None
 
 
-def match_live_event(home: str, away: str,
-                     candidats: Iterable[Candidat]) -> Optional[Candidat]:
+@dataclass(frozen=True)
+class Appariement:
+    """Le résultat d'un rapprochement, AVEC son motif.
+
+    « Aucun candidat assez proche » et « deux candidats trop proches »
+    produisent le même silence mais appellent des travaux opposés : le
+    premier est un trou de couverture chez nous, le second un doublon dans
+    `events`. Les confondre, c'est chercher au mauvais endroit."""
+    cible: Optional[Candidat]
+    score: float
+    second: float
+    motif: str
+
+    @property
+    def reussi(self) -> bool:
+        return self.cible is not None
+
+
+def evaluer_appariement(home: str, away: str,
+                        candidats: Iterable[Candidat]) -> Appariement:
     """Rapprocher un match AsianOdds d'un de nos événements, SUR LES NOMS.
 
     `matcher.match_event` exige une concordance d'horaire à 10 min près. On ne
@@ -389,20 +411,34 @@ def match_live_event(home: str, away: str,
     Les seuils et le garde-fou d'ambiguïté sont ceux de `match_event`, à
     l'identique : deux candidats presque aussi bons → on refuse de deviner."""
     meilleur: Optional[Candidat] = None
+    rival: Optional[Candidat] = None
     score_max = second = 0.0
     for c in candidats:
         direct = (team_similarity(home, c.home) + team_similarity(away, c.away)) / 2
         inverse = (team_similarity(home, c.away) + team_similarity(away, c.home)) / 2
         score = max(direct, inverse)
         if score > score_max:
-            second, score_max, meilleur = score_max, score, c
+            rival, meilleur = meilleur, c
+            second, score_max = score_max, score
         elif score > second:
-            second = score
+            second, rival = score, c
     if score_max < MIN_MATCH_SCORE:
-        return None
+        return Appariement(None, score_max, second,
+                           f"aucun candidat assez proche (meilleur {score_max:.0f} "
+                           f"< {MIN_MATCH_SCORE:.0f})")
     if second >= MIN_MATCH_SCORE and (score_max - second) < AMBIGUITY_MARGIN:
-        return None
-    return meilleur
+        return Appariement(
+            None, score_max, second,
+            f"ambiguïté {score_max:.0f} vs {second:.0f} — "
+            f"« {meilleur.home} — {meilleur.away} » et "
+            f"« {rival.home} — {rival.away} » : doublon dans events ?")
+    return Appariement(meilleur, score_max, second, "apparié")
+
+
+def match_live_event(home: str, away: str,
+                     candidats: Iterable[Candidat]) -> Optional[Candidat]:
+    """La cible seule, quand le motif n'intéresse pas l'appelant."""
+    return evaluer_appariement(home, away, candidats).cible
 
 
 def candidats_en_cours(storage, now: datetime,
@@ -417,14 +453,25 @@ def candidats_en_cours(storage, now: datetime,
     debut = (now - LIVE_WINDOW_BEFORE).isoformat()
     fin = (now + LIVE_WINDOW_AFTER).isoformat()
     notre_sport = SPORT_VERS_NOTRE_NOM.get(sport)
-    sql = "SELECT event_key, home, away FROM events WHERE start_time BETWEEN ? AND ?"
+    sql = ("SELECT event_key, home, away, start_time FROM events "
+           "WHERE start_time BETWEEN ? AND ?")
     args: list = [debut, fin]
     if notre_sport:
         sql += " AND sport = ?"
         args.append(notre_sport)
     with storage._conn() as c:
         lignes = c.execute(sql, args).fetchall()
-    return [Candidat(r["event_key"], r["home"], r["away"]) for r in lignes]
+    return [Candidat(r["event_key"], r["home"], r["away"],
+                     _horaire(r["start_time"])) for r in lignes]
+
+
+def _horaire(brut) -> Optional[datetime]:
+    """Un horaire illisible n'empêche pas le rapprochement : il ne sert qu'au
+    diagnostic. On renvoie None plutôt que de lever."""
+    try:
+        return datetime.fromisoformat(brut)
+    except (TypeError, ValueError):
+        return None
 
 
 # ══════════════════════════════════════════════════════════════════════════
@@ -573,6 +620,23 @@ class AsianOddsSession:
             self.ws = None
 
 
+def _anciennete(c, maintenant: datetime) -> str:
+    """« débuté il y a 3 h 12 » : un match de football dure environ 2 h. Nos
+    candidats vont jusqu'à LIVE_WINDOW_BEFORE en arrière, donc une partie des
+    « orphelins » est simplement TERMINÉE et gonfle le dénominateur sans
+    qu'AsianOdds y soit pour quoi que ce soit."""
+    if c.start_time is None:
+        return ""
+    debut = c.start_time
+    if debut.tzinfo is None:
+        debut = debut.replace(tzinfo=timezone.utc)
+    m = int((maintenant - debut).total_seconds() // 60)
+    if m < 0:
+        return f"   (débute dans {-m} min)"
+    fini = "  ⟵ probablement TERMINÉ" if m > 135 else ""
+    return f"   (débuté il y a {m // 60} h {m % 60:02d}){fini}"
+
+
 def diagnostic_appariement(stats, limite: "int | None" = 15) -> str:
     """Les deux listes cote a cote, pour trancher a l'oeil.
 
@@ -583,6 +647,7 @@ def diagnostic_appariement(stats, limite: "int | None" = 15) -> str:
     couverts = stats.evenements_couverts
     orphelins = [c for c in stats.derniers_candidats
                  if c.event_key not in couverts]
+    maintenant = datetime.now(timezone.utc)
     lignes = [
         "",
         "─" * 74,
@@ -591,12 +656,16 @@ def diagnostic_appariement(stats, limite: "int | None" = 15) -> str:
         f"NOS matchs en cours SANS référence AsianOdds ({len(orphelins)}) :",
     ]
     for c in (orphelins if limite is None else orphelins[:limite]):
-        lignes.append(f"    {c.home} — {c.away}")
+        lignes.append(f"    {c.home} — {c.away}{_anciennete(c, maintenant)}")
     if limite is not None and len(orphelins) > limite:
         lignes.append(f"    … et {len(orphelins) - limite} autres")
     lignes += ["",
                f"Matchs AsianOdds NON rapprochés "
                f"({len(stats.asianodds_sans_match)}) :"]
+    if stats.motifs_echec:
+        lignes += ["", "Motifs d'échec du rapprochement :"]
+        lignes += [f"    {n:>5} × {m}"
+                   for m, n in stats.motifs_echec.most_common()]
     inconnus = list(stats.asianodds_sans_match.values())
     for nom in (inconnus if limite is None else inconnus[:limite]):
         lignes.append(f"    {nom}")
@@ -629,6 +698,9 @@ class Stats:
     #: une fin normale, avec un taux de couverture de 0 % qui accusait la
     #: couverture d'AsianOdds au lieu de la connexion.
     fin_raison: str = "boucle jamais entree"
+    #: Pourquoi les rapprochements ont echoue, par motif. Un echec de seuil
+    #: et une ambiguite se corrigent a des endroits opposes.
+    motifs_echec: Counter = field(default_factory=Counter)
     # Comptes PAR MATCH, et non par message. Un match liquide reprice 200
     # fois quand un match calme reprice 3 fois : pondere par message, le
     # taux d'appariement decrit surtout les gros matchs. Ce sont ces
@@ -793,13 +865,15 @@ def collect(storage, username: str, password: str, *,
                     stats.derives += 1
                     continue
                 stats.matchs_vus.add(evf.get("MTCHID"))
-                cible = match_live_event(
+                app = evaluer_appariement(
                     evf.get("HN") or "", evf.get("AN") or "", candidats)
+                cible = app.cible
                 if cible is None:
                     stats.sans_event_key += 1
+                    stats.motifs_echec[app.motif.split(" —")[0].split(" (")[0]] += 1
                     stats.asianodds_sans_match[evf.get("MTCHID")] = (
                         f"{evf.get('HN')} — {evf.get('AN')}"
-                        f"   [{evf.get('LN')}]")
+                        f"   [{evf.get('LN')}]\n        → {app.motif}")
                 else:
                     # Deux matchs AsianOdds DIFFERENTS qui tombent sur le meme
                     # event_key : au moins l'un des deux est un mauvais
