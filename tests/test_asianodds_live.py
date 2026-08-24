@@ -688,10 +688,11 @@ def test_une_fermeture_serveur_est_nommee_et_non_confondue_avec_la_fin(tmp_path)
     now = datetime(2026, 8, 23, 19, 0, tzinfo=timezone.utc)
     db = _db_avec_match(tmp_path, now)
     stats = collect(db, "u", "p", dry_run=True, duration_sec=300,
-                    session_factory=lambda: _SessionQuiFerme(
-                        [{"EVF": EVF_DECIMAL}]),
-                    now_fn=lambda: now, log=lambda *a: None)
-    assert stats.fin_raison == "fermeture 1008 (règle violée)"
+                    session_factory=_SessionsSuccessives(
+                        [[{"EVF": EVF_DECIMAL}]] * 20, plafond=20),
+                    now_fn=lambda: now, dormir=lambda _: None,
+                    log=lambda *a: None)
+    assert "fermeture 1008 (règle violée)" in stats.fin_raison
     assert "fermeture 1008" in stats.resume()
 
 
@@ -922,3 +923,150 @@ def test_la_couverture_publie_le_taux_corrige(tmp_path, monkeypatch):
     assert "en cours=4 couverts par AsianOdds=1 (25.0 %)" in texte
     assert "EN JEU=2" in texte and "couverts=1 (50.0 %)" in texte, \
         "le taux corrigé manque : les deux matchs finis gonflent encore"
+
+
+# ── reconnexion ──────────────────────────────────────────────────────────
+class _SessionsSuccessives:
+    """Une fabrique qui rend une session neuve à chaque appel, en piochant
+    dans une liste de scénarios. Reproduit ce que fait le vrai serveur : il
+    coupe, on rouvre, ça remarche."""
+
+    def __init__(self, scenarios, plafond=200):
+        self._scenarios = list(scenarios)
+        # Sans ce plafond, un collecteur qui ne s'arrête plus fait PENDRE la
+        # suite au lieu de la faire échouer : un test qui pend ne signale
+        # rien en intégration continue.
+        self._plafond = plafond
+        self.ouvertures = 0
+        self.sessions = []
+
+    def __call__(self):
+        scenario = self._scenarios.pop(0) if self._scenarios else []
+        self.ouvertures += 1
+        if self.ouvertures > self._plafond:
+            raise AssertionError(
+                f"{self.ouvertures} ouvertures : le collecteur ne s'arrête plus")
+        if isinstance(scenario, Exception):
+            s = _SessionQuiLeve(scenario)
+        else:
+            s = _SessionQuiFerme(scenario)
+        self.sessions.append(s)
+        return s
+
+
+class _SessionQuiLeve(_FausseSession):
+    def __init__(self, erreur):
+        super().__init__([])
+        self._erreur = erreur
+
+    def open(self):
+        raise self._erreur
+
+
+def test_le_collecteur_reprend_apres_une_coupure(tmp_path):
+    """Mesuré le 24/08 : une session de 5 min coupée à 34 s. Sans reprise, le
+    collecteur s'arrête au premier incident et le silence qui suit ressemble
+    à « AsianOdds ne cote plus rien »."""
+    now = datetime(2026, 8, 23, 19, 0, tzinfo=timezone.utc)
+    db = _db_avec_match(tmp_path, now)
+    fabrique = _SessionsSuccessives([
+        [{"EVF": EVF_DECIMAL}],          # coupé
+        [{"EVF": EVF_DECIMAL}],          # coupé
+        [{"EVF": EVF_DECIMAL}],          # coupé
+    ])
+    attentes = []
+    stats = collect(db, "u", "p", dry_run=True, duration_sec=300,
+                    session_factory=fabrique, now_fn=lambda: now,
+                    dormir=attentes.append, log=lambda *a: None)
+
+    assert stats.reconnexions >= 2, "aucune reprise après coupure"
+    assert fabrique.ouvertures >= 3, "la session doit être RECRÉÉE, pas rouverte"
+    assert stats.evf >= 3, "les messages d'après la coupure sont perdus"
+    assert all(s.fermee for s in fabrique.sessions), "session non refermée"
+    assert attentes == sorted(attentes), "le délai doit croître"
+    assert max(attentes) <= 30.0
+
+
+def test_le_delai_de_reprise_croit_puis_plafonne(tmp_path):
+    now = datetime(2026, 8, 23, 19, 0, tzinfo=timezone.utc)
+    db = _db_avec_match(tmp_path, now)
+    attentes = []
+    collect(db, "u", "p", dry_run=True, duration_sec=300,
+            session_factory=_SessionsSuccessives([[]] * 10),
+            now_fn=lambda: now, dormir=attentes.append, log=lambda *a: None)
+    assert attentes[:4] == [2.0, 4.0, 8.0, 16.0]
+
+
+def test_on_abandonne_au_lieu_de_s_acharner(tmp_path):
+    """S'acharner sur un serveur qui refuse n'aide pas et peut faire
+    verrouiller le compte."""
+    from src.asianodds_live import RECONNEXION_ECHECS_MAX
+    now = datetime(2026, 8, 23, 19, 0, tzinfo=timezone.utc)
+    db = _db_avec_match(tmp_path, now)
+    fabrique = _SessionsSuccessives([[]] * 50, plafond=20)
+    stats = collect(db, "u", "p", dry_run=True, duration_sec=100000,
+                    session_factory=fabrique, now_fn=lambda: now,
+                    dormir=lambda _: None, log=lambda *a: None)
+    assert fabrique.ouvertures == RECONNEXION_ECHECS_MAX + 1
+    assert "abandon" in stats.fin_raison
+
+
+def test_un_refus_d_identifiants_n_est_jamais_reessaye(tmp_path):
+    """Rejouer un mot de passe faux cinq fois est le meilleur moyen de faire
+    verrouiller le compte."""
+    now = datetime(2026, 8, 23, 19, 0, tzinfo=timezone.utc)
+    db = _db_avec_match(tmp_path, now)
+    fabrique = _SessionsSuccessives([PermissionError("login refusé")] * 5)
+    with pytest.raises(PermissionError):
+        collect(db, "u", "p", dry_run=True, duration_sec=300,
+                session_factory=fabrique, now_fn=lambda: now,
+                dormir=lambda _: None, log=lambda *a: None)
+    assert fabrique.ouvertures == 1, "le refus a été rejoué"
+
+
+def test_une_panne_reseau_est_reprise(tmp_path):
+    """Une coupure réseau n'est pas un refus : elle se réessaie."""
+    now = datetime(2026, 8, 23, 19, 0, tzinfo=timezone.utc)
+    db = _db_avec_match(tmp_path, now)
+    fabrique = _SessionsSuccessives([
+        ConnectionError("socket fermée"),
+        [{"EVF": EVF_DECIMAL}],
+    ])
+    stats = collect(db, "u", "p", dry_run=True, duration_sec=300,
+                    session_factory=fabrique, now_fn=lambda: now,
+                    dormir=lambda _: None, log=lambda *a: None)
+    assert fabrique.ouvertures >= 2
+    assert stats.evf >= 1, "le flux n'a pas repris après la panne"
+
+
+def test_sans_echeance_le_collecteur_ne_boucle_pas(tmp_path):
+    """Sans `duration_sec`, il n'existe pas de « temps restant » : reprendre
+    en boucle ferait tourner le collecteur indéfiniment sur une fabrique
+    épuisée. L'appelant qui veut un flux sans fin doit le demander."""
+    now = datetime(2026, 8, 23, 19, 0, tzinfo=timezone.utc)
+    db = _db_avec_match(tmp_path, now)
+    fabrique = _SessionsSuccessives([[{"EVF": EVF_DECIMAL}]] * 20)
+    collect(db, "u", "p", dry_run=True,
+            session_factory=fabrique, now_fn=lambda: now,
+            dormir=lambda _: None, log=lambda *a: None)
+    assert fabrique.ouvertures == 1
+
+
+def test_reconnecter_force_la_reprise_sans_echeance(tmp_path):
+    now = datetime(2026, 8, 23, 19, 0, tzinfo=timezone.utc)
+    db = _db_avec_match(tmp_path, now)
+    fabrique = _SessionsSuccessives([[{"EVF": EVF_DECIMAL}]] * 20)
+    collect(db, "u", "p", dry_run=True, reconnecter=True,
+            session_factory=fabrique, now_fn=lambda: now,
+            dormir=lambda _: None, log=lambda *a: None)
+    assert fabrique.ouvertures > 1
+
+
+def test_le_lot_est_ecrit_avant_de_reconnecter(tmp_path):
+    """Une coupure ne doit pas jeter les cotes déjà normalisées."""
+    now = datetime(2026, 8, 23, 19, 0, tzinfo=timezone.utc)
+    db = _db_avec_match(tmp_path, now)
+    collect(db, "u", "p", duration_sec=300,
+            session_factory=_SessionsSuccessives([[{"EVF": EVF_DECIMAL}], []]),
+            now_fn=lambda: now, dormir=lambda _: None, log=lambda *a: None)
+    assert len(db.market_state(event_key=KEY)) == 12

@@ -881,12 +881,28 @@ PING_SEC = 20.0
 REFRESH_CANDIDATS_SEC = 60.0
 
 
+# Reconnexion. Le flux se fait couper : mesure le 24/08, une session de
+# 5 min s'est arretee a 34 s. Sans reprise, le collecteur s'arrete au premier
+# incident et le silence qui suit ressemble a « AsianOdds ne cote plus rien ».
+RECONNEXION_DELAI_INITIAL = 2.0
+RECONNEXION_DELAI_MAX = 30.0
+#: Au-dela, on abandonne : s'acharner sur un serveur qui refuse n'aide pas et
+#: peut faire verrouiller le compte.
+RECONNEXION_ECHECS_MAX = 5
+#: Une session qui a tenu ce temps-la est consideree saine : le delai
+#: d'attente repart de zero. Sans cela, une coupure toutes les 10 min finirait
+#: par imposer 30 s d'attente a chaque fois.
+SESSION_STABLE_SEC = 60.0
+
+
 def collect(storage, username: str, password: str, *,
             duration_sec: float | None = None,
             sport: int = SPORT_FOOTBALL,
             dry_run: bool = False,
             session_factory=None,
             now_fn=None,
+            dormir=time.sleep,
+            reconnecter: bool = False,
             log=print) -> Stats:
     """Collecter jusqu'à `duration_sec` (None = sans fin). Renvoie les stats.
 
@@ -894,25 +910,31 @@ def collect(storage, username: str, password: str, *,
     qui permet de mesurer le taux d'appariement avant d'autoriser la moindre
     écriture en production.
 
-    `session_factory` et `now_fn` existent pour les tests : ils permettent
-    d'injecter une fausse session et une horloge figée, donc de tester la
-    boucle entière sans réseau."""
+    Reprend automatiquement quand le serveur coupe, tant qu'il reste du temps.
+    Un refus d'identifiants n'est JAMAIS réessayé : s'acharner ne corrigerait
+    rien et peut faire verrouiller le compte.
+
+    La reprise demande une ÉCHÉANCE : sans `duration_sec`, il n'existe pas de
+    « temps restant », donc rien qui borne les tentatives — une session qui se
+    termine rendrait la main immédiatement, en boucle. Un appelant qui veut un
+    flux sans fin doit le dire avec `reconnecter=True` ; il accepte alors une
+    boucle qui ne s'arrête que sur `RECONNEXION_ECHECS_MAX` échecs d'affilée.
+
+    `session_factory`, `now_fn` et `dormir` existent pour les tests : ils
+    permettent d'injecter une fausse session, une horloge figée et une attente
+    instantanée, donc de tester la boucle entière sans réseau ni délai."""
     now_fn = now_fn or (lambda: datetime.now(timezone.utc))
     stats = Stats()
     fabrique = session_factory or (
         lambda: AsianOddsSession(username, password))
 
     fin = None if duration_sec is None else time.monotonic() + duration_sec
-    session = fabrique()
-    session.open()
-    session.subscribe(sport=sport)
-    log("[ao] abonné")
-    bookie_annonce = False
-
     candidats: list[Candidat] = []
     prochain_refresh = 0.0
     lot: dict[tuple, tuple] = {}
-    dernier_flush = dernier_ping = time.monotonic()
+    bookie_annonce = False
+    delai = RECONNEXION_DELAI_INITIAL
+    echecs = 0
 
     def vider() -> None:
         nonlocal lot
@@ -922,12 +944,19 @@ def collect(storage, username: str, password: str, *,
             stats.ecrits += len(lot)
         lot = {}
 
-    try:
+    def temps_restant() -> bool:
+        if fin is None:
+            return reconnecter
+        return time.monotonic() < fin
+
+    def _une_session(session) -> str:
+        """Consomme une session jusqu'à sa fin. Renvoie le motif d'arrêt."""
+        nonlocal candidats, prochain_refresh, bookie_annonce
+        dernier_flush = dernier_ping = time.monotonic()
         for msg in session.messages():
             maintenant = time.monotonic()
             if fin is not None and maintenant > fin:
-                stats.fin_raison = "durée demandée atteinte"
-                break
+                return "durée demandée atteinte"
             if msg:
                 stats.messages += 1
                 stats.types_messages.update(msg.keys())
@@ -949,15 +978,13 @@ def collect(storage, username: str, password: str, *,
             evf = msg.get("EVF") if msg else None
             if evf:
                 stats.evf += 1
-                # Filtre AVANT le rapprochement : les noms ne permettent pas
-                # de distinguer un derive de son match parent (voir
-                # SPMT_VRAI_MATCH), donc le rapprochement l'accepterait.
-                # L'abonnement demande UN sport (`sportstype`), le serveur
-                # en pousse plusieurs : la capture du 24/08 rendait du tennis
-                # et de l'e-sport sur un abonnement football. Sans ce filtre
-                # on rapproche des matchs qui ne peuvent structurellement pas
-                # correspondre, et le taux du bas est calculé sur un
-                # dénominateur qui ne nous concerne pas.
+                # Filtres AVANT le rapprochement. L'abonnement demande UN
+                # sport (`sportstype`) mais le serveur en pousse plusieurs :
+                # la capture du 24/08 rendait du tennis et de l'e-sport sur un
+                # abonnement football, qui ne peuvent structurellement pas
+                # correspondre. Et les noms ne permettent pas de distinguer un
+                # derive de son match parent (voir SPMT_VRAI_MATCH), donc le
+                # rapprochement l'accepterait.
                 if not _meme_sport(evf.get("STP"), sport):
                     stats.hors_sport += 1
                     continue
@@ -967,10 +994,10 @@ def collect(storage, username: str, password: str, *,
                 stats.matchs_vus.add(evf.get("MTCHID"))
                 app = evaluer_appariement(
                     evf.get("HN") or "", evf.get("AN") or "", candidats)
-                cible = app.cible
-                if cible is None:
+                if app.cible is None:
                     stats.sans_event_key += 1
-                    stats.motifs_echec[app.motif.split(" —")[0].split(" (")[0]] += 1
+                    stats.motifs_echec[
+                        app.motif.split(" —")[0].split(" (")[0]] += 1
                     stats.asianodds_sans_match[evf.get("MTCHID")] = (
                         f"{evf.get('HN')} — {evf.get('AN')}"
                         f"   [{evf.get('LN')}]\n        → {app.motif}")
@@ -986,7 +1013,7 @@ def collect(storage, username: str, password: str, *,
                     stats.matchs_apparies.add(evf.get("MTCHID"))
                     horodatage = now_fn()
                     if app.doublons:
-                        stats.doublons_events.add(cible.event_key)
+                        stats.doublons_events.add(app.cible.event_key)
                     for c in app.toutes_les_cibles:
                         stats.evenements_couverts.add(c.event_key)
                         lignes = normalise_evf(evf, c.event_key)
@@ -1006,13 +1033,50 @@ def collect(storage, username: str, password: str, *,
             if maintenant - dernier_ping >= PING_SEC:
                 session.ping()
                 dernier_ping = maintenant
-        else:
-            # Le generateur s'est epuise : c'est le SERVEUR qui a mis fin au
-            # flux, pas nous. Sans cette branche, une fermeture a 34 s d'un
-            # run de 5 min sortait exactement comme un run complet.
-            stats.fin_raison = (getattr(session, "fermeture", None)
-                                or "flux fermé par le serveur (motif inconnu)")
-    finally:
-        vider()
-        session.close()
+        # Le generateur s'est epuise : c'est le SERVEUR qui a mis fin au flux,
+        # pas nous. Sans cette distinction, une fermeture a 34 s d'un run de
+        # 5 min sortait exactement comme un run complet.
+        return (getattr(session, "fermeture", None)
+                or "flux fermé par le serveur (motif inconnu)")
+
+    while True:
+        session = fabrique()
+        ouverte_a = time.monotonic()
+        try:
+            session.open()
+            session.subscribe(sport=sport)
+            log("[ao] abonné")
+            stats.fin_raison = _une_session(session)
+        except PermissionError:
+            # Identifiants refuses : reessayer ne corrigerait rien et peut
+            # faire verrouiller le compte. On remonte tel quel.
+            raise
+        except (ConnectionError, ssl.SSLError, OSError) as e:
+            stats.fin_raison = f"connexion perdue : {e!r}"
+        finally:
+            vider()
+            try:
+                session.close()
+            except Exception:
+                pass
+
+        if stats.fin_raison == "durée demandée atteinte" or not temps_restant():
+            break
+        # Une session qui a tenu repart avec le delai minimal : sinon une
+        # coupure reguliere finirait par imposer l'attente maximale a vie.
+        if time.monotonic() - ouverte_a >= SESSION_STABLE_SEC:
+            delai, echecs = RECONNEXION_DELAI_INITIAL, 0
+        echecs += 1
+        if echecs > RECONNEXION_ECHECS_MAX:
+            stats.fin_raison = (f"abandon après {RECONNEXION_ECHECS_MAX} "
+                                f"reconnexions infructueuses — "
+                                f"{stats.fin_raison}")
+            break
+        log(f"[ao] {stats.fin_raison} — reprise dans {delai:.0f} s "
+            f"(tentative {echecs}/{RECONNEXION_ECHECS_MAX})")
+        dormir(delai)
+        if not temps_restant():
+            break
+        stats.reconnexions += 1
+        delai = min(delai * 2, RECONNEXION_DELAI_MAX)
     return stats

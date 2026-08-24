@@ -132,10 +132,20 @@ def main() -> int:
               f"demandées — {stats.fin_raison}. Les chiffres ci-dessus ne "
               f"portent que sur cette fraction.", file=sys.stderr)
 
-    couv, cand = len(stats.evenements_couverts), stats.candidats_connus
-    if cand and couv / cand < 0.5:
-        print("[ao] ⚠ AsianOdds couvre moins de la moitié de NOS événements "
-              "en cours : c'est ce taux-là qui limite le moteur LIVE.")
+    # L'avertissement portait sur le taux BRUT, dont le dénominateur contient
+    # des matchs terminés : il criait « moins de la moitié » alors que le taux
+    # honnête était de 74 %. Il ne se déclenche plus que sur ce dernier.
+    from src.asianodds_live import plausiblement_en_jeu
+    en_jeu = {c.event_key for c in plausiblement_en_jeu(
+        stats.derniers_candidats, datetime.now(timezone.utc))}
+    if en_jeu:
+        couv = len(en_jeu & stats.evenements_couverts)
+        if couv / len(en_jeu) < 0.5:
+            print(f"[ao] ⚠ AsianOdds ne couvre que {couv}/{len(en_jeu)} de nos "
+                  f"matchs réellement en jeu : c'est ce taux-là qui limite le "
+                  f"moteur LIVE.")
+    if stats.reconnexions:
+        print(f"[ao] {stats.reconnexions} reprise(s) après coupure du flux.")
     return 0
 
 
