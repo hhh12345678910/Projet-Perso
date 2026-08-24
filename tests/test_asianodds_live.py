@@ -311,3 +311,64 @@ def test_collect_n_ecrit_jamais_dans_quotes(tmp_path):
 def test_stats_resume_est_lisible():
     s = Stats(messages=10, evf=8, normalises=40, ecrits=40, sans_event_key=2)
     assert "appariés=6" in s.resume() and "75.0 %" in s.resume()
+
+
+# ── pseudo-événements dérivés ────────────────────────────────────────────
+# Team Totals, Corners, Bookings : AsianOdds les publie comme des matchs à
+# part entière, portant le NOM DE LA VRAIE ÉQUIPE suivi d'un suffixe. Le
+# rapprochement sur les noms ne peut pas les distinguer — vérifié :
+# team_similarity("Stjarnan Team Totals Home Team", "Stjarnan") == 100.0.
+# Sans filtre, leurs prix s'écriraient sous la clé du vrai match.
+TEAM_TOTALS = dict(
+    EVF_DECIMAL,
+    HN="Crvena Zvezda Team Totals Home Team",
+    AN="Cukaricki Team Totals Home Team",
+    MTCHID="1634601234TTH", SPMT="5",
+)
+CORNERS = dict(EVF_DECIMAL,
+               HN="Crvena Zvezda - No. of Corners",
+               AN="Cukaricki - No. of Corners", SPMT="1")
+
+
+def test_le_rapprochement_seul_ne_protege_PAS_des_derives():
+    """Constat qui justifie le filtre : sans lui, le rapprochement accepte.
+
+    Ce test documente une FAIBLESSE, pas une garantie. Si un jour il échoue
+    parce que le rapprochement s'est durci, le filtre SPMT reste correct —
+    mais on saura que la raison d'être a changé."""
+    cands = [Candidat("vrai", "Crvena Zvezda", "Cukaricki")]
+    assert match_live_event(TEAM_TOTALS["HN"], TEAM_TOTALS["AN"], cands) is not None
+
+
+@pytest.mark.parametrize("message,etiquette", [
+    (TEAM_TOTALS, "team totals"), (CORNERS, "corners")])
+def test_les_derives_ne_sont_jamais_ecrits(tmp_path, message, etiquette):
+    now = datetime(2026, 8, 23, 19, 0, tzinfo=timezone.utc)
+    db = _db_avec_match(tmp_path, now)
+    session = _FausseSession([{"EVF": message}])
+
+    stats = collect(db, "u", "p", session_factory=lambda: session,
+                    now_fn=lambda: now, log=lambda *a: None)
+
+    assert stats.derives == 1, f"{etiquette} non filtré"
+    assert stats.sans_event_key == 0, "le dérivé a été soumis au rapprochement"
+    assert db.market_state() == [], f"un {etiquette} a corrompu market_state"
+
+
+def test_le_vrai_match_passe_toujours(tmp_path):
+    """Le filtre ne doit pas jeter le bébé avec l'eau du bain."""
+    now = datetime(2026, 8, 23, 19, 0, tzinfo=timezone.utc)
+    db = _db_avec_match(tmp_path, now)
+    stats = collect(db, "u", "p",
+                    session_factory=lambda: _FausseSession([{"EVF": EVF_DECIMAL}]),
+                    now_fn=lambda: now, log=lambda *a: None)
+    assert stats.derives == 0
+    assert len(db.market_state()) == 12
+
+
+def test_le_taux_ignore_les_derives():
+    """Compter les dérivés dans le dénominateur masquerait le vrai taux."""
+    s = Stats(evf=100, derives=60, sans_event_key=10)
+    assert "dérivés=60" in s.resume()
+    assert "appariés=30 (75.0 %)" in s.resume(), \
+        "le taux doit porter sur les 40 vrais matchs, pas sur les 100"

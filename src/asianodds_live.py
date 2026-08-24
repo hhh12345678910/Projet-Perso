@@ -78,6 +78,18 @@ AMBIGUITY_MARGIN = 4.0
 LIVE_WINDOW_BEFORE = timedelta(hours=4)
 LIVE_WINDOW_AFTER = timedelta(minutes=15)
 
+# SpecialMatchType : "0" = vrai match. Tout le reste est un PSEUDO-EVENEMENT
+# derive — "1" corners, "2" cartons, "3" to advance, "4" to win, "5"/"6"
+# team totals domicile/exterieur, "7"/"8" team totals corners.
+#
+# ⚠️ PIEGE MESURE, ET IL CORROMPRAIT market_state : ces pseudo-evenements
+# portent le NOM DE LA VRAIE EQUIPE suivi d'un suffixe. Verifie :
+#   team_similarity("Stjarnan Team Totals Home Team", "Stjarnan") == 100.0
+# Sans ce filtre, un « Team Totals over 2.5 » s'ecrit sous la cle du vrai
+# match comme s'il en etait le total. Le rapprochement sur les noms ne peut
+# PAS les distinguer : on s'appuie donc sur le champ que la source fournit.
+SPMT_VRAI_MATCH = "0"
+
 
 # ══════════════════════════════════════════════════════════════════════════
 # Client WebSocket minimal (RFC 6455)
@@ -506,14 +518,19 @@ class Stats:
     evf: int = 0
     normalises: int = 0
     ecrits: int = 0
+    derives: int = 0                 # pseudo-evenements (team totals, corners)
     sans_event_key: int = 0          # match AsianOdds inconnu chez nous
     sans_selection: int = 0          # EVF sans une seule cote exploitable
     reconnexions: int = 0
 
     def resume(self) -> str:
-        appariés = self.evf - self.sans_event_key
-        taux = f"{100 * appariés / self.evf:.1f} %" if self.evf else "n/a"
-        return (f"msg={self.messages} evf={self.evf} appariés={appariés} ({taux}) "
+        # Taux calcule sur les VRAIS matchs : inclure les derives le
+        # gonflerait d'evenements qu'on ne veut de toute facon pas.
+        reels = self.evf - self.derives
+        appariés = reels - self.sans_event_key
+        taux = f"{100 * appariés / reels:.1f} %" if reels else "n/a"
+        return (f"msg={self.messages} evf={self.evf} dérivés={self.derives} "
+                f"appariés={appariés} ({taux}) "
                 f"sélections={self.normalises} écrites={self.ecrits} "
                 f"sans_match={self.sans_event_key} vides={self.sans_selection} "
                 f"reconnexions={self.reconnexions}")
@@ -557,7 +574,8 @@ def collect(storage, username: str, password: str, *,
     session = fabrique()
     session.open()
     session.subscribe(sport=sport)
-    log(f"[ao] abonné (base bookie = {session.base_bookie})")
+    log("[ao] abonné")
+    bookie_annonce = False
 
     candidats: list[Candidat] = []
     prochain_refresh = 0.0
@@ -579,6 +597,11 @@ def collect(storage, username: str, password: str, *,
                 break
             if msg:
                 stats.messages += 1
+            # `base_bookie` n'est renseigne qu'a la lecture du message US, donc
+            # apres subscribe() : l'annoncer avant affichait toujours None.
+            if not bookie_annonce and session.base_bookie:
+                log(f"[ao] base bookie = {session.base_bookie}")
+                bookie_annonce = True
 
             if maintenant >= prochain_refresh:
                 candidats = candidats_en_cours(storage, now_fn())
@@ -587,6 +610,12 @@ def collect(storage, username: str, password: str, *,
             evf = msg.get("EVF") if msg else None
             if evf:
                 stats.evf += 1
+                # Filtre AVANT le rapprochement : les noms ne permettent pas
+                # de distinguer un derive de son match parent (voir
+                # SPMT_VRAI_MATCH), donc le rapprochement l'accepterait.
+                if str(evf.get("SPMT", "")) != SPMT_VRAI_MATCH:
+                    stats.derives += 1
+                    continue
                 cible = match_live_event(
                     evf.get("HN") or "", evf.get("AN") or "", candidats)
                 if cible is None:
