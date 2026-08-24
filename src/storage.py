@@ -369,6 +369,33 @@ MIGRATIONS = [
     ("played_bets", "fair_odd", "REAL"),
     ("played_bets", "ev_pct", "REAL"),
     ("played_bets", "stake", "REAL"),
+    # ── market_state : le contexte LIVE d'un prix ────────────────────────
+    #
+    # Ces cinq colonnes restent NULL pour tout ce qu'écrit le prématch : son
+    # UPSERT ne les nomme pas. Elles n'existent que pour les sources LIVE, et
+    # aucun calcul prématch ne les lit.
+    #
+    # `observed_at` ≠ `fetched_at`, et la distinction n'est pas cosmétique.
+    # `fetched_at` est l'instant de NOTRE écriture ; `observed_at` est
+    # l'instant où LA SOURCE a fabriqué le prix. Mesuré sur AsianOdds :
+    # 76 ms d'écart médian, IQR 6 ms sur 52 000 messages. L'écart est petit
+    # ici, mais c'est `observed_at` qui borne la péremption, pas notre horloge
+    # d'écriture — un collecteur bloqué 30 s réécrit `fetched_at` sans que le
+    # prix ait été revu.
+    ("market_state", "observed_at", "TEXT"),
+    # Score au moment de l'écriture, tel que NOUS le connaissons.
+    ("market_state", "home_score", "INTEGER"),
+    ("market_state", "away_score", "INTEGER"),
+    # Score auquel LA SOURCE dit avoir fabriqué ce prix. Chez AsianOdds c'est
+    # le champ FID, base64 de "HS:AS" — vérifié conforme sur 52 000 messages.
+    # Stocké À CÔTÉ de home_score/away_score et non à leur place : quand les
+    # deux viendront de sources différentes, leur DÉSACCORD est précisément le
+    # signal « ce prix est périmé, un but est tombé depuis ». C'est la réponse
+    # directe aux faux surebets live : un prix figé après un but devient
+    # détectable au lieu d'être deviné.
+    ("market_state", "feed_score", "TEXT"),
+    # Minute de jeu annoncée par la source.
+    ("market_state", "igm", "INTEGER"),
 ]
 
 
@@ -401,6 +428,14 @@ class Storage:
             # viennent d'ajouter, il ne peut pas vivre dans SCHEMA.
             c.execute(
                 "CREATE INDEX IF NOT EXISTS idx_vb_last_seen ON value_bets(last_seen_at)"
+            )
+            # « Ce qui a été VU récemment », par opposition à idx_ms_fetched
+            # qui dit « ce qui a été ÉCRIT récemment ». Toute la raison d'être
+            # d'observed_at est cette lecture-là ; sans index elle balaie la
+            # table entière à chaque tick.
+            c.execute(
+                "CREATE INDEX IF NOT EXISTS idx_ms_observed "
+                "ON market_state(observed_at)"
             )
 
     @contextmanager
@@ -567,6 +602,48 @@ class Storage:
             for q in quotes
         ]
 
+    # UPSERT du LIVE. Distinct de _UPSERT_MARKET_STATE et non une extension de
+    # celui-ci : le prématch ne doit PAS nommer les colonnes LIVE, sinon chacun
+    # de ses cycles les écraserait à NULL. Deux écrivains, deux requêtes, aucun
+    # champ partagé au-delà de la clé naturelle.
+    _UPSERT_LIVE_STATE = (
+        "INSERT INTO market_state "
+        "(event_key, book, market, outcome_label, line, odd, fetched_at, "
+        " is_live, league, observed_at, home_score, away_score, feed_score, igm) "
+        "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?) "
+        "ON CONFLICT (event_key, market, outcome_label, COALESCE(line, -1e9), book) "
+        "DO UPDATE SET odd = excluded.odd, "
+        "              fetched_at = excluded.fetched_at, "
+        "              is_live = excluded.is_live, "
+        "              league = COALESCE(excluded.league, market_state.league), "
+        "              observed_at = excluded.observed_at, "
+        "              home_score = excluded.home_score, "
+        "              away_score = excluded.away_score, "
+        "              feed_score = excluded.feed_score, "
+        "              igm = excluded.igm"
+    )
+
+    def upsert_live_state(self, rows: "Iterable[tuple]") -> int:
+        """Écrire l'état LIVE d'un lot de sélections. Renvoie le nombre de lignes.
+
+        Chaque ligne :
+          (event_key, book, market, outcome_label, line, odd, fetched_at_iso,
+           is_live, league, observed_at_iso, home_score, away_score,
+           feed_score, igm)
+
+        N'écrit QUE dans `market_state`. Rien dans `quotes` : le journal
+        prématch est dimensionné pour ~1 écriture par marché et par cycle de
+        plusieurs minutes, là où le LIVE reprice toutes les 28 s en médiane et
+        toutes les 2,7 s sur les marchés actifs. L'y déverser gonflerait une
+        table que rien ne lirait, et allongerait les purges que le prématch
+        subit."""
+        rows = list(rows)
+        if not rows:
+            return 0
+        with self._conn() as c:
+            c.executemany(self._UPSERT_LIVE_STATE, rows)
+        return len(rows)
+
     def insert_quotes(self, quotes: "Iterable[OddQuote]") -> int:
         """Batch-insert quotes in a SINGLE transaction. The per-quote insert_quote
         opens a fresh connection and fsync-commits each row, which is catastrophic
@@ -632,7 +709,8 @@ class Storage:
 
     def market_state(self, event_key: str | None = None, *,
                      live_only: bool = False,
-                     since: "datetime | None" = None) -> list[sqlite3.Row]:
+                     since: "datetime | None" = None,
+                     observed_since: "datetime | None" = None) -> list[sqlite3.Row]:
         """Le dernier prix connu, filtré par les trois accès que le LIVE fera.
 
         Sans argument : tout l'état courant. Les trois filtres correspondent aux
@@ -647,6 +725,14 @@ class Storage:
         if since is not None:
             clauses.append("fetched_at > ?")
             args.append(since.isoformat())
+        # `since` filtre sur fetched_at (dernière ÉCRITURE), `observed_since`
+        # sur observed_at (dernière OBSERVATION à la source). Le second répond
+        # à « ce prix est-il encore frais » : mesuré sur AsianOdds, 95 % des
+        # lignes sont revues en moins de 40 s, mais la queue monte à 12 min 49.
+        # L'absence de message ne veut donc PAS dire « le prix n'a pas bougé ».
+        if observed_since is not None:
+            clauses.append("observed_at > ?")
+            args.append(observed_since.isoformat())
         sql = "SELECT * FROM market_state"
         if clauses:
             sql += " WHERE " + " AND ".join(clauses)
