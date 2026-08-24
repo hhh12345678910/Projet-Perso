@@ -38,6 +38,11 @@ def main() -> int:
                    help="1=foot 2=basket 3=tennis (défaut : 1)")
     p.add_argument("--dry-run", action="store_true",
                    help="normalise et rapproche sans écrire une seule ligne")
+    p.add_argument("--diagnostic", metavar="FICHIER",
+                   help="écrit les DEUX listes COMPLETES dans ce fichier. "
+                        "Le résumé console est tronqué à 15 lignes, ce qui "
+                        "suffit pour trancher « couverture ou rapprochement » "
+                        "mais pas pour vérifier un match précis.")
     a = p.parse_args()
 
     user, pwd = os.environ.get("AO_USER"), os.environ.get("AO_PASS")
@@ -74,9 +79,13 @@ def main() -> int:
     print(f"[ao] terminé en {duree:.0f} s")
     print(f"[ao] {stats.resume()}")
     print(f"[ao] {stats.couverture()}")
+    from src.asianodds_live import diagnostic_appariement
     if a.dry_run:
-        from src.asianodds_live import diagnostic_appariement
         print(diagnostic_appariement(stats))
+    if a.diagnostic:
+        with open(a.diagnostic, "w", encoding="utf-8") as f:
+            f.write(diagnostic_appariement(stats, limite=None) + "\n")
+        print(f"[ao] listes complètes écrites dans {a.diagnostic}")
     couv, cand = len(stats.evenements_couverts), stats.candidats_connus
     if cand and couv / cand < 0.5:
         print("[ao] ⚠ AsianOdds couvre moins de la moitié de NOS événements "

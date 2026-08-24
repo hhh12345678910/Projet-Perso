@@ -505,3 +505,94 @@ def test_le_diagnostic_montre_les_deux_cotes(tmp_path):
 def test_le_diagnostic_ne_plante_pas_sur_des_stats_vides():
     from src.asianodds_live import diagnostic_appariement
     assert "DIAGNOSTIC" in diagnostic_appariement(Stats())
+
+
+def test_le_diagnostic_complet_ne_tronque_rien(tmp_path):
+    """Le résumé console est tronqué à 15 lignes : c'est assez pour trancher
+    « couverture ou rapprochement », pas pour vérifier un match précis. Sur
+    la capture du 24/08, « Milan — Torino » figurait parmi les 19 orphelins
+    NON affichés, donc invérifiable."""
+    from src.asianodds_live import diagnostic_appariement
+    now = datetime(2026, 8, 23, 19, 0, tzinfo=timezone.utc)
+    db = Storage(tmp_path / "t.db")
+    debut = (now - timedelta(hours=1)).isoformat()
+    db.upsert_events([(f"k{i}", "soccer", "L", f"Equipe{i}", f"Adverse{i}",
+                       debut) for i in range(40)])
+
+    # Un message quelconque : c'est la boucle qui déclenche la relecture des
+    # candidats, donc sans lui les deux listes sortent vides.
+    stats = collect(db, "u", "p", dry_run=True,
+                    session_factory=lambda: _FausseSession(
+                        [{"EVF": EVF_DECIMAL}]),
+                    now_fn=lambda: now, log=lambda *a: None)
+
+    tronque = diagnostic_appariement(stats)
+    complet = diagnostic_appariement(stats, limite=None)
+    assert "et 25 autres" in tronque
+    assert "autres" not in complet
+    for i in range(40):
+        assert f"Equipe{i} — Adverse{i}" in complet
+
+
+# ── filtre de sport SUR LE FLUX (STP) ────────────────────────────────────
+TENNIS = dict(EVF_DECIMAL, MTCHID="555", STP=3,
+              HN="Radka Zelnickova (Sets)", AN="Federica Sacco (Sets)",
+              LN="ITF WOMEN TRIESTE")
+
+
+def test_un_evf_d_un_autre_sport_est_ecarte_avant_le_rapprochement(tmp_path):
+    """L'abonnement demande `sportstype=1`, le serveur pousse quand même du
+    tennis et de l'e-sport — mesuré le 24/08 : 55 matchs non rapprochés,
+    majoritairement du tennis. Les compter comme des échecs de
+    rapprochement fausse le taux et fait travailler le matcher pour rien."""
+    now = datetime(2026, 8, 23, 19, 0, tzinfo=timezone.utc)
+    db = _db_avec_match(tmp_path, now)
+    stats = collect(db, "u", "p", dry_run=True,
+                    session_factory=lambda: _FausseSession(
+                        [{"EVF": EVF_DECIMAL}, {"EVF": TENNIS}]),
+                    now_fn=lambda: now, log=lambda *a: None)
+
+    assert stats.hors_sport == 1
+    assert stats.sans_event_key == 0, "le tennis compté comme échec"
+    assert stats.matchs_vus == {EVF_DECIMAL["MTCHID"]}
+    assert "555" not in stats.asianodds_sans_match
+    assert "hors_sport=1" in stats.resume()
+    assert "(100.0 %)" in stats.resume(), "le taux doit ignorer les hors-sport"
+
+
+def test_le_filtre_de_flux_suit_le_sport_demande(tmp_path):
+    """Sur un abonnement tennis, c'est le football qui doit sortir."""
+    now = datetime(2026, 8, 23, 19, 0, tzinfo=timezone.utc)
+    db = Storage(tmp_path / "t.db")
+    stats = collect(db, "u", "p", dry_run=True, sport=3,
+                    session_factory=lambda: _FausseSession(
+                        [{"EVF": EVF_DECIMAL}, {"EVF": TENNIS}]),
+                    now_fn=lambda: now, log=lambda *a: None)
+    assert stats.hors_sport == 1
+    assert stats.matchs_vus == {"555"}
+
+
+@pytest.mark.parametrize("stp", [None, "", "?", {}])
+def test_un_stp_illisible_ne_fait_pas_jeter_le_message(tmp_path, stp):
+    """On ne jette pas une cote sur un champ qu'on n'a pas su lire : le
+    rapprochement par les noms reste seul juge."""
+    now = datetime(2026, 8, 23, 19, 0, tzinfo=timezone.utc)
+    db = _db_avec_match(tmp_path, now)
+    muet = dict(EVF_DECIMAL)
+    if stp is None:
+        muet.pop("STP")
+    else:
+        muet["STP"] = stp
+    stats = collect(db, "u", "p", dry_run=True,
+                    session_factory=lambda: _FausseSession([{"EVF": muet}]),
+                    now_fn=lambda: now, log=lambda *a: None)
+    assert stats.hors_sport == 0
+    assert len(stats.evenements_couverts) == 1
+
+
+def test_stp_texte_est_accepte_comme_nombre(tmp_path):
+    """Le flux mélange `"0"` et `0` sur SPMT ; rien ne garantit que STP soit
+    toujours un entier."""
+    from src.asianodds_live import _meme_sport
+    assert _meme_sport("1", 1) and _meme_sport(1, 1)
+    assert not _meme_sport("3", 1) and not _meme_sport(3, 1)

@@ -96,6 +96,21 @@ SPORT_VERS_NOTRE_NOM = {1: "soccer", 2: "basketball", 3: "tennis"}
 SPMT_VRAI_MATCH = "0"
 
 
+def _meme_sport(stp, sport: int) -> bool:
+    """L'EVF appartient-il au sport demandé par l'abonnement ?
+
+    `STP` (SportsType) porte le meme codage que le `sportstype` envoye au
+    SUBSCRIBE. Un champ absent ou illisible est CONSERVE : on ne jette pas un
+    message sur une donnee qu'on n'a pas su lire, le rapprochement tranchera.
+    """
+    if stp is None or stp == "":
+        return True
+    try:
+        return int(stp) == sport
+    except (TypeError, ValueError):
+        return True
+
+
 # ══════════════════════════════════════════════════════════════════════════
 # Client WebSocket minimal (RFC 6455)
 # ══════════════════════════════════════════════════════════════════════════
@@ -523,7 +538,7 @@ class AsianOddsSession:
             self.ws = None
 
 
-def diagnostic_appariement(stats, limite: int = 15) -> str:
+def diagnostic_appariement(stats, limite: "int | None" = 15) -> str:
     """Les deux listes cote a cote, pour trancher a l'oeil.
 
     Si la MEME rencontre figure dans les deux colonnes sous deux
@@ -540,17 +555,18 @@ def diagnostic_appariement(stats, limite: int = 15) -> str:
         "─" * 74,
         f"NOS matchs en cours SANS référence AsianOdds ({len(orphelins)}) :",
     ]
-    for c in orphelins[:limite]:
+    for c in (orphelins if limite is None else orphelins[:limite]):
         lignes.append(f"    {c.home} — {c.away}")
-    if len(orphelins) > limite:
+    if limite is not None and len(orphelins) > limite:
         lignes.append(f"    … et {len(orphelins) - limite} autres")
     lignes += ["",
                f"Matchs AsianOdds NON rapprochés "
                f"({len(stats.asianodds_sans_match)}) :"]
-    for nom in list(stats.asianodds_sans_match.values())[:limite]:
+    inconnus = list(stats.asianodds_sans_match.values())
+    for nom in (inconnus if limite is None else inconnus[:limite]):
         lignes.append(f"    {nom}")
-    if len(stats.asianodds_sans_match) > limite:
-        lignes.append(f"    … et {len(stats.asianodds_sans_match) - limite} autres")
+    if limite is not None and len(inconnus) > limite:
+        lignes.append(f"    … et {len(inconnus) - limite} autres")
     return "\n".join(lignes)
 
 
@@ -566,6 +582,7 @@ class Stats:
     normalises: int = 0
     ecrits: int = 0
     derives: int = 0                 # pseudo-evenements (team totals, corners)
+    hors_sport: int = 0              # EVF d'un autre sport que l'abonnement
     sans_event_key: int = 0          # match AsianOdds inconnu chez nous
     sans_selection: int = 0          # EVF sans une seule cote exploitable
     reconnexions: int = 0
@@ -591,10 +608,11 @@ class Stats:
     def resume(self) -> str:
         # Taux calcule sur les VRAIS matchs : inclure les derives le
         # gonflerait d'evenements qu'on ne veut de toute facon pas.
-        reels = self.evf - self.derives
+        reels = self.evf - self.derives - self.hors_sport
         appariés = reels - self.sans_event_key
         taux = f"{100 * appariés / reels:.1f} %" if reels else "n/a"
         return (f"msg={self.messages} evf={self.evf} dérivés={self.derives} "
+                f"hors_sport={self.hors_sport} "
                 f"appariés={appariés} ({taux}) "
                 f"sélections={self.normalises} écrites={self.ecrits} "
                 f"sans_match={self.sans_event_key} vides={self.sans_selection} "
@@ -700,6 +718,15 @@ def collect(storage, username: str, password: str, *,
                 # Filtre AVANT le rapprochement : les noms ne permettent pas
                 # de distinguer un derive de son match parent (voir
                 # SPMT_VRAI_MATCH), donc le rapprochement l'accepterait.
+                # L'abonnement demande UN sport (`sportstype`), le serveur
+                # en pousse plusieurs : la capture du 24/08 rendait du tennis
+                # et de l'e-sport sur un abonnement football. Sans ce filtre
+                # on rapproche des matchs qui ne peuvent structurellement pas
+                # correspondre, et le taux du bas est calculé sur un
+                # dénominateur qui ne nous concerne pas.
+                if not _meme_sport(evf.get("STP"), sport):
+                    stats.hors_sport += 1
+                    continue
                 if str(evf.get("SPMT", "")) != SPMT_VRAI_MATCH:
                     stats.derives += 1
                     continue
