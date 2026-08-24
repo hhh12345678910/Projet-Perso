@@ -74,6 +74,9 @@ def main() -> int:
     print(f"[ao] terminé en {duree:.0f} s")
     print(f"[ao] {stats.resume()}")
     print(f"[ao] {stats.couverture()}")
+    if a.dry_run:
+        from src.asianodds_live import diagnostic_appariement
+        print(diagnostic_appariement(stats))
     couv, cand = len(stats.evenements_couverts), stats.candidats_connus
     if cand and couv / cand < 0.5:
         print("[ao] ⚠ AsianOdds couvre moins de la moitié de NOS événements "

@@ -470,3 +470,38 @@ def test_pas_de_collision_signalee_quand_tout_va_bien(tmp_path):
                     now_fn=lambda: now, log=lambda *a: None)
     assert stats.collisions == set()
     assert "rapprochement est faux" not in stats.couverture()
+
+
+# ── diagnostic d'appariement ─────────────────────────────────────────────
+def test_le_diagnostic_montre_les_deux_cotes(tmp_path):
+    """« AsianOdds ne couvre pas ce match » et « le rapprochement a échoué »
+    donnent le même chiffre mais appellent des travaux opposés. Le
+    diagnostic doit rendre les deux listes pour qu'on tranche à l'œil."""
+    from src.asianodds_live import diagnostic_appariement
+    now = datetime(2026, 8, 23, 19, 0, tzinfo=timezone.utc)
+    db = Storage(tmp_path / "t.db")
+    debut = (now - timedelta(hours=1)).isoformat()
+    db.upsert_events([
+        (KEY, "soccer", "L", "Crvena Zvezda", "Cukaricki", debut),
+        ("orphelin", "soccer", "L", "Anderlecht", "Club Brugge", debut),
+    ])
+    # Un match qu'aucun de nos événements ne peut approcher. Attention au
+    # choix : une première version prenait « RSC Anderlecht » contre notre
+    # « Anderlecht », que le rapprochement apparie CORRECTEMENT — les deux
+    # listes ressortaient vides et le test ne testait rien.
+    inconnu = dict(EVF_DECIMAL, MTCHID="777", HN="Kawasaki Frontale",
+                   AN="Urawa Reds", LN="JAPAN J1 LEAGUE")
+    stats = collect(db, "u", "p", dry_run=True,
+                    session_factory=lambda: _FausseSession(
+                        [{"EVF": EVF_DECIMAL}, {"EVF": inconnu}]),
+                    now_fn=lambda: now, log=lambda *a: None)
+
+    rapport = diagnostic_appariement(stats)
+    assert "Anderlecht — Club Brugge" in rapport, "notre orphelin absent"
+    assert "Kawasaki Frontale — Urawa Reds" in rapport, "le leur absent"
+    assert "Crvena Zvezda" not in rapport, "un match apparié ne doit pas figurer"
+
+
+def test_le_diagnostic_ne_plante_pas_sur_des_stats_vides():
+    from src.asianodds_live import diagnostic_appariement
+    assert "DIAGNOSTIC" in diagnostic_appariement(Stats())

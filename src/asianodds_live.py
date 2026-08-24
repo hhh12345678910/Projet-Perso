@@ -523,6 +523,37 @@ class AsianOddsSession:
             self.ws = None
 
 
+def diagnostic_appariement(stats, limite: int = 15) -> str:
+    """Les deux listes cote a cote, pour trancher a l'oeil.
+
+    Si la MEME rencontre figure dans les deux colonnes sous deux
+    orthographes, c'est le rapprochement qui echoue et il faut le durcir.
+    Si les listes n'ont rien de commun, AsianOdds ne couvre simplement pas
+    ces matchs, et aucun travail sur le rapprochement n'y changera rien."""
+    couverts = stats.evenements_couverts
+    orphelins = [c for c in stats.derniers_candidats
+                 if c.event_key not in couverts]
+    lignes = [
+        "",
+        "─" * 74,
+        "DIAGNOSTIC — la même rencontre apparaît-elle des deux côtés ?",
+        "─" * 74,
+        f"NOS matchs en cours SANS référence AsianOdds ({len(orphelins)}) :",
+    ]
+    for c in orphelins[:limite]:
+        lignes.append(f"    {c.home} — {c.away}")
+    if len(orphelins) > limite:
+        lignes.append(f"    … et {len(orphelins) - limite} autres")
+    lignes += ["",
+               f"Matchs AsianOdds NON rapprochés "
+               f"({len(stats.asianodds_sans_match)}) :"]
+    for nom in list(stats.asianodds_sans_match.values())[:limite]:
+        lignes.append(f"    {nom}")
+    if len(stats.asianodds_sans_match) > limite:
+        lignes.append(f"    … et {len(stats.asianodds_sans_match) - limite} autres")
+    return "\n".join(lignes)
+
+
 # ══════════════════════════════════════════════════════════════════════════
 # Boucle de collecte
 # ══════════════════════════════════════════════════════════════════════════
@@ -550,6 +581,12 @@ class Stats:
     # un rapprochement est faux.
     origine_par_event: dict = field(default_factory=dict)
     collisions: set = field(default_factory=set)
+    # Pour le diagnostic : « AsianOdds ne couvre pas ce match » et « le
+    # rapprochement a echoue sur ce match » produisent le MEME chiffre mais
+    # appellent des travaux opposes. Seule la confrontation des deux listes
+    # permet de trancher, a l'oeil.
+    asianodds_sans_match: dict = field(default_factory=dict)
+    derniers_candidats: list = field(default_factory=list)
 
     def resume(self) -> str:
         # Taux calcule sur les VRAIS matchs : inclure les derives le
@@ -654,6 +691,7 @@ def collect(storage, username: str, password: str, *,
                 candidats = candidats_en_cours(storage, now_fn(), sport)
                 stats.candidats_connus = max(stats.candidats_connus,
                                              len(candidats))
+                stats.derniers_candidats = candidats
                 prochain_refresh = maintenant + REFRESH_CANDIDATS_SEC
 
             evf = msg.get("EVF") if msg else None
@@ -670,6 +708,9 @@ def collect(storage, username: str, password: str, *,
                     evf.get("HN") or "", evf.get("AN") or "", candidats)
                 if cible is None:
                     stats.sans_event_key += 1
+                    stats.asianodds_sans_match[evf.get("MTCHID")] = (
+                        f"{evf.get('HN')} — {evf.get('AN')}"
+                        f"   [{evf.get('LN')}]")
                 else:
                     # Deux matchs AsianOdds DIFFERENTS qui tombent sur le meme
                     # event_key : au moins l'un des deux est un mauvais
