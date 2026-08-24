@@ -50,7 +50,7 @@ from dataclasses import dataclass, field
 from datetime import datetime, timedelta, timezone
 from typing import Iterable, Iterator, Optional
 
-from .matcher import team_similarity
+from .matcher import normalize_team, team_similarity
 from .models import Book, MarketType
 
 WS_HOST = "app200.ao0188.com"
@@ -394,10 +394,37 @@ class Appariement:
     score: float
     second: float
     motif: str
+    #: Les AUTRES clés qui désignent la même rencontre. Voir
+    #: `evaluer_appariement` : mesuré en base, un même match existe jusqu'à
+    #: cinq fois sous cinq horaires différents.
+    doublons: tuple = ()
 
     @property
     def reussi(self) -> bool:
         return self.cible is not None
+
+    @property
+    def toutes_les_cibles(self) -> tuple:
+        return () if self.cible is None else (self.cible,) + self.doublons
+
+
+def _meme_rencontre(a: Candidat, b: Candidat) -> bool:
+    """Deux de NOS candidats désignent-ils LE MÊME match ?
+
+    ÉGALITÉ EXACTE des noms normalisés, pas une ressemblance. Le doublon
+    observé en base vient de l'horaire, seul, qui entre dans `event_key` :
+    `blackpool — lincolncity` existe sous quatre clés (14:00, 15:00, 16:00,
+    18:45) avec des noms rigoureusement identiques.
+
+    Une ressemblance floue au seuil de rapprochement serait ici DANGEREUSE :
+    elle juge « Sporting CP » et « Sporting Gijon » identiques, et écrirait
+    donc le prix d'un match sous la clé d'un autre — exactement la corruption
+    que le garde-fou d'ambiguïté existe pour empêcher. Le doublon interne se
+    reconnaît, il ne se devine pas.
+    """
+    x = (normalize_team(a.home), normalize_team(a.away))
+    y = (normalize_team(b.home), normalize_team(b.away))
+    return x == y or x == y[::-1]
 
 
 def evaluer_appariement(home: str, away: str,
@@ -410,29 +437,52 @@ def evaluer_appariement(home: str, away: str,
 
     Les seuils et le garde-fou d'ambiguïté sont ceux de `match_event`, à
     l'identique : deux candidats presque aussi bons → on refuse de deviner."""
-    meilleur: Optional[Candidat] = None
-    rival: Optional[Candidat] = None
-    score_max = second = 0.0
+    notes = []
     for c in candidats:
         direct = (team_similarity(home, c.home) + team_similarity(away, c.away)) / 2
         inverse = (team_similarity(home, c.away) + team_similarity(away, c.home)) / 2
-        score = max(direct, inverse)
-        if score > score_max:
-            rival, meilleur = meilleur, c
-            second, score_max = score_max, score
-        elif score > second:
-            second, rival = score, c
+        notes.append((max(direct, inverse), c))
+    if not notes:
+        return Appariement(None, 0.0, 0.0, "aucun candidat en cours")
+    notes.sort(key=lambda t: t[0], reverse=True)
+    score_max, meilleur = notes[0]
+    second = notes[1][0] if len(notes) > 1 else 0.0
+
     if score_max < MIN_MATCH_SCORE:
         return Appariement(None, score_max, second,
                            f"aucun candidat assez proche (meilleur {score_max:.0f} "
                            f"< {MIN_MATCH_SCORE:.0f})")
-    if second >= MIN_MATCH_SCORE and (score_max - second) < AMBIGUITY_MARGIN:
-        return Appariement(
-            None, score_max, second,
-            f"ambiguïté {score_max:.0f} vs {second:.0f} — "
-            f"« {meilleur.home} — {meilleur.away} » et "
-            f"« {rival.home} — {rival.away} » : doublon dans events ?")
-    return Appariement(meilleur, score_max, second, "apparié")
+
+    proches = [c for note, c in notes[1:]
+               if note >= MIN_MATCH_SCORE and (score_max - note) < AMBIGUITY_MARGIN]
+    if not proches:
+        return Appariement(meilleur, score_max, second, "apparié")
+
+    # Ex aequo. Deux cas OPPOSÉS derrière le même symptôme :
+    #
+    #   1. Nos candidats sont des rencontres DIFFÉRENTES qui se ressemblent
+    #      (deux équipes réserves, deux homonymes). Deviner écrirait un prix
+    #      sous la clé d'un autre match : on refuse, comme avant.
+    #   2. Nos candidats sont LA MÊME rencontre, dupliquée dans `events`
+    #      parce que deux books annoncent deux coups d'envoi et que l'heure
+    #      entre dans la clé. Mesuré en base : jusqu'à CINQ clés pour un
+    #      match (blackpool—lincolncity, 14:00/15:00/16:00/18:45). Refuser
+    #      ici perdait un match correctement identifié à 96/100 pour un
+    #      défaut qui est chez nous, pas dans la source.
+    #
+    # Corriger `events` releve du prematch, hors perimetre. On ecrit donc
+    # sous TOUTES les cles de la meme rencontre : le prix est le meme, et
+    # rien ne dit laquelle des cles le moteur consultera.
+    if all(_meme_rencontre(meilleur, c) for c in proches):
+        return Appariement(meilleur, score_max, second,
+                           f"apparié (+{len(proches)} doublon(s) dans events)",
+                           tuple(proches))
+    autre = next(c for c in proches if not _meme_rencontre(meilleur, c))
+    return Appariement(
+        None, score_max, second,
+        f"ambiguïté {score_max:.0f} vs {second:.0f} entre DEUX rencontres — "
+        f"« {meilleur.home} — {meilleur.away} » et "
+        f"« {autre.home} — {autre.away} »")
 
 
 def match_live_event(home: str, away: str,
@@ -620,20 +670,51 @@ class AsianOddsSession:
             self.ws = None
 
 
+#: Durée au-delà de laquelle un match de football est presque sûrement fini
+#: (2 × 45 min + mi-temps + arrêts de jeu, avec de la marge). Sert UNIQUEMENT
+#: au diagnostic : rien n'est filtré sur cette base, on ne connaît pas l'état
+#: réel du match, seulement l'heure annoncée par notre référence.
+EN_JEU_MAX_MIN = 135
+
+
+def _minutes_depuis_coup_denvoi(c, maintenant: datetime) -> "int | None":
+    if c.start_time is None:
+        return None
+    debut = c.start_time
+    if debut.tzinfo is None:
+        debut = debut.replace(tzinfo=timezone.utc)
+    return int((maintenant - debut).total_seconds() // 60)
+
+
+def plausiblement_en_jeu(candidats, maintenant: datetime) -> list:
+    """Ceux de nos candidats qui peuvent réellement être en cours.
+
+    `candidats_en_cours` remonte jusqu'à LIVE_WINDOW_BEFORE = 4 h alors qu'un
+    match en dure 2 : le dénominateur contient des matchs TERMINÉS et des
+    matchs pas encore commencés. Mesuré le 24/08 : 21 de nos 46 « orphelins »
+    étaient finis. Le taux brut accuse alors AsianOdds d'un trou qui n'est
+    pas le sien. Un horaire absent est CONSERVÉ : on ne retire pas un
+    candidat sur une donnée manquante.
+    """
+    gardes = []
+    for c in candidats:
+        m = _minutes_depuis_coup_denvoi(c, maintenant)
+        if m is None or 0 <= m <= EN_JEU_MAX_MIN:
+            gardes.append(c)
+    return gardes
+
+
 def _anciennete(c, maintenant: datetime) -> str:
     """« débuté il y a 3 h 12 » : un match de football dure environ 2 h. Nos
     candidats vont jusqu'à LIVE_WINDOW_BEFORE en arrière, donc une partie des
     « orphelins » est simplement TERMINÉE et gonfle le dénominateur sans
     qu'AsianOdds y soit pour quoi que ce soit."""
-    if c.start_time is None:
+    m = _minutes_depuis_coup_denvoi(c, maintenant)
+    if m is None:
         return ""
-    debut = c.start_time
-    if debut.tzinfo is None:
-        debut = debut.replace(tzinfo=timezone.utc)
-    m = int((maintenant - debut).total_seconds() // 60)
     if m < 0:
         return f"   (débute dans {-m} min)"
-    fini = "  ⟵ probablement TERMINÉ" if m > 135 else ""
+    fini = "  ⟵ probablement TERMINÉ" if m > EN_JEU_MAX_MIN else ""
     return f"   (débuté il y a {m // 60} h {m % 60:02d}){fini}"
 
 
@@ -701,6 +782,9 @@ class Stats:
     #: Pourquoi les rapprochements ont echoue, par motif. Un echec de seuil
     #: et une ambiguite se corrigent a des endroits opposes.
     motifs_echec: Counter = field(default_factory=Counter)
+    #: Nos evenements pour lesquels `events` porte plusieurs cles. Le prix
+    #: est ecrit sous chacune : le defaut est chez nous, pas dans la source.
+    doublons_events: set = field(default_factory=set)
     # Comptes PAR MATCH, et non par message. Un match liquide reprice 200
     # fois quand un match calme reprice 3 fois : pondere par message, le
     # taux d'appariement decrit surtout les gros matchs. Ce sont ces
@@ -760,12 +844,28 @@ class Stats:
         t1 = f"{100 * app / vus:.1f} %" if vus else "n/a"
         couv, cand = len(self.evenements_couverts), self.candidats_connus
         t2 = f"{100 * couv / cand:.1f} %" if cand else "n/a"
+        # Le taux brut compte des matchs finis et des matchs pas commences.
+        # On donne les deux : le brut reste comparable d'un run a l'autre, le
+        # corrige est celui qui decrit la source.
+        en_jeu = plausiblement_en_jeu(self.derniers_candidats,
+                                      datetime.now(timezone.utc))
+        cles = {c.event_key for c in en_jeu}
+        n_jeu = len(cles)
+        couv_jeu = len(cles & self.evenements_couverts)
+        t3 = f"{100 * couv_jeu / n_jeu:.1f} %" if n_jeu else "n/a"
+        corrige = (f"\n       dont plausiblement EN JEU={n_jeu} "
+                   f"(≤ {EN_JEU_MAX_MIN} min de jeu) couverts={couv_jeu} "
+                   f"({t3})   <<< le taux honnête"
+                   if self.derniers_candidats else "")
+        dbl = (f"\n       ({len(self.doublons_events)} rencontre(s) portant "
+               f"plusieurs clés dans events : prix écrit sous chacune)"
+               if self.doublons_events else "")
         col = (f"\n       /!\\ {len(self.collisions)} de nos evenements "
                f"revendiques par PLUSIEURS matchs AsianOdds : au moins un "
                f"rapprochement est faux" if self.collisions else "")
         return (f"matchs AsianOdds reels={vus} apparies={app} ({t1})\n"
                 f"       NOS evenements en cours={cand} couverts par "
-                f"AsianOdds={couv} ({t2})   <<< le taux qui compte" + col)
+                f"AsianOdds={couv} ({t2})" + corrige + dbl + col)
 
 
 # Cadence d'écriture. Le flux pousse ~30 messages/s ; écrire chaque message
@@ -878,22 +978,27 @@ def collect(storage, username: str, password: str, *,
                     # Deux matchs AsianOdds DIFFERENTS qui tombent sur le meme
                     # event_key : au moins l'un des deux est un mauvais
                     # rapprochement. Compte, pas devine.
-                    deja = stats.origine_par_event.setdefault(
-                        cible.event_key, evf.get("MTCHID"))
-                    if deja != evf.get("MTCHID"):
-                        stats.collisions.add(cible.event_key)
+                    for c in app.toutes_les_cibles:
+                        deja = stats.origine_par_event.setdefault(
+                            c.event_key, evf.get("MTCHID"))
+                        if deja != evf.get("MTCHID"):
+                            stats.collisions.add(c.event_key)
                     stats.matchs_apparies.add(evf.get("MTCHID"))
-                    stats.evenements_couverts.add(cible.event_key)
-                    lignes = normalise_evf(evf, cible.event_key)
-                    if not lignes:
-                        stats.sans_selection += 1
-                    stats.normalises += len(lignes)
                     horodatage = now_fn()
-                    for l in lignes:
-                        # Clé naturelle : un même marché repricé plusieurs fois
-                        # dans le lot ne produit qu'une écriture, la dernière.
-                        lot[(l.event_key, l.market.value, l.outcome_label,
-                             l.line)] = l.as_upsert_row(horodatage)
+                    if app.doublons:
+                        stats.doublons_events.add(cible.event_key)
+                    for c in app.toutes_les_cibles:
+                        stats.evenements_couverts.add(c.event_key)
+                        lignes = normalise_evf(evf, c.event_key)
+                        if not lignes:
+                            stats.sans_selection += 1
+                        stats.normalises += len(lignes)
+                        for l in lignes:
+                            # Clé naturelle : un même marché repricé plusieurs
+                            # fois dans le lot ne produit qu'une écriture, la
+                            # dernière.
+                            lot[(l.event_key, l.market.value, l.outcome_label,
+                                 l.line)] = l.as_upsert_row(horodatage)
 
             if maintenant - dernier_flush >= FLUSH_SEC:
                 vider()

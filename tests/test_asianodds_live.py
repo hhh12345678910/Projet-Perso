@@ -187,11 +187,54 @@ def test_rapprochement_refuse_un_inconnu():
     assert match_live_event("Crvena Zvezda", "Cukaricki", cands) is None
 
 
-def test_rapprochement_refuse_de_deviner_si_ambigu():
-    """Deux candidats presque aussi bons : on ne tranche pas."""
-    cands = [Candidat("k1", "Manchester United", "Liverpool"),
-             Candidat("k2", "Manchester United", "Liverpool")]
-    assert match_live_event("Manchester United", "Liverpool", cands) is None
+def test_rapprochement_refuse_de_deviner_entre_deux_rencontres():
+    """Deux candidats presque aussi bons ET RÉELLEMENT DIFFÉRENTS : on ne
+    tranche pas. « Dinamo » désigne aussi bien Minsk que Moscou ; deviner
+    écrirait le prix d'un match sous la clé de l'autre.
+
+    L'exemple d'origine utilisait deux candidats IDENTIQUES, qui sont un
+    doublon de notre base et non une ambiguïté — voir
+    test_un_doublon_de_notre_base_ne_fait_plus_perdre_le_match."""
+    cands = [Candidat("k1", "Dinamo Minsk", "Zenit"),
+             Candidat("k2", "Dinamo Moscow", "Zenit")]
+    assert match_live_event("Dinamo", "Zenit", cands) is None
+
+
+def test_une_ressemblance_ne_suffit_pas_a_declarer_un_doublon():
+    """Garde-fou de la correction elle-même. « Sporting CP » et « Sporting
+    Gijon » se ressemblent au-dessus du seuil de rapprochement : les traiter
+    comme un doublon écrirait le prix du Sporting portugais sous la clé du
+    Sporting espagnol. Le doublon interne se reconnaît à l'ÉGALITÉ des noms,
+    il ne se devine pas."""
+    from src.asianodds_live import _meme_rencontre, evaluer_appariement
+    a = Candidat("k1", "Sporting CP", "Benfica")
+    b = Candidat("k2", "Sporting Gijon", "Benfica")
+    assert not _meme_rencontre(a, b)
+    r = evaluer_appariement("Sporting", "Benfica", [a, b])
+    assert not r.reussi
+    assert "DEUX rencontres" in r.motif
+
+
+def test_un_doublon_de_notre_base_ne_fait_plus_perdre_le_match():
+    """Le cas mesuré le 24/08 : « Torpedo Zhodino — Dnepr Mogilev » identifié
+    à 96/100, mais perdu parce que `events` le porte deux fois. Mesuré en
+    base : jusqu'à CINQ clés pour une rencontre, l'horaire seul changeant
+    (blackpool—lincolncity 14:00/15:00/16:00/18:45). Le défaut est chez nous ;
+    la source ne doit pas en payer le prix."""
+    from src.asianodds_live import evaluer_appariement
+    cands = [Candidat("202608241700::a", "torpedozhodino", "dneprmogilev"),
+             Candidat("202608241800::a", "torpedozhodino", "dneprmogilev")]
+    r = evaluer_appariement("Torpedo Zhodino", "Dnepr Mogilev", cands)
+    assert r.reussi
+    assert len(r.toutes_les_cibles) == 2, "le prix doit aller sous les DEUX clés"
+    assert "doublon" in r.motif
+
+
+def test_un_doublon_inverse_domicile_exterieur_est_reconnu():
+    from src.asianodds_live import _meme_rencontre
+    a = Candidat("k1", "Anderlecht", "Club Brugge")
+    b = Candidat("k2", "Club Brugge", "Anderlecht")
+    assert _meme_rencontre(a, b)
 
 
 def test_candidats_en_cours_ne_lit_que_la_fenetre(tmp_path):
@@ -714,11 +757,13 @@ def test_l_ambiguite_est_distinguee_d_un_score_trop_bas():
     assert seul.reussi and seul.cible is vrai and seul.motif == "apparié"
     assert seul.score > 90
 
+    # Deux clés pour la MÊME rencontre : ce n'est pas une ambiguïté, c'est
+    # un doublon de notre base, et il ne doit plus coûter le match.
     ambigu = evaluer_appariement("Torpedo Zhodino", "Dnepr Mogilev",
                                  [vrai, doublon])
-    assert not ambigu.reussi
-    assert "ambiguïté" in ambigu.motif
-    assert "doublon" in ambigu.motif, "le motif doit nommer la piste"
+    assert ambigu.reussi
+    assert "doublon" in ambigu.motif
+    assert set(ambigu.toutes_les_cibles) == {vrai, doublon}
 
     loin = evaluer_appariement("Kawasaki Frontale", "Urawa Reds", [vrai])
     assert not loin.reussi
@@ -726,11 +771,12 @@ def test_l_ambiguite_est_distinguee_d_un_score_trop_bas():
 
 
 def test_le_motif_d_ambiguite_nomme_les_deux_rivaux():
+    """Sans les noms, le motif ne dit pas OÙ chercher."""
     from src.asianodds_live import evaluer_appariement
-    a = Candidat("a", "Manchester United", "Ipswich Town")
-    b = Candidat("b", "Manchester United", "Ipswich")
-    m = evaluer_appariement("Manchester United", "Ipswich Town", [a, b]).motif
-    assert "Ipswich Town" in m and "Ipswich" in m
+    a = Candidat("a", "Dinamo Minsk", "Zenit")
+    b = Candidat("b", "Dinamo Moscow", "Zenit")
+    m = evaluer_appariement("Dinamo", "Zenit", [a, b]).motif
+    assert "Dinamo Minsk" in m and "Dinamo Moscow" in m
 
 
 def test_match_live_event_garde_son_contrat():
@@ -746,13 +792,14 @@ def test_les_motifs_d_echec_sont_comptes_dans_le_diagnostic(tmp_path):
     now = datetime(2026, 8, 23, 19, 0, tzinfo=timezone.utc)
     db = Storage(tmp_path / "t.db")
     debut = (now - timedelta(hours=1)).isoformat()
-    # Le MÊME match deux fois : exactement le doublon soupçonné en base.
+    # DEUX rencontres différentes que le nom d'AsianOdds ne départage pas.
     db.upsert_events([
-        ("k1", "soccer", "L", "Crvena Zvezda", "Cukaricki", debut),
-        ("k2", "soccer", "L", "Crvena Zvezda", "Cukaricki FK", debut),
+        ("k1", "soccer", "L", "Dinamo Minsk", "Zenit", debut),
+        ("k2", "soccer", "L", "Dinamo Moscow", "Zenit", debut),
     ])
+    ambigu = dict(EVF_DECIMAL, HN="Dinamo", AN="Zenit")
     stats = collect(db, "u", "p", dry_run=True,
-                    session_factory=lambda: _FausseSession([{"EVF": EVF_DECIMAL}]),
+                    session_factory=lambda: _FausseSession([{"EVF": ambigu}]),
                     now_fn=lambda: now, log=lambda *a: None)
 
     assert stats.sans_event_key == 1
@@ -761,6 +808,31 @@ def test_les_motifs_d_echec_sont_comptes_dans_le_diagnostic(tmp_path):
     rapport = diagnostic_appariement(stats)
     assert "Motifs d'échec" in rapport
     assert "ambiguïté" in rapport
+
+
+def test_un_doublon_fait_ecrire_le_prix_sous_chaque_cle(tmp_path):
+    """Bout en bout : le même prix doit atterrir sous les deux clés, parce
+    que rien ne dit laquelle le moteur consultera."""
+    now = datetime(2026, 8, 23, 19, 0, tzinfo=timezone.utc)
+    db = Storage(tmp_path / "t.db")
+    debut = (now - timedelta(hours=1)).isoformat()
+    db.upsert_events([
+        ("202608231700::z", "soccer", "L", "Crvena Zvezda", "Cukaricki", debut),
+        ("202608231800::z", "soccer", "L", "Crvena Zvezda", "Cukaricki",
+         (now - timedelta(minutes=30)).isoformat()),
+    ])
+    stats = collect(db, "u", "p",
+                    session_factory=lambda: _FausseSession([{"EVF": EVF_DECIMAL}]),
+                    now_fn=lambda: now, log=lambda *a: None)
+
+    assert stats.sans_event_key == 0
+    assert len(stats.evenements_couverts) == 2
+    assert stats.doublons_events == {"202608231700::z"} or \
+        stats.doublons_events == {"202608231800::z"}
+    for cle in ("202608231700::z", "202608231800::z"):
+        assert len(db.market_state(event_key=cle)) == 12, f"rien sous {cle}"
+    assert stats.collisions == set(), "un doublon n'est pas une collision"
+    assert "plusieurs clés dans events" in stats.couverture()
 
 
 # ── ancienneté du coup d'envoi ───────────────────────────────────────────
@@ -806,3 +878,47 @@ def test_un_horaire_illisible_ne_fait_pas_tomber_le_diagnostic():
     assert _horaire(None) is None
     assert _horaire("pas une date") is None
     assert _horaire("2026-08-23T19:00:00+00:00") is not None
+
+
+# ── dénominateur honnête ─────────────────────────────────────────────────
+def test_plausiblement_en_jeu_ecarte_le_fini_et_le_pas_commence():
+    """La fenêtre de candidats remonte à 4 h alors qu'un match en dure 2 :
+    mesuré le 24/08, 21 de nos 46 « orphelins » étaient terminés. Les
+    compter accuse AsianOdds d'un trou qui n'est pas le sien."""
+    from src.asianodds_live import plausiblement_en_jeu, EN_JEU_MAX_MIN
+    now = datetime(2026, 8, 23, 19, 0, tzinfo=timezone.utc)
+    fini = Candidat("fini", "A", "B", now - timedelta(hours=3, minutes=30))
+    encours = Candidat("encours", "C", "D", now - timedelta(minutes=40))
+    limite = Candidat("limite", "I", "J",
+                      now - timedelta(minutes=EN_JEU_MAX_MIN))
+    futur = Candidat("futur", "E", "F", now + timedelta(minutes=10))
+    sans = Candidat("sans", "G", "H", None)
+
+    gardes = plausiblement_en_jeu([fini, encours, limite, futur, sans], now)
+
+    assert {c.event_key for c in gardes} == {"encours", "limite", "sans"}, \
+        "un horaire absent doit être conservé, pas écarté sur une donnée manquante"
+
+
+def test_la_couverture_publie_le_taux_corrige(tmp_path, monkeypatch):
+    """Les deux taux, et pas seulement le brut : le brut reste comparable
+    d'un run à l'autre, le corrigé décrit la source."""
+    now = datetime(2026, 8, 23, 19, 0, tzinfo=timezone.utc)
+    monkeypatch.setattr("src.asianodds_live.datetime", _Horloge(now))
+    stats = Stats()
+    stats.evf = 1
+    stats.candidats_connus = 4
+    stats.derniers_candidats = [
+        Candidat("couvert", "A", "B", now - timedelta(minutes=40)),
+        Candidat("orphelin", "C", "D", now - timedelta(minutes=50)),
+        Candidat("fini1", "E", "F", now - timedelta(hours=3)),
+        Candidat("fini2", "G", "H", now - timedelta(hours=3, minutes=30)),
+    ]
+    stats.evenements_couverts = {"couvert"}
+    stats.matchs_vus = {"m1"}
+    stats.matchs_apparies = {"m1"}
+
+    texte = stats.couverture()
+    assert "en cours=4 couverts par AsianOdds=1 (25.0 %)" in texte
+    assert "EN JEU=2" in texte and "couverts=1 (50.0 %)" in texte, \
+        "le taux corrigé manque : les deux matchs finis gonflent encore"
