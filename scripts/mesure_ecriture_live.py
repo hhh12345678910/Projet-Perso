@@ -200,8 +200,11 @@ def main() -> int:
     taille_apres = tailles(a.db)
 
     print(f"\n═══ APRÈS — {t1.isoformat()} ═══")
-    print(f"[ao] {stats.resume()}")
-    print(f"[ao] {stats.couverture()}")
+    if a.temoin:
+        print("[ao] collecteur non lancé — aucune statistique de collecte.")
+    else:
+        print(f"[ao] {stats.resume()}")
+        print(f"[ao] {stats.couverture()}")
 
     print(f"\n─── 1. lignes market_state ───")
     print(f"  total     : {ms_avant:,} → {ms_apres:,} "
@@ -231,8 +234,9 @@ def main() -> int:
 
     print(f"\n─── 7. impact sur le prématch ───")
     print(f"  journal_mode : {journal} → {journal_apres}")
-    print(f"  quotes ajoutées par le daemon pendant le run : {quotes_pendant:,}"
-          .replace(",", " "))
+    print(f"  quotes ajoutées par le daemon pendant le run : {quotes_pendant:,} "
+          f"({quotes_pendant / (duree / 60):.0f}/min)   <<< à comparer entre "
+          f"un run avec collecteur et un run témoin".replace(",", " "))
     if not quotes_pendant:
         print("  ⚠ AUCUNE quote ajoutée : le daemon n'a peut-être pas tourné, "
               "ou son cycle est plus long que le run.")
@@ -253,7 +257,13 @@ def main() -> int:
         print(f"  {t:<15}: {etat} ({n} → {n2} lignes présentes à T0)")
     print(f"  lignes prématch de market_state polluées par du contexte LIVE : "
           f"{prematch_ecrases}")
-    if modifiees:
+    if modifiees and a.temoin:
+        print(f"  → {', '.join(modifiees)} a/ont bougé ALORS QUE LE COLLECTEUR "
+              f"N'A PAS TOURNÉ.\n"
+              f"    C'est donc le daemon prématch qui se modifie lui-même : le "
+              f"collecteur est hors de cause, par l'expérience et pas seulement "
+              f"par l'inspection du code.")
+    elif modifiees:
         print(f"  → {', '.join(modifiees)} a/ont bougé. Le collecteur n'écrit "
               f"QUE via upsert_live_state (market_state) : il n'a aucun chemin "
               f"vers ces tables.\n"

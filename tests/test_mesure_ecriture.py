@@ -205,7 +205,7 @@ def test_le_run_temoin_mesure_sans_lancer_le_collecteur(tmp_path, monkeypatch,
     assert appele == [], "le collecteur a été lancé pendant le run témoin"
     assert code == 0
     assert "TÉMOIN" in sortie
-    assert "collecteur n'a pas été lancé" in sortie
+    assert "aucune statistique de collecte" in sortie
     assert "quotes         : INTACT" in sortie
     # Le témoin ne doit pas exiger d'identifiants : rien ne se connecte.
     assert "AO_USER" not in sortie
@@ -271,3 +271,34 @@ def test_une_suppression_est_distinguee_d_une_reecriture(tmp_path, monkeypatch,
     sortie = capsys.readouterr().out
     assert "quotes         : 1 ligne(s) SUPPRIMÉE(S)" in sortie
     assert "RÉÉCRIT" not in sortie
+
+
+def test_le_temoin_ne_reclame_pas_un_temoin(tmp_path, monkeypatch, capsys):
+    """Défaut vu sur le run réel : le rapport du témoin conseillait de lancer
+    un run témoin. Il doit au contraire CONCLURE — c'est tout son objet."""
+    import scripts.mesure_ecriture_live as m
+
+    t0 = datetime.now(timezone.utc)
+    chemin = tmp_path / "m.db"
+    db = Storage(chemin)
+    db.upsert_events([("k1", "soccer", "L", "A", "B",
+                       (t0 + timedelta(hours=1)).isoformat())])
+    db.insert_quotes([_quote("k1", Book.PINNACLE, "home", 1.90,
+                             t0 - timedelta(minutes=5))])
+
+    monkeypatch.setattr(m, "collect", lambda *a, **k: None)
+    def daemon_qui_travaille(_):
+        with db._conn() as c:
+            c.execute("UPDATE quotes SET decimal_odd = 1.55")
+
+    monkeypatch.setattr(m.time, "sleep", daemon_qui_travaille)
+    monkeypatch.setattr("sys.argv", ["m", "--db", str(chemin), "--temoin",
+                                     "--minutes", "1"])
+    main()
+    sortie = capsys.readouterr().out
+
+    assert "hors de cause" in sortie
+    assert "--temoin --minutes" not in sortie, \
+        "le témoin réclame un témoin"
+    assert "aucune statistique de collecte" in sortie
+    assert "AUCUN EVF" not in sortie, "statistiques de collecte vides affichées"
