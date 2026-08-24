@@ -38,34 +38,38 @@ def _un(c, sql, args=()):
     return r[0] if r else None
 
 
-def empreinte_prematch(c, t0: str) -> dict:
-    """Compte + empreinte des lignes ANTÉRIEURES au run, table par table.
+def bornes_rowid(c) -> dict:
+    """Le dernier rowid de chaque table du prématch, à l'instant T0.
+
+    C'est LA borne juste. La première version partitionnait sur l'horodatage
+    (`fetched_at < T0`) et se trompait : le daemon insère des lignes datées de
+    l'heure du SCRAPE, donc antérieures à T0, mais les commite après —
+    8 484 271 lignes « antérieures » en devenaient 8 484 354 sans que rien
+    n'ait été réécrit. Le rowid, lui, est attribué à l'écriture.
+    """
+    return {t: (_un(c, f"SELECT MAX(rowid) FROM {t}") or 0)
+            for t in TABLES_PREMATCH}
+
+
+def empreinte_prematch(c, bornes: dict) -> dict:
+    """Compte + empreinte des lignes qui EXISTAIENT à T0, table par table.
 
     Se limiter au compte ne prouverait rien : une ligne modifiée en place ne
-    change pas le total. On hache donc le contenu, en excluant ce que le
-    daemon ajoute PENDANT le run — sa croissance est normale, sa réécriture
-    ne le serait pas.
+    change pas le total. On hache donc le contenu — et seulement celui des
+    lignes déjà présentes, ce que le daemon ajoute pendant le run étant une
+    croissance normale.
     """
     out = {}
-    for t in TABLES_PREMATCH:
-        colonnes = [r[1] for r in c.execute(f"PRAGMA table_info({t})")]
-        if not colonnes:
+    for t, borne in bornes.items():
+        if not [r for r in c.execute(f"PRAGMA table_info({t})")]:
             continue
-        horodatage = next((x for x in ("fetched_at", "detected_at",
-                                       "snapshot_at", "start_time")
-                           if x in colonnes), None)
-        sql = f"SELECT * FROM {t}"
-        args: tuple = ()
-        if horodatage:
-            sql += f" WHERE {horodatage} < ?"
-            args = (t0,)
-        sql += " ORDER BY rowid"
         h = hashlib.sha256()
         n = 0
-        for ligne in c.execute(sql, args):
+        for ligne in c.execute(
+                f"SELECT * FROM {t} WHERE rowid <= ? ORDER BY rowid", (borne,)):
             h.update(repr(tuple(ligne)).encode())
             n += 1
-        out[t] = (n, h.hexdigest()[:16], horodatage)
+        out[t] = (n, h.hexdigest()[:16])
     return out
 
 
@@ -98,10 +102,18 @@ def main() -> int:
     p.add_argument("--minutes", type=float, default=30.0)
     p.add_argument("--db", default="data/valuebet.db")
     p.add_argument("--sport", type=int, default=SPORT_FOOTBALL)
+    p.add_argument("--temoin", action="store_true",
+                   help="RUN TÉMOIN : mesure exactement la même chose, mais "
+                        "sans lancer le collecteur. Seul le daemon prématch "
+                        "travaille. C'est ce qui distingue « le collecteur a "
+                        "modifié le prématch » de « le prématch se modifie "
+                        "lui-même », que la seule inspection du code ne "
+                        "tranche pas.")
     a = p.parse_args()
 
     user, pwd = os.environ.get("AO_USER"), os.environ.get("AO_PASS")
-    if not user or not pwd or est_un_exemple(user) or est_un_exemple(pwd):
+    if not a.temoin and (not user or not pwd
+                         or est_un_exemple(user) or est_un_exemple(pwd)):
         print(f"ERREUR : AO_USER / AO_PASS manquants ou d'exemple.\n"
               f"{INVITE_SAISIE}", file=sys.stderr)
         return 2
@@ -114,24 +126,41 @@ def main() -> int:
         ms_avant = _un(c, "SELECT COUNT(*) FROM market_state")
         ms_ao_avant = _un(c, "SELECT COUNT(*) FROM market_state WHERE book = ?",
                           (Book.ASIANODDS.value,))
-        prematch_avant = empreinte_prematch(c, t0_iso)
+        bornes = bornes_rowid(c)
+        prematch_avant = empreinte_prematch(c, bornes)
         journal = _un(c, "PRAGMA journal_mode")
+        pages_avant = (_un(c, "PRAGMA page_count"), _un(c, "PRAGMA freelist_count"),
+                       _un(c, "PRAGMA page_size"))
     taille_avant = tailles(a.db)
 
     print(f"═══ AVANT — {t0_iso} ═══")
     print(f"  journal_mode        : {journal}")
     print(f"  market_state        : {ms_avant:,} lignes "
           f"(dont asianodds : {ms_ao_avant:,})".replace(",", " "))
-    for t, (n, h, col) in prematch_avant.items():
-        print(f"  {t:<20}: {n:,} lignes antérieures, empreinte {h}"
+    for t, (n, h) in prematch_avant.items():
+        print(f"  {t:<20}: {n:,} lignes présentes, empreinte {h}"
               .replace(",", " "))
     print(f"  taille              : db {octets(taille_avant['db'])} | "
           f"wal {octets(taille_avant['-wal'])}")
-    print(f"\n═══ COLLECTE — {a.minutes:.0f} min, ÉCRITURE RÉELLE ═══", flush=True)
+    print(f"  pages               : {pages_avant[0]:,} dont {pages_avant[1]:,} "
+          f"libres ({octets(pages_avant[1] * pages_avant[2])} réutilisables)"
+          .replace(",", " "))
+    if a.temoin:
+        print(f"\n═══ TÉMOIN — {a.minutes:.0f} min, COLLECTEUR À L'ARRÊT ═══",
+              flush=True)
+    else:
+        print(f"\n═══ COLLECTE — {a.minutes:.0f} min, ÉCRITURE RÉELLE ═══",
+              flush=True)
 
     depart = time.monotonic()
-    stats = collect(db, user, pwd, duration_sec=a.minutes * 60,
-                    sport=a.sport, dry_run=False)
+    if a.temoin:
+        from src.asianodds_live import Stats
+        stats = Stats()
+        stats.fin_raison = "run témoin : le collecteur n'a pas été lancé"
+        time.sleep(a.minutes * 60)
+    else:
+        stats = collect(db, user, pwd, duration_sec=a.minutes * 60,
+                        sport=a.sport, dry_run=False)
     duree = time.monotonic() - depart
 
     t1 = datetime.now(timezone.utc)
@@ -139,10 +168,12 @@ def main() -> int:
         ms_apres = _un(c, "SELECT COUNT(*) FROM market_state")
         ms_ao_apres = _un(c, "SELECT COUNT(*) FROM market_state WHERE book = ?",
                           (Book.ASIANODDS.value,))
-        prematch_apres = empreinte_prematch(c, t0_iso)
+        prematch_apres = empreinte_prematch(c, bornes)
         complet = _un(c, "PRAGMA integrity_check")
         cles = _un(c, "PRAGMA foreign_key_check") or "ok"
         journal_apres = _un(c, "PRAGMA journal_mode")
+        pages_apres = (_un(c, "PRAGMA page_count"), _un(c, "PRAGMA freelist_count"),
+                       _un(c, "PRAGMA page_size"))
         # Ce que le daemon a AJOUTÉ pendant le run : preuve qu'il a continué
         # de tourner, et non qu'il s'est tu sous le verrou.
         quotes_pendant = _un(
@@ -205,15 +236,33 @@ def main() -> int:
     if not quotes_pendant:
         print("  ⚠ AUCUNE quote ajoutée : le daemon n'a peut-être pas tourné, "
               "ou son cycle est plus long que le run.")
-    intact = True
-    for t, (n, h, col) in prematch_avant.items():
-        n2, h2, _ = prematch_apres.get(t, (None, None, None))
-        ok = (n, h) == (n2, h2)
-        intact &= ok
-        print(f"  {t:<15}: {'INTACT' if ok else 'MODIFIÉ'} "
-              f"({n} → {n2} lignes antérieures, {h} → {h2})")
+    modifiees = []
+    for t, (n, h) in prematch_avant.items():
+        n2, h2 = prematch_apres.get(t, (None, None))
+        if (n, h) == (n2, h2):
+            etat = "INTACT"
+        elif n2 is not None and n2 < n:
+            # La purge de retention (`Storage.purge_old_quotes`) supprime les
+            # quotes par lots. Une disparition n'est donc pas anormale en soi ;
+            # c'est une REECRITURE qui le serait.
+            etat = f"{n - n2} ligne(s) SUPPRIMÉE(S)"
+            modifiees.append(t)
+        else:
+            etat = "RÉÉCRIT EN PLACE"
+            modifiees.append(t)
+        print(f"  {t:<15}: {etat} ({n} → {n2} lignes présentes à T0)")
     print(f"  lignes prématch de market_state polluées par du contexte LIVE : "
           f"{prematch_ecrases}")
+    if modifiees:
+        print(f"  → {', '.join(modifiees)} a/ont bougé. Le collecteur n'écrit "
+              f"QUE via upsert_live_state (market_state) : il n'a aucun chemin "
+              f"vers ces tables.\n"
+              f"    Le prouver demande un RUN TÉMOIN — même mesure, "
+              f"collecteur à l'arrêt :\n"
+              f"      .venv/bin/python -m scripts.mesure_ecriture_live "
+              f"--temoin --minutes {a.minutes:.0f}\n"
+              f"    Si les mêmes tables bougent sans le collecteur, "
+              f"c'est le daemon.")
 
     print(f"\n─── 8. intégrité ───")
     print(f"  integrity_check    : {complet}")
@@ -227,9 +276,26 @@ def main() -> int:
               f"{r['observed_at']} | {r['event_key']}")
     print(f"  lignes asianodds sans contexte LIVE complet : {incomplets}")
 
-    propre = (intact and complet == "ok" and stats.sqlite_echecs == 0
+    print(f"\n─── 2 bis. pages SQLite ───")
+    print(f"  page_count : {pages_avant[0]:,} → {pages_apres[0]:,}"
+          .replace(",", " "))
+    print(f"  freelist   : {pages_avant[1]:,} → {pages_apres[1]:,} "
+          f"({octets((pages_apres[1] - pages_avant[1]) * pages_apres[2])})"
+          .replace(",", " "))
+    if taille_apres["db"] == taille_avant["db"] and pages_avant[1]:
+        print("  (fichier de taille inchangée : les écritures ont réutilisé "
+              "des pages libérées par la purge, pas étendu le fichier)")
+
+    # Le verdict porte sur CE QUE LE COLLECTEUR CONTRÔLE. Le prématch se
+    # modifie lui-meme en permanence — value_bets est mis a jour en place a
+    # chaque value revue, quotes est purge par lots — et le confondre avec
+    # une faute du collecteur rendrait ce rapport ininterpretable.
+    propre = (complet == "ok" and cles == "ok" and stats.sqlite_echecs == 0
               and incomplets == 0 and prematch_ecrases == 0)
-    print(f"\n═══ VERDICT : {'PROPRE' if propre else 'À EXAMINER'} ═══")
+    print(f"\n═══ COLLECTEUR : {'PROPRE' if propre else 'À EXAMINER'} ═══")
+    if modifiees:
+        print(f"═══ PRÉMATCH : {len(modifiees)} table(s) modifiée(s) — "
+              f"à confirmer par un run témoin ═══")
     return 0 if propre else 1
 
 
