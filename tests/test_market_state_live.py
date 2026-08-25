@@ -29,9 +29,10 @@ def _quote(book=Book.PINNACLE, label="home", line=None, odd=1.90,
 
 def _live_row(key="2026-01-01T20:00|a|b", book="asianodds", market="handicap",
               label="home", line=-0.5, odd=1.90, fetched="2026-01-01T19:00:00",
-              observed="2026-01-01T18:59:59", hs=1, aw=0, feed="1:0", igm=33):
+              observed="2026-01-01T18:59:59", hs=1, aw=0, feed="1:0", igm=33,
+              source="1634601234", inverse=0, matched="2026-01-01T18:59:00"):
     return (key, book, market, label, line, odd, fetched, 1, "TEST LEAGUE",
-            observed, hs, aw, feed, igm)
+            observed, hs, aw, feed, igm, source, inverse, matched)
 
 
 @pytest.fixture
@@ -197,3 +198,72 @@ def test_index_observed_at_existe(db):
         idx = {r["name"] for r in c.execute(
             "SELECT name FROM sqlite_master WHERE type='index'")}
     assert "idx_ms_observed" in idx
+
+
+# ── traçabilité de l'appariement ─────────────────────────────────────────
+def test_les_colonnes_de_tracabilite_existent(db):
+    with db._conn() as c:
+        cols = {r[1] for r in c.execute("PRAGMA table_info(market_state)")}
+    assert {"source_event_id", "source_inverse", "matched_at"} <= cols
+
+
+def test_la_source_est_ecrite_et_relue(db):
+    """Le manque qui a bloqué l'enquête du 24/08 : impossible de nommer les
+    deux matchs derrière une collision."""
+    db.upsert_live_state([_live_row(source="999888", inverse=1,
+                                    matched="2026-01-01T18:58:00")])
+    r = db.market_state(event_key="2026-01-01T20:00|a|b")[0]
+    assert r["source_event_id"] == "999888"
+    assert r["source_inverse"] == 1
+    assert r["matched_at"] == "2026-01-01T18:58:00"
+
+
+def test_le_prematch_laisse_la_tracabilite_nulle(db):
+    """Ces colonnes n'existent que pour le LIVE. L'UPSERT prématch ne les
+    nomme pas : elles doivent rester NULL, comme les cinq précédentes."""
+    db.insert_quotes([_quote(book=Book.PINNACLE)])
+    for r in db.market_state():
+        assert r["source_event_id"] is None
+        assert r["source_inverse"] is None
+        assert r["matched_at"] is None
+
+
+def test_le_prematch_n_efface_pas_la_source_sur_le_chemin_de_conflit(db):
+    """Sabotage-résistant : le prématch qui repasse sur une ligne LIVE ne doit
+    pas en effacer la provenance. Même `book`, donc l'ON CONFLICT s'applique
+    vraiment — une première version utilisait deux books différents et ne
+    testait rien."""
+    db.upsert_live_state([_live_row(book=Book.PINNACLE.value, market="h2h",
+                                    label="home", line=None,
+                                    source="777", inverse=1)])
+    db.insert_quotes([_quote(book=Book.PINNACLE)])
+    r = [x for x in db.market_state() if x["market"] == "h2h"][0]
+    assert r["source_event_id"] == "777", "la provenance a été effacée"
+    assert r["source_inverse"] == 1
+
+
+def test_l_index_unique_ne_contient_PAS_la_source(db):
+    """Y faire entrer `source_event_id` créerait une ligne par source pour un
+    même marché : `market_state` cesserait d'être un état courant. Deux
+    sources sous une même clé doivent ENTRER EN CONFLIT — c'est ainsi qu'une
+    collision reste visible au lieu de se dédoubler en silence."""
+    with db._conn() as c:
+        sql = c.execute(
+            "SELECT sql FROM sqlite_master WHERE name = 'ux_market_state'"
+        ).fetchone()[0]
+    assert "source_event_id" not in sql
+    assert "source_inverse" not in sql
+
+    db.upsert_live_state([_live_row(source="AAA"), _live_row(source="BBB")])
+    lignes = db.market_state(event_key="2026-01-01T20:00|a|b")
+    assert len(lignes) == 1, "la source a dédoublé la ligne"
+    assert lignes[0]["source_event_id"] == "BBB", "le dernier doit gagner"
+
+
+def test_la_migration_de_tracabilite_est_rejouable(tmp_path):
+    chemin = tmp_path / "rejoue.db"
+    for _ in range(3):
+        db = Storage(chemin)
+        db.upsert_live_state([_live_row(source="X1")])
+    r = Storage(chemin).market_state(event_key="2026-01-01T20:00|a|b")[0]
+    assert r["source_event_id"] == "X1"

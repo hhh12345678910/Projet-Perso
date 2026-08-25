@@ -296,6 +296,11 @@ class LiveRow:
     feed_score: Optional[str]
     igm: Optional[int]
     league: Optional[str]
+    #: D'OU vient cette ligne. Sans ces trois champs, une collision reste
+    #: indiagnosticable apres coup : c'est ce qui a bloque l'enquete du 24/08.
+    source_event_id: Optional[str] = None
+    source_inverse: bool = False
+    matched_at: Optional[datetime] = None
 
     def as_upsert_row(self, fetched_at: datetime,
                       book: Book = Book.ASIANODDS) -> tuple:
@@ -303,10 +308,13 @@ class LiveRow:
                 self.outcome_label, self.line, self.odd,
                 fetched_at.isoformat(), 1, self.league,
                 self.observed_at.isoformat(), self.home_score,
-                self.away_score, self.feed_score, self.igm)
+                self.away_score, self.feed_score, self.igm,
+                self.source_event_id, int(self.source_inverse),
+                self.matched_at.isoformat() if self.matched_at else None)
 
 
-def normalise_evf(evf: dict, event_key: str) -> list[LiveRow]:
+def normalise_evf(evf: dict, event_key: str, *,
+                  matched_at: "datetime | None" = None) -> list[LiveRow]:
     """Un message EVF → les sélections exploitables qu'il contient.
 
     Fonction PURE : aucun réseau, aucune base, aucune horloge. Tout ce qui
@@ -327,10 +335,16 @@ def normalise_evf(evf: dict, event_key: str) -> list[LiveRow]:
     feed = decode_feed_score(evf.get("FID"))
     ligue = evf.get("LN") or None
 
+    # `MTCHID` est l'identifiant du match CHEZ ASIANODDS : il voyage avec le
+    # message, il n'a pas a etre passe par l'appelant.
+    source = evf.get("MTCHID")
+    source = str(source) if source is not None else None
+
     def ligne(**kw) -> LiveRow:
         return LiveRow(event_key=event_key, observed_at=observed,
                        home_score=hs, away_score=aw, feed_score=feed,
-                       igm=igm, league=ligue, **kw)
+                       igm=igm, league=ligue, source_event_id=source,
+                       matched_at=matched_at, **kw)
 
     out: list[LiveRow] = []
 
@@ -955,6 +969,12 @@ def collect(storage, username: str, password: str, *,
 
     fin = None if duration_sec is None else time.monotonic() + duration_sec
     candidats: list[Candidat] = []
+    # Quand la liste des candidats a-t-elle ete relue ? C'est CET instant que
+    # `matched_at` porte : il dit si le rapprochement a ete decide contre une
+    # liste fraiche ou vieille de 59 s. `fetched_at` repond deja a « quand
+    # avons-nous ecrit », une deuxieme colonne pour la meme chose ne
+    # servirait a rien.
+    candidats_datant_de: "datetime | None" = None
     prochain_refresh = 0.0
     lot: dict[tuple, tuple] = {}
     bookie_annonce = False
@@ -1003,7 +1023,8 @@ def collect(storage, username: str, password: str, *,
 
     def _une_session(session) -> str:
         """Consomme une session jusqu'à sa fin. Renvoie le motif d'arrêt."""
-        nonlocal candidats, prochain_refresh, bookie_annonce
+        nonlocal candidats, candidats_datant_de, prochain_refresh
+        nonlocal bookie_annonce
         dernier_flush = dernier_ping = time.monotonic()
         for msg in session.messages():
             maintenant = time.monotonic()
@@ -1021,7 +1042,9 @@ def collect(storage, username: str, password: str, *,
                 bookie_annonce = True
 
             if maintenant >= prochain_refresh:
-                candidats = candidats_en_cours(storage, now_fn(), sport)
+                candidats_datant_de = now_fn()
+                candidats = candidats_en_cours(storage, candidats_datant_de,
+                                               sport)
                 stats.candidats_connus = max(stats.candidats_connus,
                                              len(candidats))
                 stats.derniers_candidats = candidats
@@ -1068,7 +1091,8 @@ def collect(storage, username: str, password: str, *,
                         stats.doublons_events.add(app.cible.event_key)
                     for c in app.toutes_les_cibles:
                         stats.evenements_couverts.add(c.event_key)
-                        lignes = normalise_evf(evf, c.event_key)
+                        lignes = normalise_evf(
+                            evf, c.event_key, matched_at=candidats_datant_de)
                         if not lignes:
                             stats.sans_selection += 1
                         stats.normalises += len(lignes)

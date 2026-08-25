@@ -396,6 +396,26 @@ MIGRATIONS = [
     ("market_state", "feed_score", "TEXT"),
     # Minute de jeu annoncée par la source.
     ("market_state", "igm", "INTEGER"),
+    # ── Traçabilité de l'appariement ─────────────────────────────────────
+    #
+    # Sans ces trois colonnes, une ligne LIVE ne dit pas D'OÙ elle vient, et
+    # le diagnostic d'une collision du 24/08 est resté partiel faute de
+    # pouvoir nommer les deux matchs sources : l'information n'avait jamais
+    # quitté la mémoire du collecteur.
+    #
+    # L'identifiant du match CHEZ LA SOURCE (MTCHID chez AsianOdds). Deux
+    # valeurs différentes sous une même event_key = au moins un rapprochement
+    # faux, et c'est enfin constatable après coup.
+    ("market_state", "source_event_id", "TEXT"),
+    # La source annonçait-elle ce match dans l'autre sens (son domicile est
+    # notre extérieur) ? 1 = les prix et les scores ont été permutés pour
+    # revenir à NOTRE convention.
+    ("market_state", "source_inverse", "INTEGER"),
+    # L'instant de l'instantané `events` sur lequel le rapprochement a été
+    # décidé — PAS celui de l'écriture, que `fetched_at` porte déjà. La liste
+    # des candidats est relue une fois par minute : cette colonne dit si le
+    # match a été décidé contre une liste fraîche ou vieille de 59 s.
+    ("market_state", "matched_at", "TEXT"),
 ]
 
 
@@ -436,6 +456,15 @@ class Storage:
             c.execute(
                 "CREATE INDEX IF NOT EXISTS idx_ms_observed "
                 "ON market_state(observed_at)"
+            )
+            # « Toutes les lignes venant de ce match source ». C'est la
+            # requête de l'enquête : retrouver ce qu'un match AsianOdds
+            # donné a écrit, et sous combien de clés. Index SIMPLE, jamais
+            # dans `ux_market_state` : y faire entrer la source dupliquerait
+            # chaque marché par source et détruirait l'état courant.
+            c.execute(
+                "CREATE INDEX IF NOT EXISTS idx_ms_source "
+                "ON market_state(source_event_id)"
             )
 
     @contextmanager
@@ -609,8 +638,9 @@ class Storage:
     _UPSERT_LIVE_STATE = (
         "INSERT INTO market_state "
         "(event_key, book, market, outcome_label, line, odd, fetched_at, "
-        " is_live, league, observed_at, home_score, away_score, feed_score, igm) "
-        "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?) "
+        " is_live, league, observed_at, home_score, away_score, feed_score, igm, "
+        " source_event_id, source_inverse, matched_at) "
+        "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?) "
         "ON CONFLICT (event_key, market, outcome_label, COALESCE(line, -1e9), book) "
         "DO UPDATE SET odd = excluded.odd, "
         "              fetched_at = excluded.fetched_at, "
@@ -620,7 +650,10 @@ class Storage:
         "              home_score = excluded.home_score, "
         "              away_score = excluded.away_score, "
         "              feed_score = excluded.feed_score, "
-        "              igm = excluded.igm"
+        "              igm = excluded.igm, "
+        "              source_event_id = excluded.source_event_id, "
+        "              source_inverse = excluded.source_inverse, "
+        "              matched_at = excluded.matched_at"
     )
 
     def upsert_live_state(self, rows: "Iterable[tuple]") -> int:

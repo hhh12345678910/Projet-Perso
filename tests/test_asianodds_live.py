@@ -1164,3 +1164,64 @@ def test_le_mode_a_blanc_ne_compte_aucune_transaction(tmp_path):
     assert stats.ecrits == 12 and stats.transactions == 0
     assert stats.ecriture_resume() == "aucune transaction"
     assert db.market_state() == []
+
+
+# ── traçabilité : d'où vient cette ligne ? ───────────────────────────────
+def test_la_ligne_porte_le_mtchid_du_message():
+    """`MTCHID` voyage AVEC le message : l'appelant n'a pas à le fournir."""
+    lignes = normalise_evf(EVF_DECIMAL, KEY)
+    assert lignes, "aucune ligne produite"
+    assert all(l.source_event_id == EVF_DECIMAL["MTCHID"] for l in lignes)
+    assert all(l.source_event_id == "1634601234" for l in lignes)
+
+
+def test_un_message_sans_mtchid_ne_ment_pas_sur_sa_source():
+    muet = dict(EVF_DECIMAL)
+    muet.pop("MTCHID")
+    assert all(l.source_event_id is None for l in normalise_evf(muet, KEY))
+
+
+def test_matched_at_porte_l_instantane_des_candidats_pas_l_ecriture(tmp_path):
+    """`fetched_at` dit déjà quand nous avons écrit. `matched_at` ne vaut
+    quelque chose que s'il dit autre chose : l'instant où la liste des
+    candidats a été relue, jusqu'à 60 s plus tôt."""
+    now = datetime(2026, 8, 23, 19, 0, tzinfo=timezone.utc)
+    db = _db_avec_match(tmp_path, now)
+    lu = datetime(2026, 8, 23, 18, 59, 1, tzinfo=timezone.utc)
+    horloges = iter([lu] + [now] * 50)
+    collect(db, "u", "p",
+            session_factory=lambda: _FausseSession([{"EVF": EVF_DECIMAL}]),
+            now_fn=lambda: next(horloges), log=lambda *a: None)
+
+    r = db.market_state(event_key=KEY)[0]
+    assert r["matched_at"] == lu.isoformat()
+    assert r["fetched_at"] == now.isoformat()
+    assert r["matched_at"] != r["fetched_at"], \
+        "matched_at ne dit rien de plus que fetched_at"
+
+
+def test_collect_ecrit_la_source_en_base(tmp_path):
+    now = datetime(2026, 8, 23, 19, 0, tzinfo=timezone.utc)
+    db = _db_avec_match(tmp_path, now)
+    collect(db, "u", "p",
+            session_factory=lambda: _FausseSession([{"EVF": EVF_DECIMAL}]),
+            now_fn=lambda: now, log=lambda *a: None)
+    lignes = db.market_state(event_key=KEY)
+    assert lignes and all(r["source_event_id"] == "1634601234" for r in lignes)
+    assert all(r["source_inverse"] == 0 for r in lignes), \
+        "l'orientation n'est pas encore corrigée : 0 attendu à cette étape"
+
+
+def test_deux_matchs_sous_une_cle_sont_constatables_apres_coup(tmp_path):
+    """Ce que l'enquête du 24/08 n'a PAS pu faire. Ici la seconde source
+    écrase la première — le rejet des collisions est l'étape 4 — mais la
+    trace, elle, existe enfin."""
+    now = datetime(2026, 8, 23, 19, 0, tzinfo=timezone.utc)
+    db = _db_avec_match(tmp_path, now)
+    autre = dict(EVF_DECIMAL, MTCHID="7777777")
+    collect(db, "u", "p",
+            session_factory=lambda: _FausseSession(
+                [{"EVF": EVF_DECIMAL}, {"EVF": autre}]),
+            now_fn=lambda: now, log=lambda *a: None)
+    sources = {r["source_event_id"] for r in db.market_state(event_key=KEY)}
+    assert sources == {"7777777"}, "la dernière source doit être lisible"
