@@ -222,8 +222,12 @@ def test_un_doublon_de_notre_base_ne_fait_plus_perdre_le_match():
     (blackpool—lincolncity 14:00/15:00/16:00/18:45). Le défaut est chez nous ;
     la source ne doit pas en payer le prix."""
     from src.asianodds_live import evaluer_appariement
-    cands = [Candidat("202608241700::a", "torpedozhodino", "dneprmogilev"),
-             Candidat("202608241800::a", "torpedozhodino", "dneprmogilev")]
+    t = datetime(2026, 8, 24, 17, 0, tzinfo=timezone.utc)
+    cands = [Candidat("202608241700::a", "torpedozhodino", "dneprmogilev",
+                      league="Belarus - Premier League", start_time=t),
+             Candidat("202608241800::a", "torpedozhodino", "dneprmogilev",
+                      league="Belarus - Premier League",
+                      start_time=t + timedelta(hours=1))]
     r = evaluer_appariement("Torpedo Zhodino", "Dnepr Mogilev", cands)
     assert r.reussi
     assert len(r.toutes_les_cibles) == 2, "le prix doit aller sous les DEUX clés"
@@ -232,8 +236,11 @@ def test_un_doublon_de_notre_base_ne_fait_plus_perdre_le_match():
 
 def test_un_doublon_inverse_domicile_exterieur_est_reconnu():
     from src.asianodds_live import _meme_rencontre
-    a = Candidat("k1", "Anderlecht", "Club Brugge")
-    b = Candidat("k2", "Club Brugge", "Anderlecht")
+    t = datetime(2026, 8, 24, 18, 0, tzinfo=timezone.utc)
+    a = Candidat("k1", "Anderlecht", "Club Brugge",
+                 league="Belgium - Pro League", start_time=t)
+    b = Candidat("k2", "Club Brugge", "Anderlecht",
+                 league="Belgium - Pro League", start_time=t)
     assert _meme_rencontre(a, b)
 
 
@@ -751,8 +758,12 @@ def test_l_ambiguite_est_distinguee_d_un_score_trop_bas():
     d'AsianOdds : isolé il s'apparie à 96, donc l'échec venait d'un second
     candidat trop proche — un doublon chez nous, pas un trou de couverture."""
     from src.asianodds_live import evaluer_appariement
-    vrai = Candidat("k1", "torpedozhodino", "dneprmogilev")
-    doublon = Candidat("k2", "torpedozhodino", "dneprmogilev")
+    t = datetime(2026, 8, 24, 17, 0, tzinfo=timezone.utc)
+    vrai = Candidat("k1", "torpedozhodino", "dneprmogilev",
+                    league="Belarus - Premier League", start_time=t)
+    doublon = Candidat("k2", "torpedozhodino", "dneprmogilev",
+                       league="Belarus - Premier League",
+                       start_time=t + timedelta(minutes=30))
 
     seul = evaluer_appariement("Torpedo Zhodino", "Dnepr Mogilev", [vrai])
     assert seul.reussi and seul.cible is vrai and seul.motif == "apparié"
@@ -846,10 +857,10 @@ def test_un_orphelin_termine_depuis_longtemps_est_signale(tmp_path, monkeypatch)
     stats = Stats()
     stats.evf = 1
     stats.derniers_candidats = [
-        Candidat("vieux", "A", "B", maintenant - timedelta(hours=3, minutes=30)),
-        Candidat("encours", "C", "D", maintenant - timedelta(minutes=40)),
-        Candidat("apres", "E", "F", maintenant + timedelta(minutes=10)),
-        Candidat("sans", "G", "H", None),
+        Candidat("vieux", "A", "B", start_time=maintenant - timedelta(hours=3, minutes=30)),
+        Candidat("encours", "C", "D", start_time=maintenant - timedelta(minutes=40)),
+        Candidat("apres", "E", "F", start_time=maintenant + timedelta(minutes=10)),
+        Candidat("sans", "G", "H"),
     ]
     monkeypatch.setattr("src.asianodds_live.datetime",
                         _Horloge(maintenant))
@@ -888,12 +899,12 @@ def test_plausiblement_en_jeu_ecarte_le_fini_et_le_pas_commence():
     compter accuse AsianOdds d'un trou qui n'est pas le sien."""
     from src.asianodds_live import plausiblement_en_jeu, EN_JEU_MAX_MIN
     now = datetime(2026, 8, 23, 19, 0, tzinfo=timezone.utc)
-    fini = Candidat("fini", "A", "B", now - timedelta(hours=3, minutes=30))
-    encours = Candidat("encours", "C", "D", now - timedelta(minutes=40))
+    fini = Candidat("fini", "A", "B", start_time=now - timedelta(hours=3, minutes=30))
+    encours = Candidat("encours", "C", "D", start_time=now - timedelta(minutes=40))
     limite = Candidat("limite", "I", "J",
-                      now - timedelta(minutes=EN_JEU_MAX_MIN))
-    futur = Candidat("futur", "E", "F", now + timedelta(minutes=10))
-    sans = Candidat("sans", "G", "H", None)
+                      start_time=now - timedelta(minutes=EN_JEU_MAX_MIN))
+    futur = Candidat("futur", "E", "F", start_time=now + timedelta(minutes=10))
+    sans = Candidat("sans", "G", "H")
 
     gardes = plausiblement_en_jeu([fini, encours, limite, futur, sans], now)
 
@@ -910,10 +921,10 @@ def test_la_couverture_publie_le_taux_corrige(tmp_path, monkeypatch):
     stats.evf = 1
     stats.candidats_connus = 4
     stats.derniers_candidats = [
-        Candidat("couvert", "A", "B", now - timedelta(minutes=40)),
-        Candidat("orphelin", "C", "D", now - timedelta(minutes=50)),
-        Candidat("fini1", "E", "F", now - timedelta(hours=3)),
-        Candidat("fini2", "G", "H", now - timedelta(hours=3, minutes=30)),
+        Candidat("couvert", "A", "B", start_time=now - timedelta(minutes=40)),
+        Candidat("orphelin", "C", "D", start_time=now - timedelta(minutes=50)),
+        Candidat("fini1", "E", "F", start_time=now - timedelta(hours=3)),
+        Candidat("fini2", "G", "H", start_time=now - timedelta(hours=3, minutes=30)),
     ]
     stats.evenements_couverts = {"couvert"}
     stats.matchs_vus = {"m1"}
@@ -1351,8 +1362,11 @@ def test_l_orientation_est_retenue_CLE_PAR_CLE():
     rencontre dans des sens OPPOSÉS — un drapeau unique serait juste pour
     l'une et faux pour l'autre."""
     from src.asianodds_live import evaluer_appariement
-    endroit = Candidat("k_droit", "cerrolargo", "centralespanol")
-    envers = Candidat("k_envers", "centralespanol", "cerrolargo")
+    t = datetime(2026, 8, 24, 18, 0, tzinfo=timezone.utc)
+    endroit = Candidat("k_droit", "cerrolargo", "centralespanol",
+                       league="Uruguay - Reserve League", start_time=t)
+    envers = Candidat("k_envers", "centralespanol", "cerrolargo",
+                      league="Uruguay - Reserve League", start_time=t)
     r = evaluer_appariement("Cerro Largo", "Central Espanol",
                             [endroit, envers])
     assert r.reussi, r.motif
@@ -1409,3 +1423,150 @@ def test_collect_ecrit_chaque_doublon_dans_SON_sens(tmp_path):
     assert envers["home"]["odd"] == 1.30 and envers["home"]["source_inverse"] == 0
     assert droit["home"]["home_score"] == 1
     assert envers["home"]["home_score"] == 3
+
+
+# ══════════════════════════════════════════════════════════════════════════
+# `_meme_rencontre` : des noms identiques ne font pas une meme rencontre
+# ══════════════════════════════════════════════════════════════════════════
+_T0 = datetime(2026, 8, 24, 18, 30, tzinfo=timezone.utc)
+
+
+def _cand(cle, home, away, league, decalage=timedelta(0)):
+    return Candidat(cle, home, away, league=league, start_time=_T0 + decalage)
+
+
+def test_seniors_et_u19_ne_sont_pas_la_meme_rencontre():
+    """Cas réel, mesuré en base le 24/08 : `kocaelispor — amedspor` existe
+    en Super League ET en Super Lig U19. Les fusionner écrirait le prix du
+    match sénior sous la clé des U19. Elles étaient à 4 h 30 d'écart, donc
+    hors fenêtre ce jour-là — 30 minutes plus tôt, la corruption avait lieu."""
+    from src.asianodds_live import _meme_rencontre
+    senior = _cand("k_senior", "kocaelispor", "amedspor", "Turkey - Super League")
+    u19 = _cand("k_u19", "kocaelispor", "amedspor", "Turkey - Super Lig U19",
+                -timedelta(hours=2))
+    assert not _meme_rencontre(senior, u19)
+
+
+def test_seniors_et_reserve_ne_sont_pas_la_meme_rencontre():
+    """Second cas réel : `nacionalasuncion — sportivoluqueno` en Division
+    Profesional ET en Reserve League.
+
+    `class_marker_from_league` du projet attrape le U19 mais PAS les
+    réserves — vérifié, il rend "" sur « Reserve League ». C'est pourquoi la
+    règle porte sur l'ÉGALITÉ de la ligue et non sur sa classe : elle couvre
+    les deux, sans rien ajouter à `matcher.py` dont dépend tout le prématch."""
+    from src.asianodds_live import _meme_rencontre
+    from src.matcher import class_marker_from_league
+    assert class_marker_from_league("Paraguay - Reserve League") == "", \
+        "si le helper couvre enfin les réserves, cette règle peut être revue"
+
+    premiere = _cand("k1", "nacionalasuncion", "sportivoluqueno",
+                     "Paraguay - Division Profesional")
+    reserve = _cand("k2", "nacionalasuncion", "sportivoluqueno",
+                    "Paraguay - Reserve League", -timedelta(hours=2))
+    assert not _meme_rencontre(premiere, reserve)
+
+
+def test_un_vrai_doublon_reste_reconnu():
+    """Le cas légitime, mesuré : `torpedozhodino — dneprmogilev` sous 17:00
+    et 17:30, même ligue. Le durcissement ne doit pas le perdre."""
+    from src.asianodds_live import _meme_rencontre
+    a = _cand("k17", "torpedozhodino", "dneprmogilev", "Belarus - Premier League")
+    b = _cand("k1730", "torpedozhodino", "dneprmogilev",
+              "Belarus - Premier League", timedelta(minutes=30))
+    assert _meme_rencontre(a, b)
+
+
+def test_la_ligue_est_comparee_a_la_casse_et_aux_espaces_pres():
+    from src.asianodds_live import _meme_rencontre
+    a = _cand("k1", "farense", "felgueiras", "Portugal - Liga 2")
+    b = _cand("k2", "farense", "felgueiras", "  portugal -  LIGA 2 ")
+    assert _meme_rencontre(a, b)
+
+
+def test_deux_matchs_trop_eloignes_ne_sont_pas_un_doublon():
+    """L'horaire entre dans `event_key` : c'est de là que vient le doublon.
+    Passé quelques heures, ce n'est plus le même match — un aller-retour, ou
+    la même affiche une autre journée."""
+    from src.asianodds_live import _meme_rencontre, ECART_MEME_RENCONTRE
+    a = _cand("k1", "roma", "fiorentina", "Italy - Serie A")
+    juste = _cand("k2", "roma", "fiorentina", "Italy - Serie A",
+                  ECART_MEME_RENCONTRE)
+    trop = _cand("k3", "roma", "fiorentina", "Italy - Serie A",
+                 ECART_MEME_RENCONTRE + timedelta(minutes=1))
+    assert _meme_rencontre(a, juste)
+    assert not _meme_rencontre(a, trop)
+
+
+@pytest.mark.parametrize("la,lb", [
+    (None, "Italy - Serie A"), ("Italy - Serie A", None),
+    ("", "Italy - Serie A"), (None, None), ("   ", "Italy - Serie A"),
+])
+def test_une_ligue_absente_est_un_doute_donc_un_refus(la, lb):
+    """La base en contient — le diagnostic du 24/08 affichait des jumeaux
+    « [?] ». Un doublon non reconnu coûte une couverture partielle ; un faux
+    doublon écrit le prix d'un match sous la clé d'un autre."""
+    from src.asianodds_live import _meme_rencontre
+    assert not _meme_rencontre(_cand("k1", "a", "b", la),
+                               _cand("k2", "a", "b", lb))
+
+
+@pytest.mark.parametrize("ta,tb", [(None, _T0), (_T0, None), (None, None)])
+def test_un_horaire_absent_est_un_doute_donc_un_refus(ta, tb):
+    from src.asianodds_live import _meme_rencontre
+    a = Candidat("k1", "a", "b", league="L", start_time=ta)
+    b = Candidat("k2", "a", "b", league="L", start_time=tb)
+    assert not _meme_rencontre(a, b)
+
+
+def test_la_ressemblance_ne_suffit_toujours_pas():
+    """Garde-fou conservé de l'étape précédente : « Sporting CP » et
+    « Sporting Gijon » se ressemblent au-dessus du seuil, et ne sont pas la
+    même rencontre — même ligue et même horaire n'y changent rien."""
+    from src.asianodds_live import _meme_rencontre
+    a = _cand("k1", "Sporting CP", "Benfica", "Portugal - Liga")
+    b = _cand("k2", "Sporting Gijon", "Benfica", "Portugal - Liga")
+    assert not _meme_rencontre(a, b)
+
+
+def test_candidats_en_cours_rapporte_la_ligue(tmp_path):
+    """Sans elle, la règle ne peut pas s'appliquer en production."""
+    now = datetime(2026, 8, 24, 19, 0, tzinfo=timezone.utc)
+    db = Storage(tmp_path / "t.db")
+    db.upsert_events([("k", "soccer", "Turkey - Super Lig U19", "A", "B",
+                       (now - timedelta(hours=1)).isoformat())])
+    c = candidats_en_cours(db, now)[0]
+    assert c.league == "Turkey - Super Lig U19"
+    assert c.start_time is not None
+
+
+def test_league_et_start_time_sont_keyword_only():
+    """Insérer `league` devant `start_time` a fait absorber silencieusement
+    des datetime par `league` chez les appelants positionnels. En
+    keyword-only, l'erreur est franche au lieu d'être mal rangée."""
+    with pytest.raises(TypeError):
+        Candidat("k", "a", "b", "Italy - Serie A")
+
+
+def test_un_faux_doublon_de_categorie_ne_fait_pas_ecrire_deux_fois(tmp_path):
+    """Bout en bout : le prix du match sénior ne doit PAS atterrir sous la
+    clé U19, et le sénior doit quand même être écrit."""
+    now = datetime(2026, 8, 24, 19, 0, tzinfo=timezone.utc)
+    db = Storage(tmp_path / "t.db")
+    db.upsert_events([
+        ("k_senior", "soccer", "Turkey - Super League",
+         "Crvena Zvezda", "Cukaricki", (now - timedelta(hours=1)).isoformat()),
+        ("k_u19", "soccer", "Turkey - Super Lig U19",
+         "Crvena Zvezda", "Cukaricki", (now - timedelta(hours=3)).isoformat()),
+    ])
+    stats = collect(db, "u", "p",
+                    session_factory=lambda: _FausseSession([{"EVF": EVF_DECIMAL}]),
+                    now_fn=lambda: now, log=lambda *a: None)
+
+    assert db.market_state(event_key="k_u19") == [], "le prix sénior a fui en U19"
+    assert stats.doublons_events == set()
+    # Deux rencontres distinctes que les noms ne départagent pas : le
+    # rapprochement refuse, comme il doit.
+    assert stats.sans_event_key == 1
+    assert "DEUX rencontres" in "".join(stats.motifs_echec) or \
+        stats.motifs_echec, stats.motifs_echec

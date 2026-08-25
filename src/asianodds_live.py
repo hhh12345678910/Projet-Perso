@@ -424,10 +424,20 @@ class Candidat:
     event_key: str
     home: str
     away: str
+    # Les deux champs suivants sont KEYWORD-ONLY a dessein. Inserer `league`
+    # devant `start_time` a silencieusement fait absorber des datetime par
+    # `league` chez tous les appelants positionnels — attrape par les tests,
+    # mais rien ne garantissait qu'ils couvrent tout. En keyword-only, un
+    # appel positionnel echoue bruyamment au lieu de mal ranger la valeur.
+    #
+    #: La competition, telle que NOTRE reference la nomme. Sert a refuser un
+    #: faux doublon : des noms d'equipes identiques ne suffisent pas a faire
+    #: une meme rencontre (voir `_meme_rencontre`).
+    league: Optional[str] = field(default=None, kw_only=True)
     #: L'heure annoncee par NOTRE reference. Sert uniquement au diagnostic :
     #: un « orphelin » qui a debute il y a 3 h est fini depuis longtemps et
     #: gonfle le denominateur sans qu'AsianOdds y soit pour quelque chose.
-    start_time: Optional[datetime] = None
+    start_time: Optional[datetime] = field(default=None, kw_only=True)
 
 
 @dataclass(frozen=True)
@@ -473,23 +483,57 @@ class Appariement:
         return bool(self.inverse_par_cle.get(candidat.event_key))
 
 
+#: Au-dela, deux rencontres. Un doublon d'horaire observe en base va de
+#: 30 min (torpedozhodino 17:00/17:30) a quelques heures ; un match du
+#: lendemain, lui, n'est pas le meme match.
+ECART_MEME_RENCONTRE = timedelta(hours=3)
+
+
+def _ligue_normalisee(nom: "str | None") -> str:
+    return " ".join((nom or "").lower().split())
+
+
 def _meme_rencontre(a: Candidat, b: Candidat) -> bool:
     """Deux de NOS candidats désignent-ils LE MÊME match ?
 
-    ÉGALITÉ EXACTE des noms normalisés, pas une ressemblance. Le doublon
-    observé en base vient de l'horaire, seul, qui entre dans `event_key` :
-    `blackpool — lincolncity` existe sous quatre clés (14:00, 15:00, 16:00,
-    18:45) avec des noms rigoureusement identiques.
+    Trois conditions, toutes nécessaires. En cas de doute : NON. Un doublon
+    non reconnu coûte une couverture partielle ; un faux doublon écrit le
+    prix d'un match sous la clé d'un autre.
 
-    Une ressemblance floue au seuil de rapprochement serait ici DANGEREUSE :
-    elle juge « Sporting CP » et « Sporting Gijon » identiques, et écrirait
-    donc le prix d'un match sous la clé d'un autre — exactement la corruption
-    que le garde-fou d'ambiguïté existe pour empêcher. Le doublon interne se
-    reconnaît, il ne se devine pas.
+    1. ÉGALITÉ EXACTE des noms normalisés, pas une ressemblance. Une
+       ressemblance au seuil de rapprochement juge « Sporting CP » et
+       « Sporting Gijon » identiques, et produirait précisément la corruption
+       que le garde-fou d'ambiguïté existe pour empêcher.
+
+    2. MÊME COMPÉTITION. Les noms d'équipes ne portent pas la catégorie :
+       mesuré en base le 24/08, `kocaelispor — amedspor` existe en
+       « Turkey - Super League » ET en « Turkey - Super Lig U19 », et
+       `nacionalasuncion — sportivoluqueno` en « Division Profesional » ET
+       en « Reserve League ». Ce sont QUATRE rencontres, pas deux. Le
+       helper `class_marker_from_league` du projet attrape le U19 mais PAS
+       les équipes réserves — vérifié : il rend "" sur « Reserve League ».
+       L'égalité de la ligue couvre les deux, sans rien ajouter à
+       `matcher.py`, dont dépend tout le prématch.
+       Une ligue absente est un DOUTE, donc un refus : la base en contient.
+
+    3. HORAIRES COMPATIBLES. Le doublon vient de l'horaire qui entre dans
+       `event_key` ; passé quelques heures, ce n'est plus le même match.
     """
     x = (normalize_team(a.home), normalize_team(a.away))
     y = (normalize_team(b.home), normalize_team(b.away))
-    return x == y or x == y[::-1]
+    if x != y and x != y[::-1]:
+        return False
+    la, lb = _ligue_normalisee(a.league), _ligue_normalisee(b.league)
+    if not la or not lb or la != lb:
+        return False
+    if a.start_time is None or b.start_time is None:
+        return False
+    da, db = a.start_time, b.start_time
+    if da.tzinfo is None:
+        da = da.replace(tzinfo=timezone.utc)
+    if db.tzinfo is None:
+        db = db.replace(tzinfo=timezone.utc)
+    return abs(da - db) <= ECART_MEME_RENCONTRE
 
 
 def evaluer_appariement(home: str, away: str,
@@ -577,7 +621,7 @@ def candidats_en_cours(storage, now: datetime,
     debut = (now - LIVE_WINDOW_BEFORE).isoformat()
     fin = (now + LIVE_WINDOW_AFTER).isoformat()
     notre_sport = SPORT_VERS_NOTRE_NOM.get(sport)
-    sql = ("SELECT event_key, home, away, start_time FROM events "
+    sql = ("SELECT event_key, home, away, league, start_time FROM events "
            "WHERE start_time BETWEEN ? AND ?")
     args: list = [debut, fin]
     if notre_sport:
@@ -586,7 +630,8 @@ def candidats_en_cours(storage, now: datetime,
     with storage._conn() as c:
         lignes = c.execute(sql, args).fetchall()
     return [Candidat(r["event_key"], r["home"], r["away"],
-                     _horaire(r["start_time"])) for r in lignes]
+                     league=r["league"],
+                     start_time=_horaire(r["start_time"])) for r in lignes]
 
 
 def _horaire(brut) -> Optional[datetime]:
