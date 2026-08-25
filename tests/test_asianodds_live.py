@@ -506,9 +506,11 @@ def test_deux_matchs_asianodds_sur_un_seul_de_nos_evenements(tmp_path):
                     now_fn=lambda: now, log=lambda *a: None)
 
     assert len(stats.matchs_apparies) == 2
-    assert len(stats.evenements_couverts) == 1
     assert stats.collisions == {KEY}
-    assert "au moins un rapprochement est faux" in stats.couverture()
+    assert stats.evenements_couverts == set(), \
+        "une clé contestée ne doit pas compter comme couverte"
+    assert KEY in stats.cles_empoisonnees
+    assert "RIEN n'y a ete ecrit" in stats.couverture()
 
 
 def test_pas_de_collision_signalee_quand_tout_va_bien(tmp_path):
@@ -1223,19 +1225,21 @@ def test_collect_ecrit_la_source_en_base(tmp_path):
         "l'orientation n'est pas encore corrigée : 0 attendu à cette étape"
 
 
-def test_deux_matchs_sous_une_cle_sont_constatables_apres_coup(tmp_path):
-    """Ce que l'enquête du 24/08 n'a PAS pu faire. Ici la seconde source
-    écrase la première — le rejet des collisions est l'étape 4 — mais la
-    trace, elle, existe enfin."""
+def test_une_cle_contestee_ne_garde_AUCUNE_ligne(tmp_path):
+    """Le premier revendiquant a déjà rempli le lot quand le second arrive :
+    ses lignes partiraient au prochain flush. Les retirer avant est le seul
+    moment où c'est encore gratuit."""
     now = datetime(2026, 8, 23, 19, 0, tzinfo=timezone.utc)
     db = _db_avec_match(tmp_path, now)
     autre = dict(EVF_DECIMAL, MTCHID="7777777")
-    collect(db, "u", "p",
-            session_factory=lambda: _FausseSession(
-                [{"EVF": EVF_DECIMAL}, {"EVF": autre}]),
-            now_fn=lambda: now, log=lambda *a: None)
-    sources = {r["source_event_id"] for r in db.market_state(event_key=KEY)}
-    assert sources == {"7777777"}, "la dernière source doit être lisible"
+    stats = collect(db, "u", "p",
+                    session_factory=lambda: _FausseSession(
+                        [{"EVF": EVF_DECIMAL}, {"EVF": autre}]),
+                    now_fn=lambda: now, log=lambda *a: None)
+    assert db.market_state(event_key=KEY) == [], \
+        "la dernière source a gagné par le seul hasard de l'ordre d'arrivée"
+    assert stats.lignes_annulees == 12, "le lot n'a pas été purgé"
+    assert stats.collisions == {KEY}
 
 
 # ══════════════════════════════════════════════════════════════════════════
@@ -1570,3 +1574,133 @@ def test_un_faux_doublon_de_categorie_ne_fait_pas_ecrire_deux_fois(tmp_path):
     assert stats.sans_event_key == 1
     assert "DEUX rencontres" in "".join(stats.motifs_echec) or \
         stats.motifs_echec, stats.motifs_echec
+
+
+# ══════════════════════════════════════════════════════════════════════════
+# Collisions : une cle contestee n'est jamais ecrite en silence
+# ══════════════════════════════════════════════════════════════════════════
+def test_les_deux_revendiquants_sont_nommes(tmp_path):
+    """Compter ne suffisait pas : l'enquête du 24/08 a buté là-dessus."""
+    from src.asianodds_live import diagnostic_appariement
+    now = datetime(2026, 8, 23, 19, 0, tzinfo=timezone.utc)
+    db = _db_avec_match(tmp_path, now)
+    # Mêmes noms, autre MTCHID, autre ligue. Un « Crvena Zvezda II » ne
+    # ferait PAS l'affaire : la barrière de classe du matcher le rejette
+    # comme équipe réserve, donc aucune collision ne se produirait.
+    autre = dict(EVF_DECIMAL, MTCHID="555", LN="SERBIA PRVA LIGA")
+    stats = collect(db, "u", "p", dry_run=True,
+                    session_factory=lambda: _FausseSession(
+                        [{"EVF": EVF_DECIMAL}, {"EVF": autre}]),
+                    now_fn=lambda: now, log=lambda *a: None)
+
+    d = stats.collisions_detail[KEY]
+    assert {d["premier"], d["second"]} == {"1634601234", "555"}
+    assert "SERBIA SUPER LIGA" in d["premier_nom"]
+    assert "SERBIA PRVA LIGA" in d["second_nom"]
+    rapport = diagnostic_appariement(stats)
+    assert "Collisions rejetees" in rapport
+    assert "555" in rapport and "1634601234" in rapport
+
+
+def test_la_collision_est_journalisee(tmp_path):
+    now = datetime(2026, 8, 23, 19, 0, tzinfo=timezone.utc)
+    db = _db_avec_match(tmp_path, now)
+    autre = dict(EVF_DECIMAL, MTCHID="555")
+    messages = []
+    collect(db, "u", "p", dry_run=True,
+            session_factory=lambda: _FausseSession(
+                [{"EVF": EVF_DECIMAL}, {"EVF": autre}]),
+            now_fn=lambda: now, log=messages.append)
+    assert any("COLLISION" in m for m in messages), "collision silencieuse"
+    assert any("plus rien ne sera écrit" in m for m in messages)
+
+
+def test_le_poison_survit_a_tout_le_run(tmp_path):
+    """Si le premier revendiquant continue d'émettre après la collision, ses
+    prix ne doivent PAS revenir : il n'est pas plus crédible que l'autre."""
+    now = datetime(2026, 8, 23, 19, 0, tzinfo=timezone.utc)
+    db = _db_avec_match(tmp_path, now)
+    autre = dict(EVF_DECIMAL, MTCHID="555")
+    stats = collect(db, "u", "p",
+                    session_factory=lambda: _FausseSession(
+                        [{"EVF": EVF_DECIMAL}, {"EVF": autre},
+                         {"EVF": EVF_DECIMAL}, {"EVF": EVF_DECIMAL}]),
+                    now_fn=lambda: now, log=lambda *a: None)
+    assert db.market_state(event_key=KEY) == []
+    assert stats.lignes_refusees >= 2
+    assert len(stats.collisions) == 1, "la collision doit être comptée UNE fois"
+
+
+def test_les_autres_evenements_continuent_d_etre_ecrits(tmp_path):
+    """Une collision ne doit pas arrêter le traitement du reste."""
+    now = datetime(2026, 8, 23, 19, 0, tzinfo=timezone.utc)
+    db = Storage(tmp_path / "t.db")
+    debut = (now - timedelta(hours=1)).isoformat()
+    db.upsert_events([
+        (KEY, "soccer", "SERBIA SUPER LIGA", "Crvena Zvezda", "Cukaricki", debut),
+        ("k_sain", "soccer", "SERBIA SUPER LIGA", "Partizan", "Vojvodina", debut),
+    ])
+    sain = dict(EVF_DECIMAL, MTCHID="333", HN="Partizan", AN="Vojvodina")
+    autre = dict(EVF_DECIMAL, MTCHID="555")
+    collect(db, "u", "p",
+            session_factory=lambda: _FausseSession(
+                [{"EVF": EVF_DECIMAL}, {"EVF": autre}, {"EVF": sain}]),
+            now_fn=lambda: now, log=lambda *a: None)
+    assert db.market_state(event_key=KEY) == []
+    assert len(db.market_state(event_key="k_sain")) == 12, \
+        "un événement sain a été emporté par la collision"
+
+
+def test_un_doublon_legitime_n_est_PAS_une_collision(tmp_path):
+    """Un même MTCHID sous plusieurs clés est le comportement voulu de
+    cc2bc66. Le confondre avec une collision reperdrait ces matchs."""
+    now = datetime(2026, 8, 23, 19, 0, tzinfo=timezone.utc)
+    db = Storage(tmp_path / "t.db")
+    t = now - timedelta(hours=1)
+    db.upsert_events([
+        ("k_a", "soccer", "SERBIA SUPER LIGA", "Crvena Zvezda", "Cukaricki",
+         t.isoformat()),
+        ("k_b", "soccer", "SERBIA SUPER LIGA", "Crvena Zvezda", "Cukaricki",
+         (t + timedelta(minutes=30)).isoformat()),
+    ])
+    stats = collect(db, "u", "p",
+                    session_factory=lambda: _FausseSession(
+                        [{"EVF": EVF_DECIMAL}] * 3),
+                    now_fn=lambda: now, log=lambda *a: None)
+    assert stats.collisions == set()
+    assert stats.cles_empoisonnees == set()
+    assert len(db.market_state(event_key="k_a")) == 12
+    assert len(db.market_state(event_key="k_b")) == 12
+
+
+def test_une_collision_deja_ecrite_en_base_est_signalee_et_non_effacee(tmp_path):
+    """DÉCISION EXPLICITE : les lignes parties dans un flush ANTÉRIEUR à la
+    collision restent en base. Les effacer serait une suppression de données,
+    et elle n'a pas été autorisée. Ce test fige le comportement actuel pour
+    qu'un changement soit délibéré et non subi."""
+    now = datetime(2026, 8, 23, 19, 0, tzinfo=timezone.utc)
+    db = _db_avec_match(tmp_path, now)
+    autre = dict(EVF_DECIMAL, MTCHID="555")
+
+    class _FlushEntreDeux(_FausseSession):
+        """Force un flush entre les deux revendiquants : le tick d'inactivité
+        fait passer FLUSH_SEC dans la boucle."""
+
+    from src.asianodds_live import FLUSH_SEC
+    horloge = iter([0.0, 0.0, FLUSH_SEC + 1] + [FLUSH_SEC + 1] * 50)
+    import src.asianodds_live as mod
+    vrai = mod.time.monotonic
+    mod.time.monotonic = lambda: next(horloge, FLUSH_SEC + 1)
+    try:
+        stats = collect(db, "u", "p",
+                        session_factory=lambda: _FlushEntreDeux(
+                            [{"EVF": EVF_DECIMAL}, {"EVF": autre}]),
+                        now_fn=lambda: now, log=lambda *a: None)
+    finally:
+        mod.time.monotonic = vrai
+
+    assert stats.collisions == {KEY}
+    restantes = db.market_state(event_key=KEY)
+    assert restantes, "aucune ligne n'était partie avant la collision"
+    assert {r["source_event_id"] for r in restantes} == {"1634601234"}, \
+        "la trace de la source doit rester lisible pour l'enquête"

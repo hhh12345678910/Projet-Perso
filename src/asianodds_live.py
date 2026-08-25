@@ -862,6 +862,14 @@ def diagnostic_appariement(stats, limite: "int | None" = 15) -> str:
     lignes += ["",
                f"Matchs AsianOdds NON rapprochés "
                f"({len(stats.asianodds_sans_match)}) :"]
+    if stats.collisions_detail:
+        lignes += ["", f"Collisions rejetees ({len(stats.collisions_detail)}) :"]
+        for cle, d in stats.collisions_detail.items():
+            lignes.append(f"    {cle}")
+            lignes.append(f"      revendiquee par {d['premier']} "
+                          f"«{d['premier_nom']}»")
+            lignes.append(f"      et par          {d['second']} "
+                          f"«{d['second_nom']}»")
     if stats.motifs_echec:
         lignes += ["", "Motifs d'échec du rapprochement :"]
         lignes += [f"    {n:>5} × {m}"
@@ -935,6 +943,20 @@ class Stats:
     # un rapprochement est faux.
     origine_par_event: dict = field(default_factory=dict)
     collisions: set = field(default_factory=set)
+    #: Les cles CONTESTEES. Une fois qu'une cle a ete revendiquee par deux
+    #: matchs sources, on ne sait plus laquelle des deux la decrit : plus
+    #: rien n'y est ecrit jusqu'a la fin du run. Le poison est definitif a
+    #: dessein — la source qui gagnerait serait simplement la derniere
+    #: arrivee, ce qui n'est pas un critere.
+    cles_empoisonnees: set = field(default_factory=set)
+    #: mtchid -> « Nom A — Nom B  [ligue] », pour pouvoir NOMMER les deux
+    #: revendiquants d'une collision et pas seulement les compter.
+    descriptif_source: dict = field(default_factory=dict)
+    #: event_key -> les deux revendiquants, en clair.
+    collisions_detail: dict = field(default_factory=dict)
+    #: Lignes retirees du lot avant ecriture, et lignes refusees ensuite.
+    lignes_annulees: int = 0
+    lignes_refusees: int = 0
     # Pour le diagnostic : « AsianOdds ne couvre pas ce match » et « le
     # rapprochement a echoue sur ce match » produisent le MEME chiffre mais
     # appellent des travaux opposes. Seule la confrontation des deux listes
@@ -999,8 +1021,10 @@ class Stats:
                f"plusieurs clés dans events : prix écrit sous chacune)"
                if self.doublons_events else "")
         col = (f"\n       /!\\ {len(self.collisions)} de nos evenements "
-               f"revendiques par PLUSIEURS matchs AsianOdds : au moins un "
-               f"rapprochement est faux" if self.collisions else "")
+               f"revendiques par PLUSIEURS matchs AsianOdds : RIEN n'y a ete "
+               f"ecrit ({self.lignes_annulees} ligne(s) annulee(s), "
+               f"{self.lignes_refusees} refusee(s) ensuite)"
+               if self.collisions else "")
         return (f"matchs AsianOdds reels={vus} apparies={app} ({t1})\n"
                 f"       NOS evenements en cours={cand} couverts par "
                 f"AsianOdds={couv} ({t2})" + corrige + dbl + col)
@@ -1181,19 +1205,49 @@ def collect(storage, username: str, password: str, *,
                         f"{evf.get('HN')} — {evf.get('AN')}"
                         f"   [{evf.get('LN')}]\n        → {app.motif}")
                 else:
-                    # Deux matchs AsianOdds DIFFERENTS qui tombent sur le meme
-                    # event_key : au moins l'un des deux est un mauvais
-                    # rapprochement. Compte, pas devine.
+                    mtchid = evf.get("MTCHID")
+                    stats.descriptif_source[mtchid] = (
+                        f"{evf.get('HN')} — {evf.get('AN')}"
+                        f"  [{evf.get('LN')}]")
+                    # Deux matchs AsianOdds DIFFERENTS sur le meme event_key :
+                    # au moins l'un des deux est un mauvais rapprochement, et
+                    # rien ne dit lequel. On ne les comptait que pour les
+                    # ecrire quand meme, le dernier arrive gagnant — c'est
+                    # a dire le hasard de l'ordre d'arrivee.
                     for c in app.toutes_les_cibles:
                         deja = stats.origine_par_event.setdefault(
-                            c.event_key, evf.get("MTCHID"))
-                        if deja != evf.get("MTCHID"):
-                            stats.collisions.add(c.event_key)
-                    stats.matchs_apparies.add(evf.get("MTCHID"))
+                            c.event_key, mtchid)
+                        if deja == mtchid or c.event_key in stats.cles_empoisonnees:
+                            continue
+                        stats.cles_empoisonnees.add(c.event_key)
+                        stats.collisions.add(c.event_key)
+                        stats.collisions_detail[c.event_key] = {
+                            "premier": deja,
+                            "premier_nom": stats.descriptif_source.get(deja, "?"),
+                            "second": mtchid,
+                            "second_nom": stats.descriptif_source.get(mtchid, "?"),
+                        }
+                        # Le premier revendiquant a deja rempli le lot : ces
+                        # lignes partiraient au prochain flush. Les retirer
+                        # AVANT est le seul moment ou c'est encore gratuit.
+                        a_jeter = [k for k in lot if k[0] == c.event_key]
+                        for k in a_jeter:
+                            del lot[k]
+                        stats.lignes_annulees += len(a_jeter)
+                        stats.evenements_couverts.discard(c.event_key)
+                        log(f"[ao] COLLISION sur {c.event_key} : "
+                            f"{deja} «{stats.descriptif_source.get(deja, '?')}» "
+                            f"et {mtchid} «{stats.descriptif_source[mtchid]}» — "
+                            f"{len(a_jeter)} ligne(s) annulée(s), plus rien ne "
+                            f"sera écrit sous cette clé")
+                    stats.matchs_apparies.add(mtchid)
                     horodatage = now_fn()
                     if app.doublons:
                         stats.doublons_events.add(app.cible.event_key)
                     for c in app.toutes_les_cibles:
+                        if c.event_key in stats.cles_empoisonnees:
+                            stats.lignes_refusees += 1
+                            continue
                         stats.evenements_couverts.add(c.event_key)
                         lignes = normalise_evf(
                             evf, c.event_key, inverse=app.inverse_pour(c),
