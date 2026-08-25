@@ -313,7 +313,16 @@ class LiveRow:
                 self.matched_at.isoformat() if self.matched_at else None)
 
 
+def _inverser_score(txt: "str | None") -> "str | None":
+    """« 1:0 » → « 0:1 ». None reste None."""
+    if not txt or ":" not in txt:
+        return txt
+    h, _, a = txt.partition(":")
+    return f"{a}:{h}"
+
+
 def normalise_evf(evf: dict, event_key: str, *,
+                  inverse: bool = False,
                   matched_at: "datetime | None" = None) -> list[LiveRow]:
     """Un message EVF → les sélections exploitables qu'il contient.
 
@@ -335,6 +344,21 @@ def normalise_evf(evf: dict, event_key: str, *,
     feed = decode_feed_score(evf.get("FID"))
     ligue = evf.get("LN") or None
 
+    # ── Orientation ───────────────────────────────────────────────────
+    # La source peut annoncer le match DANS L'AUTRE SENS : son domicile est
+    # notre exterieur. Le rapprochement l'accepte (il compare aussi les noms
+    # croises) mais les prix, eux, arrivent dans SON ordre. Sans permutation,
+    # la cote du domicile adverse s'ecrit sous notre `home` — mesure : 1.30
+    # ecrit la ou il fallait 9.00, et le score a l'envers avec.
+    #
+    # `feed_score` DOIT suivre : il sert a reperer un prix perime en le
+    # comparant a home_score/away_score. Le laisser dans l'orientation de la
+    # source les ferait diverger EN PERMANENCE, et le detecteur de peremption
+    # crierait sur tous les matchs inverses.
+    if inverse:
+        hs, aw = aw, hs
+        feed = _inverser_score(feed)
+
     # `MTCHID` est l'identifiant du match CHEZ ASIANODDS : il voyage avec le
     # message, il n'a pas a etre passe par l'appelant.
     source = evf.get("MTCHID")
@@ -344,7 +368,7 @@ def normalise_evf(evf: dict, event_key: str, *,
         return LiveRow(event_key=event_key, observed_at=observed,
                        home_score=hs, away_score=aw, feed_score=feed,
                        igm=igm, league=ligue, source_event_id=source,
-                       matched_at=matched_at, **kw)
+                       source_inverse=inverse, matched_at=matched_at, **kw)
 
     out: list[LiveRow] = []
 
@@ -353,6 +377,8 @@ def normalise_evf(evf: dict, event_key: str, *,
         trio = (_odd(evf.get(prefixe + "HODD")),
                 _odd(evf.get(prefixe + "DODD")),
                 _odd(evf.get(prefixe + "AODD")))
+        if inverse:                      # notre domicile est leur exterieur
+            trio = (trio[2], trio[1], trio[0])
         # Les trois issues ou rien : un 1X2 amputé n'est pas déviguable, et
         # le laisser passer produirait une « référence » à deux voies.
         if all(trio):
@@ -375,6 +401,13 @@ def normalise_evf(evf: dict, event_key: str, *,
     # ── Handicap asiatique, match plein SEULEMENT ─────────────────────
     hdp = signed_handicap(parse_line(evf.get("FTHDP")), evf.get("FFT") or 0)
     dom, ext = _odd(evf.get("FTHHODD")), _odd(evf.get("FTHAODD"))
+    if inverse and hdp is not None:
+        # La ligne est SIGNEE selon le favori annonce par la source. En
+        # renversant les cotes il faut renverser le signe avec, sinon le
+        # handicap decrit l'avantage de l'equipe adverse.
+        hdp, dom, ext = -hdp, ext, dom
+    elif inverse:
+        dom, ext = ext, dom
     if hdp is not None and dom and ext:
         out.append(ligne(market=MarketType.HANDICAP, outcome_label="home",
                          line=hdp, odd=dom))
@@ -413,14 +446,31 @@ class Appariement:
     #: `evaluer_appariement` : mesuré en base, un même match existe jusqu'à
     #: cinq fois sous cinq horaires différents.
     doublons: tuple = ()
+    #: L'orientation retenue POUR CHAQUE CLE, et non une seule pour toutes.
+    #:
+    #: Deux clés de la même rencontre peuvent être stockées dans des sens
+    #: OPPOSES — mesuré en base le 24/08 : `cerrolargo__vs__centralespanol`
+    #: coexiste avec `centralespanol__vs__cerrolargo`. Un drapeau unique
+    #: serait donc juste pour l'une et faux pour l'autre, et permuterait les
+    #: prix du mauvais côté sur la seconde.
+    inverse_par_cle: dict = field(default_factory=dict)
 
     @property
     def reussi(self) -> bool:
         return self.cible is not None
 
     @property
+    def inverse(self) -> bool:
+        """La source annonçait-elle la cible principale à l'envers ?"""
+        return bool(self.cible is not None
+                    and self.inverse_par_cle.get(self.cible.event_key))
+
+    @property
     def toutes_les_cibles(self) -> tuple:
         return () if self.cible is None else (self.cible,) + self.doublons
+
+    def inverse_pour(self, candidat) -> bool:
+        return bool(self.inverse_par_cle.get(candidat.event_key))
 
 
 def _meme_rencontre(a: Candidat, b: Candidat) -> bool:
@@ -453,10 +503,15 @@ def evaluer_appariement(home: str, away: str,
     Les seuils et le garde-fou d'ambiguïté sont ceux de `match_event`, à
     l'identique : deux candidats presque aussi bons → on refuse de deviner."""
     notes = []
+    sens = {}
     for c in candidats:
         direct = (team_similarity(home, c.home) + team_similarity(away, c.away)) / 2
-        inverse = (team_similarity(home, c.away) + team_similarity(away, c.home)) / 2
-        notes.append((max(direct, inverse), c))
+        renverse = (team_similarity(home, c.away) + team_similarity(away, c.home)) / 2
+        # `>` et non `>=` : a egalite parfaite — deux noms identiques des deux
+        # cotes — on garde l'orientation annoncee plutot que de la retourner
+        # sans raison.
+        sens[c.event_key] = renverse > direct
+        notes.append((max(direct, renverse), c))
     if not notes:
         return Appariement(None, 0.0, 0.0, "aucun candidat en cours")
     notes.sort(key=lambda t: t[0], reverse=True)
@@ -471,7 +526,9 @@ def evaluer_appariement(home: str, away: str,
     proches = [c for note, c in notes[1:]
                if note >= MIN_MATCH_SCORE and (score_max - note) < AMBIGUITY_MARGIN]
     if not proches:
-        return Appariement(meilleur, score_max, second, "apparié")
+        return Appariement(meilleur, score_max, second, "apparié",
+                           inverse_par_cle={meilleur.event_key:
+                                            sens[meilleur.event_key]})
 
     # Ex aequo. Deux cas OPPOSÉS derrière le même symptôme :
     #
@@ -489,9 +546,11 @@ def evaluer_appariement(home: str, away: str,
     # sous TOUTES les cles de la meme rencontre : le prix est le meme, et
     # rien ne dit laquelle des cles le moteur consultera.
     if all(_meme_rencontre(meilleur, c) for c in proches):
+        retenus = [meilleur] + proches
         return Appariement(meilleur, score_max, second,
                            f"apparié (+{len(proches)} doublon(s) dans events)",
-                           tuple(proches))
+                           tuple(proches),
+                           {c.event_key: sens[c.event_key] for c in retenus})
     autre = next(c for c in proches if not _meme_rencontre(meilleur, c))
     return Appariement(
         None, score_max, second,
@@ -1092,7 +1151,8 @@ def collect(storage, username: str, password: str, *,
                     for c in app.toutes_les_cibles:
                         stats.evenements_couverts.add(c.event_key)
                         lignes = normalise_evf(
-                            evf, c.event_key, matched_at=candidats_datant_de)
+                            evf, c.event_key, inverse=app.inverse_pour(c),
+                            matched_at=candidats_datant_de)
                         if not lignes:
                             stats.sans_selection += 1
                         stats.normalises += len(lignes)

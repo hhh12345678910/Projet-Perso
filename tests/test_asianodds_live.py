@@ -1225,3 +1225,187 @@ def test_deux_matchs_sous_une_cle_sont_constatables_apres_coup(tmp_path):
             now_fn=lambda: now, log=lambda *a: None)
     sources = {r["source_event_id"] for r in db.market_state(event_key=KEY)}
     assert sources == {"7777777"}, "la dernière source doit être lisible"
+
+
+# ══════════════════════════════════════════════════════════════════════════
+# Orientation domicile/exterieur
+# ══════════════════════════════════════════════════════════════════════════
+# Un message contrôlé : chaque valeur est reconnaissable, donc une permutation
+# manquée se lit à l'œil au lieu de se deviner.
+EVF_ORIENTE = {
+    "HN": "Felgueiras", "AN": "Farense", "LN": "PORTUGAL LIGA 2",
+    "MTCHID": "999", "SPMT": "0", "STP": 1, "OF": "00",
+    "S": 1787505194297, "HS": 3, "AS": 1, "IGM": 70, "FID": "Mzox",  # "3:1"
+    "FFT": 1, "FTHDP": "0.5", "FTGOAL": "2.5",
+    "FTXHODD": "1.30", "FTXDODD": "5.00", "FTXAODD": "9.00",
+    "HTXHODD": "1.40", "HTXDODD": "4.00", "HTXAODD": "8.00",
+    "FTHHODD": "1.85", "FTHAODD": "1.95",
+    "FTOODDS": "1.90", "FTOUODDS": "2.10",
+    "HTGOAL": "1.5", "HTOODD": "1.70", "HTUODD": "2.20",
+}
+CLE = "202608241700::farense__vs__felgueiras"
+
+
+def _par(lignes):
+    return {(l.market, l.outcome_label): l for l in lignes}
+
+
+def test_orientation_directe_ne_touche_a_rien():
+    """A -> A : l'identité stricte. Une permutation qui s'appliquerait aussi
+    au sens direct serait aussi fausse que pas de permutation du tout."""
+    d = _par(normalise_evf(EVF_ORIENTE, CLE, inverse=False))
+    assert d[(MarketType.H2H, "home")].odd == 1.30
+    assert d[(MarketType.H2H, "draw")].odd == 5.00
+    assert d[(MarketType.H2H, "away")].odd == 9.00
+    assert d[(MarketType.HANDICAP, "home")].line == -0.5
+    assert d[(MarketType.HANDICAP, "home")].odd == 1.85
+    assert d[(MarketType.HANDICAP, "away")].line == 0.5
+    un = d[(MarketType.H2H, "home")]
+    assert (un.home_score, un.away_score) == (3, 1)
+    assert un.feed_score == "3:1"
+    assert un.source_inverse is False
+
+
+def test_orientation_inversee_permute_le_1x2():
+    """A/B -> B/A. Notre `home` doit porter la cote que la source donne à SON
+    extérieur. Mesuré sur le run réel : 1.30 écrit là où il fallait 9.00."""
+    d = _par(normalise_evf(EVF_ORIENTE, CLE, inverse=True))
+    assert d[(MarketType.H2H, "home")].odd == 9.00
+    assert d[(MarketType.H2H, "away")].odd == 1.30
+    assert d[(MarketType.H2H, "draw")].odd == 5.00, "le nul ne se permute pas"
+    # La mi-temps suit la même règle.
+    assert d[(MarketType.H2H_H1, "home")].odd == 8.00
+    assert d[(MarketType.H2H_H1, "away")].odd == 1.40
+    assert d[(MarketType.H2H_H1, "draw")].odd == 4.00
+
+
+def test_orientation_inversee_permute_le_handicap_ET_son_signe():
+    """Permuter les cotes sans le signe décrirait l'avantage de l'équipe
+    adverse : deux erreurs qui ne s'annulent pas."""
+    d = _par(normalise_evf(EVF_ORIENTE, CLE, inverse=True))
+    home = d[(MarketType.HANDICAP, "home")]
+    away = d[(MarketType.HANDICAP, "away")]
+    assert (home.line, home.odd) == (0.5, 1.95)
+    assert (away.line, away.odd) == (-0.5, 1.85)
+
+
+@pytest.mark.parametrize("inverse", [False, True])
+def test_le_over_under_est_invariant_par_orientation(inverse):
+    """L'orientation N'INTERVIENT PAS sur l'over/under : « plus de 2.5 buts »
+    ne dépend pas de qui reçoit. Le permuter serait une régression."""
+    d = _par(normalise_evf(EVF_ORIENTE, CLE, inverse=inverse))
+    assert d[(MarketType.TOTALS, "over")].odd == 1.90
+    assert d[(MarketType.TOTALS, "under")].odd == 2.10
+    assert d[(MarketType.TOTALS, "over")].line == 2.5
+    assert d[(MarketType.TOTALS_H1, "over")].odd == 1.70
+    assert d[(MarketType.TOTALS_H1, "under")].odd == 2.20
+
+
+def test_orientation_inversee_permute_les_scores_ET_le_feed_score():
+    """`feed_score` sert à repérer un prix périmé en le comparant à
+    home_score/away_score. Le laisser dans l'orientation de la source les
+    ferait diverger EN PERMANENCE sur tout match inversé."""
+    un = normalise_evf(EVF_ORIENTE, CLE, inverse=True)[0]
+    assert (un.home_score, un.away_score) == (1, 3)
+    assert un.feed_score == "1:3"
+    assert un.feed_score == f"{un.home_score}:{un.away_score}", \
+        "le score du flux et le nôtre se contredisent"
+    assert un.source_inverse is True
+
+
+@pytest.mark.parametrize("hs,aw,fid,attendu", [
+    (0, 0, "MDow", "0:0"),      # score nul : la permutation doit rester neutre
+    (2, 0, "Mjow", "0:2"),
+    (0, 2, "MDoy", "2:0"),
+])
+def test_permutation_du_score_a_zero_et_hors_zero(hs, aw, fid, attendu):
+    evf = dict(EVF_ORIENTE, HS=hs, AS=aw, FID=fid)
+    un = normalise_evf(evf, CLE, inverse=True)[0]
+    assert (un.home_score, un.away_score) == (aw, hs)
+    assert un.feed_score == attendu
+
+
+def test_le_score_nul_reste_identique_dans_les_deux_sens():
+    evf = dict(EVF_ORIENTE, HS=0, AS=0, FID="MDow")
+    direct = normalise_evf(evf, CLE, inverse=False)[0]
+    renverse = normalise_evf(evf, CLE, inverse=True)[0]
+    assert (direct.home_score, direct.away_score) == (0, 0)
+    assert (renverse.home_score, renverse.away_score) == (0, 0)
+    assert direct.feed_score == renverse.feed_score == "0:0"
+
+
+# ── l'orientation survit jusqu'à l'écriture ──────────────────────────────
+def test_l_appariement_conserve_l_orientation():
+    """`inverse` était calculé puis JETÉ : c'est la cause racine."""
+    from src.asianodds_live import evaluer_appariement
+    droit = Candidat("k", "Farense", "Felgueiras")
+    r = evaluer_appariement("Farense", "Felgueiras", [droit])
+    assert r.reussi and r.inverse is False
+    r = evaluer_appariement("Felgueiras", "Farense", [droit])
+    assert r.reussi and r.inverse is True, "l'orientation est encore jetée"
+
+
+def test_l_orientation_est_retenue_CLE_PAR_CLE():
+    """Mesuré en base le 24/08 : `cerrolargo__vs__centralespanol` coexiste
+    avec `centralespanol__vs__cerrolargo`. Les deux clés désignent la même
+    rencontre dans des sens OPPOSÉS — un drapeau unique serait juste pour
+    l'une et faux pour l'autre."""
+    from src.asianodds_live import evaluer_appariement
+    endroit = Candidat("k_droit", "cerrolargo", "centralespanol")
+    envers = Candidat("k_envers", "centralespanol", "cerrolargo")
+    r = evaluer_appariement("Cerro Largo", "Central Espanol",
+                            [endroit, envers])
+    assert r.reussi, r.motif
+    assert set(r.inverse_par_cle) == {"k_droit", "k_envers"}
+    assert r.inverse_par_cle["k_droit"] is False
+    assert r.inverse_par_cle["k_envers"] is True
+
+
+def test_collect_ecrit_les_prix_dans_NOTRE_convention(tmp_path):
+    """Bout en bout : la source annonce le match à l'envers, la base doit
+    porter nos équipes dans notre ordre."""
+    now = datetime(2026, 8, 23, 19, 0, tzinfo=timezone.utc)
+    db = Storage(tmp_path / "t.db")
+    db.upsert_events([(CLE, "soccer", "Portugal - Liga 2", "Farense",
+                       "Felgueiras", (now - timedelta(hours=1)).isoformat())])
+    collect(db, "u", "p",
+            session_factory=lambda: _FausseSession([{"EVF": EVF_ORIENTE}]),
+            now_fn=lambda: now, log=lambda *a: None)
+
+    lignes = {(r["market"], r["outcome_label"]): r
+              for r in db.market_state(event_key=CLE)}
+    assert lignes[("h2h", "home")]["odd"] == 9.00
+    assert lignes[("h2h", "away")]["odd"] == 1.30
+    assert lignes[("handicap", "home")]["line"] == 0.5
+    assert lignes[("h2h", "home")]["home_score"] == 1
+    assert lignes[("h2h", "home")]["feed_score"] == "1:3"
+    assert lignes[("h2h", "home")]["source_inverse"] == 1
+    assert lignes[("totals", "over")]["odd"] == 1.90, "l'O/U a été permuté"
+
+
+def test_collect_ecrit_chaque_doublon_dans_SON_sens(tmp_path):
+    """Le cas que la base a rendu nécessaire : deux clés de la même rencontre
+    stockées à l'envers l'une de l'autre. Chacune doit recevoir les prix dans
+    sa propre convention."""
+    now = datetime(2026, 8, 23, 19, 0, tzinfo=timezone.utc)
+    db = Storage(tmp_path / "t.db")
+    debut = (now - timedelta(hours=1)).isoformat()
+    db.upsert_events([
+        ("k_droit", "soccer", "L", "Farense", "Felgueiras", debut),
+        ("k_envers", "soccer", "L", "Felgueiras", "Farense", debut),
+    ])
+    collect(db, "u", "p",
+            session_factory=lambda: _FausseSession([{"EVF": EVF_ORIENTE}]),
+            now_fn=lambda: now, log=lambda *a: None)
+
+    droit = {r["outcome_label"]: r for r in db.market_state(event_key="k_droit")
+             if r["market"] == "h2h"}
+    envers = {r["outcome_label"]: r for r in db.market_state(event_key="k_envers")
+              if r["market"] == "h2h"}
+    assert droit and envers, "une des deux clés n'a rien reçu"
+    # `k_droit` = Farense en domicile, or la source annonce Felgueiras : inversé.
+    assert droit["home"]["odd"] == 9.00 and droit["home"]["source_inverse"] == 1
+    # `k_envers` = Felgueiras en domicile, comme la source : direct.
+    assert envers["home"]["odd"] == 1.30 and envers["home"]["source_inverse"] == 0
+    assert droit["home"]["home_score"] == 1
+    assert envers["home"]["home_score"] == 3
