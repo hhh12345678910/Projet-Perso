@@ -11,8 +11,8 @@ from datetime import datetime, timedelta, timezone
 import pytest
 
 from src.live_value import (
-    AGE_MAX_FAIR_SEC, AGE_MAX_PRENEUR_SEC, SEUIL_EV_PCT, Memoire, Statut,
-    construire_fair, evaluer, resume)
+    AGE_MAX_FAIR_SEC, AGE_MAX_PRENEUR_SEC, OVERROUND_PRENEUR_MAX,
+    SEUIL_EV_PCT, Memoire, Statut, construire_fair, evaluer, resume)
 from src.asianodds_live import LiveRow
 from src.matcher import event_key
 from src.models import Book, MarketType, OddQuote, Outcome
@@ -706,3 +706,206 @@ def test_le_jitter_sous_la_seconde_vaut_zero_et_pas_moins(tmp_path):
                 db, MAINTENANT).opportunites[0]
     assert o.age_preneur_sec == 0.0
     assert "unibet_age=0.0s" in o.ligne()
+
+
+# ══ pas de plafond d'EV, jamais ════════════════════════════════════════
+@pytest.mark.parametrize("ev_cible", [10.1, 25.0, 100.0, 500.0, 5000.0])
+def test_aucune_EV_n_est_rejetee_pour_sa_TAILLE(tmp_path, ev_cible):
+    """Règle explicite de la phase d'observation : +10 %, +100 %, +500 % ou
+    davantage passent tous, si le calcul est valide. Une grosse EV n'est pas
+    un défaut à corriger — c'est précisément l'objet de l'observation."""
+    db = _db(tmp_path)
+    _fair(db)
+    o = evaluer([_cote(_cote_pour_ev(ev_cible, db))], db, MAINTENANT).opportunites[0]
+    assert o.ev_pct == pytest.approx(ev_cible, rel=1e-9)
+    assert o.statut is not Statut.DOUBLON
+    assert "PLAFOND" not in o.motif.upper()
+
+
+def test_kelly_est_calcule_et_ne_filtre_JAMAIS(tmp_path):
+    """Kelly informe et trie. Il ne supprime pas.
+
+    Le cas mesuré le 26/08 : une cote à 101 rendait +119 % d'EV pour un
+    Kelly de 1,2 %, une cote à 3,25 rendait +15 % pour 6,8 %. Le classement
+    par EV est l'inverse du classement par information. Les deux doivent
+    sortir, avec les deux chiffres.
+    """
+    db = _db(tmp_path)
+    _fair(db, cotes=(1.01, 21.41, 24.33))     # domicile écrasant, 2:0
+    o = evaluer([_cote(101.00, label="away")], db, MAINTENANT).opportunites[0]
+    assert o.ev_pct > 100.0, "EV énorme"
+    assert 0.0 < o.kelly_pct < 3.0, "Kelly minuscule sur une cote à 101"
+    assert o.statut is not Statut.DOUBLON, "le Kelly faible n'a rien supprimé"
+    assert f"kelly={o.kelly_pct:.2f}%" in o.ligne()
+
+
+# ══ marché preneur partiel ═════════════════════════════════════════════
+def test_une_jambe_preneuse_MANQUANTE_ne_rejette_pas_l_occasion(tmp_path):
+    """LE cas Petrojet du 26/08 : Unibet ne cotait que `draw` et `home`, sa
+    jambe favorite absente, marge 0,032. L'EV de `draw` ne dépend pourtant
+    que de la cote de `draw` et de sa probabilité juste — les autres jambes
+    n'entrent pas dans le calcul. On signale, on ne rejette pas, et on
+    n'invente aucune cote."""
+    db = _db(tmp_path)
+    _fair(db, cotes=(17.82, 6.26, 1.18))       # away écrasant
+    lot = [_cote(41.00, label="draw"), _cote(131.00, label="home")]
+    a = evaluer(lot, db, MAINTENANT)
+    assert len(a.opportunites) == 2, "les deux cotes présentes sont jugées"
+    for o in a.opportunites:
+        assert o.partiel is True
+        assert o.issues_manquantes == ("away",)
+        assert o.statut is not Statut.REJET_MARCHE_PRENEUR
+        assert "marché partiel" in o.ligne()
+    assert a.partiels == 2
+
+
+def test_une_cote_manquante_n_est_JAMAIS_inventee(tmp_path):
+    """Aucune opportunité ne peut naître d'une issue que le preneur ne cote
+    pas. L'absence reste l'absence."""
+    db = _db(tmp_path)
+    _fair(db)
+    a = evaluer([_cote(4.00, label="home")], db, MAINTENANT)
+    assert {o.outcome for o in a.opportunites} == {"home"}
+    assert a.opportunites[0].issues_manquantes == ("away", "draw")
+
+
+def test_un_marche_preneur_COMPLET_n_est_pas_marque_partiel(tmp_path):
+    """Contre-épreuve : sans elle, marquer tout le monde « partiel » ferait
+    passer le test précédent."""
+    db = _db(tmp_path)
+    _fair(db)
+    a = evaluer([_cote(4.00, label="home"), _cote(4.00, label="draw"),
+                 _cote(4.00, label="away")], db, MAINTENANT)
+    assert a.partiels == 0
+    assert all(not o.partiel and o.issues_manquantes == ()
+               for o in a.opportunites)
+
+
+# ══ overround du preneur ═══════════════════════════════════════════════
+def test_une_marge_preneuse_BASSE_n_est_jamais_un_motif_de_rejet(tmp_path):
+    """Une marge sous 100 % sur un marché complet est la signature d'un prix
+    trop généreux — c'est-à-dire l'occasion elle-même. La couper reviendrait
+    à supprimer les occasions pour cause d'occasion."""
+    db = _db(tmp_path)
+    _fair(db, cotes=(2.00, 3.60, 4.00))
+    a = evaluer([_cote(1.90, label="home"), _cote(3.60, label="draw"),
+                 _cote(8.00, label="away")], db, MAINTENANT)
+    o = next(x for x in a.opportunites if x.outcome == "away")
+    assert o.overround_preneur < 1.0, "marché sous 100 %"
+    assert o.statut is not Statut.REJET_MARCHE_PRENEUR
+    assert o.ev_pct > SEUIL_EV_PCT
+
+
+def test_une_marge_preneuse_GROTESQUE_sur_marche_complet_est_rejetee(tmp_path):
+    """Au-delà, ce n'est plus une offre. Le seuil est très haut à dessein :
+    ce contrôle écarte ce qui n'est pas un marché, pas ce qui est cher."""
+    db = _db(tmp_path)
+    _fair(db, cotes=(2.00, 3.60, 4.00))
+    a = evaluer([_cote(20.00, label="home"), _cote(1.10, label="draw"),
+                 _cote(1.10, label="away")], db, MAINTENANT)
+    o = next(x for x in a.opportunites if x.outcome == "home")
+    assert o.overround_preneur > 1.50
+    assert o.statut is Statut.REJET_MARCHE_PRENEUR
+
+
+def test_un_marche_PARTIEL_n_est_jamais_juge_sur_sa_marge(tmp_path):
+    """C'est LA distinction « marché incomplet » / « marché faux ».
+
+    Ici deux jambes sur trois, chacune à 1.10 : la marge du lot vaut 1,82,
+    au-dessus du seuil. Mais elle ne veut rien dire — il MANQUE une jambe, et
+    la somme des probabilités d'un marché amputé n'a aucune raison d'être
+    proche de 100 %. Juger un marché partiel sur sa marge, c'est rejeter une
+    cote parfaitement valide au motif qu'une AUTRE cote est absente.
+
+    Ma première version de ce test ne prouvait rien : elle n'avait qu'une
+    seule jambe, la marge n'était donc même pas calculée, et le test passait
+    aussi bien avec le garde-fou que sans.
+    """
+    db = _db(tmp_path)
+    _fair(db, cotes=(1.20, 6.00, 15.00))
+    a = evaluer([_cote(1.50, label="home"), _cote(1.15, label="draw")],
+                db, MAINTENANT)
+    o = next(x for x in a.opportunites if x.outcome == "home")
+    assert o.partiel is True and o.issues_manquantes == ("away",)
+    assert o.overround_preneur > OVERROUND_PRENEUR_MAX, "marge au-dessus du seuil"
+    assert o.ev_pct > SEUIL_EV_PCT, "et une jambe réellement rentable"
+    assert o.statut is not Statut.REJET_MARCHE_PRENEUR, (
+        "un marché partiel a été jugé sur une marge qui ne veut rien dire")
+
+
+# ══ match terminé ══════════════════════════════════════════════════════
+def test_un_match_clairement_TERMINE_est_rejete(tmp_path):
+    """Un match ne peut plus être en cours 3 heures après le coup d'envoi."""
+    db = _db(tmp_path)
+    vieux = event_key("Fini FC", "Termine SK", MAINTENANT - timedelta(hours=3))
+    _fair(db, cle=vieux)
+    o = evaluer([_cote(4.00, cle=vieux)], db, MAINTENANT).opportunites[0]
+    assert o.statut is Statut.REJET_MATCH_TERMINE
+    assert o.minute_ecoulee == pytest.approx(180, abs=1)
+
+
+def test_un_match_a_la_88e_minute_N_EST_PAS_terminE(tmp_path):
+    """LE test qui fige mon erreur du 26/08. J'avais déclaré Rapid Vienna
+    terminé : coup d'envoi 16:45, observé à 18:25. J'avais OUBLIÉ LA
+    MI-TEMPS — 16:45 + 45 + 15 + 45 = 18:30, le match était à la 88e.
+
+    Une borne resserrée sur cette erreur aurait supprimé des matchs bel et
+    bien en cours. 100 minutes d'horloge murale, c'est la fin de la seconde
+    période, pas la fin du match.
+    """
+    db = _db(tmp_path)
+    ko = MAINTENANT - timedelta(minutes=100)
+    cle = event_key("Rapid Vienna", "Hearts", ko)
+    _fair(db, cle=cle)
+    o = evaluer([_cote(4.00, cle=cle)], db, MAINTENANT).opportunites[0]
+    assert o.minute_ecoulee == pytest.approx(100, abs=1)
+    assert o.statut is not Statut.REJET_MATCH_TERMINE
+
+
+def test_une_prolongation_reste_en_cours(tmp_path):
+    """90 + 15 de mi-temps + arrêts de jeu + 30 de prolongation et ses
+    pauses : 140 minutes se jouent encore."""
+    db = _db(tmp_path)
+    ko = MAINTENANT - timedelta(minutes=140)
+    cle = event_key("Prolong FC", "Tirs Au But SK", ko)
+    _fair(db, cle=cle)
+    o = evaluer([_cote(4.00, cle=cle)], db, MAINTENANT).opportunites[0]
+    assert o.statut is not Statut.REJET_MATCH_TERMINE
+
+
+# ══ déduplication : la règle en entier ═════════════════════════════════
+def test_dedup_un_CHANGEMENT_DE_SCORE_rouvre_l_observation(tmp_path):
+    """Même EV, même cote, mais un but est tombé : ce n'est plus la même
+    situation de jeu. Sans cette règle, une occasion signalée à 0:0 resterait
+    muette à 1:0 alors que tout a changé."""
+    db = _db(tmp_path)
+    _fair(db, feed_score="0:0")
+    m = Memoire()
+    q = _cote(4.00)
+    assert evaluer([q], db, MAINTENANT, memoire=m).nouvelles
+    assert evaluer([q], db, MAINTENANT, memoire=m).nouvelles == []
+
+    _fair(db, feed_score="1:0")                       # but
+    a = evaluer([q], db, MAINTENANT, memoire=m)
+    assert a.nouvelles, "le changement de score n'a pas rouvert l'observation"
+    assert "0:0 -> 1:0" in a.nouvelles[0].motif_reemission
+
+
+def test_dedup_les_trois_declencheurs_et_RIEN_d_autre(tmp_path):
+    """La règle complète, figée : EV qui bouge de 2 points, score qui change,
+    ou disparition/réapparition. Un simple passage de plus ne suffit pas."""
+    db = _db(tmp_path)
+    _fair(db, feed_score="0:0")
+    m = Memoire()
+    base = _cote_pour_ev(20.0, db)
+
+    assert evaluer([_cote(base)], db, MAINTENANT, memoire=m).nouvelles
+    for _ in range(4):                                # rien ne change
+        assert evaluer([_cote(base)], db, MAINTENANT, memoire=m).nouvelles == []
+    # 1. EV
+    a = evaluer([_cote(_cote_pour_ev(23.0, db))], db, MAINTENANT, memoire=m)
+    assert a.nouvelles and "EV" in a.nouvelles[0].motif_reemission
+    # 3. disparition puis retour
+    evaluer([], db, MAINTENANT, memoire=m)
+    assert evaluer([_cote(_cote_pour_ev(23.0, db))], db, MAINTENANT,
+                   memoire=m).nouvelles

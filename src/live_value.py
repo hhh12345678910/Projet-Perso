@@ -24,8 +24,8 @@ from datetime import datetime, timedelta
 from enum import Enum
 
 from .detection import _overround_ok
-from .devig import devig
-from .ev import ev_pct, fair_odd
+from .devig import devig, overround
+from .ev import ev_pct, fair_odd, kelly_fraction
 from .matcher import parse_event_key
 from .models import Book, MarketType, OddQuote, Outcome
 
@@ -68,6 +68,31 @@ AGE_MAX_PRENEUR_SEC = 5.0
 #: minute pour un centième de point d'EV.
 DELTA_EV_REEMISSION = 2.0
 
+#: Au-dela, le match ne peut plus etre en cours. 90 minutes de jeu + 15 de
+#: mi-temps + l'arret de jeu + une prolongation eventuelle et ses pauses
+#: tiennent dans 150 minutes ; rien de ce qui se joue encore n'est dehors.
+#:
+#: ⚠️ Deux erreurs a ne pas refaire. J'ai d'abord cru que Rapid Vienna (coup
+#: d'envoi 16:45, observe a 18:25) etait termine : c'est faux, j'avais OUBLIE
+#: LA MI-TEMPS — 16:45 + 45 + 15 + 45 = 18:30, le match etait a la 88e. La
+#: borne est donc large a dessein. Et elle ne pretend rien resoudre d'autre :
+#: sur ce meme Rapid, AsianOdds cotait le nul favori a 1.71 a la 88e avec
+#: 1:0 au tableau, ce qui est impossible — un `observed_at` frais a 5 s
+#: portait un PRIX vieux. Aucune borne temporelle ne detecte ca.
+MINUTES_MAX_LIVE = 150.0
+
+#: Marge maximale du marche PRENEUR. Volontairement tres haut : ce controle
+#: n'est pas la pour trier les occasions, il est la pour ecarter ce qui n'est
+#: pas une offre. Un 1X2 Kambi en direct tourne entre 1,04 et 1,15.
+#:
+#: ⚠️ IL N'Y A PAS DE BORNE BASSE, ET C'EST DELIBERE. Une marge INFERIEURE a
+#: 100 % sur un marche complet est exactement la signature d'un prix trop
+#: genereux — c'est-a-dire la chose meme qu'on cherche. La couper reviendrait
+#: a supprimer les occasions pour cause d'occasion. Le cas Petrojet du 26/08
+#: (marge 0,032) n'etait pas un marche faux mais un marche INCOMPLET : il est
+#: traite comme tel, signale et conserve, jamais rejete pour sa marge.
+OVERROUND_PRENEUR_MAX = 1.50
+
 #: h2h + totals, MATCH PLEIN. Le HANDICAP est absent par construction, pas
 #: par filtrage tardif : la convention de ligne d'Unibet face à celle
 #: d'AsianOdds n'a pas été vérifiée, et un handicap mal orienté produit une
@@ -101,6 +126,11 @@ class Statut(str, Enum):
     REJET_SCORE_INCOHERENT = "REJET_SCORE_INCOHERENT"
     REJET_FAIR_PERIMEE = "REJET_FAIR_PERIMEE"
     REJET_COTE_PERIMEE = "REJET_COTE_PERIMEE"
+    #: Le match ne peut plus etre en cours (voir MINUTES_MAX_LIVE).
+    REJET_MATCH_TERMINE = "REJET_MATCH_TERMINE"
+    #: Le marche preneur n'est pas une offre : marge grotesque sur un marche
+    #: COMPLET. Un marche partiel ne passe jamais par la.
+    REJET_MARCHE_PRENEUR = "REJET_MARCHE_PRENEUR"
     DOUBLON = "DOUBLON"
 
 
@@ -282,12 +312,34 @@ class Opportunite:
     fair_cote: float
     ev_pct: float
     statut: Statut
+    #: Pourquoi ce STATUT. Distinct de `motif_reemission` : l'un dit pourquoi
+    #: l'occasion est (in)exploitable, l'autre pourquoi elle est signalee
+    #: maintenant. Les entasser dans un seul champ faisait perdre le second
+    #: des que le premier etait rempli.
     motif: str = ""
+    motif_reemission: str = ""
+    #: Kelly plein, en % de bankroll. INFORMATIF ET DE TRI UNIQUEMENT : il ne
+    #: supprime jamais une occasion. Mesure le 26/08 : les cinq ecarts de prix
+    #: les plus credibles se classaient a l'INVERSE par EV et par Kelly — une
+    #: cote a 101 rendait +119 % d'EV pour 1,9 point de probabilite d'ecart,
+    #: quand une cote a 3,25 rendait +15 % pour 8,1 points. L'EV en pourcent
+    #: mesure la LONGUEUR DE LA COTE autant que l'erreur du book ; Kelly, non.
+    kelly_pct: float = 0.0
     #: — les cinq mesures demandées, None quand la donnée manque —
     age_fair_sec: "float | None" = None
     age_preneur_sec: "float | None" = None
     delai_calcul_sec: "float | None" = None
     intervalle_maj_sec: "float | None" = None
+    #: — etat du marche preneur —
+    #: Une jambe absente n'invalide RIEN : l'EV d'une selection ne depend que
+    #: de SA cote et de SA probabilite juste. On le signale, on ne le rejette
+    #: pas, et on n'invente aucune cote manquante.
+    partiel: bool = False
+    issues_manquantes: tuple = ()
+    overround_preneur: "float | None" = None
+    #: Minutes ecoulees depuis le coup d'envoi annonce. Horloge murale, donc
+    #: mi-temps comprise — ce n'est PAS la minute de jeu.
+    minute_ecoulee: "float | None" = None
     #: — provenance —
     feed_score: "str | None" = None
     score_preneur: "str | None" = None
@@ -324,10 +376,16 @@ class Opportunite:
                 f" unibet_age={_na(self.age_preneur_sec)}s"
                 f" delai_calcul={_na(self.delai_calcul_sec, '{:.2f}')}s"
                 f" maj_precedente={_na(self.intervalle_maj_sec)}s"
+                f" kelly={self.kelly_pct:.2f}%"
                 f" score={self.feed_score or 'N/A'}"
                 f"/{self.score_preneur or 'N/A'}"
+                f" min={_na(self.minute_ecoulee, '{:.0f}')}"
                 f" status={self.statut.value}"
-                + (f" ({self.motif})" if self.motif else ""))
+                + (f" ({self.motif})" if self.motif else "")
+                + (f" [{self.motif_reemission}]"
+                   if self.motif_reemission else "")
+                + (f"  ⚠️ marché partiel — manque "
+                   f"{', '.join(self.issues_manquantes)}" if self.partiel else ""))
 
 
 @dataclass
@@ -340,6 +398,32 @@ class Memoire:
     """
     vues: dict = field(default_factory=dict)
     observations: dict = field(default_factory=dict)
+
+    def revoir(self, cle, ev: float, feed_score, delta: float) -> "str | None":
+        """Faut-il re-signaler cette selection ? Le motif, ou None.
+
+        LA REGLE, EN ENTIER. Une selection deja signalee est retenue une
+        seconde fois si — et seulement si — l'une de ces trois choses est
+        vraie :
+          1. son EV a bouge d'au moins `delta` points ;
+          2. le SCORE AsianOdds a change depuis la derniere emission — ce
+             n'est alors plus la meme situation de jeu, meme a EV identique ;
+          3. elle avait DISPARU d'un passage (gere par `evaluer`, qui oublie
+             les cles absentes) et revient.
+        Sinon elle est marquee DOUBLON. Rien d'autre ne declenche.
+        """
+        avant = self.vues.get(cle)
+        if avant is None:
+            self.vues[cle] = (ev, feed_score)
+            return "premiere fois"
+        ev0, score0 = avant
+        if score0 != feed_score:
+            self.vues[cle] = (ev, feed_score)
+            return f"score {score0 or 'N/A'} -> {feed_score or 'N/A'}"
+        if abs(ev - ev0) >= delta:
+            self.vues[cle] = (ev, feed_score)
+            return f"EV {ev0:+.1f} -> {ev:+.1f}"
+        return None
 
     def intervalle(self, cle, observed: "datetime | None") -> "float | None":
         """Secondes depuis la mise à jour PRÉCÉDENTE de cette sélection.
@@ -369,6 +453,7 @@ class Analyse:
     #: Occasions ≥ seuil par statut.
     par_statut: Counter = field(default_factory=Counter)
     sous_seuil: int = 0
+    partiels: int = 0
 
     @property
     def retenues(self) -> list:
@@ -429,6 +514,16 @@ def evaluer(quotes_preneur, storage, maintenant: datetime, *,
     # du même instantané peuvent venir de deux sondages si l'un a échoué.
     delai = _age(preneur_pris_a, maintenant)
 
+    # Le marche PRENEUR complet, par (event_key, marche, ligne). Sert a deux
+    # choses et a deux choses seulement : mesurer sa marge, et savoir quelles
+    # jambes manquent par rapport a la fair. Jamais a rejeter une selection
+    # dont la cote est la.
+    lots_preneur: dict = {}
+    for q in quotes_preneur:
+        if q.book in BOOKS_PRENEURS and q.market in MARCHES and q.from_live_feed:
+            lots_preneur.setdefault(
+                (q.event_key, q.market, _cle_ligne(q.outcome.line)), []).append(q)
+
     vus: set = set()
     matchs: set = set()
     for q in quotes_preneur:
@@ -460,12 +555,16 @@ def evaluer(quotes_preneur, storage, maintenant: datetime, *,
             a.sous_seuil += 1
             continue
 
+        cle_lot = (q.event_key, q.market, _cle_ligne(q.outcome.line))
         o = _juger(q, g, p, ev, maintenant, scores_preneur, memoire,
                    _age(q.fetched_at, maintenant), delai,
-                   age_max_fair, age_max_preneur, delta_reemission)
+                   age_max_fair, age_max_preneur, delta_reemission,
+                   lots_preneur.get(cle_lot, []))
         vus.add(o.cle)
         a.opportunites.append(o)
         a.par_statut[o.statut.value] += 1
+        if o.partiel:
+            a.partiels += 1
 
     a.matchs_analyses = len(matchs)
     # Une occasion qui DISPARAÎT est oubliée : si elle revient, elle sera
@@ -480,11 +579,23 @@ def evaluer(quotes_preneur, storage, maintenant: datetime, *,
 
 def _juger(q, g: GroupeFair, p: float, ev: float, maintenant: datetime,
            scores_preneur: dict, memoire: Memoire, age_preneur, delai,
-           age_max_fair, age_max_preneur, delta_reemission) -> Opportunite:
+           age_max_fair, age_max_preneur, delta_reemission,
+           lot_preneur: list) -> Opportunite:
     parsed = parse_event_key(q.event_key)
     home, away = (parsed[1], parsed[2]) if parsed else ("?", "?")
+    minute = _age(parsed[0], maintenant) if parsed else None
+    minute = None if minute is None else minute / 60.0
     age_fair = _age(g.observed_at, maintenant)
     score_preneur = scores_preneur.get(q.source_event_id)
+
+    # Etat du marche preneur. `manquantes` compare aux issues que la FAIR
+    # price : c'est le seul referentiel dont on dispose, et il est le bon —
+    # une jambe que la reference cote et que le preneur ne cote plus est
+    # exactement ce qu'on veut savoir.
+    presentes = {x.outcome.label for x in lot_preneur}
+    manquantes = tuple(sorted(set(g.probs) - presentes))
+    cotes = [x.decimal_odd for x in lot_preneur if x.decimal_odd > 1.0]
+    marge = 1.0 + overround(cotes) if len(cotes) >= 2 else None
 
     o = Opportunite(
         detecte_a=maintenant, event_key=q.event_key, home=home, away=away,
@@ -492,50 +603,69 @@ def _juger(q, g: GroupeFair, p: float, ev: float, maintenant: datetime,
         outcome=q.outcome.label, book=q.book, cote_preneur=q.decimal_odd,
         fair_prob=p, fair_cote=fair_odd(p), ev_pct=ev,
         statut=Statut.RETENUE,
+        kelly_pct=100.0 * kelly_fraction(q.decimal_odd, p),
         age_fair_sec=age_fair, age_preneur_sec=age_preneur,
         delai_calcul_sec=delai,
         intervalle_maj_sec=memoire.intervalle(
             (q.event_key, q.market.value, _cle_ligne(q.outcome.line),
              q.outcome.label),
             g.observed_at),
+        partiel=bool(manquantes), issues_manquantes=manquantes,
+        overround_preneur=marge, minute_ecoulee=minute,
         feed_score=g.feed_score, score_preneur=score_preneur,
         source_event_id_fair=g.source_event_id,
         source_event_id_preneur=q.source_event_id,
         fair_inverse=g.inverse)
 
-    # L'ORDRE compte : on nomme le défaut le plus grave d'abord. Une cote
-    # périmée ET un score incohérent se raconte « score incohérent », parce
-    # que c'est celui-là qui fait perdre le pari.
+    # L'ORDRE compte : on nomme le defaut le plus grave d'abord. Une cote
+    # perimee ET un score incoherent se raconte « score incoherent », parce
+    # que c'est celui-la qui fait perdre le pari.
+    #
+    # ⚠️ CE QUI N'EST PAS UN MOTIF DE REJET, ET NE DOIT PAS LE DEVENIR :
+    #   - une EV enorme. Il n'existe AUCUN plafond ici. +500 % passe si le
+    #     calcul est valide, parce que c'est precisement ce qu'on observe.
+    #   - un Kelly faible. Il informe et il trie, il ne supprime pas.
+    #   - un marche preneur PARTIEL. L'EV d'une selection ne depend que de SA
+    #     cote et de SA probabilite juste ; les autres jambes n'entrent pas
+    #     dans le calcul. Une jambe absente est signalee, jamais fatale.
+    #   - une marge preneur INFERIEURE a 100 %. C'est la signature d'un prix
+    #     trop genereux, donc de l'occasion elle-meme.
     statut, motif = Statut.RETENUE, ""
     concordent, connu = _score_coherent(g.feed_score, score_preneur)
     if connu and not concordent:
         statut = Statut.REJET_SCORE_INCOHERENT
-        motif = f"fair {g.feed_score} ≠ preneur {score_preneur}"
+        motif = f"fair {g.feed_score} != preneur {score_preneur}"
+    elif minute is not None and minute > MINUTES_MAX_LIVE:
+        statut = Statut.REJET_MATCH_TERMINE
+        motif = f"{minute:.0f} min depuis le coup d'envoi"
+    elif (not manquantes and marge is not None
+            and marge > OVERROUND_PRENEUR_MAX):
+        # Marche COMPLET dont la marge est grotesque : ce n'est pas une offre.
+        statut = Statut.REJET_MARCHE_PRENEUR
+        motif = f"marge {marge:.2f} > {OVERROUND_PRENEUR_MAX:.2f}"
     elif age_fair is None:
         statut, motif = Statut.REJET_FAIR_PERIMEE, "observed_at absent"
     elif age_fair > age_max_fair:
         statut = Statut.REJET_FAIR_PERIMEE
         motif = f"{age_fair:.0f}s > {age_max_fair:.0f}s"
     elif age_preneur is None:
-        statut, motif = Statut.REJET_COTE_PERIMEE, "instantané sans horodatage"
+        statut, motif = Statut.REJET_COTE_PERIMEE, "instantane sans horodatage"
     elif age_preneur > age_max_preneur:
         statut = Statut.REJET_COTE_PERIMEE
         motif = f"{age_preneur:.0f}s > {age_max_preneur:.0f}s"
     elif not connu:
-        # Le seul statut « détecté mais pas exploitable ». On ne sait pas à
-        # quel score Unibet a fabriqué sa cote : la traiter comme valide
-        # reviendrait à supposer ce qu'on n'a pas mesuré, et c'est
-        # exactement l'alerte-après-un-but qu'on refuse.
+        # Le seul statut « detecte mais pas exploitable ». On ne sait pas a
+        # quel score Unibet a fabrique sa cote : la traiter comme valide
+        # reviendrait a supposer ce qu'on n'a pas mesure, et c'est
+        # exactement l'alerte-apres-un-but qu'on refuse.
         statut, motif = Statut.OBSERVEE_SCORE_INCONNU, "score preneur indisponible"
 
     o = _avec(o, statut=statut, motif=motif)
 
-    avant = memoire.vues.get(o.cle)
-    if avant is not None and abs(ev - avant) < delta_reemission:
-        return _avec(o, statut=Statut.DOUBLON,
-                     motif=f"déjà vue à {avant:+.1f} %")
-    memoire.vues[o.cle] = ev
-    return o
+    revoir = memoire.revoir(o.cle, ev, g.feed_score, delta_reemission)
+    if revoir is None:
+        return _avec(o, statut=Statut.DOUBLON, motif="deja signalee")
+    return _avec(o, motif_reemission=revoir)
 
 
 def _avec(o: Opportunite, **kw) -> Opportunite:
@@ -560,8 +690,28 @@ def resume(a: Analyse) -> str:
         f"{a.par_statut.get('REJET_FAIR_PERIMEE', 0)}",
         f"    cote périmée            "
         f"{a.par_statut.get('REJET_COTE_PERIMEE', 0)}",
+        f"    match terminé           "
+        f"{a.par_statut.get('REJET_MATCH_TERMINE', 0)}",
+        f"    marché preneur invalide "
+        f"{a.par_statut.get('REJET_MARCHE_PRENEUR', 0)}",
         f"    doublons                {a.par_statut.get('DOUBLON', 0)}",
+        f"    dont marchés partiels   {a.partiels}  (signalés, JAMAIS rejetés)",
     ]
+    # Les tranches d'EV, SANS plafond superieur. Chacune est un sur-ensemble
+    # de la suivante ; une occasion a +500 % compte dans les quatre.
+    vivantes = [o for o in a.opportunites if o.statut is not Statut.DOUBLON]
+    if vivantes:
+        lignes.append("  EV : " + "   ".join(
+            f"≥{s_} % : {sum(1 for o in vivantes if o.ev_pct >= s_)}"
+            for s_ in (10, 20, 50, 100)))
+        haut = max(vivantes, key=lambda o: o.ev_pct)
+        gros = max(vivantes, key=lambda o: o.kelly_pct)
+        lignes.append(f"  top EV    {haut.ev_pct:+.1f} % (kelly "
+                      f"{haut.kelly_pct:.2f} %)  {haut.home}-{haut.away} "
+                      f"{haut.market.value} {haut.outcome}")
+        lignes.append(f"  top Kelly {gros.kelly_pct:.2f} % (EV "
+                      f"{gros.ev_pct:+.1f} %)  {gros.home}-{gros.away} "
+                      f"{gros.market.value} {gros.outcome}")
     if a.groupes_rejetes:
         lignes.append("  groupes AsianOdds écartés : " + ", ".join(
             f"{m} ×{n}" for m, n in a.groupes_rejetes.most_common()))
