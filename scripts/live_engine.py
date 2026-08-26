@@ -27,7 +27,8 @@ from datetime import datetime, timezone
 
 from src.live_value import (
     AGE_MAX_FAIR_SEC, AGE_MAX_PRENEUR_SEC, MINUTES_MAX_LIVE,
-    OVERROUND_PRENEUR_MAX, SEUIL_EV_PCT, Memoire, Statut, evaluer, resume)
+    OVERROUND_PRENEUR_MAX, SEUIL_EV_PCT, Memoire, Opportunite, Statut,
+    evaluer, resume)
 from src.storage import Storage
 from src.unibet_live import PERIODE_SEC, UnibetLive, apparier
 
@@ -104,8 +105,6 @@ def main() -> int:
         # rend concluante. Les valeurs sont inventees et le message le dit —
         # un message de test qui ressemblerait a une vraie occasion serait
         # pire qu'inutile.
-        from datetime import timedelta
-        from src.live_value import Opportunite, Statut
         from src.models import Book, MarketType
         maintenant = datetime.now(timezone.utc)
         faux = Opportunite(
