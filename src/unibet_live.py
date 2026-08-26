@@ -32,14 +32,26 @@ from .scrapers.unibet import UnibetScraper, parse_listview
 #: 92 matchs et 456 cotes en 219 ms, mesuré le 25/08 depuis la VM.
 CHEMIN_IN_PLAY = "all/all/all/in-play"
 
-#: 5 s. Mesuré : la réponse tient en 219 ms, donc le coût d'un sondage est
-#: marginal — 720 requêtes/heure, une seule par sondage. Mais descendre plus
-#: bas n'apporterait RIEN : le prix de référence AsianOdds ne change que
-#: toutes les 28 s en médiane, et un book soft bouge plus lentement encore.
-#: Sonder à 1 s multiplierait les requêtes par cinq pour observer cinq fois
-#: le même prix. L'API est publique et sans authentification : la ménager
-#: est une question de correction, pas une contrainte technique.
-PERIODE_SEC = 5.0
+#: 1 s. Et il ne sert à RIEN de descendre plus bas — c'est mesuré, pas
+#: supposé.
+#:
+#: Run du 26/08, 232 sondages à 1 s : un sondage sur deux ne rend rien de
+#: neuf (115 changements sur 232), et CES sondages-là répondent en ~50 ms
+#: quand les autres prennent ~175 ms. La bimodalité est la signature d'un
+#: CACHE CDN d'environ 2 secondes : Kambi ne recalcule pas sa réponse plus
+#: vite. À 0,5 s on quadruplerait les requêtes pour relire trois fois le
+#: même octet.
+#:
+#: Pourquoi 1 s et non 2 s, puisque la moitié des sondages est perdue : le
+#: cache expire à un instant qu'on ne contrôle pas. Sonder à 1 s fait voir
+#: la réponse fraîche dans la seconde qui suit sa mise à disposition ; à 2 s
+#: on peut la manquer et attendre jusqu'à 2 s de plus. Le doublement des
+#: requêtes achète donc la moitié de la latence de détection — ce qui est
+#: précisément ce qu'on cherche pour repérer un prix devenu faux.
+#:
+#: `resume_global` publie la durée médiane selon qu'un sondage a rendu du
+#: neuf ou non : si le cache change de comportement, l'écart le dira.
+PERIODE_SEC = 1.0
 #: Repli sur refus ou panne du serveur. Jamais d'accélération sous PERIODE_SEC.
 REPLI_MAX_SEC = 60.0
 #: Au-delà, on abandonne : s'acharner sur un serveur qui refuse n'aide pas.
@@ -343,6 +355,15 @@ def resume_global(cycles: "list[CycleStats]") -> str:
     # a 5 s, le booleen saturait a 98 % et aurait sature tout autant a 30 s.
     part = f"{100 * bougees / total:.2f} %" if total else "n/a"
     par_sondage = f"{bougees / len(suivis):.1f}" if suivis else "n/a"
+    # Duree selon que le sondage a rendu du NEUF ou non. Un ecart net signe un
+    # cache cote serveur : les reponses servies du cache reviennent bien plus
+    # vite. C'est ce qui borne la cadence utile, et le publier evite d'avoir a
+    # le redecouvrir a chaque fois qu'on veut sonder plus vite.
+    def _p50(xs):
+        xs = sorted(xs)
+        return f"{xs[len(xs) // 2]:.0f} ms" if xs else "n/a"
+    neuf = _p50([c.duree_ms for c in suivis if c.selections_modifiees])
+    vieux = _p50([c.duree_ms for c in suivis if not c.selections_modifiees])
     return (f"{len(cycles)} sondage(s) : {len(ok)} réussis, {len(err)} en erreur\n"
             f"  durée      p50 {d[n // 2]:.0f} ms  p95 "
             f"{d[min(n - 1, int(0.95 * n))]:.0f} ms  max {d[-1]:.0f} ms\n"
@@ -352,5 +373,10 @@ def resume_global(cycles: "list[CycleStats]") -> str:
             f"    → c'est ce taux qui dit si sonder plus vite sert : un taux "
             f"élevé\n      signifie que le marché bouge entre deux sondages, "
             f"un taux bas que\n      l'on regarde le même prix plusieurs fois.\n"
+            f"  durée médiane — sondage qui rend du NEUF : {neuf}   "
+            f"sans rien de neuf : {vieux}\n"
+            f"    → un écart net signe un cache côté serveur : les réponses "
+            f"servies du cache\n      reviennent bien plus vite, et bornent "
+            f"la cadence utile.\n"
             f"  matchs {ok[-1].matchs}  quotes {ok[-1].quotes} "
             f"(h2h {ok[-1].h2h}, totals {ok[-1].totals})")

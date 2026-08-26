@@ -389,3 +389,31 @@ def test_le_resume_publie_la_part_de_selections_bougees():
     r = resume_global([live.sonder(), live.sonder()])
     assert "SÉLECTIONS bougées" in r
     assert "0/8 (0.00 %)" in r
+
+
+def _cycle(duree, bougees, suivies=8):
+    return CycleStats(debut=MAINTENANT, fin=MAINTENANT, duree_ms=duree,
+                      selections_suivies=suivies, selections_modifiees=bougees,
+                      change=bool(bougees))
+
+
+def test_le_resume_separe_la_duree_des_sondages_qui_rendent_du_neuf():
+    """C'est cet écart qui a révélé le cache CDN de ~2 s côté Kambi, et donc
+    ce qui borne la cadence utile. Un p50 global l'aurait noyé : ici 50 ms et
+    200 ms se moyennent en 125 ms, un chiffre qui n'existe nulle part et qui
+    ne dit rien. Le test échoue si les deux populations sont refondues."""
+    r = resume_global([_cycle(200.0, 3), _cycle(50.0, 0),
+                       _cycle(200.0, 5), _cycle(50.0, 0)])
+    assert "rend du NEUF : 200 ms" in r
+    assert "sans rien de neuf : 50 ms" in r
+    assert "125 ms" not in r, "les deux populations ont été moyennées"
+
+
+def test_une_population_vide_dit_n_a_et_n_emprunte_pas_l_autre_chiffre():
+    """Si aucun sondage ne rend du neuf, le résumé doit le dire, pas recopier
+    la durée des sondages servis du cache : ce serait inventer une mesure
+    qu'on n'a pas faite, et masquer précisément le cas où sonder ne sert à
+    rien du tout."""
+    r = resume_global([_cycle(50.0, 0), _cycle(50.0, 0)])
+    assert "rend du NEUF : n/a" in r
+    assert "sans rien de neuf : 50 ms" in r

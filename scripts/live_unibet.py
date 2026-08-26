@@ -26,7 +26,7 @@ def main() -> int:
         formatter_class=argparse.RawDescriptionHelpFormatter)
     p.add_argument("--minutes", type=float, default=5.0)
     p.add_argument("--periode", type=float, default=PERIODE_SEC,
-                   help=f"secondes entre deux sondages (défaut : {PERIODE_SEC:.0f})")
+                   help=f"secondes entre deux sondages (défaut : {PERIODE_SEC:g})")
     p.add_argument("--sport", default="soccer")
     p.add_argument("--apparier", action="store_true",
                    help="rapprocher avec nos events (lecture seule)")
