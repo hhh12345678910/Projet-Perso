@@ -1,18 +1,22 @@
-"""Moteur LIVE — observation locale, bornée. §PHASE 5, commit 2
+"""Moteur LIVE — observation. §PHASE 5, commit 4
 
-AsianOdds fait le prix juste (lu dans `market_state`), Unibet LIVE le prend
-(sondé en mémoire, hors de la boucle prématch).
+AsianOdds fait le prix juste ET donne le score ; Unibet LIVE prend la cote.
 
+    # lecture seule, AUCUN envoi — c'est le mode par defaut
     .venv/bin/python -m scripts.live_engine --minutes 10
-    .venv/bin/python -m scripts.live_engine --minutes 10 --tout
 
-N'ÉCRIT RIEN : ni en base, ni sur Telegram. Aucune alerte n'est envoyée à
-cette étape, et le module `alerter` n'est même pas importé. Le lanceur
-affiche une ligne par occasion et un compte rendu final.
+    # meme chose, mais on IMPRIME les messages Telegram sans les envoyer
+    .venv/bin/python -m scripts.live_engine --minutes 10 --telegram-blanc
 
-Par défaut, seules les occasions NON dupliquées sont affichées. `--tout`
-montre aussi les doublons, ce qui sert à vérifier que la déduplication
-travaille au lieu de le supposer.
+    # envoi reel vers le canal LIVE
+    .venv/bin/python -m scripts.live_engine --minutes 10 --telegram
+
+N'ECRIT RIEN EN BASE, jamais. Aucun pari, aucun bouton, aucune action
+bookmaker. `--telegram` exige TELEGRAM_LIVE_SUREBET_CHAT_ID : sans lui,
+`send_live_observation` refuse d'envoyer plutot que de retomber sur le canal
+prematch.
+
+AUCUN PLAFOND D'EV. +10 %, +100 %, +500 % sortent tous si le calcul est valide.
 """
 from __future__ import annotations
 
@@ -22,10 +26,16 @@ from collections import Counter
 from datetime import datetime, timezone
 
 from src.live_value import (
-    AGE_MAX_FAIR_SEC, AGE_MAX_PRENEUR_SEC, SEUIL_EV_PCT, Memoire, Statut,
-    evaluer, resume)
+    AGE_MAX_FAIR_SEC, AGE_MAX_PRENEUR_SEC, MINUTES_MAX_LIVE,
+    OVERROUND_PRENEUR_MAX, SEUIL_EV_PCT, Memoire, Statut, evaluer, resume)
 from src.storage import Storage
 from src.unibet_live import PERIODE_SEC, UnibetLive, apparier
+
+TRANCHES = (10, 20, 50, 100)
+
+
+def _p(x, u="s"):
+    return "N/A" if x is None else f"{x:.1f} {u}"
 
 
 def main() -> int:
@@ -37,28 +47,39 @@ def main() -> int:
     p.add_argument("--sport", default="soccer")
     p.add_argument("--db", default="data/valuebet.db")
     p.add_argument("--ev", type=float, default=SEUIL_EV_PCT,
-                   help=f"seuil d'EV en %% (défaut : {SEUIL_EV_PCT:g})")
-    p.add_argument("--age-fair", type=float, default=AGE_MAX_FAIR_SEC,
-                   help=f"âge max d'une ligne AsianOdds (défaut : "
-                        f"{AGE_MAX_FAIR_SEC:g} s)")
-    p.add_argument("--age-preneur", type=float, default=AGE_MAX_PRENEUR_SEC,
-                   help=f"âge max d'une cote Unibet (défaut : "
-                        f"{AGE_MAX_PRENEUR_SEC:g} s)")
-    p.add_argument("--tout", action="store_true",
-                   help="afficher aussi les doublons")
+                   help=f"seuil BAS d'EV en %% (défaut : {SEUIL_EV_PCT:g}). "
+                        f"Il n'existe aucun seuil haut.")
+    p.add_argument("--age-fair", type=float, default=AGE_MAX_FAIR_SEC)
+    p.add_argument("--age-preneur", type=float, default=AGE_MAX_PRENEUR_SEC)
+    p.add_argument("--telegram", action="store_true",
+                   help="ENVOYER vers le canal LIVE")
+    p.add_argument("--telegram-blanc", action="store_true",
+                   help="imprimer les messages sans les envoyer")
+    p.add_argument("--tout", action="store_true", help="afficher les doublons")
     a = p.parse_args()
 
-    storage = Storage(a.db)
-    live = UnibetLive(a.sport)
-    memoire = Memoire()
-    total: Counter = Counter()
-    cumul = None
-    passages = erreurs = 0
+    cfg = alerte = None
+    if a.telegram or a.telegram_blanc:
+        from src.alerter import (TelegramConfig, format_live_observation,
+                                 send_live_observation)
+        cfg = TelegramConfig.from_env()
+        alerte = (format_live_observation, send_live_observation)
+        chat = cfg.live_surebet_chat_id
+        print(f"[live] Telegram : canal LIVE = {chat or 'NON DÉFINI'}"
+              f"   prématch = {cfg.chat_id}   surebet prématch = "
+              f"{cfg.surebet_chat_id}")
+        if a.telegram and not chat:
+            print("[live] TELEGRAM_LIVE_SUREBET_CHAT_ID absent — AUCUN envoi "
+                  "ne partira (le repli irait vers le prématch).")
+
+    storage, live, memoire = Storage(a.db), UnibetLive(a.sport), Memoire()
+    total, envoyes, passages, erreurs = Counter(), 0, 0, 0
+    retenues, apparies_max, vus_max = {}, 0, 0
 
     debut = datetime.now(timezone.utc)
     print(f"[live] démarrage {debut.isoformat()} — {a.minutes:g} min, "
-          f"sondage {a.periode:g} s, EV > {a.ev:g} %, AUCUNE écriture, "
-          f"AUCUNE alerte")
+          f"sondage {a.periode:g} s, EV > {a.ev:g} % SANS plafond, "
+          f"AUCUNE écriture")
     fin = time.monotonic() + a.minutes * 60
     try:
         while time.monotonic() < fin:
@@ -71,20 +92,39 @@ def main() -> int:
             passages += 1
             maintenant = datetime.now(timezone.utc)
             app = apparier(live.instantane, storage, maintenant, a.sport)
-            an = evaluer(app.quotes, storage, maintenant,
-                         memoire=memoire,
+            apparies_max = max(apparies_max, app.matchs_apparies)
+            vus_max = max(vus_max, app.matchs_vus)
+            an = evaluer(app.quotes, storage, maintenant, memoire=memoire,
                          preneur_pris_a=live.instantane.pris_a,
                          seuil_ev=a.ev, age_max_fair=a.age_fair,
                          age_max_preneur=a.age_preneur)
             for o in (an.opportunites if a.tout else an.nouvelles):
                 print(o.ligne())
+            # Ce qui PART sur Telegram : les occasions vivantes, doublons
+            # exclus. Le statut n'est pas un filtre ici — une occasion
+            # rejetee part quand meme, marquee de son statut : c'est une
+            # phase d'OBSERVATION, et ce qu'on ecarte est aussi une donnee.
+            for o in an.nouvelles:
+                v = retenues.get(o.cle)
+                if v is None or o.ev_pct > v.ev_pct:
+                    retenues[o.cle] = o
+            if alerte is not None and an.nouvelles:
+                if a.telegram:
+                    envoyes += alerte[1](an.nouvelles, cfg)
+                else:
+                    for o in an.nouvelles:
+                        print("\n--- message Telegram (NON envoyé) ---")
+                        print(alerte[0](o))
             total.update(an.par_statut)
             total["quotes"] += an.quotes_analysees
             total["sous_seuil"] += an.sous_seuil
+            total["partiels"] += an.partiels
             total["matchs"] = max(total["matchs"], an.matchs_analyses)
-            total["apparies"] = max(total["apparies"], app.matchs_apparies)
-            total["inversions"] += app.inversions
-            cumul = an
+            total["fair"] = max(total["fair"], an.groupes_fair)
+            for m, n in an.groupes_rejetes.items():
+                total[f"groupe:{m}"] += n
+            for m, n in an.ecartees.items():
+                total[f"ecart:{m}"] += n
             if time.monotonic() + a.periode > fin:
                 break
             time.sleep(a.periode)
@@ -93,19 +133,62 @@ def main() -> int:
     finally:
         live.close()
 
+    sel = list(retenues.values())
     duree = (datetime.now(timezone.utc) - debut).total_seconds()
-    print(f"\n[live] terminé en {duree:.0f} s — {passages} passage(s), "
-          f"{erreurs} sondage(s) en erreur")
-    if cumul is not None:
-        print("\nDERNIER PASSAGE")
-        print(resume(cumul))
-    print("\nCUMUL DU RUN")
-    print(f"  matchs analysés (max)     {total['matchs']}")
-    print(f"  matchs appariés (max)     {total['apparies']}")
-    print(f"  quotes analysées          {total['quotes']}")
-    print(f"  EV sous le seuil          {total['sous_seuil']}")
+    print(f"\n{'═' * 72}")
+    print(f"OBSERVATION — {duree:.0f} s, {passages} passages, {erreurs} erreurs")
+    print('═' * 72)
+
+    # ── L'ENTONNOIR : combien restent apres chaque etape ──────────────
+    print("\nENTONNOIR")
+    print(f"  matchs Unibet vus                       {vus_max}")
+    print(f"  … appariés à nos events                 {apparies_max}")
+    print(f"  lignes justes AsianOdds retenues        {total['fair']}")
+    for m in sorted(k for k in total if k.startswith("groupe:")):
+        print(f"      écartées — {m[7:]:<28} {total[m]}")
+    print(f"  cotes preneuses comparées               {total['quotes']}")
+    for m in sorted(k for k in total if k.startswith("ecart:")):
+        print(f"      écartées — {m[6:]:<28} {total[m]}")
+    print(f"  … sous le seuil d'EV                    {total['sous_seuil']}")
+    print(f"  OCCASIONS ≥ {a.ev:g} %                          {len(sel)}")
     for s in Statut:
-        print(f"  {s.value:<24}  {total.get(s.value, 0)}")
+        print(f"      {s.value:<32} {total.get(s.value, 0)}")
+    # Distinct, comme les autres lignes de l'entonnoir. `an.partiels`
+    # compte des OCCURRENCES et se cumule a chaque passage : l'afficher ici
+    # ferait lire « 6 marches partiels » la ou il y en a 2.
+    print(f"  dont marchés partiels (conservés)       "
+          f"{sum(1 for o in sel if o.partiel)}"
+          f"   ({total['partiels']} occurrences)")
+
+    print("\nTRANCHES D'EV (aucun plafond)")
+    for t in TRANCHES:
+        n = sum(1 for o in sel if o.ev_pct >= t)
+        print(f"  EV ≥ {t:>3} %   {n}")
+
+    if sel:
+        print("\nTOP EV")
+        for o in sorted(sel, key=lambda x: -x.ev_pct)[:5]:
+            print(f"  {o.ev_pct:>+8.1f} %  kelly {o.kelly_pct:>6.2f} %  "
+                  f"{o.home}-{o.away} {o.market.value} {o.outcome} "
+                  f"@{o.cote_preneur:.2f} score {o.feed_score or 'N/A'} "
+                  f"[{o.statut.value}]")
+        print("\nTOP KELLY")
+        for o in sorted(sel, key=lambda x: -x.kelly_pct)[:5]:
+            print(f"  kelly {o.kelly_pct:>6.2f} %  EV {o.ev_pct:>+8.1f} %  "
+                  f"{o.home}-{o.away} {o.market.value} {o.outcome} "
+                  f"@{o.cote_preneur:.2f} score {o.feed_score or 'N/A'} "
+                  f"[{o.statut.value}]")
+        partiels = [o for o in sel if o.partiel]
+        if partiels:
+            print("\nMARCHÉS PARTIELS (conservés, jamais rejetés)")
+            for o in sorted(partiels, key=lambda x: -x.ev_pct)[:5]:
+                print(f"  {o.ev_pct:>+8.1f} %  {o.home}-{o.away} "
+                      f"{o.market.value} {o.outcome} — manque "
+                      f"{', '.join(o.issues_manquantes)}  marge preneuse "
+                      f"{_p(o.overround_preneur, '')}")
+    if a.telegram:
+        print(f"\nTELEGRAM : {envoyes} message(s) envoyé(s) vers "
+              f"{cfg.live_surebet_chat_id or 'AUCUN CANAL'}")
     return 0 if passages else 1
 
 
