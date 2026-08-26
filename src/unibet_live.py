@@ -86,10 +86,16 @@ class CycleStats:
     totals: int = 0
     erreur: "str | None" = None
     #: Le contenu a-t-il VRAIMENT changé depuis le sondage précédent ? La
-    #: leçon d'AsianOdds : un message reçu n'est pas un prix qui bouge. Sans
-    #: ce compteur, on prendrait la cadence de sondage pour la cadence du
-    #: marché et on sonderait dix fois pour voir un prix une fois.
+    #: leçon d'AsianOdds : un message reçu n'est pas un prix qui bouge.
     change: bool = False
+    #: COMBIEN de sélections ont bougé. Le booléen ci-dessus ne pouvait pas
+    #: arbitrer une cadence : mesuré le 26/08 à 5 s, il saturait à 98 % —
+    #: sur 168 sélections vivantes, qu'au moins une bouge est presque
+    #: certain, et il aurait saturé tout autant à 30 s. C'est la PART de
+    #: sélections modifiées qui dit si sonder plus vite apporte quelque
+    #: chose.
+    selections_modifiees: int = 0
+    selections_suivies: int = 0
     #: Âge de l'instantané au terme du sondage. Vaut ~0 après un succès ; ne
     #: grandit que si un sondage échoue et qu'on garde le précédent.
     fraicheur_sec: float = 0.0
@@ -97,13 +103,14 @@ class CycleStats:
 
     def resume(self) -> str:
         e = f"  ERREUR {self.erreur}" if self.erreur else ""
-        return (f"{self.debut:%H:%M:%S.%f}"[:-3]
-                + f" → {self.fin:%H:%M:%S.%f}"[:-3]
-                + f"  {self.duree_ms:6.0f} ms  "
+        bouge = (f"{self.selections_modifiees:>3}/{self.selections_suivies:<4}"
+                 if self.selections_suivies else "  1er   ")
+        return (f"{self.debut:%H:%M:%S}.{self.debut.microsecond // 1000:03d}"
+                f" → {self.fin:%H:%M:%S}.{self.fin.microsecond // 1000:03d}"
+                f"  {self.duree_ms:6.0f} ms  "
                 f"matchs={self.matchs:>3} betOffers={self.betoffers:>4} "
                 f"quotes={self.quotes:>4} (h2h={self.h2h:>3} "
-                f"totals={self.totals:>3})  "
-                f"{'CHANGE' if self.change else '  ==  '}  "
+                f"totals={self.totals:>3})  bougees {bouge}  "
                 f"fraicheur={self.fraicheur_sec:4.1f}s "
                 f"disparus={self.disparus:>2}{e}")
 
@@ -148,6 +155,7 @@ class UnibetLive:
         self._horloge = horloge or (lambda: datetime.now(timezone.utc))
         self.instantane = Instantane()
         self._signature = None
+        self._cotes: dict = {}
 
     def close(self) -> None:
         fermer = getattr(self._scraper, "close", None)
@@ -176,7 +184,15 @@ class UnibetLive:
         noms = _evenements(data)
         fin = self._horloge()
         sig = _signature(quotes)
+        # Comparaison SELECTION PAR SELECTION, et non du bloc entier. Un
+        # marche qui apparait ou disparait n'est pas un prix qui bouge : on
+        # ne compte que les selections presentes DES DEUX COTES.
+        avant = self._cotes
+        cotes = {t[:-1]: t[-1] for t in sig}
+        communes = set(avant) & set(cotes)
+        bougees = sum(1 for k in communes if avant[k] != cotes[k])
         change = self._signature is not None and sig != self._signature
+        self._cotes = cotes
         avant = set(self.instantane.noms)
         self._signature = sig
         self.instantane = Instantane(pris_a=fin, noms=noms, quotes=quotes)
@@ -190,6 +206,8 @@ class UnibetLive:
             h2h=types.get(MarketType.H2H, 0),
             totals=types.get(MarketType.TOTALS, 0),
             change=change,
+            selections_modifiees=bougees,
+            selections_suivies=len(communes),
             fraicheur_sec=0.0,
             disparus=len(avant - set(noms)))
 
@@ -318,11 +336,21 @@ def resume_global(cycles: "list[CycleStats]") -> str:
     d = sorted(c.duree_ms for c in ok)
     n = len(d)
     changes = sum(1 for c in ok if c.change)
+    suivis = [c for c in ok if c.selections_suivies]
+    bougees = sum(c.selections_modifiees for c in suivis)
+    total = sum(c.selections_suivies for c in suivis)
+    # C'est CE taux qui arbitre la cadence, pas le booleen : mesure le 26/08
+    # a 5 s, le booleen saturait a 98 % et aurait sature tout autant a 30 s.
+    part = f"{100 * bougees / total:.2f} %" if total else "n/a"
+    par_sondage = f"{bougees / len(suivis):.1f}" if suivis else "n/a"
     return (f"{len(cycles)} sondage(s) : {len(ok)} réussis, {len(err)} en erreur\n"
             f"  durée      p50 {d[n // 2]:.0f} ms  p95 "
             f"{d[min(n - 1, int(0.95 * n))]:.0f} ms  max {d[-1]:.0f} ms\n"
-            f"  changements réels : {changes}/{len(ok)} "
-            f"({100 * changes / len(ok):.0f} %) — sonder plus vite ne montrerait "
-            f"que le même prix\n"
+            f"  sondages avec au moins un changement : {changes}/{len(ok)}\n"
+            f"  SÉLECTIONS bougées : {bougees}/{total} ({part}), "
+            f"soit {par_sondage} par sondage\n"
+            f"    → c'est ce taux qui dit si sonder plus vite sert : un taux "
+            f"élevé\n      signifie que le marché bouge entre deux sondages, "
+            f"un taux bas que\n      l'on regarde le même prix plusieurs fois.\n"
             f"  matchs {ok[-1].matchs}  quotes {ok[-1].quotes} "
             f"(h2h {ok[-1].h2h}, totals {ok[-1].totals})")

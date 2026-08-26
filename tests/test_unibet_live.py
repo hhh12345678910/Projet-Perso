@@ -318,13 +318,6 @@ def test_le_collecteur_n_ecrit_RIEN_en_base(tmp_path):
 
 
 # ── résumé ───────────────────────────────────────────────────────────────
-def test_le_resume_dit_la_part_de_changements_reels():
-    live = _sonde([PAYLOAD, PAYLOAD])
-    cycles = [live.sonder(), live.sonder()]
-    r = resume_global(cycles)
-    assert "0 %" in r and "changements réels" in r
-
-
 def test_le_resume_ne_ment_pas_quand_tout_echoue():
     c = CycleStats(debut=MAINTENANT, fin=MAINTENANT, duree_ms=1.0,
                    erreur="boom")
@@ -355,3 +348,44 @@ def test_la_permutation_ne_touche_QUE_le_h2h():
                    outcome=Outcome("home"), decimal_odd=2.5,
                    fetched_at=MAINTENANT, source_event_id="1")
     assert _permuter_h2h(h2h).outcome.label == "away"
+
+
+def test_on_compte_COMBIEN_de_selections_bougent_pas_seulement_si():
+    """Le booléen `change` ne peut pas arbitrer une cadence : mesuré le 26/08
+    à 5 s, il saturait à 98 % — sur 168 sélections vivantes, qu'au moins une
+    bouge est presque certain, et il aurait saturé tout autant à 30 s. Seule
+    la PART de sélections modifiées dit si sonder plus vite sert."""
+    une_bouge = {"events": [_evt(1001, "Örebro SK", "Varbergs BoIS",
+                                 [_h2h(2600, 3200, 2800), _totals()]),
+                            _evt(1002, "Östers IF", "GIF Sundsvall",
+                                 [_h2h(1500, 4000, 6000)])]}
+    live = _sonde([PAYLOAD, une_bouge])
+    premier = live.sonder()
+    assert premier.selections_suivies == 0, "rien à comparer au premier sondage"
+
+    c = live.sonder()
+    assert c.change is True
+    assert c.selections_suivies == 8, "les 8 sélections communes"
+    assert c.selections_modifiees == 1, "une seule cote a bougé, pas huit"
+
+
+def test_un_marche_qui_apparait_n_est_pas_un_prix_qui_bouge():
+    """On ne compare que les sélections présentes DES DEUX CÔTÉS : sinon
+    l'ouverture d'un marché gonflerait le taux et ferait croire à une
+    agitation qui n'existe pas."""
+    plus = {"events": [_evt(1001, "Örebro SK", "Varbergs BoIS",
+                            [_h2h(), _totals(), _totals(3500, 2100, 1750)]),
+                       _evt(1002, "Östers IF", "GIF Sundsvall",
+                            [_h2h(1500, 4000, 6000)])]}
+    live = _sonde([PAYLOAD, plus])
+    live.sonder()
+    c = live.sonder()
+    assert c.selections_modifiees == 0, "une ouverture comptée comme un mouvement"
+    assert c.selections_suivies == 8
+
+
+def test_le_resume_publie_la_part_de_selections_bougees():
+    live = _sonde([PAYLOAD, PAYLOAD])
+    r = resume_global([live.sonder(), live.sonder()])
+    assert "SÉLECTIONS bougées" in r
+    assert "0/8 (0.00 %)" in r
