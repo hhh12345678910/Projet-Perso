@@ -126,12 +126,24 @@ def _lire_horodatage(txt) -> "datetime | None":
     return d
 
 
+#: En deçà, un âge négatif est du jitter d'ordonnancement : `parse_listview`
+#: estampille une cote quelques microsecondes après l'instant de référence, et
+#: « -0,0 s » veut dire zéro. Au-delà, ce n'est plus du jitter — c'est que les
+#: deux horloges divergent, et un prix « venu du futur » franchirait le
+#: contrôle de fraîcheur quel que soit son âge réel. On refuse alors de dater.
+TOLERANCE_HORLOGE_SEC = 1.0
+
+
 def _age(depuis: "datetime | None", maintenant: datetime) -> "float | None":
+    """Secondes écoulées, ou None quand la question n'a pas de réponse sûre."""
     if depuis is None:
         return None
     if depuis.tzinfo is None:
         depuis = depuis.replace(tzinfo=maintenant.tzinfo)
-    return (maintenant - depuis).total_seconds()
+    ecart = (maintenant - depuis).total_seconds()
+    if ecart < -TOLERANCE_HORLOGE_SEC:
+        return None
+    return max(0.0, ecart)
 
 
 @dataclass(frozen=True)

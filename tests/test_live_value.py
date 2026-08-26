@@ -523,3 +523,186 @@ def test_une_jambe_sans_prix_reel_rend_le_groupe_incomplet(tmp_path):
     groupes, motifs = construire_fair(db, MAINTENANT)
     assert groupes == {}
     assert motifs["groupe incomplet"] == 1
+
+
+# ══ bout en bout : du payload Kambi a l'occasion ═══════════════════════
+#
+# Les tests ci-dessus appellent `evaluer` avec des cotes fabriquees a la main.
+# Utile, mais ils ne prouvent RIEN sur le chemin reel : entre le payload et le
+# moteur il y a `parse_listview`, `candidats_en_cours`, `evaluer_appariement`
+# et `_permuter_h2h`. C'est la que l'orientation se joue, et c'est donc la
+# qu'il faut la verifier.
+
+KO = DEBUT
+_PAYLOAD_KEYS = dict(start=KO.strftime("%Y-%m-%dT%H:%M:%SZ"), group="Sweden")
+
+
+def _payload(home, away, *, sid=1001, h=2500, d=3200, a=2800,
+             totals=(2500, 1900, 1950)):
+    """Le format que `parse_listview` lit VRAIMENT : cotes et lignes au
+    millieme, `betOfferType.id` 2 pour le 1X2 et 6 pour les totaux, 11 pour
+    le handicap — qui doit disparaitre en chemin."""
+    ligne, over, under = totals
+    return {"events": [{
+        "event": {"id": sid, "homeName": home, "awayName": away,
+                  **_PAYLOAD_KEYS},
+        "betOffers": [
+            {"betOfferType": {"id": 2},
+             "outcomes": [{"type": "OT_ONE", "odds": h},
+                          {"type": "OT_CROSS", "odds": d},
+                          {"type": "OT_TWO", "odds": a}]},
+            {"betOfferType": {"id": 6},
+             "outcomes": [{"type": "OT_OVER", "odds": over, "line": ligne},
+                          {"type": "OT_UNDER", "odds": under, "line": ligne}]},
+            {"betOfferType": {"id": 11},
+             "outcomes": [{"type": "OT_ONE", "odds": 9000, "line": -1000},
+                          {"type": "OT_TWO", "odds": 9000, "line": -1000}]},
+        ]}]}
+
+
+class _Faux:
+    def __init__(self, payload):
+        self._p = payload
+
+    def fetch_listview(self, sport="soccer", path_suffix=""):
+        return self._p
+
+    def close(self):
+        pass
+
+
+def _chaine(tmp_path, payload, *, fair_cotes=(1.20, 6.00, 15.00), **kw):
+    """La chaine complete : sondage → appariement → moteur."""
+    from src.unibet_live import UnibetLive, apparier
+    tmp_path.mkdir(parents=True, exist_ok=True)
+    db = _db(tmp_path)
+    db.upsert_events([(CLE, "soccer", "Superettan", "orebrosk",
+                       "varbergsbois", DEBUT.isoformat())])
+    _fair(db, cotes=fair_cotes)
+    _fair(db, market=MarketType.TOTALS, cotes=(1.95, 1.85),
+          labels=("over", "under"), line=2.5)
+    live = UnibetLive("soccer", scraper=_Faux(payload),
+                      horloge=lambda: MAINTENANT)
+    live.sonder()
+    app = apparier(live.instantane, db, MAINTENANT)
+    return app, evaluer(app.quotes, db, MAINTENANT,
+                        preneur_pris_a=live.instantane.pris_a, **kw)
+
+
+def test_bout_en_bout_le_payload_kambi_produit_une_occasion(tmp_path):
+    """Unibet cote le domicile a 2.50 la ou la juste AsianOdds le donne
+    grandissime favori : c'est une value, et elle doit traverser toute la
+    chaine sans se perdre."""
+    app, a = _chaine(tmp_path, _payload("Örebro SK", "Varbergs BoIS"))
+    assert app.matchs_apparies == 1
+    assert a.matchs_analyses == 1
+    home = [o for o in a.opportunites if o.outcome == "home"]
+    assert home and home[0].ev_pct > SEUIL_EV_PCT
+    assert home[0].cote_preneur == pytest.approx(2.50)
+
+
+def test_bout_en_bout_le_handicap_du_payload_ne_ressort_jamais(tmp_path):
+    """Le payload contient un handicap a 9.00 — irresistible et interdit.
+    Deux filtres devraient l'arreter ; le test dit que le resultat est bon,
+    pas lequel des deux a servi."""
+    _, a = _chaine(tmp_path, _payload("Örebro SK", "Varbergs BoIS"))
+    assert all(o.market is not MarketType.HANDICAP for o in a.opportunites)
+    assert all(o.market in (MarketType.H2H, MarketType.TOTALS)
+               for o in a.opportunites)
+
+
+def test_bout_en_bout_l_orientation_DEPLACE_la_value_de_home_vers_away(tmp_path):
+    """LE test qui compte pour l'orientation, et le seul qui discrimine.
+
+    Ma premiere version ne prouvait rien : avec une juste ou le domicile ecrase
+    l'exterieur, la value tombe sur `home` DANS LES DEUX SENS, et le test
+    passait aussi bien avec la permutation que sans. Il fallait la construire
+    pour que le verdict CHANGE.
+
+    Memes cotes Unibet des deux cotes — 6.00 sur le premier nomme, 2.00 sur le
+    second — et une juste equilibree (2.00 / 3.60 / 4.00). La value est sur la
+    cote de 6.00, donc sur l'equipe PREMIERE NOMMEE PAR UNIBET, quelle qu'elle
+    soit. Quand Unibet annonce le match a l'envers, cette equipe est notre
+    EXTERIEUR : la value doit passer de `home` a `away`.
+
+    Sans la permutation d'`apparier`, la value resterait sur `home` dans les
+    deux cas — c'est-a-dire qu'on jugerait la cote de l'exterieur contre la
+    probabilite du domicile. Sur un match desequilibre, ce defaut ne produit
+    pas une petite erreur : il produit une value enorme et entierement fausse.
+    """
+    JUSTE = (2.00, 3.60, 4.00)
+    COTES = dict(h=6000, d=3000, a=2000)
+
+    app, endroit = _chaine(tmp_path / "a",
+                           _payload("Örebro SK", "Varbergs BoIS", **COTES),
+                           fair_cotes=JUSTE)
+    assert app.inversions == 0
+    app, envers = _chaine(tmp_path / "b",
+                          _payload("Varbergs BoIS", "Örebro SK", **COTES),
+                          fair_cotes=JUSTE)
+    assert app.matchs_apparies == 1 and app.inversions == 1
+
+    h2h = lambda a: {o.outcome for o in a.opportunites
+                     if o.market is MarketType.H2H}
+    assert h2h(endroit) == {"home"}, "la cote de 6.00 est celle du domicile"
+    assert h2h(envers) == {"away"}, (
+        "match annonce a l'envers : la cote de 6.00 est celle de l'exterieur")
+
+    # Et c'est bien LA MEME cote qui est jugee, des deux cotes.
+    prise = lambda a: next(o.cote_preneur for o in a.opportunites
+                           if o.market is MarketType.H2H)
+    assert prise(endroit) == prise(envers) == pytest.approx(6.00)
+
+
+def test_bout_en_bout_les_totaux_survivent_a_l_inversion(tmp_path):
+    """« Plus de 2,5 buts » ne depend pas de qui recoit : la meme cote doit
+    donner la meme EV dans les deux sens."""
+    _, endroit = _chaine(tmp_path, _payload("Örebro SK", "Varbergs BoIS"),
+                         seuil_ev=-100.0)
+    _, envers = _chaine(tmp_path, _payload("Varbergs BoIS", "Örebro SK"),
+                        seuil_ev=-100.0)
+    tot = lambda a: {(o.outcome, o.line): round(o.ev_pct, 9)
+                     for o in a.opportunites if o.market is MarketType.TOTALS}
+    assert tot(endroit) == tot(envers) != {}
+
+
+def test_bout_en_bout_le_moteur_n_ecrit_toujours_rien(tmp_path):
+    """La chaine complete, y compris `apparier` qui lit `events`."""
+    from src.unibet_live import UnibetLive, apparier
+    db = _db(tmp_path)
+    db.upsert_events([(CLE, "soccer", "Superettan", "orebrosk",
+                       "varbergsbois", DEBUT.isoformat())])
+    _fair(db)
+    avant = [tuple(r) for r in db.market_state()]
+    live = UnibetLive("soccer",
+                      scraper=_Faux(_payload("Örebro SK", "Varbergs BoIS")),
+                      horloge=lambda: MAINTENANT)
+    live.sonder()
+    app = apparier(live.instantane, db, MAINTENANT)
+    evaluer(app.quotes, db, MAINTENANT)
+    assert [tuple(r) for r in db.market_state()] == avant
+
+
+# ══ horloges ═══════════════════════════════════════════════════════════
+def test_un_age_negatif_franc_est_traite_comme_INCONNU(tmp_path):
+    """Un prix ne peut pas venir du futur. S'il en vient, les deux horloges
+    divergent — et alors son âge réel est inconnu, pas nul. Le laisser passer
+    ferait franchir le contrôle de fraîcheur à n'importe quelle cote, aussi
+    vieille soit-elle, du moment que l'horloge de la source avance."""
+    db = _db(tmp_path)
+    _fair(db, observed=MAINTENANT + timedelta(seconds=30))
+    o = evaluer([_cote(4.00)], db, MAINTENANT).opportunites[0]
+    assert o.age_fair_sec is None
+    assert o.statut is Statut.REJET_FAIR_PERIMEE
+
+
+def test_le_jitter_sous_la_seconde_vaut_zero_et_pas_moins(tmp_path):
+    """`parse_listview` estampille quelques microsecondes après l'instant de
+    référence : c'est de l'ordonnancement, pas une anomalie. Afficher
+    « -0.0 s » ferait douter d'une mesure juste."""
+    db = _db(tmp_path)
+    _fair(db)
+    o = evaluer([_cote(4.00, fetched=MAINTENANT + timedelta(microseconds=800))],
+                db, MAINTENANT).opportunites[0]
+    assert o.age_preneur_sec == 0.0
+    assert "unibet_age=0.0s" in o.ligne()
