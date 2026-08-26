@@ -59,6 +59,8 @@ def main() -> int:
     p.add_argument("--heures", type=float, default=12.0)
     p.add_argument("--trou", type=float, default=20.0,
                    help="secondes sans écriture qui séparent deux cycles")
+    p.add_argument("--liste", type=int, default=0, metavar="N",
+                   help="détailler les N derniers cycles, un par ligne")
     p.add_argument("--coupure", metavar="ISO",
                    help="instant UTC séparant AVANT et APRÈS "
                         "(ex. 2026-08-26T19:00). Défaut : la médiane.")
@@ -74,6 +76,39 @@ def main() -> int:
     print(f"{len(c)} cycles, du {c[0][0]:%d/%m %H:%M} au {c[-1][0]:%d/%m %H:%M}"
           f" UTC\n{'═' * 68}")
     _stats([d for _, d in c], "ensemble")
+
+    if a.liste:
+        derniers = c[-a.liste:]
+        durees = [d for _, d in derniers]
+        med = statistics.median(durees)
+        print(f"\n{'─' * 68}\nLES {len(derniers)} DERNIERS CYCLES, UN PAR LIGNE"
+              f"\n{'─' * 68}")
+        # La barre est calee sur la MEDIANE DE CES CYCLES-LA, pas sur une
+        # constante : ce qu'on cherche a voir, c'est un cycle qui sort du lot
+        # DE CE MOMENT, pas un ecart a une norme decidee d'avance.
+        for i, (t, d) in enumerate(derniers, 1):
+            ecart = 100 * (d / med - 1)
+            barre = "█" * min(40, max(1, int(d / med * 20)))
+            marque = "  ←" if abs(ecart) > 25 else ""
+            print(f"  {i:>3}. {t:%H:%M:%S}  {d:6.1f} s  {ecart:+6.1f} %  "
+                  f"{barre}{marque}")
+        print(f"\n  médiane de ces {len(derniers)} cycles : {med:.1f} s")
+        # Tendance : premiere moitie contre seconde. Sur 50 cycles c'est
+        # ~40 minutes, assez pour voir une derive, trop court pour conclure.
+        moitie = len(durees) // 2
+        if moitie >= 3:
+            d1 = statistics.median(durees[:moitie])
+            d2 = statistics.median(durees[moitie:])
+            pct = 100 * (d2 - d1) / d1
+            print(f"  première moitié {d1:.1f} s → seconde {d2:.1f} s "
+                  f"({pct:+.1f} %)")
+            if abs(pct) > 15:
+                print(f"  >>> dérive visible SUR CETTE FENÊTRE — à confirmer "
+                      f"sur plus long")
+        hors = [(t, d) for t, d in derniers if d > med * 1.25]
+        if hors:
+            print(f"  {len(hors)} cycle(s) à plus de 25 % au-dessus : " +
+                  ", ".join(f"{t:%H:%M} ({d:.0f} s)" for t, d in hors[:6]))
 
     if a.coupure:
         coupure = datetime.fromisoformat(a.coupure)
