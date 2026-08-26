@@ -56,6 +56,10 @@ def main() -> int:
     p.add_argument("--telegram-blanc", action="store_true",
                    help="imprimer les messages sans les envoyer")
     p.add_argument("--tout", action="store_true", help="afficher les doublons")
+    p.add_argument("--envoyer-rejets", action="store_true",
+                   help="envoyer AUSSI sur Telegram les occasions rejetées "
+                        "(fair périmée, match terminé…). Elles restent de "
+                        "toute façon affichées ici.")
     a = p.parse_args()
 
     cfg = alerte = None
@@ -124,13 +128,27 @@ def main() -> int:
                 v = retenues.get(o.cle)
                 if v is None or o.ev_pct > v.ev_pct:
                     retenues[o.cle] = o
-            if alerte is not None and an.nouvelles:
+            # CE QUI PART sur Telegram. Ce n'est PAS un filtre d'EV — aucune
+            # EV n'est jamais écartée pour sa taille, ni ici ni ailleurs.
+            # C'est un filtre de VALIDITÉ : une occasion dont la fair a 57
+            # minutes, ou dont le match est fini, a déjà été établie comme
+            # non calculable. L'envoyer n'ajoute rien à l'observation et
+            # noie ce qui mérite d'être regardé — mesuré le 26/08 : ~10
+            # messages/minute, soit des dizaines de milliers sur quelques
+            # jours. Tout reste affiché ici, et `--envoyer-rejets` rétablit
+            # l'envoi complet.
+            partants = [o for o in an.nouvelles
+                        if a.envoyer_rejets
+                        or not o.statut.value.startswith("REJET_")]
+            if alerte is not None and partants:
                 if a.telegram:
-                    envoyes += alerte[1](an.nouvelles, cfg)
+                    envoyes += alerte[1](partants, cfg)
                 else:
-                    for o in an.nouvelles:
+                    for o in partants:
                         print("\n--- message Telegram (NON envoyé) ---")
                         print(alerte[0](o))
+            total["retenus_envoi"] += len(partants)
+            total["retenus_muets"] += len(an.nouvelles) - len(partants)
             total.update(an.par_statut)
             total["quotes"] += an.quotes_analysees
             total["sous_seuil"] += an.sous_seuil
@@ -202,9 +220,14 @@ def main() -> int:
                       f"{o.market.value} {o.outcome} — manque "
                       f"{', '.join(o.issues_manquantes)}  marge preneuse "
                       f"{_p(o.overround_preneur, '')}")
-    if a.telegram:
-        print(f"\nTELEGRAM : {envoyes} message(s) envoyé(s) vers "
+    if alerte is not None:
+        quoi = ("envoyé(s)" if a.telegram else "qui SERAIENT partis")
+        print(f"\nTELEGRAM : {total['retenus_envoi']} message(s) {quoi} vers "
               f"{cfg.live_surebet_chat_id or 'AUCUN CANAL'}")
+        print(f"           {total['retenus_muets']} rejet(s) NON envoyé(s) "
+              f"(affichés ci-dessus ; --envoyer-rejets pour les inclure)")
+        if a.telegram:
+            print(f"           {envoyes} accepté(s) par l'API Telegram")
     return 0 if passages else 1
 
 
