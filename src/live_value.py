@@ -140,6 +140,20 @@ def _na(x, fmt="{:.1f}") -> str:
     return "N/A" if x is None else fmt.format(x)
 
 
+def _duree(x) -> str:
+    """Une durée lisible, jamais « 0.0 s » pour quelque chose de non nul.
+
+    Le run du 26/08 affichait `unibet_age=0.0s delai_calcul=0.00s` sur CHAQUE
+    ligne. Les valeurs étaient réelles mais toutes sous 50 ms, donc arrondies
+    à zéro par un format en secondes : deux des mesures de fraîcheur
+    demandées ne mesuraient plus rien. Sous la seconde, on passe en
+    millisecondes.
+    """
+    if x is None:
+        return "N/A"
+    return f"{x * 1000:.0f}ms" if abs(x) < 1.0 else f"{x:.1f}s"
+
+
 def _cle_ligne(line) -> "float | None":
     return None if line is None else round(float(line), 3)
 
@@ -372,10 +386,10 @@ class Opportunite:
                 f" unibet={self.cote_preneur:.2f}"
                 f" fair={self.fair_cote:.2f}"
                 f" ev={self.ev_pct:+.1f}%"
-                f" asianodds_age={_na(self.age_fair_sec)}s"
-                f" unibet_age={_na(self.age_preneur_sec)}s"
-                f" delai_calcul={_na(self.delai_calcul_sec, '{:.2f}')}s"
-                f" maj_precedente={_na(self.intervalle_maj_sec)}s"
+                f" asianodds_age={_duree(self.age_fair_sec)}"
+                f" unibet_age={_duree(self.age_preneur_sec)}"
+                f" delai_calcul={_duree(self.delai_calcul_sec)}"
+                f" maj_precedente={_duree(self.intervalle_maj_sec)}"
                 f" kelly={self.kelly_pct:.2f}%"
                 f" score={self.feed_score or 'N/A'}"
                 f"/{self.score_preneur or 'N/A'}"

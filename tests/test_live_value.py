@@ -403,7 +403,7 @@ def test_un_observed_at_absent_donne_N_A_et_ne_plante_pas(tmp_path):
     o = evaluer([_cote(4.00)], db, MAINTENANT).opportunites[0]
     assert o.age_fair_sec is None
     assert o.statut is Statut.REJET_FAIR_PERIMEE
-    assert "asianodds_age=N/As" in o.ligne()
+    assert "asianodds_age=N/A" in o.ligne()
     assert o.motif == "observed_at absent"
 
 
@@ -425,7 +425,7 @@ def test_l_intervalle_de_maj_est_N_A_tant_qu_on_n_a_pas_deux_observations(tmp_pa
     m = Memoire()
     o = evaluer([_cote(4.00)], db, MAINTENANT, memoire=m).opportunites[0]
     assert o.intervalle_maj_sec is None
-    assert "maj_precedente=N/As" in o.ligne()
+    assert "maj_precedente=N/A" in o.ligne()
 
     o = evaluer([_cote(4.00)], db, MAINTENANT, memoire=m).opportunites[0]
     assert o.intervalle_maj_sec is None, "même observation, aucune mise à jour"
@@ -705,7 +705,7 @@ def test_le_jitter_sous_la_seconde_vaut_zero_et_pas_moins(tmp_path):
     o = evaluer([_cote(4.00, fetched=MAINTENANT + timedelta(microseconds=800))],
                 db, MAINTENANT).opportunites[0]
     assert o.age_preneur_sec == 0.0
-    assert "unibet_age=0.0s" in o.ligne()
+    assert "unibet_age=0ms" in o.ligne()
 
 
 # ══ pas de plafond d'EV, jamais ════════════════════════════════════════
@@ -909,3 +909,28 @@ def test_dedup_les_trois_declencheurs_et_RIEN_d_autre(tmp_path):
     evaluer([], db, MAINTENANT, memoire=m)
     assert evaluer([_cote(_cote_pour_ev(23.0, db))], db, MAINTENANT,
                    memoire=m).nouvelles
+
+
+# ══ affichage des durées ═══════════════════════════════════════════════
+def test_une_duree_sous_la_seconde_s_affiche_en_MILLISECONDES(tmp_path):
+    """Le run du 26/08 affichait `unibet_age=0.0s delai_calcul=0.00s` sur
+    CHAQUE ligne. Les valeurs étaient réelles — toutes sous 50 ms — mais un
+    format en secondes les arrondissait à zéro. Deux des mesures de fraîcheur
+    demandées ne mesuraient donc plus rien du tout."""
+    from src.live_value import _duree
+    assert _duree(0.042) == "42ms"
+    assert _duree(0.0004) == "0ms"
+    assert _duree(1.5) == "1.5s"
+    assert _duree(None) == "N/A"
+
+    db = _db(tmp_path)
+    _fair(db, observed=MAINTENANT - timedelta(milliseconds=120))
+    o = evaluer([_cote(4.00, fetched=MAINTENANT - timedelta(milliseconds=38))],
+                db, MAINTENANT,
+                preneur_pris_a=MAINTENANT - timedelta(milliseconds=250)
+                ).opportunites[0]
+    ligne = o.ligne()
+    assert "asianodds_age=120ms" in ligne
+    assert "unibet_age=38ms" in ligne
+    assert "delai_calcul=250ms" in ligne
+    assert "0.0s" not in ligne, "une durée réelle affichée comme nulle"

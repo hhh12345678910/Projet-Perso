@@ -63,6 +63,18 @@ def main() -> int:
         from src.alerter import (TelegramConfig, format_live_observation,
                                  send_live_observation)
         cfg = TelegramConfig.from_env()
+        if cfg is None:
+            # `from_env` rend None des qu'il manque TELEGRAM_BOT_TOKEN ou
+            # TELEGRAM_CHAT_ID. Le projet ne charge pas `.env` tout seul : un
+            # lancement a la main n'a donc pas l'environnement du daemon.
+            import os as _os
+            absents = [v for v in ("TELEGRAM_BOT_TOKEN", "TELEGRAM_CHAT_ID")
+                       if not _os.getenv(v)]
+            print(f"[live] Telegram NON configuré — absent(s) de "
+                  f"l'environnement : {', '.join(absents)}")
+            print("[live] le projet ne lit pas `.env` tout seul. Charger :")
+            print("       set -a && . ./.env && set +a")
+            return 2
         alerte = (format_live_observation, send_live_observation)
         chat = cfg.live_surebet_chat_id
         print(f"[live] Telegram : canal LIVE = {chat or 'NON DÉFINI'}"
@@ -94,6 +106,10 @@ def main() -> int:
             app = apparier(live.instantane, storage, maintenant, a.sport)
             apparies_max = max(apparies_max, app.matchs_apparies)
             vus_max = max(vus_max, app.matchs_vus)
+            # Horloge RELUE ici. Prise avant `apparier`, elle rendait un
+            # « temps de détection » de 0,00 s qui ne mesurait rien : tout le
+            # coût du rapprochement tombait hors de la fenêtre mesurée.
+            maintenant = datetime.now(timezone.utc)
             an = evaluer(app.quotes, storage, maintenant, memoire=memoire,
                          preneur_pris_a=live.instantane.pris_a,
                          seuil_ev=a.ev, age_max_fair=a.age_fair,
