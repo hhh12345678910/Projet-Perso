@@ -39,6 +39,31 @@ def _p(x, u="s"):
     return "N/A" if x is None else f"{x:.1f} {u}"
 
 
+def opportunite_de_test():
+    """L'occasion bidon de `--test-telegram`. UNE alerte, sans réseau ni base.
+
+    Elle passe par le VRAI formateur et le VRAI envoi : c'est ce qui la rend
+    concluante. Les valeurs sont inventées et LES NOMS D'ÉQUIPE LE DISENT —
+    un message de test qui ressemblerait à une vraie occasion serait pire
+    qu'inutile, il finirait par être lu comme un signal. Le marqueur vit dans
+    les noms parce que c'est le seul endroit du message qui s'affiche
+    toujours, quel que soit le statut.
+    """
+    from src.models import Book, MarketType
+    return Opportunite(
+        detecte_a=datetime.now(timezone.utc),
+        event_key="TEST::ceci_est_un_test__vs__aucun_pari",
+        home="CECI EST UN TEST", away="AUCUN PARI",
+        market=MarketType.H2H, line=None, outcome="home",
+        book=Book.UNIBET_BE, cote_preneur=2.00, fair_prob=0.60,
+        fair_cote=1.67, ev_pct=20.0, statut=Statut.OBSERVEE_SCORE_INCONNU,
+        motif="message de vérification du canal — données inventées",
+        kelly_pct=20.0, age_fair_sec=1.0, age_preneur_sec=0.1,
+        delai_calcul_sec=0.1, feed_score="0:0",
+        source_event_id_fair="TEST", source_event_id_preneur="TEST",
+        minute_ecoulee=1.0)
+
+
 def main() -> int:
     p = argparse.ArgumentParser(
         description=__doc__,
@@ -100,26 +125,7 @@ def main() -> int:
                   "ne partira (le repli irait vers le prématch).")
 
     if a.test_telegram:
-        # UNE alerte, tout de suite, sans reseau bookmaker ni base. Elle
-        # passe par le VRAI formateur et le VRAI envoi : c'est ce qui la
-        # rend concluante. Les valeurs sont inventees et le message le dit —
-        # un message de test qui ressemblerait a une vraie occasion serait
-        # pire qu'inutile.
-        from src.models import Book, MarketType
-        maintenant = datetime.now(timezone.utc)
-        faux = Opportunite(
-            detecte_a=maintenant,
-            event_key="TEST::ceci_est_un_test__vs__aucun_pari",
-            home="CECI EST UN TEST", away="AUCUN PARI",
-            market=MarketType.H2H, line=None, outcome="home",
-            book=Book.UNIBET_BE, cote_preneur=2.00, fair_prob=0.60,
-            fair_cote=1.67, ev_pct=20.0, statut=Statut.OBSERVEE_SCORE_INCONNU,
-            motif="message de vérification du canal — données inventées",
-            kelly_pct=20.0, age_fair_sec=1.0, age_preneur_sec=0.1,
-            delai_calcul_sec=0.1, feed_score="0:0",
-            source_event_id_fair="TEST", source_event_id_preneur="TEST",
-            minute_ecoulee=1.0)
-        n = alerte[1]([faux], cfg)
+        n = alerte[1]([opportunite_de_test()], cfg)
         print(f"[live] alerte de test : {n} message(s) accepté(s) par Telegram "
               f"vers {cfg.live_surebet_chat_id}")
         print("[live] vérifiez dans « Sure Bet live » : le message est arrivé, "

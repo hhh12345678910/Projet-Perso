@@ -58,23 +58,21 @@ def test_tout_drapeau_telegram_passe_par_la_mise_en_place(drapeau, monkeypatch):
 
 def test_le_message_de_test_dit_qu_il_est_un_test():
     """Un message de vérification qui ressemblerait à une vraie occasion
-    serait pire qu'inutile : il finirait par être lu comme un signal."""
-    from datetime import datetime, timezone
-    from src.alerter import format_live_observation
-    from src.live_value import Opportunite, Statut
-    from src.models import Book, MarketType
+    serait pire qu'inutile : il finirait par être lu comme un signal.
 
-    o = Opportunite(
-        detecte_a=datetime.now(timezone.utc),
-        event_key="TEST::ceci_est_un_test__vs__aucun_pari",
-        home="CECI EST UN TEST", away="AUCUN PARI", market=MarketType.H2H,
-        line=None, outcome="home", book=Book.UNIBET_BE, cote_preneur=2.00,
-        fair_prob=0.60, fair_cote=1.67, ev_pct=20.0,
-        statut=Statut.OBSERVEE_SCORE_INCONNU,
-        motif="message de vérification du canal — données inventées",
-        kelly_pct=20.0)
-    t = format_live_observation(o).lower()
-    assert "test" in t and "vérification" in t
+    Ce test lit L'OBJET QUE LE LANCEUR ENVOIE VRAIMENT. Ma première version
+    en construisait un sosie dans le test — elle passait donc même après
+    avoir remplacé les noms bidons par « Örebro SK vs Varbergs BoIS » dans le
+    lanceur. Elle ne protégeait rien.
+    """
+    from src.alerter import format_live_observation
+
+    t = format_live_observation(le.opportunite_de_test()).lower()
+    # Le marqueur doit vivre dans les NOMS D'ÉQUIPE : seul endroit du message
+    # qui s'affiche toujours, quel que soit le statut. Le `motif` ne convient
+    # pas — depuis l'allègement du format, il ne sort que pour un REJET.
+    assert "ceci est un test" in t
+    assert "aucun pari" in t
 
 
 # ══ le lanceur doit aller JUSQU'AU BOUT ════════════════════════════════
