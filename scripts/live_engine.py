@@ -56,6 +56,9 @@ def main() -> int:
     p.add_argument("--telegram-blanc", action="store_true",
                    help="imprimer les messages sans les envoyer")
     p.add_argument("--tout", action="store_true", help="afficher les doublons")
+    p.add_argument("--test-telegram", action="store_true",
+                   help="envoyer UNE alerte de test au canal LIVE et sortir. "
+                        "Ne sonde rien, ne lit pas la base.")
     p.add_argument("--envoyer-rejets", action="store_true",
                    help="envoyer AUSSI sur Telegram les occasions rejetées "
                         "(fair périmée, match terminé…). Elles restent de "
@@ -87,6 +90,35 @@ def main() -> int:
         if a.telegram and not chat:
             print("[live] TELEGRAM_LIVE_SUREBET_CHAT_ID absent — AUCUN envoi "
                   "ne partira (le repli irait vers le prématch).")
+
+    if a.test_telegram:
+        # UNE alerte, tout de suite, sans reseau bookmaker ni base. Elle
+        # passe par le VRAI formateur et le VRAI envoi : c'est ce qui la
+        # rend concluante. Les valeurs sont inventees et le message le dit —
+        # un message de test qui ressemblerait a une vraie occasion serait
+        # pire qu'inutile.
+        from datetime import timedelta
+        from src.live_value import Opportunite, Statut
+        from src.models import Book, MarketType
+        maintenant = datetime.now(timezone.utc)
+        faux = Opportunite(
+            detecte_a=maintenant,
+            event_key="TEST::ceci_est_un_test__vs__aucun_pari",
+            home="CECI EST UN TEST", away="AUCUN PARI",
+            market=MarketType.H2H, line=None, outcome="home",
+            book=Book.UNIBET_BE, cote_preneur=2.00, fair_prob=0.60,
+            fair_cote=1.67, ev_pct=20.0, statut=Statut.OBSERVEE_SCORE_INCONNU,
+            motif="message de vérification du canal — données inventées",
+            kelly_pct=20.0, age_fair_sec=1.0, age_preneur_sec=0.1,
+            delai_calcul_sec=0.1, feed_score="0:0",
+            source_event_id_fair="TEST", source_event_id_preneur="TEST",
+            minute_ecoulee=1.0)
+        n = alerte[1]([faux], cfg)
+        print(f"[live] alerte de test : {n} message(s) accepté(s) par Telegram "
+              f"vers {cfg.live_surebet_chat_id}")
+        print("[live] vérifiez dans « Sure Bet live » : le message est arrivé, "
+              "il n'a AUCUN bouton, et le canal prématch est resté muet.")
+        return 0 if n else 1
 
     storage, live, memoire = Storage(a.db), UnibetLive(a.sport), Memoire()
     total, envoyes, passages, erreurs = Counter(), 0, 0, 0
