@@ -1001,6 +1001,104 @@ class TelegramAlerter:
             return False
 
 
+def _duree(x, unite="s") -> str:
+    """Une duree, ou N/A. JAMAIS zero a la place d'une valeur inconnue."""
+    return "N/A" if x is None else f"{x:.1f} {unite}"
+
+
+#: Au-dela, on le dit dans le message. Ce n'est pas un filtre — le moteur a
+#: deja tranche en amont ; c'est un avertissement pour l'oeil humain qui lira
+#: l'alerte, parce qu'une fraicheur mediocre ne se voit pas dans une EV.
+FRAICHEUR_SUSPECTE_SEC = 30.0
+
+
+def format_live_observation(o) -> str:
+    """Une occasion LIVE, en observation. AUCUN bouton, aucune action.
+
+    Le score vient d'AsianOdds et de nulle part ailleurs : c'est le score qui
+    a servi a fabriquer la fair utilisee dans ce calcul. L'afficher avec son
+    AGE n'est pas decoratif — une fair de 90 s sur un match en direct peut
+    porter un etat de jeu revolu, et c'est la seule chose qui permet a un
+    lecteur de s'en apercevoir.
+    """
+    from html import escape
+    match = f"{_prettify_team_name(o.home)} vs {_prettify_team_name(o.away)}"
+    score = (o.feed_score or "").replace(":", "-") or "N/A"
+    ligne = "" if o.line is None else f" {o.line:g}"
+    parties = [
+        "🧪 <b>LIVE OBSERVATION</b>  —  aucune action, aucun pari",
+        "",
+        f"⚽ <b>{escape(match)}</b>",
+        f"⚽ <b>Score : {score}</b>  (AsianOdds, il y a {_duree(o.age_fair_sec)})",
+        "",
+        f"📊 Marché : <b>{o.market.value}{ligne}</b>",
+        f"🎯 Sélection : <b>{escape(o.outcome)}</b>",
+        "",
+        f"💰 Cote {o.book.value} : <b>{o.cote_preneur:.2f}</b>",
+        f"📐 Fair AsianOdds : <b>{o.fair_cote:.2f}</b>",
+        f"📈 EV : <b>{o.ev_pct:+.1f} %</b>",
+        f"💵 Kelly : <b>{o.kelly_pct:.2f} %</b>",
+        "",
+        f"⏱ Âge fair AsianOdds : {_duree(o.age_fair_sec)}",
+        f"⏱ Âge cote {o.book.value} : {_duree(o.age_preneur_sec)}",
+        f"⚡ Temps de détection : {_duree(o.delai_calcul_sec)}",
+    ]
+    if o.minute_ecoulee is not None:
+        parties.append(f"🕐 {o.minute_ecoulee:.0f} min depuis le coup d'envoi "
+                       f"(horloge, mi-temps comprise)")
+    # Une jambe absente n'invalide pas le calcul, mais le lecteur doit le
+    # savoir : le prix affiche peut etre celui d'un marche en cours de
+    # suspension.
+    if o.partiel:
+        parties.append(f"⚠️ <b>Marché partiel</b> — issue(s) manquante(s) : "
+                       f"{escape(', '.join(o.issues_manquantes))}")
+    vieux = [n for n, v in (("fair AsianOdds", o.age_fair_sec),
+                            (f"cote {o.book.value}", o.age_preneur_sec))
+             if v is not None and v > FRAICHEUR_SUSPECTE_SEC]
+    if vieux:
+        parties.append(f"⚠️ <b>Fraîcheur limite</b> : {escape(', '.join(vieux))}")
+    if o.statut.value != "RETENUE":
+        parties.append(f"ℹ️ statut : {escape(o.statut.value)}"
+                       + (f" — {escape(o.motif)}" if o.motif else ""))
+    parties += [
+        "",
+        f"<code>{escape(o.event_key)}</code>",
+        f"<code>AO {o.source_event_id_fair or 'N/A'} · "
+        f"{o.book.value} {o.source_event_id_preneur or 'N/A'} · "
+        f"détecté {o.detecte_a:%H:%M:%S} UTC</code>",
+    ]
+    return "\n".join(parties)
+
+
+def send_live_observation(opportunites, config: "TelegramConfig | None",
+                          *, alerter=None, log=print) -> int:
+    """Envoyer les observations LIVE. Renvoie le nombre de messages partis.
+
+    ⚠️ REFUSE D'ENVOYER si aucun canal LIVE dedie n'est configure. Ce n'est
+    pas de la prudence excessive : `effective_live_surebet_chat_id` retombe
+    silencieusement sur le canal des surebets prematch, donc sans ce refus,
+    un `TELEGRAM_LIVE_SUREBET_CHAT_ID` absent enverrait les observations LIVE
+    dans le canal prematch — exactement ce qu'on a interdit.
+
+    Aucun `reply_markup` n'est passe : pas de bouton, donc aucune action
+    bookmaker possible depuis le message.
+    """
+    if config is None or not config.bot_token:
+        log("[live] Telegram non configuré — aucune alerte")
+        return 0
+    if not config.live_surebet_chat_id:
+        log("[live] TELEGRAM_LIVE_SUREBET_CHAT_ID non défini — AUCUN envoi. "
+            "Le repli irait vers le canal prématch.")
+        return 0
+    chat = config.live_surebet_chat_id
+    envoi = alerter or TelegramAlerter(config)
+    n = 0
+    for o in opportunites:
+        if envoi._send(format_live_observation(o), chat):
+            n += 1
+    return n
+
+
 def _edge_key(q) -> tuple:
     """Identifie une cote dans la table des écarts."""
     return (q.market.value, q.outcome.label, q.outcome.line)
