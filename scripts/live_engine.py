@@ -66,7 +66,14 @@ def main() -> int:
     a = p.parse_args()
 
     cfg = alerte = None
-    if a.telegram or a.telegram_blanc:
+    # UN SEUL endroit qui decide si Telegram est necessaire. Je m'y suis
+    # trompe DEUX FOIS en ajoutant un drapeau sans l'inscrire ici : la
+    # premiere a plante sur `cfg.live_surebet_chat_id` avec cfg a None, la
+    # seconde sur `alerte[1]` pour la meme raison. Tout nouveau drapeau qui
+    # parle a Telegram s'ajoute dans cette liste, et le test
+    # `test_tout_drapeau_telegram_passe_par_la_mise_en_place` echoue sinon.
+    DRAPEAUX_TELEGRAM = (a.telegram, a.telegram_blanc, a.test_telegram)
+    if any(DRAPEAUX_TELEGRAM):
         from src.alerter import (TelegramConfig, format_live_observation,
                                  send_live_observation)
         cfg = TelegramConfig.from_env()
