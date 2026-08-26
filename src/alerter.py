@@ -1025,11 +1025,14 @@ def format_live_observation(o) -> str:
     match = f"{_prettify_team_name(o.home)} vs {_prettify_team_name(o.away)}"
     score = (o.feed_score or "").replace(":", "-") or "N/A"
     ligne = "" if o.line is None else f" {o.line:g}"
+    minute = ("" if o.minute_ecoulee is None
+              else f"  🕐 {o.minute_ecoulee:.0f} min")
     parties = [
         "🧪 <b>LIVE OBSERVATION</b>  —  aucune action, aucun pari",
         "",
         f"⚽ <b>{escape(match)}</b>",
-        f"⚽ <b>Score : {score}</b>  (AsianOdds, il y a {_duree(o.age_fair_sec)})",
+        f"⚽ <b>Score : {score}</b>{minute}  (AsianOdds, il y a "
+        f"{_duree(o.age_fair_sec)})",
         "",
         f"📊 Marché : <b>{o.market.value}{ligne}</b>",
         f"🎯 Sélection : <b>{escape(o.outcome)}</b>",
@@ -1037,15 +1040,11 @@ def format_live_observation(o) -> str:
         f"💰 Cote {o.book.value} : <b>{o.cote_preneur:.2f}</b>",
         f"📐 Fair AsianOdds : <b>{o.fair_cote:.2f}</b>",
         f"📈 EV : <b>{o.ev_pct:+.1f} %</b>",
-        f"💵 Kelly : <b>{o.kelly_pct:.2f} %</b>",
         "",
         f"⏱ Âge fair AsianOdds : {_duree(o.age_fair_sec)}",
         f"⏱ Âge cote {o.book.value} : {_duree(o.age_preneur_sec)}",
         f"⚡ Temps de détection : {_duree(o.delai_calcul_sec)}",
     ]
-    if o.minute_ecoulee is not None:
-        parties.append(f"🕐 {o.minute_ecoulee:.0f} min depuis le coup d'envoi "
-                       f"(horloge, mi-temps comprise)")
     # Une jambe absente n'invalide pas le calcul, mais le lecteur doit le
     # savoir : le prix affiche peut etre celui d'un marche en cours de
     # suspension.
@@ -1057,16 +1056,9 @@ def format_live_observation(o) -> str:
              if v is not None and v > FRAICHEUR_SUSPECTE_SEC]
     if vieux:
         parties.append(f"⚠️ <b>Fraîcheur limite</b> : {escape(', '.join(vieux))}")
-    if o.statut.value != "RETENUE":
+    if o.statut.value.startswith("REJET_"):
         parties.append(f"ℹ️ statut : {escape(o.statut.value)}"
                        + (f" — {escape(o.motif)}" if o.motif else ""))
-    parties += [
-        "",
-        f"<code>{escape(o.event_key)}</code>",
-        f"<code>AO {o.source_event_id_fair or 'N/A'} · "
-        f"{o.book.value} {o.source_event_id_preneur or 'N/A'} · "
-        f"détecté {o.detecte_a:%H:%M:%S} UTC</code>",
-    ]
     return "\n".join(parties)
 
 

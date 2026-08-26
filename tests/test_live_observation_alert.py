@@ -58,8 +58,8 @@ def test_le_message_porte_TOUT_ce_qui_permet_de_juger():
     t = format_live_observation(_opp())
     for attendu in ("🧪", "LIVE OBSERVATION", "Score : 1-0", "AsianOdds",
                     "Marché", "Sélection", "Cote", "Fair", "EV",
-                    "+96.1 %", "Kelly", "12.34 %", "Âge fair",
-                    "Temps de détection", "orebrosk", "1634601234"):
+                    "+96.1 %", "Âge fair", "Temps de détection",
+                    "Orebrosk", "42 min"):
         assert attendu in t, f"{attendu!r} absent du message :\n{t}"
 
 
@@ -70,6 +70,8 @@ def test_le_score_vient_d_AsianOdds_et_porte_son_AGE():
     t = format_live_observation(_opp(feed_score="2:1", age_fair_sec=87.0))
     assert "Score : 2-1" in t
     assert "il y a 87.0 s" in t
+    # La minute rejoint le score : les deux disent où en est le match.
+    assert "🕐 42 min" in t
 
 
 def test_un_score_absent_s_ecrit_N_A_et_pas_0_0():
@@ -165,3 +167,40 @@ def test_aucune_opportunite_aucun_message():
     faux = _FauxAlerter()
     assert send_live_observation([], _cfg(), alerter=faux) == 0
     assert faux.envois == []
+
+
+# ══ le message allégé garde ce qui protège ═════════════════════════════
+def test_le_statut_NORMAL_ne_pollue_pas_le_message():
+    """`OBSERVEE_SCORE_INCONNU` est l'état de TOUTES les alertes de cette
+    phase. L'afficher à chaque fois était du bruit constant : une ligne qui
+    ne varie jamais ne porte aucune information."""
+    assert "statut" not in format_live_observation(_opp())
+
+
+def test_un_REJET_reste_VISIBLE_dans_le_message():
+    """Un rejet, lui, doit se voir : c'est la seule chose qui dit pourquoi
+    l'alerte ne vaut rien. Sans ça, `--envoyer-rejets` enverrait des alertes
+    indiscernables des bonnes."""
+    t = format_live_observation(_opp(statut=Statut.REJET_FAIR_PERIMEE,
+                                     motif="3329s > 60s"))
+    assert "REJET_FAIR_PERIMEE" in t
+    # Le motif contient un « > » : il DOIT sortir échappé, sinon Telegram
+    # refuse le message entier pour HTML invalide et l'alerte se perd.
+    assert "3329s &gt; 60s" in t
+    assert "3329s > 60s" not in t
+
+
+def test_le_message_allege_garde_les_DEUX_avertissements():
+    """Kelly et les identifiants sortent du message — ils restent au journal.
+    Les avertissements, eux, ne sortent jamais : ils disent que la donnée
+    elle-même est douteuse."""
+    t = format_live_observation(_opp(partiel=True, issues_manquantes=("away",),
+                                     age_fair_sec=FRAICHEUR_SUSPECTE_SEC + 1))
+    assert "Marché partiel" in t and "away" in t
+    assert "Fraîcheur limite" in t
+
+
+def test_une_minute_inconnue_n_ecrit_pas_d_horloge_vide():
+    t = format_live_observation(_opp(minute_ecoulee=None))
+    assert "🕐" not in t
+    assert "Score : 1-0" in t
