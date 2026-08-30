@@ -244,6 +244,18 @@ class TelegramConfig:
     # Premium channel — curated "best opportunities" copy: big value bets (incl.
     # the suspiciously-huge ones) within a sane odds band, plus juicy prematch
     # surebets. Opt-in via TELEGRAM_PREMIUM_CHAT_ID; no fallback when unset.
+    # Canal MAINTENANCE — les pannes, pas les opportunites.
+    #
+    # Avant lui, `send_system_alert` partait sur le canal critique. Les deux
+    # sont urgents mais ne demandent pas la meme chose : un value bet
+    # exceptionnel se joue dans la minute, un book muet se repare. Les meler
+    # oblige a trier a l'oeil au pire moment, et une panne noyee dans le flux
+    # des grosses cotes est une panne qu'on rate — l'incident Pinnacle de
+    # 1 h 30 (§12) n'avait ete vu par personne.
+    #
+    # Non defini : le comportement ne change PAS (canal critique, puis chat
+    # principal). Un reglage absent ne doit jamais modifier la production.
+    maintenance_chat_id: str | None = None
     premium_chat_id: str | None = None
     min_premium_ev_pct: float = 8.0      # value bets at/above this go to premium channel
     # NB : le premium ne reçoit plus aucun surebet, quelle que soit la marge.
@@ -330,6 +342,7 @@ class TelegramConfig:
             min_critical_ev_pct=float(os.getenv("TELEGRAM_MIN_CRITICAL_EV", "35.0")),
             min_critical_surebet_pct=float(os.getenv("TELEGRAM_MIN_CRITICAL_SUREBET", "10.0")),
             min_critical_clv_pct=float(os.getenv("TELEGRAM_MIN_CRITICAL_CLV", "25.0")),
+            maintenance_chat_id=os.getenv("TELEGRAM_MAINTENANCE_CHAT_ID") or None,
             premium_chat_id=os.getenv("TELEGRAM_PREMIUM_CHAT_ID") or None,
             min_premium_ev_pct=float(os.getenv("TELEGRAM_MIN_PREMIUM_EV", "8.0")),
             premium_min_odd=float(os.getenv("TELEGRAM_PREMIUM_MIN_ODD", "1.5")),
@@ -368,6 +381,13 @@ class TelegramConfig:
     def effective_critical_chat_id(self) -> str | None:
         """Critical channel — None when not configured (no fallback: critical is opt-in)."""
         return self.critical_chat_id
+
+    @property
+    def effective_maintenance_chat_id(self) -> str:
+        """Les pannes. Retombe sur le critique, puis sur le chat principal —
+        une alerte d'exploitation ne doit JAMAIS disparaitre faute de canal."""
+        return (self.maintenance_chat_id or self.effective_critical_chat_id
+                or self.chat_id)
 
     @property
     def effective_premium_chat_id(self) -> str | None:
@@ -1309,14 +1329,19 @@ def send_system_alert(config: TelegramConfig | None, text: str,
                       *, print_fn=print) -> bool:
     """Alerte d'exploitation — panne d'un composant, pas une opportunité.
 
-    Part sur le canal critique quand il existe, sinon le chat principal : une
-    panne de la référence sharp mérite d'interrompre, pas de se noyer dans le
-    flux des value bets. Le seul incident de ce type observé a duré 1 h 30 sans
-    que rien ne le signale, et chaque heure sans Pinnacle est une heure de
-    lignes de clôture perdues pour de bon — donc de CLV non mesurable."""
+    Part sur le canal MAINTENANCE quand il existe, sinon le critique, sinon le
+    chat principal : une panne de la référence sharp mérite d'interrompre, pas
+    de se noyer dans le flux des value bets. Le seul incident de ce type
+    observé a duré 1 h 30 sans que rien ne le signale, et chaque heure sans
+    Pinnacle est une heure de lignes de clôture perdues pour de bon — donc de
+    CLV non mesurable.
+
+    La cascade n'a pas de sortie vide : une alerte de panne qui n'atterrit
+    nulle part vaut exactement l'incident silencieux qu'elle existe pour
+    éviter."""
     if config is None:
         return False
-    chat = config.effective_critical_chat_id or config.chat_id
+    chat = config.effective_maintenance_chat_id
     if not chat:
         return False
     with TelegramAlerter(config, print_fn=print_fn) as alerter:
