@@ -256,6 +256,24 @@ class TelegramConfig:
     premium_hi_min_ev: float = 20.0      # cotes premium_hi_min_odd..max only if EV >= this
     premium_hi_min_odd: float = 4.0
     premium_hi_max_odd: float = 6.0
+    # Sports EXCLUS de la seule bande longue. Vide par défaut : sans réglage,
+    # rien ne change.
+    #
+    # POURQUOI PAR SPORT ET NON GLOBALEMENT. Mesuré le 30/08 sur les
+    # détections closes : la tranche 4,0-6,0 rend −20,34 % de ROI (n=406,
+    # −2,3σ) et la tranche > 6,0 rend −16,20 % (n=230). Mais cette population
+    # est à 96 % du TENNIS — 1 119 paris contre 34 au soccer. Fermer la bande
+    # pour tous les sports appliquerait donc au soccer une conclusion tirée
+    # d'un échantillon qui n'en contient presque pas.
+    #
+    # Le CLV dit l'inverse sur ces mêmes tranches (unibet > 6,0 à +17,15 %).
+    # On tranche pour le P&L à cause d'un mécanisme connu : la marge d'un
+    # book n'est pas répartie uniformément, elle se concentre sur les longues
+    # cotes. Un devig qui la suppose uniforme surestime la probabilité juste
+    # des outsiders — tout paraît value, le CLV s'illumine, la probabilité
+    # réelle n'y est pas. C'est le biais favori-outsider, et c'est pour ça que
+    # `pnl_detections` imprime déjà « décroissance régulière = devig suspect ».
+    premium_hi_sports_exclus: tuple = ()
     # Totals middles — back Over low_line + Under high_line on two books; the
     # gap between the lines is profit. EV is priced against Pinnacle's devigged
     # totals ladder. Routed to the CLV channel (effective_clv_chat_id) per the
@@ -317,6 +335,10 @@ class TelegramConfig:
             premium_min_odd=float(os.getenv("TELEGRAM_PREMIUM_MIN_ODD", "1.5")),
             premium_max_odd=float(os.getenv("TELEGRAM_PREMIUM_MAX_ODD", "4.0")),
             premium_hi_min_ev=float(os.getenv("TELEGRAM_PREMIUM_HI_EV", "20.0")),
+            premium_hi_sports_exclus=tuple(
+                x.strip().lower()
+                for x in os.getenv("TELEGRAM_PREMIUM_HI_EXCLUT", "").split(",")
+                if x.strip()),
             premium_hi_min_odd=float(os.getenv("TELEGRAM_PREMIUM_HI_MIN_ODD", "4.0")),
             premium_hi_max_odd=float(os.getenv("TELEGRAM_PREMIUM_HI_MAX_ODD", "6.0")),
             min_middle_ev_pct=float(os.getenv("TELEGRAM_MIN_MIDDLE_EV", "2.0")),
@@ -830,6 +852,16 @@ class TelegramAlerter:
         _prem_high_odds = (
             ev >= cfg.premium_hi_min_ev
             and cfg.premium_hi_min_odd <= bet.odd_taken <= cfg.premium_hi_max_odd
+            # Un sport exclu ne franchit QUE cette bande-là. La bande standard
+            # (cotes 1,5-4) n'est pas touchée : c'est elle qui porte le
+            # rendement, +19,92 % sur la tranche 1,8-2,3.
+            #
+            # ⚠️ `sport is None` NE déclenche PAS l'exclusion. La production
+            # passe toujours le sport (`send_alerts(..., sport=current_sport)`),
+            # donc le cas ne se présente pas ; mais si un appel l'omettait,
+            # écarter par défaut supprimerait des paris d'un sport qu'on n'a
+            # jamais voulu couper.
+            and (sport or "").lower() not in cfg.premium_hi_sports_exclus
         )
         # Le premium a-t-il vraiment pris ce pari ? La question porte sur la
         # livraison, pas sur la seule éligibilité : si le canal n'est pas
