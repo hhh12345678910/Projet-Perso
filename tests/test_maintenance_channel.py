@@ -56,8 +56,9 @@ def test_les_pannes_partent_sur_le_canal_maintenance(envois):
 
 
 def test_le_canal_critique_n_est_plus_touche_par_les_pannes(envois):
-    """C'est tout l'objet du commit : « Value Bet Exceptionnel » doit rester
-    un canal de paris, pas d'exploitation."""
+    """C'est tout l'objet du commit : « Citrique Alert BE », le canal branche
+    sur TELEGRAM_CRITICAL_CHAT_ID, doit rester un canal de paris et pas
+    d'exploitation."""
     cfg = _cfg(maintenance_chat_id="MAINTENANCE", critical_chat_id="CRITIQUE")
     send_system_alert(cfg, "🚨 unibet_be muet")
     assert "CRITIQUE" not in {c for c, _ in envois}
