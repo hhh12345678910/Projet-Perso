@@ -256,6 +256,18 @@ class TelegramConfig:
     # Non defini : le comportement ne change PAS (canal critique, puis chat
     # principal). Un reglage absent ne doit jamais modifier la production.
     maintenance_chat_id: str | None = None
+    # Seconde voie du critique : les GROSSES COTES que le premium refuse.
+    #
+    # Sans elle, un pari en cote 4-6 ecarte du premium (exclusion tennis, ou
+    # canal premium absent) devait atteindre 35 % d'EV pour reapparaitre
+    # quelque part. Entre 20 et 35 % il ne partait NULLE PART : ni joue, ni
+    # observe. Fermer une bande au premium devait deplacer ces paris, pas les
+    # effacer — on veut continuer a les mesurer.
+    #
+    # Ce n'est PAS un doublon : tout le bloc critique reste conditionne a
+    # `not _premium_takes`. Un pari deja parti en premium ne repart jamais ici.
+    critical_hi_min_ev: float = 20.0     # meme seuil que la bande longue du premium
+    critical_hi_min_odd: float = 4.0     # au-dessus de la bande premium standard
     premium_chat_id: str | None = None
     min_premium_ev_pct: float = 8.0      # value bets at/above this go to premium channel
     # NB : le premium ne reçoit plus aucun surebet, quelle que soit la marge.
@@ -343,6 +355,8 @@ class TelegramConfig:
             min_critical_surebet_pct=float(os.getenv("TELEGRAM_MIN_CRITICAL_SUREBET", "10.0")),
             min_critical_clv_pct=float(os.getenv("TELEGRAM_MIN_CRITICAL_CLV", "25.0")),
             maintenance_chat_id=os.getenv("TELEGRAM_MAINTENANCE_CHAT_ID") or None,
+            critical_hi_min_ev=float(os.getenv("TELEGRAM_CRITICAL_HI_EV", "20.0")),
+            critical_hi_min_odd=float(os.getenv("TELEGRAM_CRITICAL_HI_MIN_ODD", "4.0")),
             premium_chat_id=os.getenv("TELEGRAM_PREMIUM_CHAT_ID") or None,
             min_premium_ev_pct=float(os.getenv("TELEGRAM_MIN_PREMIUM_EV", "8.0")),
             premium_min_odd=float(os.getenv("TELEGRAM_PREMIUM_MIN_ODD", "1.5")),
@@ -801,10 +815,12 @@ class TelegramAlerter:
           - main chat:     min_ev_pct <= EV < main_max_ev_pct, odd within the main band
           - premium chat:  EV >= min_premium_ev_pct within 1.5-4, or
                            EV >= premium_hi_min_ev within 4-6. No EV ceiling.
-          - critical chat: EV >= min_critical_ev_pct, no odds limit, but ONLY
-                           when premium did not already take the bet — critical
-                           is the overflow lane for huge EV on odds no premium
-                           band accepts, not a second copy of premium.
+          - critical chat: EV >= min_critical_ev_pct at any odds, OR
+                           EV >= critical_hi_min_ev above critical_hi_min_odd —
+                           but in both cases ONLY when premium did not already
+                           take the bet. Critical is the overflow lane for what
+                           no premium band accepts, not a second copy of
+                           premium: a bet never lands in both.
 
         Returns True if at least one message was actually delivered, so the
         daemon marks the bet notified only when something went out — a
@@ -909,10 +925,16 @@ class TelegramAlerter:
                 reply_markup=button,
             )
 
+        # Deux entrees, un seul canal : l'EV extreme quelle que soit la cote,
+        # ou une EV plus modeste mais sur une grosse cote que le premium a
+        # refusee. Les deux restent barrees par `not _premium_takes`.
+        _crit = ev >= cfg.min_critical_ev_pct or (
+            ev >= cfg.critical_hi_min_ev and bet.odd_taken > cfg.critical_hi_min_odd
+        )
         if (
             not is_live
             and cfg.effective_critical_chat_id
-            and ev >= cfg.min_critical_ev_pct
+            and _crit
             and not _premium_takes
         ):
             delivered |= self._send(

@@ -47,8 +47,11 @@ CAS = (
     (2.10, 50.0, "soccer", "bande premium standard"),
     (2.10, 12.0, "soccer", "EV moyenne, bande standard"),
     (5.00, 25.0, "soccer", "bande premium longue"),
-    (5.00, 25.0, "tennis", "bande longue, sport exclu"),
-    (5.00, 40.0, "tennis", "bande longue exclue, mais EV critique"),
+    (5.00, 25.0, "tennis", "bande longue exclue -> voie grosses cotes"),
+    (5.00, 40.0, "tennis", "bande longue exclue, EV critique"),
+    (5.00, 15.0, "tennis", "bande longue exclue, EV sous 20 %"),
+    (8.00, 25.0, "soccer", "au-dessus de toute bande premium"),
+    (2.10, 25.0, "soccer", "grosse EV mais cote <= 4 : pas de voie critique"),
     (2.10, 3.0, "soccer", "EV sous tous les seuils"),
 )
 

@@ -21,6 +21,15 @@ from scripts.routage_telegram import CAS, espionner, main, panne, tableau
 from src.alerter import TelegramConfig
 
 
+def _ligne(cote: float, ev: float, sport: str) -> int:
+    """Indexe un cas par ce qui le définit, pas par son libellé : indexer sur
+    le tuple entier casse le test au premier commentaire reformulé."""
+    for i, (o, e, sp, _) in enumerate(CAS):
+        if (o, e, sp) == (cote, ev, sport):
+            return i
+    raise AssertionError(f"cas absent de CAS : {cote} / {ev} % / {sport}")
+
+
 def _cfg(**kw) -> TelegramConfig:
     base = dict(bot_token="jeton", chat_id="PRINCIPAL", premium_chat_id="PREMIUM",
                 critical_chat_id="CRITIQUE", maintenance_chat_id="MAINTENANCE",
@@ -82,7 +91,7 @@ def test_send_est_restaure_meme_sur_exception():
 def test_le_tableau_suit_la_config(muet):
     """Preuve qu'il rejoue le routage au lieu de le décrire : sans canal
     premium, le pari de la bande standard doit basculer ailleurs."""
-    i = CAS.index((2.10, 50.0, "soccer", "bande premium standard"))
+    i = _ligne(2.10, 50.0, "soccer")
     avec = tableau(_cfg(), envoyer=False, print_fn=muet)[i]
     sans = tableau(_cfg(premium_chat_id=None), envoyer=False, print_fn=muet)[i]
     assert avec == ["PREMIUM"]
@@ -90,12 +99,16 @@ def test_le_tableau_suit_la_config(muet):
 
 
 def test_l_exclusion_tennis_est_visible(muet):
-    """La bande longue fermée au tennis, et elle seule : le soccer au même
-    couple cote/EV doit continuer d'aller au premium."""
+    """La bande longue fermée au tennis, et elle seule : au même couple
+    cote/EV, le soccer va au premium et le tennis bascule sur le critique par
+    la voie grosses cotes. Deux canaux différents, donc une exclusion qui se
+    LIT dans le tableau — c'est tout l'objet de l'outil."""
     lignes = tableau(_cfg(premium_hi_sports_exclus=("tennis",)),
                      envoyer=False, print_fn=muet)
-    assert lignes[CAS.index((5.00, 25.0, "soccer", "bande premium longue"))] == ["PREMIUM"]
-    assert lignes[CAS.index((5.00, 25.0, "tennis", "bande longue, sport exclu"))] == []
+    assert lignes[_ligne(5.00, 25.0, "soccer")] == ["PREMIUM"]
+    assert lignes[_ligne(5.00, 25.0, "tennis")] == ["CRITIQUE"]
+    # Sous le seuil de la voie grosses cotes, l'exclusion supprime vraiment.
+    assert lignes[_ligne(5.00, 15.0, "tennis")] == []
 
 
 def test_la_panne_part_sur_le_canal_maintenance(muet):
