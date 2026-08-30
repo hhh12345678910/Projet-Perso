@@ -6146,10 +6146,174 @@ un résultat, et pourquoi les autres n'en ont pas, débloquerait tout le reste.*
 
 ### 22.13 La branche
 
-Tout ce travail est sur **`refactor/prepare-live`**, jamais fusionnée : **49
-commits d'avance** sur `claude/resume-clarification-1541xa` (la branche par
-défaut du dépôt), **0 de retard**. La VM tourne sur `refactor/prepare-live`.
+Tout ce travail est sur **`refactor/prepare-live`**. Elle a été fusionnée dans
+`claude/resume-clarification-1541xa` (la branche par défaut du dépôt) le 30/08,
+en avance rapide : les deux pointent désormais sur le même commit, **0 d'avance
+et 0 de retard**. La VM tourne sur `refactor/prepare-live`.
 
-⚠️ La branche par défaut est donc **périmée** : elle ne contient ni le
-découpage de `main.py`, ni le LIVE, ni les réglages du 30/08. Tout outil ou
-personne qui la supposerait à jour se tromperait.
+Chaque commit est poussé sur les deux, dans cet ordre. Elles ne doivent plus
+diverger : une branche par défaut périmée avait fait croire pendant une semaine
+que le découpage de `main.py` n'était pas fait.
+
+---
+
+## 23. Session du 30/08 au soir — le routage des canaux, rendu visible
+
+4 commits. Aucun ne touche à la détection : tout se joue après, sur la question
+« ce pari, il part où ? ». Le LIVE est **en pause** — la fair AsianOdds ne
+convient pas (§22.3) et une autre source reste à trouver.
+
+### 23.1 Le canal Maintenance
+
+Les alertes d'exploitation — `🚨 Pinnacle muet`, `✅ Pinnacle rétabli`,
+`🚨 {book} muet`, `✅ {book} de retour` — partaient sur le canal critique,
+celui des value bets exceptionnels. Les deux flux sont urgents mais ne
+demandent pas la même chose : une grosse cote se joue dans la minute, un book
+muet se répare. Mêlés, ils obligent à trier à l'œil au pire moment, et une
+panne noyée dans le flux des grosses cotes est une panne qu'on rate —
+l'incident Pinnacle de 1 h 30 (§12) n'avait été vu par personne.
+
+`TELEGRAM_MAINTENANCE_CHAT_ID` route désormais `send_system_alert`, seul point
+de passage de ces quatre alertes. Le routage des value bets n'est pas touché.
+
+**Variable absente = comportement strictement inchangé** (canal critique, puis
+chat principal). Une mise à jour ne doit pas déplacer les alertes d'une
+installation qui n'a rien demandé.
+
+### 23.2 Le canal critique s'appelle **Citrique Alert BE**
+
+Pas « Value Bet Exceptionnel » — c'est le titre du *message*
+(`src/alerter.py:919`), pas le nom du canal. La confusion a coûté un
+aller-retour complet. Le routage se fait sur les ID, jamais sur les noms : les
+canaux peuvent être renommés sans rien casser.
+
+### 23.3 `scripts/routage_telegram` — voir le routage sans le provoquer
+
+Le routage est réparti sur quatre conditions indépendantes dans
+`send_value_bet` et une cascade dans `send_system_alert`. La seule façon de
+savoir où part une alerte était d'attendre qu'un vrai pari tombe, puis de le
+lire dans un canal — ce qui ne dit rien des canaux où il n'est **pas** parti.
+
+```bash
+.venv/bin/python -m scripts.routage_telegram            # simulation, rien ne part
+.venv/bin/python -m scripts.routage_telegram --envoyer  # envoie vraiment
+```
+
+Il **rejoue** le routage réel en appelant `send_value_bet` ; il n'en
+réimplémente aucune règle (§17.7 — une sonde qui recalcule autre chose que la
+production ment). `test_le_tableau_suit_la_config` le prouve : on retire le
+canal premium, la ligne doit basculer.
+
+Sans `--envoyer`, l'envoi est remplacé par un relevé du `chat_id` visé. Un
+diagnostic ne doit pas pouvoir polluer les canaux qu'il inspecte. L'espion se
+restaure dans un `finally` — laissé en place, il rendrait muet tout envoi
+ultérieur du processus.
+
+### 23.4 Ce que le tableau a révélé : le critique est une voie de DÉBORDEMENT
+
+Personne ne pouvait le deviner en lisant les seuils. Le canal critique n'est
+pas une copie du premium : il ne prend que ce qu'**aucune** bande premium n'a
+pris (`src/alerter.py:804`). Un EV à 50 % en cote 2,10 part en premium et
+**nulle part ailleurs**.
+
+Conséquence directe : fermer la bande longue du premium au tennis (§22.9)
+n'avait pas déplacé ces paris, il en avait **effacé** une partie. Un tennis en
+cote 4-6 à 25 % d'EV ne partait plus nulle part — il lui fallait 35 % pour
+reparaître sur le critique. La demande était de continuer à les détecter et à
+les analyser ; l'implémentation faisait le contraire entre 20 et 35 %.
+
+### 23.5 La seconde voie du critique
+
+Le critique gagne une seconde entrée : `TELEGRAM_CRITICAL_HI_EV` (20 %) au
+dessus de `TELEGRAM_CRITICAL_HI_MIN_ODD` (4,0). Elle ferme aussi un trou **plus
+ancien**, sans rapport avec le tennis : au-dessus de 6,0 aucune bande premium
+n'existe, donc une cote de 8 à 25 % d'EV n'était alertée nulle part non plus,
+et ne l'a jamais été depuis que les bandes existent.
+
+**Ce n'est pas un doublon.** Tout le bloc critique reste conditionné à
+`not _premium_takes` : un pari déjà parti en premium ne repart jamais ici. La
+bande standard 1,5-4,0 — celle qui porte le rendement, +19,92 % sur 1,8-2,3 —
+ne gagne aucune sortie critique, et la borne de cote est **stricte** (> 4,0)
+pour ne pas empiéter dessus.
+
+Le routage complet, tel que le script l'affiche :
+
+| cote | EV | sport | canal |
+|---|---|---|---|
+| 12,00 | 60 % | soccer | CRITIQUE — hors bandes premium |
+| 1,20 | 40 % | soccer | CRITIQUE — hors bandes premium |
+| 2,10 | 50 % | soccer | PREMIUM — le critique ne double pas |
+| 2,10 | 12 % | soccer | PREMIUM |
+| 5,00 | 25 % | soccer | PREMIUM — bande longue |
+| 5,00 | 25 % | tennis | CRITIQUE — **trou fermé par §23.5** |
+| 5,00 | 40 % | tennis | CRITIQUE |
+| 5,00 | 15 % | tennis | aucun — sous 20 % |
+| 8,00 | 25 % | soccer | CRITIQUE — **trou fermé par §23.5** |
+| 2,10 | 25 % | soccer | PREMIUM — cote ≤ 4, pas de voie critique |
+| 2,10 | 3 % | soccer | aucun |
+
+### 23.6 Les marchés en retard, coupés
+
+`LATE_MARKET_ENABLED=0` dans `.env` + restart. Le coupe-circuit existait déjà
+(`src/main.py:880`) mais n'était documenté nulle part. Il coupe les deux
+variantes — `🥅 BUT — MARCHÉ TOUJOURS OUVERT` et `⏱️ MARCHÉ EN RETARD` —
+détection comprise. Aucun autre type d'alerte n'est concerné. Réversible en
+remettant `1`.
+
+Motif : demandé par l'utilisateur, sans raison consignée. À ne pas
+reconstruire après coup.
+
+⚠️ **Et on ne pourra pas trancher sur des chiffres si la question du rallumage
+se pose** : `find_late_markets` ne persiste rien. Ces marchés ne passent ni par
+`value_bets` ni par la capture de clôture, donc `clv_split` et `pnl_detections`
+ne les ont jamais vus — l'axe `alerte` de `clv_split` sépare les books muets
+des books actifs, pas les types d'alerte. Depuis leur mise en service (§14,
+04/08) ces alertes n'ont laissé aucune trace mesurable. Les rallumer pour les évaluer supposerait
+d'abord de les écrire quelque part.
+
+### 23.7 Trois erreurs de cette session, et ce qu'elles ont appris
+
+**J'ai donné une commande qui ne pouvait pas marcher.** Pour récupérer l'ID du
+canal, j'ai proposé un `curl … /getUpdates`. Or `valuebet-listener` fait déjà
+du long-polling `getUpdates` en permanence (`bot_listener.py:875`) avec un
+offset sauvegardé. Telegram n'autorise qu'un seul `getUpdates` par bot : le
+curl reçoit un `409 Conflict`, et de toute façon le listener a déjà consommé
+**et confirmé** le message, donc Telegram l'a effacé. La leçon : lire ce qui
+tourne déjà avant de proposer une commande qui parle à la même API.
+
+**Un ID mal collé a fait disparaître une alerte sans un mot.**
+`--1004462763661`, deux tirets — le tiret de mon exemple plus celui de l'ID.
+`send_system_alert` a renvoyé `False` et l'alerte n'est allée **nulle part** :
+ni sur Maintenance, ni en repli sur le critique. J'avais pourtant écrit dans le
+code « la cascade n'a pas de sortie vide ». C'est faux : elle protège contre un
+canal **non configuré**, pas contre un canal **injoignable**.
+
+**Un test indexait `CAS` par le tuple entier, libellé compris.** Reformuler un
+commentaire l'a cassé. Corrigé : on indexe par (cote, EV, sport).
+
+### 23.8 État des tests
+
+**1301 tests, 4 skips.** Les 20 nouveaux couvrent le canal maintenance (9),
+le diagnostic de routage (10 dans `test_routage_telegram.py`) et la voie
+grosses cotes (10 dans `test_critical_high_odds.py`). Chaque garde a été
+falsifiée : voie supprimée, doublon autorisé, borne passée à `>=`, cote
+ignorée, prématch-seulement retiré, espion non restauré, variable vide non
+normalisée, repli supprimé. Chacune casse au moins un test.
+
+### 23.9 Reste ouvert
+
+- **Le repli quand le canal maintenance est injoignable** (§23.7). Une alerte
+  de panne mérite d'être doublée plutôt que perdue : si l'envoi échoue,
+  réessayer sur le critique puis sur le chat principal, et le journaliser.
+  **C'est le point le plus urgent** — il rend une panne muette *plus* facile à
+  provoquer qu'avant le §23.1.
+- **`pnl_detections.is_premium()`** code ses seuils en dur et ignore le sport.
+  Il ignore donc maintenant **deux** règles de production : l'exclusion tennis
+  (§22.9) et la voie critique grosses cotes (§23.5). Toute analyse « premium »
+  qu'il produit décrit un flux qui n'existe plus.
+- **Les deux trous fermés par §23.5 n'ont aucune mesure.** On ne sait pas ce
+  que valent les paris qui vont y arriver — c'est précisément pour les mesurer
+  qu'on les route quelque part. À revoir avec `clv_split --premium` quand il y
+  aura du volume.
+- **Le LIVE est en pause**, en attente d'une autre source de fair odds
+  (§22.3). Tout le reste de §22 tient toujours.
