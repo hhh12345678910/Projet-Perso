@@ -646,6 +646,26 @@ def format_value_bet(bet: ValueBet, sport: str | None = None,
 
 _PLAYS_DB = Path(__file__).resolve().parent.parent / "data" / "valuebet.db"
 
+# Importe ICI et pas en tete de fichier : `channels` importe `routing`, et
+# `routing` n'importe rien — aucun cycle possible. L'import est au niveau du
+# MODULE (jamais dans une fonction) : un import local rendrait le nom local a
+# toute la fonction, y compris sur les chemins ou le bloc ne s'execute pas.
+from src.channels import PREMIUM as _ROUTE_PREMIUM, CRITIQUE as _ROUTE_CRITIQUE
+from src.channels import PRINCIPAL as _ROUTE_PRINCIPAL
+from src.channels import charger as charger_canaux
+from src.routing import canaux_pour
+from src.storage import Storage
+
+# Presentation PAR ROUTE, le temps de la migration. Les trois routes traduites
+# de .env gardent exactement l'en-tete et le bouton qu'elles ont aujourd'hui.
+# Un canal cree par l'utilisateur n'en a pas — et rien ne permet encore d'en
+# creer. A porter sur une colonne de `channels` quand les commandes arriveront.
+_PRESENTATION = {
+    _ROUTE_PRINCIPAL: ("", False),
+    _ROUTE_PREMIUM: ("💎 <b>VALUE PREMIUM</b>\n", True),
+    _ROUTE_CRITIQUE: ("🚨 <b>VALUE BET EXCEPTIONNEL</b>\n", False),
+}
+
 
 def _record_pending_play(payload: dict) -> str:
     """Persist the data needed to log a played bet, keyed by a short token that
@@ -747,6 +767,47 @@ def _load_books_alert_off() -> set[str]:
         return set()
 
 
+def _load_channels(print_fn=print) -> list:
+    """Les canaux configures en base, relus a chaque construction d'alerter —
+    donc a chaque cycle, comme `_load_books_alert_off`.
+
+    Liste VIDE = aucune configuration persistee, et le routage historique
+    s'applique tel quel. C'est volontaire : sans canal en base il n'y a rien a
+    router, et deduire une configuration a partir des variables .env serait
+    exactement la deduction silencieuse qu'on s'interdit. La bascule est donc
+    un acte explicite (`scripts.canaux --installer`), et revocable en
+    supprimant les lignes.
+
+    Une base sans les tables (jamais rouverte par `Storage`) rend [] elle
+    aussi : le daemon continue de router comme avant plutot que de s'arreter.
+    """
+    class _Source:
+        @staticmethod
+        def load_channel_rows():
+            con = sqlite3.connect(str(_PLAYS_DB), timeout=SQLITE_BUSY_TIMEOUT_SEC)
+            con.row_factory = sqlite3.Row
+            try:
+                return (
+                    con.execute("SELECT * FROM channels ORDER BY priorite, nom, id").fetchall(),
+                    con.execute("SELECT * FROM channel_rules ORDER BY channel_id, id").fetchall(),
+                    con.execute("SELECT * FROM channel_rule_values").fetchall(),
+                )
+            finally:
+                con.close()
+
+    try:
+        return charger_canaux(_Source, print_fn=print_fn)
+    except Exception:
+        return []
+
+
+def routage_par_canaux_actif() -> bool:
+    """Y a-t-il une configuration persistee ? `main` s'en sert pour savoir qui
+    tient le dedoublonnage : lui (historique, global) ou `send_value_bet`
+    (par canal)."""
+    return bool(_load_channels(print_fn=lambda _s: None))
+
+
 def _load_played_keys() -> tuple[set, set]:
     """(selections, markets) already played — neither should alert again.
 
@@ -789,13 +850,18 @@ class TelegramAlerter:
     _cooldown_until: dict[str, float] = {}   # chat_id -> epoch to skip sends until (post-429)
 
     def __init__(self, config: TelegramConfig, *, client: httpx.Client | None = None,
-                 print_fn=print):
+                 print_fn=print, canaux=None, storage=None):
         self.config = config
         self._client = client or httpx.Client(timeout=10.0)
         self._owns_client = client is None
         self._print = print_fn
         self._played_keys, self._played_markets = _load_played_keys()
         self._books_off = _load_books_alert_off()
+        # `canaux=None` lit la base. `canaux=()` FORCE le chemin historique —
+        # c'est ainsi que le harnais de comparaison obtient les deux routages
+        # depuis la MEME fonction de production, sans en reimplementer aucun.
+        self._canaux = _load_channels(print_fn) if canaux is None else list(canaux)
+        self._storage = storage
 
     def close(self) -> None:
         if self._owns_client:
@@ -875,6 +941,20 @@ class TelegramAlerter:
             if mins_to_kickoff < cfg.min_minutes_to_kickoff:
                 return False
 
+        # ══ Routage par canaux configures ══════════════════════════════
+        # Place APRES les securites globales (marche deja joue, book en
+        # sourdine, mi-temps, fenetre morte) et apres le calcul de `is_live` :
+        # ces garde-fous s'appliquent a tous les canaux et ne sont pas
+        # negociables par configuration.
+
+        # ══ Routage par canaux configures ══════════════════════════════
+        # Place APRES les securites globales (marche deja joue, book en
+        # sourdine, mi-temps, fenetre morte) et apres le calcul de `is_live` :
+        # ces garde-fous s'appliquent a tous les canaux et ne sont pas
+        # negociables par configuration.
+        if self._canaux:
+            return self._router(bet, text, sport=sport, is_live=is_live)
+
         if (
             cfg.min_ev_pct <= ev < cfg.main_max_ev_pct
             and cfg.main_min_odd <= bet.odd_taken <= cfg.main_max_odd
@@ -942,6 +1022,66 @@ class TelegramAlerter:
             )
 
         return delivered
+
+    def _bouton_jouer(self, bet: ValueBet, sport: str | None) -> dict | None:
+        try:
+            token = _record_pending_play(
+                _value_bet_play_payload(bet, sport, self.config.bankroll))
+        except Exception as e:  # never let bet-logging break alerting
+            self._print(f"pending_play record failed: {e}")
+            return None
+        return {"inline_keyboard": [[{
+            "text": "\u25b6\ufe0f Jouer", "callback_data": f"play:{token}"}]]}
+
+    def _base(self) -> Storage:
+        if self._storage is None:
+            self._storage = Storage(str(_PLAYS_DB))
+        return self._storage
+
+    def _doit_notifier(self, bet: ValueBet, chat_id: str) -> bool:
+        """Le dedoublonnage, PAR CANAL. Memes reglages qu'avant
+        (`valuebet_max_alerts`, `valuebet_dedup`, `valuebet_ev_delta_pct`) et
+        memes fonctions de base — seul le perimetre change.
+
+        Un pari deja parti sur le canal Tennis doit pouvoir partir sur le
+        canal Grosses Cotes : c'est tout l'objet du commit 1."""
+        cfg, st = self.config, self._base()
+        cle = (bet.event_key, bet.book.value, bet.market.value,
+               bet.outcome.label, bet.outcome.line)
+        if st.value_bet_notify_count(*cle, chat_id=chat_id) >= cfg.valuebet_max_alerts:
+            return False
+        if cfg.valuebet_dedup and st.value_bet_already_notified(
+                *cle, current_ev_pct=bet.ev_pct,
+                ev_delta_pct=cfg.valuebet_ev_delta_pct, chat_id=chat_id):
+            return False
+        return True
+
+    def _router(self, bet: ValueBet, text: str, *, sport: str | None,
+                is_live: bool) -> bool:
+        """Envoie le pari a chaque canal dont les regles correspondent.
+
+        Zero, un ou plusieurs canaux — ils sont independants. Une erreur sur
+        un canal n'empeche PAS les suivants : sans ce `try`, un chat_id
+        devenu invalide ferait taire toute la liste."""
+        cibles = canaux_pour(bet, sport=sport, league=bet.league,
+                             is_live=is_live, canaux=self._canaux)
+        livre = False
+        for canal in cibles:
+            entete, avec_bouton = _PRESENTATION.get(canal.nom, ("", False))
+            try:
+                if not self._doit_notifier(bet, canal.chat_id):
+                    continue
+                bouton = self._bouton_jouer(bet, sport) if avec_bouton else None
+                if self._send(entete + text, chat_id=canal.chat_id,
+                              reply_markup=bouton):
+                    livre = True
+                    self._base().mark_value_bet_notified(
+                        bet.event_key, bet.book.value, bet.market.value,
+                        bet.outcome.label, bet.outcome.line, bet.ev_pct,
+                        datetime.now(timezone.utc), chat_id=canal.chat_id)
+            except Exception as e:  # noqa: BLE001
+                self._print(f"canal {canal.nom} : envoi impossible ({type(e).__name__}: {e})")
+        return livre
 
     def send_clv_alert(
         self,

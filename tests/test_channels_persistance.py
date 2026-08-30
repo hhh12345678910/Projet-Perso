@@ -395,13 +395,17 @@ def test_le_chargement_ne_fait_pas_de_N_plus_1(st):
     assert appels["n"] == 1
 
 
-# ══ non-regression : rien n'est branche ════════════════════════════════
-def test_le_daemon_ne_charge_encore_aucun_canal():
-    """Le commit 3 ne branche rien : `channels` et `routing` ne sont importés
-    par aucun module de production."""
+# ══ non-regression : sans canal persiste, rien ne change ═══════════════
+def test_une_base_sans_canal_ne_declenche_pas_le_nouveau_routage(st):
+    """La bascule est un acte explicite. Tant que la table est vide, le
+    daemon route comme avant — et `charger` ne DÉDUIT aucun canal des
+    variables .env."""
+    assert charger(st) == []
+
+
+def test_bot_listener_ignore_toujours_les_canaux():
+    """Aucune commande Telegram dans ce commit."""
     import pathlib
-    racine = pathlib.Path(__file__).resolve().parent.parent
-    for nom in ("src/main.py", "src/alerter.py", "bot_listener.py"):
-        source = (racine / nom).read_text(encoding="utf-8")
-        assert "src.channels" not in source and "src.routing" not in source, nom
-        assert "load_channel_rows" not in source, nom
+    source = (pathlib.Path(__file__).resolve().parent.parent
+              / "bot_listener.py").read_text(encoding="utf-8")
+    assert "src.channels" not in source and "src.routing" not in source

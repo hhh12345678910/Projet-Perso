@@ -44,7 +44,8 @@ from .clv import (
     settle as clv_settle,
 )
 from .alerter import (
-    TelegramConfig, send_alerts, send_surebet_alerts, send_clv_alerts,
+    TelegramConfig, routage_par_canaux_actif,
+    send_alerts, send_surebet_alerts, send_clv_alerts,
     send_late_market_alerts, send_middle_alerts, send_system_alert,
 )
 from . import teams, track
@@ -630,7 +631,13 @@ def scan(
 
         tg_cfg = TelegramConfig.from_env()
         if tg_cfg is not None:
-            candidates = [
+            # Avec des canaux configures, le dedoublonnage est fait PAR CANAL
+            # dans `send_value_bet`, et le marquage aussi. Filtrer ici, une
+            # seule fois pour tous les canaux, empecherait un pari deja parti
+            # sur l'un d'atteindre les autres — c'est precisement le blocage
+            # que le commit 1 a leve, et le reintroduire ici l'annulerait.
+            par_canaux = routage_par_canaux_actif()
+            candidates = bets if par_canaux else [
                 b for b in bets
                 if storage.value_bet_notify_count(
                     b.event_key, b.book.value, b.market.value, b.outcome.label, b.outcome.line,
@@ -646,7 +653,7 @@ def scan(
             ]
             sent = send_alerts(candidates, tg_cfg, print_fn=lambda s: console.print(f"[yellow]{s}[/yellow]"), sport=current_sport)
             now = datetime.now(timezone.utc)
-            for b in sent:
+            for b in ([] if par_canaux else sent):
                 storage.mark_value_bet_notified(
                     b.event_key, b.book.value, b.market.value, b.outcome.label, b.outcome.line,
                     b.ev_pct, now,
@@ -1166,7 +1173,11 @@ def _daemon_scan_sport(
         if tg_cfg is not None:
             # The hard alert cap ALWAYS applies (even with the EV-delta dedup
             # turned off); the EV-delta dedup is an extra filter on top.
-            vb_candidates = [
+            # Voir le commentaire du scan ponctuel : avec des canaux
+            # configures, le dedoublonnage et le marquage descendent dans
+            # `send_value_bet`, par canal.
+            par_canaux = routage_par_canaux_actif()
+            vb_candidates = bets if par_canaux else [
                 b for b in bets
                 if storage.value_bet_notify_count(
                     b.event_key, b.book.value, b.market.value, b.outcome.label, b.outcome.line,
@@ -1188,7 +1199,7 @@ def _daemon_scan_sport(
             now_mark = datetime.now(timezone.utc)
             # Mark only what actually sent — deferred/rate-limited bets stay
             # unmarked and get retried next cycle instead of being lost.
-            vb_to_mark = sent
+            vb_to_mark = [] if par_canaux else sent
             if sent:
                 console.print(f"\\[{current_sport}]   → {len(sent)} value bet alert(s) sent")
 
