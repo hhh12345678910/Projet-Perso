@@ -83,8 +83,38 @@ def main() -> None:
                     help="Effectif minimum pour afficher une ligne (défaut 20).")
     ap.add_argument("--since", default="", help="Date de détection minimale (AAAA-MM-JJ).")
     ap.add_argument("--until", default="", help="Date de détection maximale, incluse.")
+    ap.add_argument("--premium", action="store_true",
+                    help="ne garder que les paris qui passeraient la porte du "
+                         "canal PREMIUM : EV et cote dans l'une des deux "
+                         "bandes. Les seuils sont LUS DANS VOTRE "
+                         "CONFIGURATION, pas recopiés ici.")
     ap.add_argument("--db", default=ScanConfig().db_path)
     args = ap.parse_args()
+
+    # La porte du premium, telle que l'alerter l'applique. On lit
+    # `TelegramConfig` plutot que de recopier les nombres : une constante
+    # dupliquee derive des que quelqu'un change un TELEGRAM_* dans `.env`, et
+    # la sonde mesurerait alors autre chose que la production (§17.7).
+    porte = None
+    if args.premium:
+        from src.alerter import TelegramConfig
+        # `TelegramConfig()` exige un jeton et un chat : ici on ne veut que
+        # les SEUILS, pas de quoi envoyer quoi que ce soit. Les deux champs
+        # vides rendent l'objet inoffensif — aucune alerte ne peut en sortir.
+        tg = TelegramConfig.from_env() or TelegramConfig(bot_token="", chat_id="")
+        d_env = TelegramConfig.from_env() is not None
+        print(f"\nPORTE PREMIUM — seuils {'lus dans votre .env' if d_env else 'PAR DEFAUT (.env non chargé — `set -a && . ./.env && set +a`)'}")
+        print(f"  bande standard : EV ≥ {tg.min_premium_ev_pct:g} %  "
+              f"cote {tg.premium_min_odd:g}–{tg.premium_max_odd:g}")
+        print(f"  bande longue   : EV ≥ {tg.premium_hi_min_ev:g} %  "
+              f"cote {tg.premium_hi_min_odd:g}–{tg.premium_hi_max_odd:g}")
+        print("  (un pari passe s'il franchit L'UNE des deux)")
+
+        def porte(ev, odd):
+            return ((ev >= tg.min_premium_ev_pct
+                     and tg.premium_min_odd <= odd <= tg.premium_max_odd)
+                    or (ev >= tg.premium_hi_min_ev
+                        and tg.premium_hi_min_odd <= odd <= tg.premium_hi_max_odd))
 
     axes = [a.strip() for a in args.by.split(",") if a.strip()]
     inconnus = [a for a in axes if a not in _AXES]
@@ -103,6 +133,9 @@ def main() -> None:
             continue
         fair = r["closing_fair_odd"]
         if not fair or fair <= 0:
+            continue
+        if porte is not None and not porte(r["ev_pct"] or 0.0,
+                                           r["odd_taken"] or 0.0):
             continue
         cle = []
         for a in axes:
