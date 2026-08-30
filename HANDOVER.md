@@ -5925,3 +5925,231 @@ rien.
 - **Le handicap de jeux** (664 prix par relevé) reste inexploité. Le débloquer
   demande que la ligne porte son unité — un changement de modèle, pas un
   correctif de scraper.
+
+## 22. Sessions des 26 et 30/08 — la pile LIVE, et le premier réglage qu'elle a permis
+
+38 commits. Deux choses distinctes : une chaîne LIVE complète construite à
+côté du prématch sans le toucher, et une décision de routage prise à partir de
+mesures que le prématch permettait déjà mais que personne n'avait croisées.
+
+### 22.1 Ce qui a été construit
+
+| Fichier | Rôle |
+|---|---|
+| `src/asianodds_live.py` | collecteur WebSocket AsianOdds — fair odds + score |
+| `src/unibet_live.py` | sonde Kambi in-play, indépendante du cycle prématch |
+| `src/live_value.py` | moteur : EV = cote Unibet contre fair AsianOdds déviguée |
+| `scripts/live_engine.py` | lanceur borné, entonnoir de rejet, 3 modes Telegram |
+| `scripts/live_observatoire.py` | session longue, tout enregistré dans SA base |
+| `scripts/cadence_prematch.py` | cadence reconstruite depuis la base (voir §22.7) |
+
+⚠️ **Le prématch n'a jamais été touché.** Depuis le premier commit LIVE,
+`main.py`, `detection.py`, `late_markets.py`, `orchestration.py`,
+`reference.py`, `config.py` et les scrapers sont **inchangés**. Trois fichiers
+partagés ont bougé, tous de façon additive : `models.py` (+6 lignes, l'entrée
+`ASIANODDS`), `alerter.py` (aucune suppression, vérifié par
+`git diff | grep "^-"`), `storage.py` (3 colonnes, 1 index, et l'UPSERT **LIVE**
+étendu). `_UPSERT_MARKET_STATE` et `insert_quotes_sparse` — les deux chemins
+d'écriture du prématch — sont **identiques mot pour mot**.
+
+Le seul coût théorique pour le prématch est l'index `idx_ms_source`, maintenu à
+chaque écriture de `market_state`. Mesuré : cadence inchangée (§22.7).
+
+### 22.2 Cadence Unibet — le cache CDN de Kambi
+
+232 sondages à 1 s : les durées sont **bimodales et alternent strictement**.
+Un sondage qui ne rend rien de neuf répond en ~50 ms, un qui rend du neuf prend
+~175 ms. C'est la signature d'un cache d'environ **2 secondes** côté Kambi :
+descendre sous 1 s ne rendrait que des octets déjà lus. On garde 1 s parce que
+le cache expire à un instant qu'on ne contrôle pas — à 2 s on peut manquer la
+réponse fraîche et attendre 2 s de plus.
+
+`resume_global` publie la durée médiane **selon** qu'un sondage a rendu du neuf
+ou non : si le cache change, l'écart le dira.
+
+### 22.3 Le score AsianOdds est frais, son PRIX ne l'est pas
+
+**C'est la découverte qui bloque tout le reste.** Deux lignes du run du 26/08,
+même sélection, à 6 secondes d'intervalle :
+
+```
+avro-leektown  totals 6.5 under  unibet=2.70  fair=1.76  age=9.2s  score=2:3
+avro-leektown  totals 6.5 under  unibet=2.70  fair=1.76  age=3.2s  score=2:4
+```
+
+L'âge est retombé de 9,2 s à 3,2 s — AsianOdds a donc bien écrit une ligne
+neuve. Le score est passé de 2:3 à 2:4 — un but est tombé. **Et la fair n'a pas
+bougé d'un centième.** Un but dans un marché de totaux ne peut pas laisser le
+prix identique.
+
+Conséquence : `observed_at` dit **quand la source a parlé**, pas **de quel
+instant elle parle**. Notre contrôle de fraîcheur regarde donc la mauvaise
+chose. Le même motif explique Rapid Vienna (nul favori à 1,71 à la 88e avec
+1:0 au tableau) et onze cas classés « état de match différent » où Unibet donne
+systématiquement l'équipe qui mène plus probable qu'AsianOdds.
+
+⚠️ Une piste de garde-fou existe et n'est **pas** implémentée : si `feed_score`
+change et que la cote de la même sélection ne change pas, le prix est périmé
+relativement au score, quel que soit son `observed_at`. `live_observatoire`
+compte ces cas (table `score_prix`) précisément pour savoir si ça se répète.
+
+### 22.4 Les grosses EV live ne sont pas des occasions
+
+Diagnostic ciblé sur les EV ≥ 50 % : **0 sur 33** classée « erreur de prix
+plausible ». Onze « état de match différent », neuf « formes différentes » —
+des marchés Unibet réduits à une jambe résiduelle à marge 0,03, dont un
+`over 1.5` coté 21,00 sur un match à 1:0. Ce sont des marchés morts, pas des
+marchés « auxquels il manque une jambe ».
+
+Le discriminant qui marche : le **rapport** `p_Unibet / p_AsianOdds` par issue,
+divisé par sa médiane — ce qui annule la renormalisation du devig. Une seule
+issue décrochée = erreur de prix isolée ; plusieurs = les deux sources ne
+décrivent pas le même instant. Comparer les probabilités déviguées terme à
+terme NE MARCHE PAS : le devig normalise à 100 %, donc une erreur sur une issue
+déplace mécaniquement les autres.
+
+⚠️ **L'EV en pourcentage mesure la longueur de la cote autant que l'erreur du
+book.** Mesuré : une cote à 101 rendait +119 % d'EV pour 1,9 point de
+probabilité d'écart ; une cote à 3,25 rendait +15 % pour 8,1 points. Le
+classement par EV est l'inverse du classement par Kelly. Kelly est calculé et
+publié pour cette raison — il ne filtre jamais.
+
+### 22.5 Ce que le moteur refuse, et ce qu'il ne refuse pas
+
+**Aucun plafond d'EV.** +500 % passe si le calcul est valide ; ajouter un
+plafond à +100 % fait tomber huit tests. Un **marché partiel** est signalé,
+jamais rejeté — l'EV d'une sélection ne dépend que de sa cote et de sa
+probabilité juste. Une **marge preneuse basse** n'est pas un motif de rejet :
+c'est la signature d'un prix trop généreux, donc de l'occasion même.
+
+Rejettent : score incohérent, match au-delà de 150 min d'horloge murale, fair
+ou cote périmée, marge preneuse grotesque sur un marché **complet**.
+
+⚠️ La borne des 150 min est large **à dessein**. J'avais déclaré Rapid Vienna
+terminé en oubliant la mi-temps : 16:45 + 45 + 15 + 45 = 18:30, le match était
+à la 88e. Un test fige cette erreur — resserrer à 95 min le fait tomber.
+
+### 22.6 Rien n'est exploitable tant que le score preneur manque
+
+`parse_listview` n'extrait pas le score du payload Kambi. Toutes les alertes
+sortent donc en `OBSERVEE_SCORE_INCONNU` : détectées, affichées, **non
+exploitables**. Le canal (`scores_preneur`) existe et le rejet sur discordance
+est testé ; il s'activera quand la donnée arrivera. C'est le blocage principal.
+
+Alertes vers `TELEGRAM_LIVE_SUREBET_CHAT_ID`, **aucun bouton**, aucun pari.
+`send_live_observation` **refuse d'envoyer** si ce canal n'est pas configuré :
+`effective_live_surebet_chat_id` retombe silencieusement sur le canal prématch,
+et une variable oubliée y déverserait les observations LIVE.
+
+### 22.7 Le LIVE n'a pas ralenti le prématch
+
+`scripts/cycle_speed.py` (30/08) : période 45 s → 47 s, travail 25 s → 28 s
+entre les 200 derniers cycles et les 20 derniers. Le `max 74 s` apparaît dans
+les trois fenêtres — un seul cycle lent, pas une dérive.
+
+⚠️ `scripts/cadence_prematch.py` a été écrit **sans vérifier que
+`cycle_speed.py` existait**. Ce dernier est meilleur : il sépare la période du
+travail et exclut les redémarrages par le NUMÉRO de cycle, pas par la durée.
+`cadence_prematch` ne garde qu'un intérêt marginal (`--liste N`, et la
+comparaison avant/après une coupure donnée). Utiliser `cycle_speed.py`.
+
+### 22.8 La porte premium porte tout le rendement
+
+`clv_split --premium` a été ajouté : il applique le prédicat de
+`alerter.py:827` en **lisant** `TelegramConfig`, pas en recopiant les nombres.
+
+| Population | n | ROI | P&L |
+|---|---|---|---|
+| Toutes détections | 3 059 | −0,33 % | −251 € |
+| **Premium seul** | **1 153** | **+6,48 %** | **+1 868 €** |
+| Écarté par la porte | 1 906 | −4,45 % | −2 119 € |
+
+⚠️ **Ne jamais comparer une mesure premium à une mesure non filtrée.** J'ai
+alerté sur une « contradiction » entre un CLV tennis de +13,40 % et un P&L de
+−0,34 % : le second portait sur toutes les détections. À population comparable,
+le tennis premium fait **+6,69 % sur 1 119 paris**. Aucune contradiction.
+
+### 22.9 Le tennis en cote 4-6 sorti du premium (30/08)
+
+```
+TELEGRAM_PREMIUM_HI_EXCLUT=tennis
+```
+
+Mesuré : tranche 4,0-6,0 à **−20,34 %** de ROI (n=406, −2,3σ), tranche > 6,0 à
+−16,20 % (n=230). Dans le premium seul, 4,0-6,0 tombe à −31,14 % (n=85) ; le
+fermer porterait le premium de +6,48 % à **+9,99 %**.
+
+**Par sport, et pas globalement** : cette population est à 96 % du tennis
+(1 119 paris contre 34 au soccer). Fermer pour tous les sports appliquerait au
+soccer une conclusion tirée d'un échantillon qui n'en contient presque pas.
+C'est l'utilisateur qui a corrigé ma proposition initiale.
+
+Le CLV dit l'inverse sur ces tranches (unibet > 6,0 à +17,15 %). On tranche
+pour le P&L à cause d'un mécanisme connu : **le biais favori-outsider**. La
+marge d'un book se concentre sur les longues cotes ; un devig qui la suppose
+uniforme surestime la probabilité juste des outsiders — tout paraît value, le
+CLV s'illumine, la probabilité réelle n'y est pas. `pnl_detections` imprimait
+déjà « décroissance régulière = devig suspect ».
+
+⚠️ Les 85 paris premium en cote 4-6 sont un **sous-ensemble** des 406. J'avais
+écrit « trois mesures indépendantes » — c'est faux, il y en a **deux** (les
+tranches 4-6 et > 6), dont une seule dépasse 2σ. Sur six tranches examinées,
+une à −2,3σ arrive par hasard une fois sur huit. C'est un **essai réversible**,
+pas une conclusion.
+
+**Où vont les paris écartés** : EV ≥ 35 % → canal critique ; EV entre 20 et
+35 % → **aucune alerte**. Détectés et enregistrés dans tous les cas —
+`insert_value_bet` s'exécute avant `send_alerts` et sans condition.
+
+**Repère de départ à comparer dans un mois : premium à +6,48 % sur 1 153
+paris.**
+
+### 22.10 Elitesports coupé
+
+Seul book à CLV négative : **−2,25 %** sur 339 paris, **48,4 % de positives**.
+Décomposition exacte : 85 paris premium à +5,04 %, et **254 hors premium à
+−4,69 %** avec 43,4 % de positives. Cinq tranches de cote sur six en négatif,
+la sixième à +1,18 % (σ 2,28) — aucun autre book n'a une seule tranche
+négative.
+
+⚠️ **Aucune preuve de P&L n'existe et n'existera bientôt** : elitesports est
+soccer, et le P&L est à 96 % tennis. Le book a 4 semaines (`n = 85` identique
+en « tout » et « depuis le 1er août »). Son volume premium a été **multiplié
+par 6** en une semaine (12 → 73) — ce saut n'est pas expliqué.
+
+### 22.11 L'angle mort : le soccer n'a pas de P&L
+
+`pnl_detections` : **tennis 2 945, soccer 114**. `clv_split --premium` sur la
+semaine : **soccer 1 144, tennis 280**. Les deux outils décrivent des
+populations opposées.
+
+Conséquence directe : toute décision sur un book soccer repose sur le CLV seul
+et restera invérifiable par le résultat. La cause est probablement la
+couverture des résultats. **Mesurer quelle part des détections soccer obtient
+un résultat, et pourquoi les autres n'en ont pas, débloquerait tout le reste.**
+
+### 22.12 Reste ouvert
+
+- **Le score preneur Unibet.** Sans lui, aucune alerte LIVE ne sera jamais
+  exploitable. Il faudrait le lire dans le payload Kambi sans modifier
+  `parse_listview`, qui sert au prématch.
+- **Le prix figé AsianOdds** (§22.3). `live_observatoire` collecte ; il faut
+  une vingtaine de cas avant d'écrire un garde-fou.
+- **Le statut des issues Kambi** n'est pas lu. Une jambe suspendue disparaît ou
+  garde un prix résiduel, et rien ne le distingue d'un marché partiel ordinaire.
+- **`pnl_detections.is_premium()` code ses seuils en dur** (`ev >= 20`) au lieu
+  de lire la config, et ne connaît pas le sport. Depuis §22.9 il compte donc le
+  tennis 4-6 comme premium alors que le canal ne l'envoie plus. Les deux outils
+  divergeront en silence.
+- **Le devig sur les longues cotes** (§22.9). C'est la cause racine soupçonnée,
+  et elle n'est pas traitée — seulement contournée par un filtre de routage.
+
+### 22.13 La branche
+
+Tout ce travail est sur **`refactor/prepare-live`**, jamais fusionnée : **49
+commits d'avance** sur `claude/resume-clarification-1541xa` (la branche par
+défaut du dépôt), **0 de retard**. La VM tourne sur `refactor/prepare-live`.
+
+⚠️ La branche par défaut est donc **périmée** : elle ne contient ni le
+découpage de `main.py`, ni le LIVE, ni les réglages du 30/08. Tout outil ou
+personne qui la supposerait à jour se tromperait.
