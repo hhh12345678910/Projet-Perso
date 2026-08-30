@@ -416,6 +416,15 @@ MIGRATIONS = [
     # des candidats est relue une fois par minute : cette colonne dit si le
     # match a été décidé contre une liste fraîche ou vieille de 59 s.
     ("market_state", "matched_at", "TEXT"),
+    # Le canal qui a reçu cette alerte. NULL = ligne écrite AVANT le routage
+    # multi-canal, du temps où un pari n'avait qu'une seule destination.
+    #
+    # ⚠️ Ces NULL comptent pour TOUS les canaux (voir `_clause_canal`). Sans
+    # cela, le jour du déploiement, chaque pari encore vivant paraîtrait
+    # jamais notifié sur chaque canal et repartirait partout : une rafale de
+    # doublons proportionnelle au nombre de canaux, au moment précis où
+    # personne ne regarde.
+    ("notified_value_bets", "chat_id", "TEXT"),
 ]
 
 
@@ -448,6 +457,15 @@ class Storage:
             # viennent d'ajouter, il ne peut pas vivre dans SCHEMA.
             c.execute(
                 "CREATE INDEX IF NOT EXISTS idx_vb_last_seen ON value_bets(last_seen_at)"
+            )
+            # Le dedoublonnage interroge cette table une fois par pari et par
+            # canal a chaque cycle : le nombre de lectures est multiplie par
+            # le nombre de canaux. idx_nvb_lookup porte deja (event_key, book,
+            # market) ; chat_id en queue evite de toucher la ligne pour la
+            # filtrer.
+            c.execute(
+                "CREATE INDEX IF NOT EXISTS idx_nvb_canal ON notified_value_bets"
+                "(event_key, book, market, chat_id)"
             )
             # « Ce qui a été VU récemment », par opposition à idx_ms_fetched
             # qui dit « ce qui a été ÉCRIT récemment ». Toute la raison d'être
@@ -1354,28 +1372,51 @@ class Storage:
                 (value_bet_id, clv_pct, current_pin_odd, notified_at.isoformat()),
             )
 
+    @staticmethod
+    def _clause_canal(chat_id: Optional[str]) -> tuple[str, tuple]:
+        """Le fragment SQL qui restreint le dédoublonnage à un canal.
+
+        `chat_id=None` — le défaut, et le SEUL usage de la production
+        aujourd'hui — ne produit AUCUNE clause : la requête est alors mot pour
+        mot celle d'avant le routage multi-canal. Un pari notifié compte une
+        fois, quelle que soit sa destination.
+
+        `chat_id="X"` compte les lignes de X **et celles laissées à NULL**.
+        Ces NULL sont l'historique d'avant la bascule : un pari alerté hier
+        l'a été sans qu'on sache où. Les ignorer ferait paraître chaque pari
+        vivant « jamais notifié » sur chaque canal le jour du déploiement, et
+        il repartirait partout à la fois."""
+        if chat_id is None:
+            return "", ()
+        return " AND (chat_id=? OR chat_id IS NULL)", (chat_id,)
+
     def value_bet_already_notified(
         self, event_key: str, book: str, market: str, outcome_label: str,
         line: Optional[float],
         current_ev_pct: float = 0.0, ev_delta_pct: float = 1.0,
+        chat_id: Optional[str] = None,
     ) -> bool:
         """Return True (skip) when this value bet was already notified AND its
-        EV hasn't moved by ev_delta_pct since the last alert."""
+        EV hasn't moved by ev_delta_pct since the last alert.
+
+        `chat_id` restreint la question à un canal — voir `_clause_canal`. Non
+        fourni : comportement d'avant le multi-canal, inchangé."""
         like_key = self._event_key_like(event_key)
+        canal, p_canal = self._clause_canal(chat_id)
         with self._conn() as c:
             if line is None:
                 row = c.execute(
                     "SELECT ev_pct FROM notified_value_bets "
-                    "WHERE event_key LIKE ? AND book=? AND market=? AND outcome_label=? AND line IS NULL "
-                    "ORDER BY notified_at DESC LIMIT 1",
-                    (like_key, book, market, outcome_label),
+                    "WHERE event_key LIKE ? AND book=? AND market=? AND outcome_label=? AND line IS NULL"
+                    + canal + " ORDER BY notified_at DESC LIMIT 1",
+                    (like_key, book, market, outcome_label) + p_canal,
                 ).fetchone()
             else:
                 row = c.execute(
                     "SELECT ev_pct FROM notified_value_bets "
-                    "WHERE event_key LIKE ? AND book=? AND market=? AND outcome_label=? AND line=? "
-                    "ORDER BY notified_at DESC LIMIT 1",
-                    (like_key, book, market, outcome_label, line),
+                    "WHERE event_key LIKE ? AND book=? AND market=? AND outcome_label=? AND line=?"
+                    + canal + " ORDER BY notified_at DESC LIMIT 1",
+                    (like_key, book, market, outcome_label, line) + p_canal,
                 ).fetchone()
             if row is None:
                 return False
@@ -1383,37 +1424,47 @@ class Storage:
 
     def value_bet_notify_count(
         self, event_key: str, book: str, market: str, outcome_label: str,
-        line: Optional[float],
+        line: Optional[float], chat_id: Optional[str] = None,
     ) -> int:
         """How many times this value bet has already been alerted. Used to cap
         re-alerts at a fixed number per bet, so a bet whose EV keeps jittering
-        across the dedup delta can't notify forever."""
+        across the dedup delta can't notify forever.
+
+        `chat_id` compte par canal — voir `_clause_canal`. Sans lui, le
+        plafond reste global, comme avant."""
         like_key = self._event_key_like(event_key)
+        canal, p_canal = self._clause_canal(chat_id)
         with self._conn() as c:
             if line is None:
                 row = c.execute(
                     "SELECT COUNT(*) FROM notified_value_bets "
-                    "WHERE event_key LIKE ? AND book=? AND market=? AND outcome_label=? AND line IS NULL",
-                    (like_key, book, market, outcome_label),
+                    "WHERE event_key LIKE ? AND book=? AND market=? AND outcome_label=? AND line IS NULL"
+                    + canal,
+                    (like_key, book, market, outcome_label) + p_canal,
                 ).fetchone()
             else:
                 row = c.execute(
                     "SELECT COUNT(*) FROM notified_value_bets "
-                    "WHERE event_key LIKE ? AND book=? AND market=? AND outcome_label=? AND line=?",
-                    (like_key, book, market, outcome_label, line),
+                    "WHERE event_key LIKE ? AND book=? AND market=? AND outcome_label=? AND line=?"
+                    + canal,
+                    (like_key, book, market, outcome_label, line) + p_canal,
                 ).fetchone()
             return int(row[0]) if row else 0
 
     def mark_value_bet_notified(
         self, event_key: str, book: str, market: str, outcome_label: str,
         line: Optional[float], ev_pct: float, notified_at: datetime,
+        chat_id: Optional[str] = None,
     ) -> None:
+        """`chat_id` non fourni écrit NULL : c'est ce que fait la production
+        aujourd'hui, et une ligne NULL vaut « notifié partout »."""
         with self._conn() as c:
             c.execute(
                 "INSERT INTO notified_value_bets"
-                "(event_key, book, market, outcome_label, line, ev_pct, notified_at) "
-                "VALUES (?, ?, ?, ?, ?, ?, ?)",
-                (event_key, book, market, outcome_label, line, ev_pct, notified_at.isoformat()),
+                "(event_key, book, market, outcome_label, line, ev_pct, notified_at, chat_id) "
+                "VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
+                (event_key, book, market, outcome_label, line, ev_pct,
+                 notified_at.isoformat(), chat_id),
             )
 
     def record_team(self, normalized_name: str, display_name: str) -> None:
