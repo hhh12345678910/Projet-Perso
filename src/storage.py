@@ -330,6 +330,65 @@ CREATE TABLE IF NOT EXISTS book_alerts_off (
     book        TEXT PRIMARY KEY,
     disabled_at TEXT NOT NULL
 );
+
+-- ── Canaux configurables ───────────────────────────────────────────────
+-- Un canal = une destination Telegram + des regles. Un pari qui satisfait
+-- trois canaux part dans les trois : ils sont INDEPENDANTS.
+--
+-- Ces trois tables vivent dans SCHEMA et non dans MIGRATIONS : le
+-- `executescript(SCHEMA)` de chaque ouverture porte deja `IF NOT EXISTS`,
+-- donc une base ancienne les gagne a la reouverture et une base recente ne
+-- bouge pas. MIGRATIONS ne sert qu'aux colonnes ajoutees a une table qui
+-- existe deja.
+--
+-- ⚠️ `REFERENCES` est ecrit pour dire l'intention, PAS pour agir : ce
+-- projet n'active jamais `PRAGMA foreign_keys`, donc aucun ON DELETE
+-- CASCADE ne se declencherait. `delete_channel` supprime ses enfants
+-- explicitement, et un test l'exige.
+CREATE TABLE IF NOT EXISTS channels (
+    id          INTEGER PRIMARY KEY AUTOINCREMENT,
+    chat_id     TEXT NOT NULL,
+    nom         TEXT NOT NULL UNIQUE,
+    actif       INTEGER NOT NULL DEFAULT 1,
+    -- Ordonne la sortie du routage (petit = tot). Ne filtre rien.
+    priorite    INTEGER NOT NULL DEFAULT 100,
+    -- Quand un canal exclusif prend le pari, les canaux de priorite
+    -- inferieure ne le recoivent pas. 0 par defaut : canaux independants.
+    exclusif    INTEGER NOT NULL DEFAULT 0,
+    -- Prevu pour le multi-utilisateur. Aucun code ne le lit encore.
+    profile_id  INTEGER,
+    cree_le     TEXT NOT NULL
+);
+
+-- Plusieurs regles pour un canal se combinent en OU.
+-- Chaque borne porte sa strictesse : la configuration reelle en a besoin
+-- des deux cotes (le canal principal s'arrete a EV < 8 tandis que sa bande
+-- de cote inclut 4,00 ; la voie critique grosses cotes commence a cote > 4).
+CREATE TABLE IF NOT EXISTS channel_rules (
+    id              INTEGER PRIMARY KEY AUTOINCREMENT,
+    channel_id      INTEGER NOT NULL REFERENCES channels(id),
+    ev_min          REAL,
+    ev_min_strict   INTEGER NOT NULL DEFAULT 0,
+    ev_max          REAL,
+    ev_max_strict   INTEGER NOT NULL DEFAULT 0,
+    odd_min         REAL,
+    odd_min_strict  INTEGER NOT NULL DEFAULT 0,
+    odd_max         REAL,
+    odd_max_strict  INTEGER NOT NULL DEFAULT 0,
+    phase           TEXT              -- 'prematch' | 'live' | NULL = les deux
+);
+CREATE INDEX IF NOT EXISTS idx_chrules_canal ON channel_rules(channel_id);
+
+-- Les dimensions multivaluees. Plusieurs valeurs d'une meme dimension se
+-- combinent en OU ; deux dimensions differentes en ET.
+-- `inclut=0` fait une exclusion (le tennis hors de la bande longue).
+CREATE TABLE IF NOT EXISTS channel_rule_values (
+    rule_id     INTEGER NOT NULL REFERENCES channel_rules(id),
+    dimension   TEXT NOT NULL,        -- 'sport' | 'book' | 'market' | 'league'
+    valeur      TEXT NOT NULL,
+    inclut      INTEGER NOT NULL DEFAULT 1,
+    PRIMARY KEY (rule_id, dimension, valeur)
+);
 """
 
 
@@ -1466,6 +1525,116 @@ class Storage:
                 (event_key, book, market, outcome_label, line, ev_pct,
                  notified_at.isoformat(), chat_id),
             )
+
+    # ══ Canaux configurables ═══════════════════════════════════════════
+    # SQL uniquement : cette classe ne connait pas `routing`. La conversion
+    # des lignes vers Canal/Regle/Critere vit dans `src/channels.py`, ce qui
+    # garde la persistance ignorante du modele de decision — et le modele de
+    # decision ignorant de SQLite.
+
+    def create_channel(self, chat_id: str, nom: str, *, actif: bool = True,
+                       priorite: int = 100, exclusif: bool = False,
+                       profile_id: Optional[int] = None) -> int:
+        """Cree un canal et rend son id. Le nom est UNIQUE : c'est par lui
+        que les commandes Telegram le designeront."""
+        with self._conn() as c:
+            cur = c.execute(
+                "INSERT INTO channels(chat_id, nom, actif, priorite, exclusif,"
+                " profile_id, cree_le) VALUES (?, ?, ?, ?, ?, ?, ?)",
+                (chat_id, nom, int(actif), int(priorite), int(exclusif),
+                 profile_id, datetime.now(timezone.utc).isoformat()),
+            )
+            return int(cur.lastrowid)
+
+    def add_channel_rule(
+        self, channel_id: int, *,
+        ev_min: Optional[float] = None, ev_min_strict: bool = False,
+        ev_max: Optional[float] = None, ev_max_strict: bool = False,
+        odd_min: Optional[float] = None, odd_min_strict: bool = False,
+        odd_max: Optional[float] = None, odd_max_strict: bool = False,
+        phase: Optional[str] = None,
+    ) -> int:
+        """Ajoute une regle. Les parametres refletent les colonnes une a une :
+        une couche de persistance qui reinterprete ses propres colonnes est
+        une couche ou l'on ne sait plus ce qui est stocke."""
+        if phase is not None and phase not in ("prematch", "live"):
+            raise ValueError(f"phase inconnue : {phase!r}")
+        with self._conn() as c:
+            cur = c.execute(
+                "INSERT INTO channel_rules(channel_id, ev_min, ev_min_strict,"
+                " ev_max, ev_max_strict, odd_min, odd_min_strict, odd_max,"
+                " odd_max_strict, phase) VALUES (?,?,?,?,?,?,?,?,?,?)",
+                (channel_id, ev_min, int(ev_min_strict), ev_max, int(ev_max_strict),
+                 odd_min, int(odd_min_strict), odd_max, int(odd_max_strict), phase),
+            )
+            return int(cur.lastrowid)
+
+    def add_rule_value(self, rule_id: int, dimension: str, valeur: str,
+                       *, inclut: bool = True) -> None:
+        """Une valeur pour une dimension. Rejouable : la meme valeur deux fois
+        ne cree pas de doublon, mais met a jour son sens (inclut/exclut).
+
+        La dimension est validee ICI, a l'ecriture. Une ligne invalide ecrite
+        en base ne se manifesterait qu'au chargement, dans le cycle, loin de
+        la commande qui l'a produite."""
+        if dimension not in ("sport", "book", "market", "league"):
+            raise ValueError(
+                f"dimension inconnue : {dimension!r} "
+                f"(attendu : sport, book, market, league)")
+        v = str(valeur).strip().lower()
+        if not v:
+            raise ValueError("valeur vide")
+        with self._conn() as c:
+            c.execute(
+                "INSERT INTO channel_rule_values(rule_id, dimension, valeur, inclut) "
+                "VALUES (?,?,?,?) ON CONFLICT(rule_id, dimension, valeur) "
+                "DO UPDATE SET inclut=excluded.inclut",
+                (rule_id, dimension, v, int(inclut)),
+            )
+
+    def set_channel_active(self, channel_id: int, actif: bool) -> None:
+        with self._conn() as c:
+            c.execute("UPDATE channels SET actif=? WHERE id=?",
+                      (int(actif), channel_id))
+
+    def delete_channel(self, channel_id: int) -> None:
+        """Supprime un canal ET ses regles.
+
+        ⚠️ Les enfants sont supprimes A LA MAIN : `PRAGMA foreign_keys` n'est
+        jamais active dans ce projet, donc aucun ON DELETE CASCADE ne se
+        declenche. Sans ces deux DELETE, les regles survivraient au canal et
+        seraient reattribuees au prochain canal recevant le meme id."""
+        with self._conn() as c:
+            c.execute(
+                "DELETE FROM channel_rule_values WHERE rule_id IN "
+                "(SELECT id FROM channel_rules WHERE channel_id=?)", (channel_id,))
+            c.execute("DELETE FROM channel_rules WHERE channel_id=?", (channel_id,))
+            c.execute("DELETE FROM channels WHERE id=?", (channel_id,))
+
+    def delete_channel_rule(self, rule_id: int) -> None:
+        with self._conn() as c:
+            c.execute("DELETE FROM channel_rule_values WHERE rule_id=?", (rule_id,))
+            c.execute("DELETE FROM channel_rules WHERE id=?", (rule_id,))
+
+    def load_channel_rows(self) -> tuple[list, list, list]:
+        """Les trois tables, en TROIS requetes — pas une par canal.
+
+        Ce chargement tournera une fois par cycle et par sport. Un N+1 y
+        coûterait un aller-retour SQLite par canal et par regle, sur le
+        chemin le plus chaud du daemon."""
+        with self._conn() as c:
+            canaux = c.execute(
+                "SELECT * FROM channels ORDER BY priorite, nom, id").fetchall()
+            regles = c.execute(
+                "SELECT * FROM channel_rules ORDER BY channel_id, id").fetchall()
+            valeurs = c.execute(
+                "SELECT * FROM channel_rule_values ORDER BY rule_id, dimension, valeur"
+            ).fetchall()
+        return list(canaux), list(regles), list(valeurs)
+
+    def find_channel_by_name(self, nom: str):
+        with self._conn() as c:
+            return c.execute("SELECT * FROM channels WHERE nom=?", (nom,)).fetchone()
 
     def record_team(self, normalized_name: str, display_name: str) -> None:
         """Persist (or refresh) the mapping from the matcher's space-stripped
