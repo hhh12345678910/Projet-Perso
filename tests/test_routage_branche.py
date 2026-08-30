@@ -403,13 +403,65 @@ def test_les_trois_routes_sont_traduites(st):
 
 
 # ══ le harnais de comparaison lui-meme ═════════════════════════════════
+def test_le_harnais_neutralise_le_dedoublonnage():
+    """LE garde-fou du harnais, et il a fallu deux echecs pour l'ecrire.
+
+    Le dedoublonnage ne vit pas au meme endroit dans les deux chemins : dans
+    l'ancien il est dans `main.py`, AVANT `send_alerts`, donc un harnais qui
+    appelle `send_value_bet` le contourne ; dans le nouveau il est DANS
+    `send_value_bet`. Sans neutralisation, la comparaison oppose un chemin
+    non dedoublonne a un chemin dedoublonne.
+
+    Premier echec : 3 840 fausses divergences sur les cas synthetiques. J'ai
+    corrige en rendant les cles uniques — ce qui MASQUAIT le defaut au lieu
+    de le traiter. Second echec : 31 fausses divergences sur les detections
+    reelles de la VM, qui contiennent de vraies repetitions.
+
+    Le cas ci-dessous est celui de la VM : meme date, memes equipes, minute
+    differente — `_event_key_like` les regroupe."""
+    from scripts.comparer_routage import comparer
+    cfg = _cfg()
+    cle = "%s::pedrovives__vs__bernardomunk"
+
+    def _repete(minute, ev):
+        return ValueBet(
+            event_key=cle % f"20260826{minute}", book=Book.UNIBET_BE,
+            market=MarketType.H2H, outcome=Outcome("home"), odd_taken=3.05,
+            fair_prob=0.5, fair_odd=2.0, ev_pct=ev, kelly_stake_pct=1.0,
+            detected_at=datetime.now(timezone.utc))
+
+    cas = [("1104", _repete("1104", 7.5), "tennis"),
+           ("1046", _repete("1046", 7.5), "tennis"),
+           ("1022", _repete("1022", 5.3), "tennis")]
+    r = comparer(cas, cfg)
+    assert r["divergences"] == [], (
+        "le harnais mesure le dedoublonnage au lieu du routage : "
+        f"{r['divergences']}")
+    assert r["identiques"] == 3
+
+
+def test_la_neutralisation_du_dedoublonnage_est_effective():
+    """Falsification permanente : la config passee aux deux espions doit
+    vraiment desactiver le dedoublonnage, sinon le test precedent passerait
+    pour de mauvaises raisons."""
+    from scripts.comparer_routage import _sans_dedoublonnage
+    nu = _sans_dedoublonnage(_cfg(valuebet_dedup=True, valuebet_max_alerts=2))
+    assert nu.valuebet_dedup is False
+    assert nu.valuebet_max_alerts >= 10 ** 6
+    # Et le reste de la configuration est intact : neutraliser le
+    # dedoublonnage ne doit pas deplacer un seuil de routage.
+    origine = _cfg()
+    for champ in ("min_ev_pct", "main_max_ev_pct", "main_min_odd", "main_max_odd",
+                  "min_premium_ev_pct", "premium_min_odd", "premium_max_odd",
+                  "premium_hi_min_ev", "min_critical_ev_pct",
+                  "critical_hi_min_ev", "critical_hi_min_odd"):
+        assert getattr(_sans_dedoublonnage(origine), champ) == getattr(origine, champ), champ
+
+
 def test_les_cas_synthetiques_ont_des_cles_de_dedoublonnage_distinctes():
-    """La premiere execution du harnais a produit 3 840 fausses divergences
-    parce que tous les cas partageaient (event_key, book, market, outcome,
-    line) : le nouveau chemin se plafonnait des le second cas alors que
-    l'ancien ne dedoublonne pas dans `send_value_bet`. Un harnais qui mesure
-    le dedoublonnage en croyant mesurer le routage est pire qu'aucun
-    harnais."""
+    """Ceinture et bretelles depuis que le harnais neutralise le
+    dedoublonnage : des cas distincts restent plus proches de la
+    production que N fois le meme pari."""
     from scripts.comparer_routage import cas_synthetiques
     cles = [(b.event_key, b.book.value, b.market.value, b.outcome.label,
              b.outcome.line) for _, b, _ in cas_synthetiques()]

@@ -27,6 +27,7 @@ from __future__ import annotations
 
 import argparse
 import sqlite3
+from dataclasses import replace
 import tempfile
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
@@ -92,12 +93,35 @@ def _bases(dossier: Path):
     return Storage(str(dossier / "ancien.db")), Storage(str(dossier / "nouveau.db"))
 
 
+def _sans_dedoublonnage(cfg: TelegramConfig) -> TelegramConfig:
+    """La comparaison porte sur QUELS canaux, pas sur COMBIEN DE FOIS.
+
+    ⚠️ Sans cela le harnais compare deux choses differentes. Le
+    dedoublonnage ne vit pas au meme endroit dans les deux chemins : dans
+    l'ancien il est dans `main.py`, AVANT `send_alerts`, donc le harnais —
+    qui appelle `send_value_bet` directement — le contourne ; dans le
+    nouveau il est DANS `send_value_bet`, donc il s'applique. Comparer les
+    deux tels quels oppose un chemin non dedoublonne a un chemin
+    dedoublonne, et fabrique des divergences qui n'existent pas en
+    production, ou les deux dedoublonnent.
+
+    Mesure sur les detections reelles : 31 fausses divergences sur 20 000,
+    toutes des paris repetes que `_event_key_like` regroupe (meme date,
+    memes equipes, minute differente). Neutralisation faite, 20 000 sur
+    20 000 identiques.
+
+    Le dedoublonnage par canal est verifie ailleurs, par les tests
+    unitaires du commit 4 — pas ici."""
+    return replace(cfg, valuebet_dedup=False, valuebet_max_alerts=10 ** 9)
+
+
 def comparer(cas, cfg, *, print_fn=print) -> dict:
-    """`cas` : iterable de (libelle, bet, sport, league_ignoree).
+    """`cas` : iterable de (libelle, bet, sport).
 
     Rend le compte et la liste des divergences. Rien n'est masque : chaque
     ecart est rendu tel quel, avec ses entrees."""
     canaux = depuis_config(cfg)
+    cfg = _sans_dedoublonnage(cfg)
     with tempfile.TemporaryDirectory() as d:
         st_a, st_n = _bases(Path(d))
         ancien = _Espion(cfg, (), st_a)
@@ -200,6 +224,8 @@ def main() -> int:
 
     r = comparer(cas, cfg)
     print(f"canaux traduits : {', '.join(r['canaux'])}")
+    print("dedoublonnage   : NEUTRALISE des deux cotes — on compare quels")
+    print("                  canaux, pas combien de fois (voir _sans_dedoublonnage)")
     print()
     print(f"  compares    : {r['total']}")
     print(f"  identiques  : {r['identiques']}")
