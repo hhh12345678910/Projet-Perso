@@ -62,6 +62,11 @@ from src.matcher import parse_event_key
 from src.routing import canaux_pour
 from src.storage import Storage
 
+# Au-dela de ce nombre de marques en attente, on vide la table temporaire a
+# la prochaine frontiere de groupe. Assez bas pour que le balayage reste
+# trivial, assez haut pour que la purge reste amortie.
+PURGE_AU_DELA = 200
+
 TRANCHES = ((1.0, 1.5), (1.5, 2.0), (2.0, 3.0), (3.0, 4.0), (4.0, 6.0), (6.0, 1e9))
 
 
@@ -124,6 +129,21 @@ def analyser(db: str, cfg, *, limite: int | None = None) -> dict:
     lignes = con.execute(sql).fetchall()
     con.close()
 
+    # Les opportunites de groupes DIFFERENTS n'interagissent jamais : le
+    # dedoublonnage ne regarde que (date+equipes, book, marche, issue, ligne).
+    # On les traite donc groupe par groupe, en vidant la table temporaire des
+    # qu'elle grossit. Sans cela chaque verification balaie une table qui
+    # grandit — `event_key LIKE ?` ne peut pas utiliser d'index, SQLite faisant
+    # LIKE insensible a la casse par defaut — et le cout devient quadratique :
+    # mesure a 27 minutes sur 36 000 opportunites, contre ~7 ainsi.
+    def _groupe(r):
+        return (Storage._event_key_like(r["event_key"]), r["book"], r["market"],
+                r["outcome_label"], r["line"])
+
+    lignes = sorted(lignes, key=lambda r: (_groupe(r), r["id"]))
+    groupe_courant = None
+    marques = 0
+
     envois_ancien: Counter = Counter()
     envois_nouveau: Counter = Counter()
     surplus: list[dict] = []
@@ -136,6 +156,16 @@ def analyser(db: str, cfg, *, limite: int | None = None) -> dict:
         st_a = Storage(str(Path(d) / "ancien.db"))
         st_n = Storage(str(Path(d) / "nouveau.db"))
         for r in lignes:
+            g = _groupe(r)
+            if g != groupe_courant:
+                # Frontiere de groupe : c'est le SEUL endroit ou vider est sur.
+                # Purger au milieu d'un groupe effacerait l'historique dont le
+                # dedoublonnage a besoin, et fabriquerait de faux surplus.
+                if marques > PURGE_AU_DELA:
+                    st_a.prune_notifications(retention_days=0)
+                    st_n.prune_notifications(retention_days=0)
+                    marques = 0
+                groupe_courant = g
             try:
                 base = dict(
                     event_key=r["event_key"], book=Book(r["book"]),
@@ -172,6 +202,7 @@ def analyser(db: str, cfg, *, limite: int | None = None) -> dict:
                         envois_ancien[c.nom] += 1
                         vus_ancien.add(c.nom)
                     st_a.mark_value_bet_notified(*cle, ev, quand)
+                    marques += 1
 
                 # ── NOUVEAU : une porte PAR canal
                 for c in cibles:
@@ -186,6 +217,7 @@ def analyser(db: str, cfg, *, limite: int | None = None) -> dict:
                         continue
                     envois_nouveau[c.nom] += 1
                     st_n.mark_value_bet_notified(*cle, ev, quand, chat_id=c.chat_id)
+                    marques += 1
                     if not passe:
                         motif = ("canal jamais atteint auparavant"
                                  if c.nom not in vus_ancien
