@@ -41,13 +41,15 @@ DIMENSIONS = ("sport", "book", "market")     # league : par commande texte
 PHASES = (None, "prematch", "live")
 MARQUE = {None: "☐", True: "✅", False: "⛔"}
 
-# Bornes proposees au clavier. Volontairement peu nombreuses : un clavier de
-# quarante boutons ne se lit pas sur un telephone. Les valeurs exactes
-# passent par la commande texte.
-EV_PRESETS = ((5.0, None), (8.0, None), (10.0, None), (15.0, None),
-              (20.0, None), (35.0, None), (None, None))
-COTE_PRESETS = ((None, 2.0), (None, 3.0), (None, 4.0), (1.5, 4.0),
-                (4.0, 6.0), (4.0, None), (None, None))
+# Paliers proposes, MINIMUM et MAXIMUM separement. La premiere version
+# n'offrait que des couples figes (« EV >= 10 », « cote 1,5-4 ») : impossible
+# d'y composer « EV entre 12 et 25 » sans passer par une commande texte que
+# personne ne devine. Chaque bouton ne touche desormais QUE sa borne et laisse
+# l'autre en place.
+EV_MIN = (None, 5.0, 8.0, 10.0, 15.0, 20.0, 35.0)
+EV_MAX = (None, 8.0, 10.0, 15.0, 20.0, 35.0, 50.0)
+COTE_MIN = (None, 1.3, 1.5, 1.8, 2.0, 2.5, 3.0, 4.0)
+COTE_MAX = (None, 2.0, 2.5, 3.0, 4.0, 5.0, 6.0, 10.0)
 
 
 @dataclass(frozen=True)
@@ -88,8 +90,9 @@ def decrire_regle(regle, numero: int) -> str:
     if regle.phase:
         bouts.append(regle.phase)
     for c in regle.criteres:
-        bouts.append(f"{c.dimension} {'∈' if c.inclut else '∉'} "
-                     f"{{{', '.join(sorted(c.valeurs))}}}")
+        bouts.append(f"{_NOM_DIM.get(c.dimension, c.dimension)} "
+                     f"{'∈' if c.inclut else '∉'} "
+                     f"{{{', '.join(joli(v) for v in sorted(c.valeurs))}}}")
     return f"  <b>{numero}.</b> " + (" ET ".join(bouts) or "<i>tout passe</i>")
 
 
@@ -104,6 +107,26 @@ def decrire_canal(canal, ids_regles) -> str:
         lignes.append("\nRègles (l'une OU l'autre) :")
         lignes += [decrire_regle(r, i + 1) for i, r in enumerate(canal.regles)]
     return "\n".join(lignes)
+
+
+# Sigles a laisser en capitales. Le reste est simplement capitalise :
+# `unibet_be` -> « Unibet BE », `golden_palace` -> « Golden Palace ».
+#
+# Volontairement une REGLE et non une table de noms. `alerter` en tient
+# deja une (_BOOK_NAMES) et la recopier ici la ferait diverger au premier
+# book ajoute ; l'importer casserait l'isolement qui garantit que ce module
+# ne peut pas envoyer de message.
+_SIGLES = {"be", "h2h", "btts", "h1", "1h", "fr", "nl", "uk"}
+
+# Les dimensions portent des noms techniques (`market`, `league`) qui n'ont
+# aucune raison d'apparaitre a l'ecran.
+_NOM_DIM = {"sport": "Sport", "book": "Book", "market": "Marché",
+            "league": "Compétition"}
+
+
+def joli(valeur: str) -> str:
+    return " ".join(m.upper() if m.lower() in _SIGLES else m.capitalize()
+                    for m in str(valeur).split("_"))
 
 
 def _bouton(t, d):
@@ -129,7 +152,8 @@ def clavier_canal(canal, ids_regles) -> dict:
 def clavier_dimension(rid: int, dim: str, valeurs: list[str], etats: dict) -> dict:
     rows, cur = [], []
     for v in valeurs:
-        cur.append(_bouton(f"{MARQUE[etats.get(v)]} {v[:16]}", f"cx:t:{rid}:{dim}:{v}"))
+        cur.append(_bouton(f"{MARQUE[etats.get(v)]} {joli(v)[:18]}",
+                           f"cx:t:{rid}:{dim}:{v}"))
         if len(cur) == 2:
             rows.append(cur); cur = []
     if cur:
@@ -148,20 +172,37 @@ def _libelle_borne(mini, maxi, unite: str) -> str:
     return f"{unite} {mini:g}–{maxi:g}"
 
 
-def clavier_bornes(rid: int, quoi: str) -> dict:
-    presets = EV_PRESETS if quoi == "ev" else COTE_PRESETS
-    unite = "EV" if quoi == "ev" else "cote"
+def _rangee(rid: int, quoi: str, bord: str, valeurs, actuelle) -> list[list[dict]]:
+    """Une ligne de paliers. La borne posee est marquee, pour qu'on voie
+    d'un coup d'oeil ce qui est actif sans relire le texte."""
     rows, cur = [], []
-    for mini, maxi in presets:
-        arg = f"{'' if mini is None else mini:g}" if mini is not None else ""
-        arg2 = f"{maxi:g}" if maxi is not None else ""
-        cur.append(_bouton(_libelle_borne(mini, maxi, unite),
-                           f"cx:{quoi}s:{rid}:{arg}:{arg2}"))
-        if len(cur) == 2:
+    for v in valeurs:
+        pose = (v is None and actuelle is None) or (
+            actuelle is not None and v is not None and actuelle.valeur == v)
+        libelle = "aucun" if v is None else f"{v:g}"
+        cur.append(_bouton(("• " if pose else "") + libelle,
+                           f"cx:{quoi}{bord}:{rid}:{'' if v is None else f'{v:g}'}"))
+        if len(cur) == 4:
             rows.append(cur); cur = []
     if cur:
         rows.append(cur)
-    rows.append([_bouton("← retour", f"cx:vr:{rid}")])
+    return rows
+
+
+def clavier_bornes(rid: int, quoi: str, regle=None) -> dict:
+    """Deux rangees independantes : minimum, puis maximum."""
+    if quoi == "ev":
+        mini, maxi = (regle.ev_min if regle else None), (regle.ev_max if regle else None)
+        vmin, vmax, unite = EV_MIN, EV_MAX, "EV"
+    else:
+        mini, maxi = (regle.odd_min if regle else None), (regle.odd_max if regle else None)
+        vmin, vmax, unite = COTE_MIN, COTE_MAX, "cote"
+    rows = [[_bouton(f"── {unite} minimum ──", "cx:noop")]]
+    rows += _rangee(rid, quoi, "min", vmin, mini)
+    rows.append([_bouton(f"── {unite} maximum ──", "cx:noop")])
+    rows += _rangee(rid, quoi, "max", vmax, maxi)
+    rows.append([_bouton("✏️ Valeur exacte", f"cx:{quoi}x:{rid}"),
+                 _bouton("← retour", f"cx:vr:{rid}")])
     return {"inline_keyboard": rows}
 
 
@@ -200,7 +241,10 @@ def _valeurs_possibles(storage, dim: str) -> list[str]:
         return storage.sports_seen() or ["soccer", "tennis", "basketball"]
     if dim == "book":
         return storage.books_seen() or [b.value for b in Book if b != Book.PINNACLE]
-    return [m.value for m in MarketType]
+    # L'enum porte des marches que le projet sait lire mais ne detecte pas
+    # forcement ici. Proposer BTTS ou un handicap qui n'arrive jamais ferait
+    # croire au filtre qu'on vient de poser.
+    return storage.markets_seen() or [MarketType.H2H.value, MarketType.TOTALS.value]
 
 
 def _vue(storage, nom: str, *, edite: bool, alerte=None) -> Reponse:
@@ -396,8 +440,15 @@ def bouton(data: str, *, storage, cfg, id_utilisateur) -> Optional[Reponse]:
         return _vue(storage, nom, edite=True, alerte="Règle supprimée")
 
     if verbe == "vr":                                  # retour depuis une regle
+        # Une regle peut avoir disparu depuis que ce clavier a ete affiche —
+        # Telegram garde les anciens messages cliquables indefiniment. Le
+        # retour doit alors ramener QUELQUE PART, pas laisser l'ecran mort.
         nom = _canal_de_regle(storage, int(arg))
-        return _vue(storage, nom, edite=True) if nom else Reponse("Règle introuvable.")
+        if nom:
+            return _vue(storage, nom, edite=True)
+        return Reponse("Cette règle n'existe plus.\n\n"
+                       + _liste(storage), edite=True,
+                       alerte="Règle supprimée entre-temps")
 
     if verbe == "d":                                   # ouvrir une dimension
         dim = bouts[3] if len(bouts) > 3 else ""
@@ -407,8 +458,8 @@ def bouton(data: str, *, storage, cfg, id_utilisateur) -> Optional[Reponse]:
         etats = _etats_dimension(storage, rid, dim)
         valeurs = sorted(set(_valeurs_possibles(storage, dim)) | set(etats))
         return Reponse(
-            f"<b>{dim}</b> — ☐ absent (tous), ✅ inclus, ⛔ exclu\n"
-            f"<i>Un clic fait tourner les trois états.</i>",
+            f"<b>{_NOM_DIM.get(dim, dim)}</b> — ☐ absent (tous), ✅ inclus, "
+            f"⛔ exclu\n<i>Un clic fait tourner les trois états.</i>",
             clavier_dimension(rid, dim, valeurs, etats), edite=True)
 
     if verbe == "t":                                   # basculer une valeur
@@ -429,28 +480,39 @@ def bouton(data: str, *, storage, cfg, id_utilisateur) -> Optional[Reponse]:
         etats = _etats_dimension(storage, rid, dim)
         valeurs = sorted(set(_valeurs_possibles(storage, dim)) | set(etats))
         return Reponse(
-            f"<b>{dim}</b> — ☐ absent (tous), ✅ inclus, ⛔ exclu\n"
-            f"<i>Un clic fait tourner les trois états.</i>",
+            f"<b>{_NOM_DIM.get(dim, dim)}</b> — ☐ absent (tous), ✅ inclus, "
+            f"⛔ exclu\n<i>Un clic fait tourner les trois états.</i>",
             clavier_dimension(rid, dim, valeurs, etats), edite=True,
-            alerte=f"{valeur} : {MARQUE[etats.get(valeur)]}")
+            alerte=f"{joli(valeur)} : {MARQUE[etats.get(valeur)]}")
 
     if verbe in ("ev", "co"):                          # ouvrir les paliers
-        return Reponse(f"Bornes <b>{'EV' if verbe == 'ev' else 'cote'}</b> — "
-                       f"paliers courants.\n<i>Valeur exacte : "
-                       f"/canal &lt;nom&gt; &lt;n°&gt; "
-                       f"{'ev' if verbe == 'ev' else 'cote'} &lt;min&gt; [max]</i>",
-                       clavier_bornes(int(arg), verbe), edite=True)
+        return _ecran_bornes(storage, int(arg), verbe, edite=True)
 
-    if verbe in ("evs", "cos"):                        # poser les bornes
+    if verbe in ("evmin", "evmax", "comin", "comax"):  # poser UNE borne
         rid = int(arg)
-        mini = _nombre(bouts[3]) if len(bouts) > 3 else None
-        maxi = _nombre(bouts[4]) if len(bouts) > 4 else None
-        p = "ev" if verbe == "evs" else "odd"
-        storage.update_channel_rule(rid, **{f"{p}_min": mini, f"{p}_max": maxi})
+        valeur = _nombre(bouts[3]) if len(bouts) > 3 else None
+        quoi = "ev" if verbe.startswith("ev") else "co"
+        colonne = ("ev" if quoi == "ev" else "odd") + \
+                  ("_min" if verbe.endswith("min") else "_max")
+        # UNE seule colonne : l'autre borne reste ou elle est. C'est tout
+        # l'objet de la refonte — composer un intervalle en deux clics.
+        storage.update_channel_rule(rid, **{colonne: valeur})
+        return _ecran_bornes(storage, rid, quoi, edite=True,
+                             alerte=f"{colonne} = "
+                                    f"{'aucun' if valeur is None else f'{valeur:g}'}")
+
+    if verbe in ("evx", "cox"):                        # saisie libre
+        rid = int(arg)
         nom = _canal_de_regle(storage, rid)
-        return _vue(storage, nom, edite=True,
-                    alerte=_libelle_borne(mini, maxi,
-                                          "EV" if verbe == "evs" else "cote"))
+        canal, ids, _ = _canal_et_regles(storage, nom or "")
+        numero = ids.index(rid) + 1 if canal and rid in ids else 1
+        quoi = "ev" if verbe == "evx" else "cote"
+        return Reponse(
+            f"Valeur exacte — copie la ligne, change les nombres, envoie-la :\n\n"
+            f"<code>/canal {nom} {numero} {quoi} 12.5 27.5</code>\n\n"
+            f"<i>Le second nombre est facultatif. « /canal {nom} {numero} "
+            f"{quoi} 12.5 » ne pose que le minimum.</i>",
+            alerte="Commande à copier")
 
     if verbe == "ph":                                  # cycler la phase
         rid = int(arg)
@@ -480,4 +542,34 @@ def bouton(data: str, *, storage, cfg, id_utilisateur) -> Optional[Reponse]:
 
     if verbe == "v":
         return _vue(storage, arg, edite=True)
-    return None
+    # Un clavier d'une version anterieure porte des verbes qui n'existent
+    # plus. Ne rien renvoyer donnerait un bouton qui « ne marche pas » sans
+    # explication — exactement le symptome qu'on cherche a supprimer.
+    return Reponse("", alerte="Clavier périmé — relance /canaux")
+
+
+def _liste(storage) -> str:
+    """Le repli quand on ne sait plus quoi afficher."""
+    canaux = charger(storage, print_fn=lambda _s: None)
+    if not canaux:
+        return "Aucun canal configuré."
+    return "\n".join(f"{'✅' if c.actif else '☐'} <b>{c.nom}</b>" for c in canaux)
+
+
+def _ecran_bornes(storage, rid: int, quoi: str, *, edite: bool,
+                  alerte=None) -> Reponse:
+    nom = _canal_de_regle(storage, rid)
+    canal, ids, _ = _canal_et_regles(storage, nom or "")
+    if canal is None or rid not in ids:
+        return Reponse("Cette règle n'existe plus.\n\n" + _liste(storage),
+                       edite=edite, alerte="Règle supprimée entre-temps")
+    regle = canal.regles[ids.index(rid)]
+    unite = "EV" if quoi == "ev" else "cote"
+    mini = regle.ev_min if quoi == "ev" else regle.odd_min
+    maxi = regle.ev_max if quoi == "ev" else regle.odd_max
+    actuel = _libelle_borne(None if mini is None else mini.valeur,
+                            None if maxi is None else maxi.valeur, unite)
+    return Reponse(
+        f"<b>{unite}</b> — actuellement : {actuel}\n"
+        f"<i>Chaque bouton ne change que SA borne ; l'autre reste.</i>",
+        clavier_bornes(rid, quoi, regle), edite=edite, alerte=alerte)

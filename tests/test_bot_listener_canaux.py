@@ -26,7 +26,12 @@ INTRUS = "999999999"
 def envois(monkeypatch, tmp_path):
     """Espionne `tg` et pointe le bot sur une base jetable."""
     appels: list[tuple] = []
-    monkeypatch.setattr(bl, "tg", lambda methode, **kw: appels.append((methode, kw)))
+    # `tg` rend TOUJOURS un dict (`{}` si la reponse est illisible). Une
+    # sonde qui rend None ferait planter le code qui lit `r["ok"]` — et
+    # masquerait le repli d'edition qu'on veut justement verifier.
+    monkeypatch.setattr(bl, "tg",
+                        lambda methode, **kw: (appels.append((methode, kw)),
+                                               {"ok": True})[1])
     monkeypatch.setattr(bl, "DB_PATH", str(tmp_path / "t.db"))
     Storage(str(tmp_path / "t.db"))
     monkeypatch.delenv("TELEGRAM_ADMIN_ID", raising=False)
@@ -130,3 +135,41 @@ def test_le_bouton_book_n_est_pas_intercepte(envois, monkeypatch):
     monkeypatch.setattr(bl, "handle_book_toggle", lambda cb: vus.append(cb))
     bl.handle_callback(_cb("bookalert:unibet_be"))
     assert len(vus) == 1
+
+
+# ══ le bouton qui « ne marche pas » ════════════════════════════════════
+def test_une_edition_refusee_produit_quand_meme_un_message(monkeypatch, tmp_path):
+    """Telegram refuse l'edition pour des raisons banales — message trop
+    ancien, ou contenu identique (« message is not modified »). Sans repli,
+    le bouton paraissait mort : c'est le « retour qui ne marche pas
+    toujours »."""
+    appels: list[tuple] = []
+
+    def _tg(methode, **kw):
+        appels.append((methode, kw))
+        if methode == "editMessageText":
+            return {"ok": False, "description": "Bad Request: message is not modified"}
+        return {"ok": True}
+
+    monkeypatch.setattr(bl, "tg", _tg)
+    monkeypatch.setattr(bl, "DB_PATH", str(tmp_path / "t.db"))
+    Storage(str(tmp_path / "t.db"))
+    monkeypatch.delenv("TELEGRAM_ADMIN_ID", raising=False)
+    monkeypatch.setattr(TelegramConfig, "from_env",
+                        staticmethod(lambda: TelegramConfig(bot_token="j",
+                                                            chat_id=ADMIN)))
+    bl.handle_message(_msg("/nouveau TENNIS -100123"))
+    appels.clear()
+    bl.handle_callback(_cb("cx:a:TENNIS"))
+    methodes = [m for m, _ in appels]
+    assert methodes == ["answerCallbackQuery", "editMessageText", "sendMessage"]
+    assert "TENNIS" in appels[-1][1]["text"]
+
+
+def test_un_callback_sans_message_ne_plante_pas(envois):
+    """Au-dela de 48 h, Telegram n'attache plus le message au clic."""
+    bl.handle_message(_msg("/nouveau TENNIS -100123"))
+    envois.clear()
+    bl.handle_callback({"id": "cb2", "data": "cx:a:TENNIS",
+                        "from": {"id": int(ADMIN)}})
+    assert [m for m, _ in envois] == ["answerCallbackQuery"]

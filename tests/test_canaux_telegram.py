@@ -194,16 +194,63 @@ def test_le_cycle_absent_inclus_exclu(st, cfg):
     assert charger(st)[0].regles[0].criteres == ()
 
 
-def test_poser_des_bornes_par_palier(st, cfg):
+def test_chaque_bouton_ne_touche_QUE_sa_borne(st, cfg):
+    """Le defaut de la premiere version : les paliers etaient des couples
+    figes, donc poser un maximum effacait le minimum et « EV entre 12 et 25 »
+    etait impossible au clavier."""
     _canal(st)
     _clic("cx:r+:TENNIS", st, cfg)
     _, ids, _ = ct._canal_et_regles(st, "TENNIS")
     rid = ids[0]
-    _clic(f"cx:evs:{rid}:10:", st, cfg)
-    _clic(f"cx:cos:{rid}::4", st, cfg)
+
+    _clic(f"cx:evmin:{rid}:10", st, cfg)
     r = charger(st)[0].regles[0]
     assert r.ev_min.valeur == 10.0 and r.ev_max is None
-    assert r.odd_max.valeur == 4.0 and r.odd_min is None
+
+    _clic(f"cx:evmax:{rid}:20", st, cfg)
+    r = charger(st)[0].regles[0]
+    assert (r.ev_min.valeur, r.ev_max.valeur) == (10.0, 20.0), \
+        "poser le maximum a efface le minimum"
+
+    _clic(f"cx:comin:{rid}:1.5", st, cfg)
+    _clic(f"cx:comax:{rid}:4", st, cfg)
+    r = charger(st)[0].regles[0]
+    assert (r.odd_min.valeur, r.odd_max.valeur) == (1.5, 4.0)
+    assert (r.ev_min.valeur, r.ev_max.valeur) == (10.0, 20.0), \
+        "les bornes de cote ont touche celles d'EV"
+
+
+def test_retirer_une_borne_sans_toucher_a_l_autre(st, cfg):
+    _canal(st)
+    _clic("cx:r+:TENNIS", st, cfg)
+    _, ids, _ = ct._canal_et_regles(st, "TENNIS")
+    rid = ids[0]
+    _clic(f"cx:evmin:{rid}:10", st, cfg)
+    _clic(f"cx:evmax:{rid}:20", st, cfg)
+    _clic(f"cx:evmax:{rid}:", st, cfg)           # « aucun »
+    r = charger(st)[0].regles[0]
+    assert r.ev_min.valeur == 10.0 and r.ev_max is None
+
+
+def test_l_ecran_des_bornes_marque_la_valeur_posee(st, cfg):
+    _canal(st)
+    _clic("cx:r+:TENNIS", st, cfg)
+    _, ids, _ = ct._canal_et_regles(st, "TENNIS")
+    rid = ids[0]
+    _clic(f"cx:evmin:{rid}:10", st, cfg)
+    rep = _clic(f"cx:ev:{rid}", st, cfg)
+    assert "EV ≥ 10" in rep.texte
+    libelles = [b["text"] for row in rep.clavier["inline_keyboard"] for b in row]
+    assert "• 10" in libelles, libelles
+
+
+def test_la_saisie_libre_donne_une_commande_prete(st, cfg):
+    _canal(st)
+    _clic("cx:r+:TENNIS", st, cfg)
+    _, ids, _ = ct._canal_et_regles(st, "TENNIS")
+    rep = _clic(f"cx:evx:{ids[0]}", st, cfg)
+    assert "/canal TENNIS 1 ev" in rep.texte
+    assert rep.clavier is None
 
 
 def test_cycler_la_phase(st, cfg):
@@ -234,8 +281,26 @@ def test_supprimer_un_canal_emporte_ses_regles(st, cfg):
     assert st.load_channel_rows() == ([], [], [])
 
 
-def test_un_bouton_inconnu_ne_fait_rien(st, cfg):
-    assert _clic("cx:inconnu:x", st, cfg) is None
+def test_un_bouton_perime_le_dit_au_lieu_de_rester_muet(st, cfg):
+    """Un clavier d'une version anterieure porte des verbes disparus. Ne rien
+    renvoyer donnerait un bouton qui « ne marche pas » sans explication."""
+    rep = _clic("cx:inconnu:x", st, cfg)
+    assert rep is not None and rep.texte == ""
+    assert "périmé" in rep.alerte
+
+
+def test_le_retour_sur_une_regle_supprimee_ramene_quelque_part(st, cfg):
+    """Telegram garde les anciens messages cliquables indefiniment : le
+    retour doit aboutir meme si la regle a disparu entre-temps."""
+    _canal(st)
+    _clic("cx:r+:TENNIS", st, cfg)
+    _, ids, _ = ct._canal_et_regles(st, "TENNIS")
+    rid = ids[0]
+    _clic(f"cx:r-:{rid}", st, cfg)
+    rep = _clic(f"cx:vr:{rid}", st, cfg)
+    assert "n'existe plus" in rep.texte and "TENNIS" in rep.texte
+    rep = _clic(f"cx:ev:{rid}", st, cfg)
+    assert "n'existe plus" in rep.texte
 
 
 def test_une_dimension_inventee_est_refusee(st, cfg):
@@ -305,7 +370,7 @@ def test_tester_un_canal_compte_sans_envoyer(st, cfg):
     _canal(st)
     _clic("cx:r+:TENNIS", st, cfg)
     _, ids, _ = ct._canal_et_regles(st, "TENNIS")
-    _clic(f"cx:evs:{ids[0]}:20:", st, cfg)
+    _clic(f"cx:evmin:{ids[0]}:20", st, cfg)
 
     c = sqlite3.connect(str(st.path))
     now = datetime.now(timezone.utc)
@@ -400,3 +465,73 @@ def test_sports_seen_est_dynamique(st):
     c.commit()
     c.close()
     assert st.sports_seen() == ["soccer", "tennis"]
+
+
+# ══ lisibilite des libelles ════════════════════════════════════════════
+def test_les_libelles_sont_lisibles():
+    assert ct.joli("unibet_be") == "Unibet BE"
+    assert ct.joli("starcasino_sport") == "Starcasino Sport"
+    assert ct.joli("golden_palace") == "Golden Palace"
+    assert ct.joli("h2h") == "H2H"
+    assert ct.joli("btts") == "BTTS"
+    assert ct.joli("soccer") == "Soccer"
+
+
+def test_le_clavier_affiche_les_libelles_pas_les_cles(st, cfg):
+    _canal(st)
+    _clic("cx:r+:TENNIS", st, cfg)
+    _, ids, _ = ct._canal_et_regles(st, "TENNIS")
+    rep = _clic(f"cx:d:{ids[0]}:book", st, cfg)
+    libelles = [b["text"] for row in rep.clavier["inline_keyboard"] for b in row]
+    assert any("Unibet BE" in x for x in libelles), libelles
+    assert not any("unibet_be" in x for x in libelles), libelles
+
+
+def test_seuls_les_marches_REELLEMENT_detectes_sont_proposes(st, cfg):
+    """L'enum porte BTTS, handicap et les mi-temps. Les proposer laisserait
+    croire qu'un filtre les couvrira, alors qu'il n'attrapera jamais rien."""
+    from datetime import datetime, timezone
+    c = sqlite3.connect(str(st.path))
+    for marche in ("h2h", "totals"):
+        cle = f"202609011800::{marche}a__vs__{marche}b"
+        c.execute("INSERT OR REPLACE INTO events VALUES (?,?,?,?,?,?)",
+                  (cle, "soccer", "L", "a", "b", "2026-09-01T18:00:00+00:00"))
+        c.execute("INSERT INTO value_bets(event_key, book, market, outcome_label,"
+                  " line, odd_taken, fair_prob, fair_odd, ev_pct, kelly_pct,"
+                  " detected_at) VALUES (?,?,?,?,?,?,?,?,?,?,?)",
+                  (cle, "unibet_be", marche, "home", None, 2.0, 0.5, 2.0, 10.0,
+                   1.0, datetime.now(timezone.utc).isoformat()))
+    c.commit()
+    c.close()
+    _canal(st)
+    _clic("cx:r+:TENNIS", st, cfg)
+    _, ids, _ = ct._canal_et_regles(st, "TENNIS")
+    rep = _clic(f"cx:d:{ids[0]}:market", st, cfg)
+    libelles = " ".join(b["text"] for row in rep.clavier["inline_keyboard"]
+                        for b in row)
+    assert "H2H" in libelles and "Totals" in libelles
+    assert "BTTS" not in libelles and "Handicap" not in libelles, libelles
+
+
+def test_sans_aucune_detection_un_repli_raisonnable(st, cfg):
+    """Base neuve : plutot que zero bouton, les deux marches du projet."""
+    _canal(st)
+    _clic("cx:r+:TENNIS", st, cfg)
+    _, ids, _ = ct._canal_et_regles(st, "TENNIS")
+    rep = _clic(f"cx:d:{ids[0]}:market", st, cfg)
+    libelles = " ".join(b["text"] for row in rep.clavier["inline_keyboard"]
+                        for b in row)
+    assert "H2H" in libelles and "Totals" in libelles
+
+
+def test_les_dimensions_ont_un_nom_francais(st, cfg):
+    """`market` et `league` sont des noms de colonnes, pas des mots
+    d'interface."""
+    _canal(st)
+    _clic("cx:r+:TENNIS", st, cfg)
+    _, ids, _ = ct._canal_et_regles(st, "TENNIS")
+    rid = ids[0]
+    assert _clic(f"cx:d:{rid}:market", st, cfg).texte.startswith("<b>Marché</b>")
+    assert _clic(f"cx:d:{rid}:sport", st, cfg).texte.startswith("<b>Sport</b>")
+    _clic(f"cx:t:{rid}:market:totals", st, cfg)
+    assert "Marché ∈ {Totals}" in ct._vue(st, "TENNIS", edite=False).texte

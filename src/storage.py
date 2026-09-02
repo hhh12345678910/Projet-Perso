@@ -1691,6 +1691,21 @@ class Storage:
             out.append((bet, r["sport"], r["league"], live))
         return out
 
+    def markets_seen(self, *, days: float = 30.0) -> list[str]:
+        """Marches ayant produit une detection recemment.
+
+        Meme raison que `books_seen` et `sports_seen` : l'enum MarketType
+        porte des marches que le projet SAIT lire mais ne detecte pas ici
+        (BTTS, handicap, mi-temps selon la periode). Les proposer au clavier
+        laisse croire qu'un filtre les couvrira, alors qu'il n'attrapera
+        jamais rien."""
+        since = (datetime.now(timezone.utc) - timedelta(days=days)).isoformat()
+        with self._conn() as c:
+            return [r[0] for r in c.execute(
+                "SELECT DISTINCT market FROM value_bets WHERE detected_at >= ? "
+                "ORDER BY market", (since,)
+            )]
+
     def delete_rule_value(self, rule_id: int, dimension: str, valeur: str) -> None:
         """Retire UNE valeur d'une dimension. Le pendant de `add_rule_value` :
         sans lui, un critere pose par erreur ne pourrait plus etre defait

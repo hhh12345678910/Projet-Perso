@@ -835,13 +835,24 @@ def handle_canaux_bouton(cb: dict) -> None:
     if not rep.texte:
         return
     message = cb.get("message", {})
+    chat = (message.get("chat") or {}).get("id")
+    if chat is None:
+        # Telegram n'attache le message qu'aux boutons recents (48 h). Sans
+        # lui on ne sait meme pas ou repondre.
+        print("bouton canaux : message absent du callback, rien a editer")
+        return
     if rep.edite and message.get("message_id"):
-        tg("editMessageText", chat_id=message.get("chat", {}).get("id"),
-           message_id=message["message_id"], parse_mode="HTML",
-           text=rep.texte, reply_markup=rep.clavier)
-    else:
-        tg("sendMessage", chat_id=message.get("chat", {}).get("id"),
-           parse_mode="HTML", text=rep.texte, reply_markup=rep.clavier)
+        r = tg("editMessageText", chat_id=chat, message_id=message["message_id"],
+               parse_mode="HTML", text=rep.texte, reply_markup=rep.clavier)
+        if r.get("ok", True):
+            return
+        # L'edition echoue pour des raisons banales : message trop ancien,
+        # ou « message is not modified » quand le contenu est identique. Sans
+        # ce repli le bouton paraissait simplement mort — c'est le « retour
+        # qui ne marche pas toujours ».
+        print("bouton canaux : edition refusee, envoi d'un nouveau message")
+    tg("sendMessage", chat_id=chat, parse_mode="HTML", text=rep.texte,
+       reply_markup=rep.clavier)
 
 
 def _mark_button_done(cb: dict, label: str = "✅ Joue") -> None:
