@@ -673,6 +673,15 @@ def _allowed_chats(cfg) -> set[str]:
     return {str(i) for i in ids if i}
 
 
+def _repondre(rep, chat_id: str) -> None:
+    """Envoie ce que `canaux_telegram` a decide. Le module ne peut pas
+    envoyer lui-meme : tout passe par ici, et par ici seulement."""
+    if not rep or not rep.texte:
+        return
+    tg("sendMessage", chat_id=chat_id, parse_mode="HTML", text=rep.texte,
+       reply_markup=rep.clavier)
+
+
 def handle_message(msg: dict) -> None:
     text = (msg.get("text") or msg.get("caption") or "").strip()
     chat_id = str((msg.get("chat") or {}).get("id") or "")
@@ -680,6 +689,29 @@ def handle_message(msg: dict) -> None:
         return
     # "/scan@mon_bot arg" -> "/scan"
     cmd = text.split()[0].split("@", 1)[0].lower()
+
+    # ── Gestion des canaux ─────────────────────────────────────────────
+    # `from.id` : l'AUTEUR reel. Le bot ne lisait jusqu'ici que le CHAT, ce
+    # qui suffisait pour /scan (le chat est celui du projet) mais pas pour
+    # creer un canal — dans un groupe, n'importe quel membre aurait la main.
+    # Un post de CANAL n'a pas d'auteur : la gestion s'y trouve donc refusee,
+    # et c'est voulu.
+    if cmd in ("/canaux", "/nouveau", "/canal", "/test"):
+        from src.alerter import TelegramConfig
+        from src.canaux_telegram import commande as canaux_commande
+        from src.storage import Storage
+        cfg = TelegramConfig.from_env()
+        if cfg is None:
+            print("TELEGRAM_BOT_TOKEN/CHAT_ID absents — gestion des canaux desactivee")
+            return
+        auteur = (msg.get("from") or {}).get("id")
+        rep = canaux_commande(text, storage=Storage(DB_PATH), cfg=cfg,
+                              id_utilisateur=auteur)
+        if rep is not None:
+            _repondre(rep, chat_id)
+            print(f"[{datetime.now():%H:%M:%S}] {cmd} par {auteur} dans {chat_id}")
+        return
+
     if cmd not in ("/scan", "/start", "/book"):
         print(f"[{datetime.now():%H:%M:%S}] commande inconnue {cmd!r} (chat {chat_id})")
         return
@@ -747,6 +779,9 @@ def handle_message(msg: dict) -> None:
 # ----------------------------------------------------------- Callbacks ------
 def handle_callback(cb: dict) -> None:
     data = cb.get("data", "")
+    if data.startswith("cx:"):
+        handle_canaux_bouton(cb)
+        return
     if data.startswith("scanplay:"):
         handle_scan_play(cb)
         return
@@ -777,6 +812,36 @@ def handle_callback(cb: dict) -> None:
     tg("answerCallbackQuery", callback_query_id=cb_id,
        text=f"Enregistre : {bet['mise']:.2f} EUR @ {bet['cote']}")
     print(f"[{datetime.now():%H:%M:%S}] logged {token} {bet['match']} {bet['book']}")
+
+
+def handle_canaux_bouton(cb: dict) -> None:
+    """Un clic sur un clavier de canaux.
+
+    `canaux_telegram.bouton` verifie l'identite lui-meme ; le controle n'est
+    pas duplique ici pour qu'il n'existe qu'UN endroit ou il puisse etre
+    faux. On lui passe l'auteur du clic, jamais le chat."""
+    from src.alerter import TelegramConfig
+    from src.canaux_telegram import bouton as canaux_bouton
+    from src.storage import Storage
+    cfg = TelegramConfig.from_env()
+    if cfg is None:
+        return
+    auteur = (cb.get("from") or {}).get("id")
+    rep = canaux_bouton(cb.get("data", ""), storage=Storage(DB_PATH), cfg=cfg,
+                        id_utilisateur=auteur)
+    if rep is None:
+        return
+    tg("answerCallbackQuery", callback_query_id=cb["id"], text=rep.alerte)
+    if not rep.texte:
+        return
+    message = cb.get("message", {})
+    if rep.edite and message.get("message_id"):
+        tg("editMessageText", chat_id=message.get("chat", {}).get("id"),
+           message_id=message["message_id"], parse_mode="HTML",
+           text=rep.texte, reply_markup=rep.clavier)
+    else:
+        tg("sendMessage", chat_id=message.get("chat", {}).get("id"),
+           parse_mode="HTML", text=rep.texte, reply_markup=rep.clavier)
 
 
 def _mark_button_done(cb: dict, label: str = "✅ Joue") -> None:

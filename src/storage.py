@@ -1632,6 +1632,95 @@ class Storage:
             ).fetchall()
         return list(canaux), list(regles), list(valeurs)
 
+    def sports_seen(self, *, days: float = 30.0) -> list[str]:
+        """Sports ayant produit une detection recemment.
+
+        Meme philosophie que `books_seen` : liste DYNAMIQUE plutot que codee
+        en dur. Un sport ajoute apparait seul dans les claviers, un sport
+        retire en disparait, et personne n'a a tenir un second inventaire.
+        30 jours et non 7 : certains sports ne tournent qu'en saison."""
+        since = (datetime.now(timezone.utc) - timedelta(days=days)).isoformat()
+        with self._conn() as c:
+            return [r[0] for r in c.execute(
+                "SELECT DISTINCT e.sport FROM value_bets v "
+                "JOIN events e ON e.event_key = v.event_key "
+                "WHERE v.detected_at >= ? AND e.sport IS NOT NULL "
+                "AND e.sport <> '' ORDER BY e.sport", (since,)
+            )]
+
+    def dernieres_detections(self, *, limite: int = 500) -> list[tuple]:
+        """Les N dernieres opportunites, pretes a etre rejouees dans un canal.
+
+        Rend (ValueBet, sport, league, is_live) — le sport et la ligue
+        viennent d'`events`, `value_bets` ne les portant pas. `is_live` est
+        calcule a l'instant de la DETECTION, pas maintenant : rejouer un
+        historique en le declarant live parce que les matchs sont passes
+        rendrait le test faux pour tout canal ayant une phase."""
+        with self._conn() as c:
+            lignes = c.execute(
+                "SELECT v.event_key, v.book, v.market, v.outcome_label, v.line,"
+                "       v.odd_taken, v.fair_prob, v.fair_odd, v.ev_pct,"
+                "       v.kelly_pct, v.detected_at, e.sport, e.league,"
+                "       e.start_time"
+                "  FROM value_bets v LEFT JOIN events e"
+                "    ON e.event_key = v.event_key"
+                " ORDER BY v.id DESC LIMIT ?", (int(limite),)).fetchall()
+        out = []
+        for r in lignes:
+            try:
+                bet = ValueBet(
+                    event_key=r["event_key"], book=Book(r["book"]),
+                    market=MarketType(r["market"]),
+                    outcome=Outcome(r["outcome_label"], line=r["line"]),
+                    odd_taken=r["odd_taken"], fair_prob=r["fair_prob"] or 0.5,
+                    fair_odd=r["fair_odd"] or 1.0, ev_pct=r["ev_pct"],
+                    kelly_stake_pct=r["kelly_pct"] or 0.0,
+                    detected_at=datetime.fromisoformat(r["detected_at"]),
+                    league=r["league"])
+            except (ValueError, TypeError):
+                continue          # book ou marche disparu de l'enum
+            live = False
+            if r["start_time"]:
+                try:
+                    depart = datetime.fromisoformat(r["start_time"])
+                    if depart.tzinfo is None:
+                        depart = depart.replace(tzinfo=timezone.utc)
+                    live = depart <= bet.detected_at
+                except ValueError:
+                    pass
+            out.append((bet, r["sport"], r["league"], live))
+        return out
+
+    def delete_rule_value(self, rule_id: int, dimension: str, valeur: str) -> None:
+        """Retire UNE valeur d'une dimension. Le pendant de `add_rule_value` :
+        sans lui, un critere pose par erreur ne pourrait plus etre defait
+        depuis Telegram, seulement en supprimant la regle entiere."""
+        with self._conn() as c:
+            c.execute(
+                "DELETE FROM channel_rule_values WHERE rule_id=? AND dimension=?"
+                " AND valeur=?", (rule_id, dimension, str(valeur).strip().lower()))
+
+    def update_channel_rule(self, rule_id: int, **champs) -> None:
+        """Modifie les bornes ou la phase d'une regle existante.
+
+        Les colonnes autorisees sont listees en dur : ce chemin est atteint
+        depuis Telegram, et une liste blanche est la seule facon d'etre
+        certain qu'un nom de colonne ne vienne jamais de l'exterieur."""
+        permis = ("ev_min", "ev_min_strict", "ev_max", "ev_max_strict",
+                  "odd_min", "odd_min_strict", "odd_max", "odd_max_strict",
+                  "phase")
+        inconnus = set(champs) - set(permis)
+        if inconnus:
+            raise ValueError(f"colonnes inconnues : {sorted(inconnus)}")
+        if champs.get("phase") not in (None, "prematch", "live"):
+            raise ValueError(f"phase inconnue : {champs['phase']!r}")
+        if not champs:
+            return
+        sets = ", ".join(f"{k}=?" for k in champs)
+        with self._conn() as c:
+            c.execute(f"UPDATE channel_rules SET {sets} WHERE id=?",
+                      (*champs.values(), rule_id))
+
     def find_channel_by_name(self, nom: str):
         with self._conn() as c:
             return c.execute("SELECT * FROM channels WHERE nom=?", (nom,)).fetchone()
