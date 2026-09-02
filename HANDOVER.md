@@ -6317,3 +6317,272 @@ normalisée, repli supprimé. Chacune casse au moins un test.
   aura du volume.
 - **Le LIVE est en pause**, en attente d'une autre source de fair odds
   (§22.3). Tout le reste de §22 tient toujours.
+
+---
+
+## 24. Sessions des 31/08 au 02/09 — les canaux configurables, de bout en bout
+
+11 commits. Le système d'alerte passe de **trois canaux codés en dur dans
+`.env`** à **une couche de canaux configurables depuis Telegram**, sans que le
+moteur de détection, les seuils, le LIVE ou AsianOdds soient touchés une seule
+fois.
+
+**Tout est en production et vérifié sur trafic réel.**
+
+### 24.1 Les cinq commits, dans l'ordre
+
+| | commit | ce qu'il fait |
+|---|---|---|
+| 1/5 | `047aaeb` | `notified_value_bets.chat_id` — le dédoublonnage sait compter par canal |
+| 2/5 | `b89c631` | `src/routing.py` — la couche de filtrage, **pure**, non branchée |
+| 3/5 | `9ce1f7f` | les trois tables + la conversion, toujours non branchée |
+| 4/5 | `56b4fb2` | branchement réel, à comportement équivalent |
+| 4b | `e013765` | correction du harnais de comparaison (voir §24.6) |
+| 5/5 | `16ad82f` | gestion depuis Telegram, réservée à l'administrateur |
+| — | `3df0945` | les cinq défauts remontés à l'usage (§24.8) |
+
+Diagnostics : `ce7e684`, `09df1c1`, `d5071cf`, `9b15d94`.
+
+### 24.2 L'architecture
+
+```
+find_value_bets ──► insert_value_bet ──► canaux_pour(bet, canaux)
+   (INCHANGÉ)         (INCHANGÉ)               │
+                                               ├─► canal A ─┐
+                                               ├─► canal B ─┼─► envoi + marquage
+                                               └─► canal C ─┘     PAR CANAL
+```
+
+Trois modules, trois ignorances **délibérées** :
+
+- **`src/routing.py`** n'importe **rien du projet**, pas même `models` — ses
+  seules dépendances sont `dataclasses` et `typing`. Le routage décide où part
+  un pari ; s'il pouvait atteindre `detection` ou `reference`, plus rien ne
+  garantirait structurellement qu'un filtre n'influence pas une EV. La garantie
+  est vérifiée deux fois : par AST sur le source, et dans un **interpréteur
+  neuf** via `sys.modules` — avec sa propre falsification permanente (le même
+  contrôle appliqué à `src.alerter` doit trouver des modules interdits, sinon
+  il ne prouve rien).
+- **`src/storage.py`** ne fait que du SQL et ne connaît pas `routing`.
+- **`src/channels.py`** est la couture : lignes → objets. Il ne touche pas la
+  base non plus, il reçoit un objet sachant rendre ses trois tables.
+- **`src/canaux_telegram.py`** rend un couple (texte, clavier) et **ne peut pas
+  envoyer** : `bot_listener` s'en charge. Une rafale est donc impossible depuis
+  ce module, et un test l'exige par AST.
+
+### 24.3 Le modèle de règles
+
+```
+ET  entre les critères d'une même règle
+OU  entre les valeurs d'une même dimension
+OU  entre les règles d'un même canal
+```
+
+Dimension non renseignée = toutes. Dimensions : `sport`, `book`, `market`,
+`league`. Inclusion **et** exclusion explicites.
+
+Trois choix qui ne se devinent pas :
+
+- **L'asymétrie sur les données manquantes.** Une inclusion sur une dimension
+  inconnue échoue (un canal tennis ne doit pas accepter un pari de sport
+  inconnu) ; une exclusion n'exclut pas (écarter par défaut supprimerait des
+  paris d'un sport qu'on n'a jamais voulu couper — la faute inverse est
+  silencieuse). C'était déjà la règle de `premium_hi_sports_exclus`.
+- **Un canal SANS RÈGLE ne prend rien, une RÈGLE SANS CRITÈRE prend tout.** Un
+  canal créé et pas encore configuré doit rester muet.
+- **Les bornes portent leur strictesse** (`Borne.stricte`). La configuration
+  réelle en a besoin des deux côtés : le principal s'arrête à `EV < 8` tandis
+  que sa bande de cote **inclut** 4,00, et la voie critique grosses cotes
+  commence à `cote > 4,0`. ⚠️ Ce n'est pas théorique : une alerte réelle est
+  partie à **4,00 pile** dans les 35 premières heures. Avec une borne stricte
+  elle n'aurait été envoyée nulle part.
+
+`priorite` ordonne la sortie. `exclusif` reproduit le débordement historique
+(le critique ne reçoit que ce qu'aucune bande premium n'a pris) et vaut `False`
+par défaut — **canaux indépendants**. `profile_id` est prévu pour le
+multi-utilisateur et **n'est lu par personne**.
+
+### 24.4 Le blocage que le commit 1 a levé
+
+`notified_value_bets` n'avait aucune colonne de canal, et le filtre tournait
+dans `main.py` **avant** l'envoi. En multi-canal, un pari envoyé au canal
+Tennis aurait été marqué « notifié » globalement et ne serait **jamais** parti
+au canal Grosses Cotes.
+
+Sémantique : `chat_id=None` n'ajoute aucune clause (comportement d'avant, mot
+pour mot) ; `chat_id="X"` compte les lignes de X **et celles à NULL**.
+
+⚠️ **Ce dernier point n'est pas un détail.** Les NULL sont l'historique d'avant
+la bascule. Les ignorer aurait fait paraître chaque pari vivant « jamais
+notifié » sur chaque canal le jour du déploiement : une rafale proportionnelle
+au nombre de canaux, au moment précis où personne ne regarde.
+
+### 24.5 La preuve de non-régression
+
+Le routage a été comparé **avant** d'être branché, ancien contre nouveau, les
+deux tirés de la **même fonction de production** (`canaux=()` donne le chemin
+historique) :
+
+| | comparées | identiques | divergences |
+|---|---:|---:|---:|
+| synthétique (bornes × sport × book × marché × prématch/live) | 12 960 | 12 960 | **0** |
+| historique (`value_bets ⋈ events`, VM) | 20 000 | 20 000 | **0** |
+
+Puis **en production**, 35 h après la bascule :
+
+```
+396 alertes    PRINCIPAL 176 · PREMIUM 167 · CRITIQUE 53
+396/396 expliquées par le modèle
+0 chat_id NULL   0 couple (opportunité, canal) au-delà du plafond
+271 alertes/jour contre 297 avant — le volume a BAISSÉ
+pointe 32/h, p95 historique 29, maximum connu 114 — aucune rafale
+```
+
+### 24.6 Deux erreurs de méthode qui ont failli passer
+
+**Le harnais mesurait le dédoublonnage en croyant mesurer le routage.** Le
+dédoublonnage ne vit pas au même endroit dans les deux chemins : dans l'ancien
+il est dans `main.py`, **avant** `send_alerts`, donc un harnais qui appelle
+`send_value_bet` le contourne ; dans le nouveau il est **dans**
+`send_value_bet`. Comparer les deux tels quels oppose un chemin non dédoublonné
+à un chemin dédoublonné.
+
+Première manifestation : 3 840 fausses divergences synthétiques, « corrigées »
+en rendant les clés uniques — ce qui **masquait** le problème au lieu de le
+traiter. Seconde manifestation, sur les détections réelles de la VM : 31 fausses
+divergences, toutes des paris répétés que `_event_key_like` regroupe (même
+date, mêmes équipes, minute différente). `comparer` neutralise désormais le
+dédoublonnage des deux côtés, et deux tests le verrouillent.
+
+**Une alerte réelle que le modèle n'expliquait pas.** `EV 6,8 cote 4,2/4,1
+→ parti sur PRINCIPAL, modèle : aucun`. `odds_history` a tranché : au moment
+de l'alerte la cote valait **4,00**, et l'EV correspondait sur quinze
+décimales. La sonde était aveugle — elle n'a que deux points par opportunité.
+**Le routage était juste.**
+
+### 24.7 L'interface Telegram, et la sécurité
+
+⚠️ **Le bot n'avait AUCUNE notion d'utilisateur.** `_allowed_chats` filtre par
+**chat**, et `handle_callback` ne vérifiait **rien du tout**. Créer un canal
+depuis un groupe aurait été à la portée de n'importe quel membre.
+
+`from.id` — l'auteur réel — est désormais lu. L'administrateur est
+`TELEGRAM_ADMIN_ID` s'il existe, sinon `TELEGRAM_CHAT_ID` **quand c'est un chat
+privé** (identifiant positif) : dans un chat privé, l'identifiant du chat EST
+celui de l'utilisateur. Si le chat principal devenait un groupe, **aucun**
+administrateur n'est déduit et toute la gestion est refusée — mieux vaut une
+interface inutilisable qu'une interface ouverte.
+
+Un **post de canal Telegram n'a pas d'auteur** : la gestion y est impossible,
+et c'est voulu. Tout passe par le message privé.
+
+La vérification est **dans `canaux_telegram`**, pas seulement chez l'appelant :
+un appelant distrait n'ouvre rien.
+
+**Commandes** — `/canaux`, `/nouveau <nom> <chat_id>`, `/canal <nom>`,
+`/test <nom>`, plus `/canal <nom> <n°> ev|cote|league|-league …` pour les
+valeurs exactes.
+
+**Clavier** — activer/couper, ajouter/supprimer une règle, Sport/Book/Marché
+(un clic fait tourner ☐ absent → ✅ inclus → ⛔ exclu), EV/Cote (rangées
+minimum et maximum **indépendantes**), Phase en cycle, supprimer avec
+confirmation, et 🧪 Tester.
+
+`/test` rejoue les dernières détections dans les règles d'un canal **sans rien
+envoyer**. Il force le canal à ACTIF pour la simulation : `canaux_pour` écarte
+les canaux coupés, et un canal coupé est justement celui qu'on veut éprouver
+avant de l'allumer. Sans ce forçage `/test` rendait toujours zéro — la seule
+réponse qui n'apprend rien ; c'est un test qui l'a trouvé.
+
+Un canal naît **coupé et sans règle** : poser la première règle sur un canal
+actif le ferait émettre au milieu de la configuration.
+
+### 24.8 Les cinq défauts remontés à l'usage (`3df0945`)
+
+- **« Le retour ne marche pas toujours »**, deux causes distinctes. Côté envoi,
+  Telegram refuse `editMessageText` pour des raisons banales (message de plus
+  de 48 h, ou « message is not modified ») et rien ne s'affichait ; un repli
+  envoie maintenant un nouveau message. Côté logique, Telegram garde les
+  anciens messages cliquables indéfiniment : « ← retour » depuis un clavier
+  dont la règle a été supprimée entre-temps ne rendait rien.
+- **Pas de majuscules** sur les books et sports → `joli()`, une **règle** et non
+  une table (`alerter` tient déjà `_BOOK_NAMES` ; la recopier la ferait diverger,
+  l'importer casserait l'isolement anti-envoi).
+- **BTTS, handicap et mi-temps** proposés alors qu'ils ne sont jamais détectés
+  → `markets_seen()`, comme `books_seen` et `sports_seen`.
+- **Bornes EV/cote figées** : poser un maximum effaçait le minimum. Deux rangées
+  indépendantes désormais, plus un bouton « ✏️ Valeur exacte » qui rend la
+  commande prête à copier.
+
+### 24.9 Les outils, et quand les lancer
+
+| commande | quand |
+|---|---|
+| `scripts.canaux --lister` / `--traduire` / `--installer` | voir ou (ré)installer les canaux |
+| `scripts.comparer_routage [--historique]` | ancien vs nouveau routage |
+| `scripts.impact_dedoublonnage` | surplus d'alertes attendu (~7 min sur 36 k) |
+| `scripts.verifier_canaux` | les 4 contrôles structurels |
+| `scripts.controle_production` | les 8 contrôles, dont 4 sur trafic réel |
+
+Tous en **lecture seule** sauf `--installer`.
+
+**Retour arrière complet**, sans redéploiement — le daemon reprend le routage
+historique au cycle suivant :
+
+```bash
+cd ~/Projet-Perso && .venv/bin/python -c "
+import sqlite3
+c = sqlite3.connect('data/valuebet.db')
+for t in ('channel_rule_values','channel_rules','channels'):
+    c.execute(f'DELETE FROM {t}')
+c.commit()"
+```
+
+⚠️ `sqlite3` **n'est pas installé** sur la VM. Toujours passer par
+`.venv/bin/python -c "import sqlite3 …"`.
+
+### 24.10 État des tests
+
+**1509 tests, 4 skips, 1 échec** — voir §24.11. Le travail de §24 en apporte
+~200, avec **48 gardes falsifiées** au total.
+
+⚠️ Trois falsifications **ne mordaient pas** au premier essai et ont été
+refaites : la liste blanche des colonnes de `update_channel_rule` (aucun test
+ne l'exerçait), la normalisation de `delete_rule_value` (une valeur posée par
+bouton serait devenue ineffaçable), et le tri par groupe de la sonde d'impact
+(ses fixtures avaient leurs groupes déjà adjacents). **Un test qui ne mord pas
+ne protège rien** — le vérifier fait partie du travail, pas de la finition.
+
+### 24.11 Ce qui reste ouvert
+
+- ⚠️ **`tests/test_corrections.py::test_the_curve_runs_to_kickoff_not_to_alignment`
+  ÉCHOUE.** Ce n'est pas une régression : le test a un `T0` codé en dur au
+  `2026-09-01 12:00` avec un coup d'envoi à 16:00, et `open_corrections` ne
+  garde un suivi que tant que `kickoff > now`. L'horloge a dépassé la borne.
+  Vérifié sur un arbre vierge. **Sans effet sur la production.** À rendre
+  indépendant de la date.
+- **`/book` reste une sourdine globale** à côté des filtres par canal. La
+  décision E.2 (« le filtrage des books doit devenir une propriété du canal »)
+  n'est pas appliquée : il y a encore **deux endroits** qui peuvent couper un
+  book.
+- **Les en-têtes et le bouton « Jouer »** sont attachés aux trois routes
+  d'origine, dans `_PRESENTATION` d'`alerter.py`. Échafaudage de migration
+  assumé : un canal créé par l'utilisateur n'a ni en-tête ni bouton. À porter
+  sur une colonne de `channels`.
+- **`pnl_detections.is_premium()`** code toujours ses seuils en dur et ignore le
+  sport. Il ignore donc l'exclusion tennis (§22.9), la voie critique grosses
+  cotes (§23.5) **et** maintenant les canaux configurables.
+- **Le surplus du dédoublonnage par canal** est estimé à **+0,75 %** (plancher :
+  la base ne garde que deux points par opportunité). Mesuré en production :
+  271 alertes/jour contre 297 avant, donc rien d'inquiétant. À reconfirmer sur
+  une semaine.
+- **Le LIVE reste en pause**, en attente d'une autre source de fair odds
+  (§22.3).
+- Le multi-utilisateur n'est **pas** implémenté et ne doit pas l'être sans
+  décision : `profile_id` existe, personne ne le lit.
+
+### 24.12 La branche
+
+Toujours **`refactor/prepare-live`**, poussée en parallèle sur
+`claude/resume-clarification-1541xa` (la branche par défaut) à chaque commit.
+Les deux pointent sur le même commit. La VM tourne sur `refactor/prepare-live`.
