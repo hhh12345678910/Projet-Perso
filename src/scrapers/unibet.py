@@ -5,6 +5,7 @@ from datetime import datetime, timezone
 from typing import Any, Iterator
 
 import httpx
+from concurrent.futures import ThreadPoolExecutor, as_completed
 from tenacity import retry, stop_after_attempt, wait_exponential
 
 from ..filter import is_noise_event
@@ -126,12 +127,69 @@ class UnibetScraper:
         # if the tree walk fails.
         term_keys = [""] + term_keys[:max_terms]
 
+        # UNE REQUÊTE PAR COMPÉTITION, ET ELLES ÉTAIENT EN FILE.
+        #
+        # Mesuré le 03/09 par `scripts/book_latency.py` : Unibet tenait le
+        # chemin critique du cycle 52 % du temps, médiane 12,1 s mais p90 à
+        # 23,4 s et pointe à 25,2 s. Ce n'est pas un scraper lent, c'est une
+        # boucle série : le coût vaut N × latence, et N varie avec le nombre de
+        # compétitions du jour. Une seule requête qui repart en tenacity
+        # (3 tentatives, recul de 1 à 8 s) ajoute son recul à TOUTES les
+        # suivantes.
+        #
+        # ⚠️ PARALLÉLISME VOLONTAIREMENT MODESTE. Kambi limite le débit — c'est
+        # la raison pour laquelle les trois jumeaux (711, Bingoal, Scooore)
+        # sont désactivés dans `orchestration.fetch_all_parallel`. Lâcher 100
+        # requêtes d'un coup ferait courir à Unibet le risque qui a déjà coûté
+        # les trois autres, et Unibet est l'un des deux books du canal premium.
+        # Le plafond reste donc du même ordre que ce que les jumeaux ajoutaient
+        # avant leur coupure, et il est réglable sans déploiement.
+        #
+        # ⚠️ L'ORDRE DE FUSION EST PRÉSERVÉ. La déduplication garde le PREMIER
+        # exemplaire d'un event_id, donc fusionner dans l'ordre d'arrivée des
+        # threads changerait quel exemplaire gagne — un changement de données
+        # silencieux, déguisé en optimisation. Les résultats sont rangés par
+        # index de termKey et fusionnés dans l'ordre d'origine.
+        # ⚠️ UNE FAUTE DE FRAPPE DANS .env NE DOIT PAS FAIRE TAIRE UN BOOK.
+        # `int()` sur une valeur illisible lève, et l'exception remonterait
+        # jusqu'à `fetch_all_parallel` qui la journalise en « Unibet skipped »
+        # — un book du canal premium éteint par un réglage mal écrit, sans que
+        # personne ne fasse le lien. On retombe sur le défaut en le disant.
+        _brut = os.getenv("UNIBET_PARALLEL_TERMS", "6")
+        try:
+            ouvriers = max(1, int(_brut))
+        except ValueError:
+            print(f"[unibet] UNIBET_PARALLEL_TERMS={_brut!r} illisible — "
+                  f"6 par défaut")
+            ouvriers = 6
+        par_index: dict[int, dict] = {}
+        if ouvriers == 1 or len(term_keys) <= 1:
+            for i, tk in enumerate(term_keys):
+                try:
+                    par_index[i] = self.fetch_listview(sport, tk)
+                except httpx.HTTPError:
+                    continue
+        else:
+            with ThreadPoolExecutor(max_workers=ouvriers) as ex:
+                futs = {ex.submit(self.fetch_listview, sport, tk): i
+                        for i, tk in enumerate(term_keys)}
+                for fut in as_completed(futs):
+                    try:
+                        par_index[futs[fut]] = fut.result()
+                    except httpx.HTTPError:
+                        continue
+                    except Exception:
+                        # Un `fetch_listview` peut lever autre chose qu'une
+                        # HTTPError (JSON illisible, tenacity à bout). En série
+                        # ça faisait tomber toute la collecte Unibet ; ici ça ne
+                        # doit pas non plus faire tomber les autres termKeys.
+                        continue
+
         seen_ids: set = set()
         merged: list = []
-        for tk in term_keys:
-            try:
-                data = self.fetch_listview(sport, tk)
-            except httpx.HTTPError:
+        for i in range(len(term_keys)):
+            data = par_index.get(i)
+            if not data:
                 continue
             for ev in data.get("events") or []:
                 eid = (ev.get("event") or {}).get("id")

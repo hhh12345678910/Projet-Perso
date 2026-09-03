@@ -40,6 +40,7 @@ from __future__ import annotations
 
 import os
 import threading
+from contextlib import contextmanager
 import time
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from dataclasses import replace
@@ -933,6 +934,57 @@ def ligne_book(sport: str, name: str, dt: float, n_quotes: int,
     if erreur:
         return f"[yellow]\\[{sport}]   {name:<13} {dt:5.1f}s skipped: {erreur}[/yellow]"
     return f"\\[{sport}]   → {n_quotes:5d} quotes  {name:<13} {dt:5.1f}s"
+
+
+class Chrono:
+    """Accumule le temps par phase d'un scan de sport.
+
+    Les 13,6 s « hors fetch » mesurées le 03/09 par `scripts/book_latency.py`
+    sont aussi grosses que le fetch et n'avaient jamais été regardées : un seul
+    bloc opaque contenant l'analyse, les écritures en base et les alertes.
+    Impossible de savoir s'il fallait optimiser du SQL ou du calcul.
+
+    Accumule plutôt qu'il ne chronomètre une fois : une phase revient
+    plusieurs fois dans un scan (trois `insert_quotes_sparse` par exemple), et
+    ce qui compte est leur total, pas chaque passage."""
+
+    def __init__(self) -> None:
+        self.par_phase: dict[str, float] = {}
+        self._t0 = time.monotonic()
+
+    @contextmanager
+    def __call__(self, phase: str):
+        t = time.monotonic()
+        try:
+            yield
+        finally:
+            # `finally` et non après le `yield` : une exception dans la phase
+            # ne doit pas faire disparaître son temps du compte. Une phase qui
+            # échoue LENTEMENT est précisément ce qu'on cherche.
+            self.par_phase[phase] = self.par_phase.get(phase, 0.0) + (
+                time.monotonic() - t)
+
+    def total(self) -> float:
+        return time.monotonic() - self._t0
+
+    def reste(self) -> float:
+        """Le temps qu'aucune phase nommée ne revendique.
+
+        C'est la valeur la plus utile du lot : tant qu'elle domine, nommer une
+        phase de plus rapporte davantage que d'optimiser celles qu'on voit."""
+        return max(0.0, self.total() - sum(self.par_phase.values()))
+
+
+def ligne_phases(sport: str, ch: "Chrono") -> str:
+    """Le partage du temps d'un sport, en une ligne sous 80 colonnes.
+
+    ⚠️ Même contrainte que `ligne_book` : hors terminal `rich` enveloppe à 80
+    et couperait la ligne, la rendant illisible à toute sonde. Les noms de
+    phase sont courts pour cette raison, pas par négligence."""
+    bouts = " ".join(f"{k} {v:.1f}" for k, v in sorted(
+        ch.par_phase.items(), key=lambda kv: -kv[1]))
+    return (f"[dim]\\[{sport}]   ⏱ {bouts} reste {ch.reste():.1f} "
+            f"tot {ch.total():.1f}s[/dim]")
 
 
 def fetch_all_parallel(

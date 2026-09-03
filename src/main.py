@@ -68,7 +68,9 @@ from . import teams, track
 # Pinnacle — est privé à la collecte, et les tests qui le remplacent visent
 # désormais `src.orchestration`.
 from .orchestration import (
+    Chrono,
     fetch_all_parallel,
+    ligne_phases,
     fetch_smarkets_quotes,
     pinnacle_fetch_failed,
     pinnacle_was_cached,
@@ -865,6 +867,11 @@ def _daemon_scan_sport(
     so all sports execute concurrently every cycle. SQLite WAL mode lets multiple
     threads read simultaneously; concurrent writes serialise via the 10 s timeout
     built into Storage._conn(), so no external locking is needed."""
+    # Les 13,6 s « hors fetch » du 03/09 étaient un bloc opaque : analyse,
+    # écritures et alertes confondues. Le chrono les nomme, et sa valeur
+    # « reste » dit s'il vaut mieux nommer une phase de plus ou optimiser
+    # celles qu'on voit déjà.
+    ch = Chrono()
     vb_to_mark: list[ValueBet] = []
     sb_to_mark: list[Surebet] = []
     mid_to_mark: list[Middle] = []
@@ -873,10 +880,11 @@ def _daemon_scan_sport(
     try:
         console.print(f"\n[bold]{current_sport.upper()}[/bold]")
         # Betano is a soccer-only file-based scraper.
-        all_q = fetch_all_parallel(
-            current_sport, betano_file,
-            include_file_books=(current_sport == "soccer"),
-        )
+        with ch("fetch"):
+            all_q = fetch_all_parallel(
+                current_sport, betano_file,
+                include_file_books=(current_sport == "soccer"),
+            )
         pinnacle_q = [q for q in all_q if q.book == Book.PINNACLE]
         soft_raw   = [q for q in all_q if q.book not in SHARP_BOOKS]
 
@@ -926,6 +934,10 @@ def _daemon_scan_sport(
             # aucun match de hockey, et alerter dessus rendrait le canal
             # critique inutilisable.
             _pinnacle_health(current_sport, ok=not failed, tg_cfg=tg_cfg)
+            # Imprimer le bilan MÊME ici : un sport sorti tôt faute de
+            # référence coûte quand même son fetch, et un cycle court parce
+            # qu'il n'a rien fait ne doit pas se lire comme un cycle rapide.
+            console.print(ligne_phases(current_sport, ch))
             return
         _pinnacle_health(current_sport, ok=True, tg_cfg=tg_cfg)
 
@@ -943,10 +955,11 @@ def _daemon_scan_sport(
             secondary = align_reference_source(
                 secondary, {q.event_key for q in pinnacle_q}, current_sport
             )
-        fair = build_fair_lines(
-            pinnacle_q, cfg.devig_method,
-            secondary_quotes=secondary if SMARKETS_AS_REFERENCE else None,
-        )
+        with ch("fair"):
+            fair = build_fair_lines(
+                pinnacle_q, cfg.devig_method,
+                secondary_quotes=secondary if SMARKETS_AS_REFERENCE else None,
+            )
         if SMARKETS_ENABLED and current_sport in SMARKETS_SPORT_DOMAINS:
             # Compter ce qui SORT de la source, jamais se contenter de l'avoir
             # appelée : c'est le mode de défaillance dominant du projet (§11).
@@ -1000,7 +1013,8 @@ def _daemon_scan_sport(
             {k[0] for k in fair} | {q.event_key for q in pinnacle_q},
             current_sport, league_by_event,
         )
-        storage.upsert_events(event_rows)
+        with ch("base"):
+            storage.upsert_events(event_rows)
         # Écriture parcimonieuse : seuls les marchés qui ont bougé sont écrits.
         # 99,6 % des cotes Pinnacle sont identiques d'un cycle à l'autre, donc
         # l'essentiel de ce qu'on écrivait répétait la base. Le marché est
@@ -1009,7 +1023,8 @@ def _daemon_scan_sport(
         _offered = _written = 0
         if not pinnacle_was_cached(current_sport):
             _offered += len(pinnacle_q)
-            _written += storage.insert_quotes_sparse(pinnacle_q)
+            with ch("base"):
+                _written += storage.insert_quotes_sparse(pinnacle_q)
 
         # Persister Smarkets EST la condition pour pouvoir le juger plus tard.
         # Le prix de clôture n'existe que dans notre propre capture : Pinnacle
@@ -1020,7 +1035,8 @@ def _daemon_scan_sport(
         # rien, et l'absence ne se verrait nulle part.
         if secondary:
             _offered += len(secondary)
-            _written += storage.insert_quotes_sparse(secondary)
+            with ch("base"):
+                _written += storage.insert_quotes_sparse(secondary)
 
         # Sur soft_raw et non soft_q : on demande « ce book répond-il ? », pas
         # « ses cotes s'apparient-elles ? ». Un book qui répond mais dont rien
@@ -1058,7 +1074,8 @@ def _daemon_scan_sport(
         )
 
         _offered += len(soft_q)
-        _written += storage.insert_quotes_sparse(soft_q)
+        with ch("base"):
+            _written += storage.insert_quotes_sparse(soft_q)
         # Compter ce qui est écrit ET ce qui est proposé : « compression qui
         # marche » et « plus rien ne s'écrit » donnent le même silence (§11).
         console.print(
@@ -1294,6 +1311,10 @@ def _daemon_scan_sport(
 
     # ── Persist dedup marks outside the sport catch so a scraper/analysis
     # failure never prevents already-sent alerts from being recorded. ──────
+    # Chronométré à plat plutôt qu'avec `with` : envelopper le `try` aurait
+    # demandé de réindenter vingt lignes de code de production pour une mesure,
+    # et un `with` à l'intérieur du `try` aurait laissé une indentation bâtarde.
+    _t_marques = time.monotonic()
     try:
         for b in vb_to_mark:
             storage.mark_value_bet_notified(
@@ -1313,6 +1334,9 @@ def _daemon_scan_sport(
             f"[red]  dedup mark failed for {current_sport} — "
             f"next cycle may re-alert: {mark_err}[/red]"
         )
+    ch.par_phase["marques"] = time.monotonic() - _t_marques
+
+    console.print(ligne_phases(current_sport, ch))
 
 
 @app.command()

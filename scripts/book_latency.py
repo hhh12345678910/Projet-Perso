@@ -49,6 +49,8 @@ RE_OK = re.compile(r"^\[(\w+)\]\s+→\s+(\d+) quotes\s+(\S+)\s+([\d.]+)s\s*$")
 # `[sport]   Ladbrokes      15.1s skipped: ...`
 RE_KO = re.compile(r"^\[(\w+)\]\s+(\S+)\s+([\d.]+)s skipped:")
 RE_FAIT = re.compile(r"Cycle (\d+) done in (\d+)s")
+# `[sport]   ⏱ base 8.2 fetch 12.1 fair 0.4 reste 3.8 tot 24.5s`
+RE_PHASES = re.compile(r"^\[(\w+)\]\s+⏱\s+(.*?)\s+tot\s+([\d.]+)s\s*$")
 
 
 def _pcent(vals: list[float], p: float) -> float:
@@ -80,6 +82,7 @@ def main() -> int:
 
     # (cycle, sport) → [(durée, book, n_cotes)] ; -1 en n_cotes = échec
     par_lot: dict[tuple, list] = defaultdict(list)
+    phases: list[tuple[dict, float]] = []
     travail: dict[int, int] = {}
     cycle = 0
     for ligne in chemin.read_text(errors="replace").splitlines():
@@ -90,6 +93,13 @@ def main() -> int:
         m = RE_FAIT.search(ligne)
         if m:
             travail[int(m.group(1))] = int(m.group(2))
+            continue
+        m = RE_PHASES.match(ligne.strip())
+        if m:
+            if not (a.sport and m.group(1) != a.sport):
+                paires = re.findall(r"([a-zéè]+) ([\d.]+)", m.group(2))
+                phases.append(({k: float(v) for k, v in paires},
+                               float(m.group(3))))
             continue
         m = RE_OK.match(ligne.strip())
         if m:
@@ -103,13 +113,27 @@ def main() -> int:
             continue
         par_lot[(cycle, sp)].append((dt, book, n))
 
-    if not par_lot:
+    # ⚠️ NE SORTIR QUE SI LES DEUX MANQUENT. La première version sortait dès
+    # qu'aucune durée par book n'était trouvée — elle jetait donc les lignes de
+    # phases qu'elle venait de lire, et un journal qui n'aurait que celles-ci
+    # (filtre `--sport`, chemin de fetch court-circuité) n'affichait rien du
+    # tout en ayant l'air de fonctionner. Trouvé en vérifiant que
+    # l'avertissement « reste » sortait bien : il ne sortait jamais.
+    if not par_lot and not phases:
         raise SystemExit(
             "Aucune durée par book dans ce journal.\n"
             "Elles sont écrites par `fetch_all_parallel` depuis le 03/09/2026 : "
             "un journal\nantérieur, ou un daemon pas encore redémarré sur cette "
             "version, n'en a pas.\nRedémarrer le daemon, laisser tourner "
             "quelques minutes, relancer.")
+
+    if not par_lot:
+        print(f"\nOÙ PASSE LE TEMPS DU FETCH — {chemin}")
+        print("  Aucune durée par book (les lignes `→ N quotes`) — seules les "
+              "phases sont lisibles.")
+        _bloc_phases(phases)
+        print("\nLecture seule — aucune écriture, aucun réglage modifié.")
+        return 0
 
     if a.derniers:
         gardes = sorted({c for c, _ in par_lot})[-a.derniers:]
@@ -192,8 +216,44 @@ def main() -> int:
     else:
         print("\n  ⚠️ Aucune ligne « Cycle N done in Xs » lisible : impossible "
               "de dire quelle part\n     du cycle le fetch représente.")
+    # ── Le partage du temps HORS fetch ────────────────────────────────────
+    # Le fetch était la seule chose mesurée, et il ne fait que la moitié du
+    # cycle. Sans ce bloc on optimisait des scrapers en ignorant une part
+    # égale du temps, simplement parce qu'elle n'avait pas de nom.
+    _bloc_phases(phases)
+
     print("\nLecture seule — aucune écriture, aucun réglage modifié.")
     return 0
+
+
+def _bloc_phases(phases: list) -> None:
+    """Le partage du temps d'un scan de sport, fetch compris."""
+    if phases:
+        noms = sorted({k for d, _ in phases for k in d},
+                      key=lambda k: -sum(d.get(k, 0.0) for d, _ in phases))
+        tot = st.mean([t for _, t in phases])
+        print(f"\nOÙ PASSE LE TEMPS D'UN SPORT — {len(phases)} scans mesurés")
+        e2 = f"{'phase':10} {'médiane':>8} {'p90':>7} {'max':>7} {'part':>6}"
+        print(e2)
+        print("-" * len(e2))
+        for k in noms:
+            v = [d.get(k, 0.0) for d, _ in phases]
+            print(f"{k:10} {st.median(v):7.1f}s {_pcent(v, .9):6.1f}s "
+                  f"{max(v):6.1f}s {100 * st.mean(v) / tot if tot else 0:5.0f}%")
+        print("-" * len(e2))
+        print(f"{'TOTAL':10} {st.median([t for _, t in phases]):7.1f}s "
+              f"{_pcent([t for _, t in phases], .9):6.1f}s "
+              f"{max(t for _, t in phases):6.1f}s {'100%':>6}")
+        reste = st.mean([d.get("reste", 0.0) for d, _ in phases])
+        if tot and reste / tot > 0.25:
+            print(f"\n  ⚠️ « reste » pèse {100 * reste / tot:.0f} % : c'est du "
+                  f"temps qu'aucune phase ne revendique.\n     Tant qu'il "
+                  f"domine, NOMMER une phase de plus rapporte davantage "
+                  f"qu'optimiser\n     celles qu'on voit déjà.")
+    else:
+        print("\n  ⚠️ Aucune ligne de phases (`⏱`) dans ce journal : les 13,6 s "
+              "hors fetch restent\n     un bloc opaque. Elles sont écrites "
+              "depuis le 03/09/2026 — redémarrer le daemon.")
 
 
 if __name__ == "__main__":

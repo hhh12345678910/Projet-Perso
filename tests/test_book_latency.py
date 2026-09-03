@@ -15,6 +15,8 @@ jamais quand on teste à la main dans un terminal large.
 from __future__ import annotations
 
 import io
+import re
+import time
 
 import pytest
 from rich.console import Console
@@ -85,3 +87,70 @@ def test_une_erreur_a_deux_points_ne_casse_pas_la_lecture():
                               erreur="timeout: 30s elapsed: read"))
     m = RE_KO.match(rendu.strip())
     assert m and float(m.group(3)) == pytest.approx(7.5)
+
+
+# ── Les lignes de phases : mêmes deux pièges que les lignes de book ─────────
+
+class _ChronoFige:
+    """Un `Chrono` aux valeurs imposées, pour rendre la ligne sans dormir."""
+
+    def __init__(self, par_phase: dict, total: float):
+        self.par_phase, self._t = par_phase, total
+
+    def total(self) -> float:
+        return self._t
+
+    def reste(self) -> float:
+        return self._t - sum(self.par_phase.values())
+
+
+@pytest.mark.parametrize("sport", ["volleyball", "basketball", "soccer"])
+def test_la_ligne_de_phases_est_lue_par_la_sonde(sport):
+    from scripts.book_latency import RE_PHASES
+    from src.orchestration import ligne_phases
+
+    ch = _ChronoFige({"fetch": 12.0, "base": 8.0, "fair": 1.0, "marques": 0.5}, 26.0)
+    rendu = _rendu(ligne_phases(sport, ch))
+    assert "\n" not in rendu, f"enveloppée par rich : {rendu!r}"
+    m = RE_PHASES.match(rendu.strip())
+    assert m, f"la regex ne matche pas : {rendu!r}"
+    assert m.group(1) == sport
+    assert float(m.group(3)) == pytest.approx(26.0)
+    paires = dict(re.findall(r"([a-zéè]+) ([\d.]+)", m.group(2)))
+    assert {k: float(v) for k, v in paires.items()} == {
+        "fetch": 12.0, "base": 8.0, "fair": 1.0, "marques": 0.5, "reste": 4.5}
+
+
+def test_le_chrono_cumule_les_passages_d_une_meme_phase():
+    """Trois `insert_quotes_sparse` par scan : c'est leur TOTAL qui compte."""
+    from src.orchestration import Chrono
+
+    ch = Chrono()
+    for _ in range(3):
+        with ch("base"):
+            time.sleep(0.02)
+    assert ch.par_phase["base"] == pytest.approx(0.06, abs=0.03)
+    assert len(ch.par_phase) == 1
+
+
+def test_une_phase_qui_echoue_compte_quand_meme_son_temps():
+    """Une phase qui échoue LENTEMENT est précisément ce qu'on cherche : si
+    l'exception effaçait sa durée, le coupable serait invisible."""
+    from src.orchestration import Chrono
+
+    ch = Chrono()
+    with pytest.raises(ValueError):
+        with ch("fair"):
+            time.sleep(0.03)
+            raise ValueError("boom")
+    assert ch.par_phase["fair"] >= 0.02
+
+
+def test_le_reste_ne_devient_jamais_negatif():
+    """Des phases imbriquées double-compteraient et rendraient `reste` négatif
+    — un chiffre absurde vaut mieux caché derrière un plancher que servi."""
+    from src.orchestration import Chrono
+
+    ch = Chrono()
+    ch.par_phase["a"] = 1000.0
+    assert ch.reste() == 0.0

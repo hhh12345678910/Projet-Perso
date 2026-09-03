@@ -664,3 +664,46 @@ production et par le test — et il doit tenir **sous 80 colonnes**, parce que
 hors terminal `rich` enveloppe à 80 et couperait la ligne en deux, rendant la
 sonde muette sans que le format ait bougé. `tests/test_book_latency.py`
 verrouille les deux.
+
+### Le partage du temps hors fetch
+
+`book_latency` sort maintenant un second tableau, `OÙ PASSE LE TEMPS D'UN
+SPORT`, qui décompose les 13,6 s que le fetch ne couvrait pas : `fetch`,
+`fair` (construction des lignes justes), `base` (les quatre écritures —
+`upsert_events` et les trois `insert_quotes_sparse`), `marques` (la
+déduplication des alertes), et **`reste`**.
+
+**`reste` est la valeur la plus utile du lot** : c'est le temps qu'aucune phase
+ne revendique. Tant qu'il domine, **nommer une phase de plus rapporte davantage
+qu'optimiser celles qu'on voit déjà** — la sonde le dit d'elle-même au-delà de
+25 %.
+
+⚠️ Comme les durées par book, ces lignes sont écrites depuis le 03/09/2026 et
+demandent un daemon redémarré.
+
+### `UNIBET_PARALLEL_TERMS` — la queue d'Unibet
+
+Unibet interroge **un endpoint par compétition** (`termKey`), jusqu'à 101 par
+scan. La boucle était en file : mesuré le 03/09, Unibet tenait le chemin
+critique 52 % du temps, médiane 12,1 s mais **p90 à 23,4 s** — le coût vaut
+`N × latence`, et une seule requête qui repart en tenacity (3 tentatives, recul
+de 1 à 8 s) ajoute son recul à toutes les suivantes.
+
+La boucle est parallélisée, à **6 fils par défaut**, réglable :
+
+```bash
+UNIBET_PARALLEL_TERMS=6      # défaut ; 1 revient au comportement série
+```
+
+⚠️ **Ne pas monter ce chiffre à la légère.** Kambi limite le débit, et c'est
+exactement pour ça que les trois jumeaux (711, Bingoal, Scooore) sont
+désactivés dans `fetch_all_parallel`. Unibet est l'un des deux books du canal
+premium : lâcher 100 requêtes d'un coup lui ferait courir le risque qui a déjà
+coûté les trois autres.
+
+⚠️ L'ordre de fusion est préservé : la déduplication garde le **premier**
+exemplaire d'un `event_id`, donc fusionner dans l'ordre d'arrivée des threads
+changerait quel exemplaire gagne — un changement de données non déterministe,
+déguisé en optimisation, et invisible puisque le NOMBRE d'événements ne bouge
+pas. `tests/test_unibet_parallele.py` le verrouille avec des retards qui
+inversent délibérément l'ordre d'arrivée.
