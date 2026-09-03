@@ -917,6 +917,24 @@ def pinnacle_was_cached(sport: str) -> bool:
     return _PINNACLE_SERVED_FROM_CACHE.get(sport, False)
 
 
+def ligne_book(sport: str, name: str, dt: float, n_quotes: int,
+               erreur: str = "") -> str:
+    """La ligne de journal d'un book, en UN seul endroit.
+
+    `scripts/book_latency.py` parse ces lignes pour dire où passe le cycle. Si
+    le format vivait en clair dans la boucle et la regex dans la sonde, les
+    deux dériveraient sans bruit : la sonde afficherait un tableau vide en
+    ayant l'air de marcher, ce qui est le mode de défaillance dominant du
+    projet (§11). Ils partagent donc cette fonction, et un test vérifie que la
+    regex de la sonde matche ce qu'elle produit.
+
+    ⚠️ TENIR SOUS 80 COLONNES : hors terminal `rich` enveloppe à 80 et coupe la
+    ligne en deux, ce qui la rend illisible à la regex."""
+    if erreur:
+        return f"[yellow]\\[{sport}]   {name:<13} {dt:5.1f}s skipped: {erreur}[/yellow]"
+    return f"\\[{sport}]   → {n_quotes:5d} quotes  {name:<13} {dt:5.1f}s"
+
+
 def fetch_all_parallel(
     sport: str,
     betano_file: str | None = None,
@@ -1003,17 +1021,54 @@ def fetch_all_parallel(
             )
 
     all_quotes: list[OddQuote] = []
+    # ⚠️ LA DURÉE PAR BOOK EST LA SEULE MESURE QUI DISE OÙ VA LE CYCLE.
+    # `as_completed` attend TOUS les futures : le fetch coûte donc le book le
+    # PLUS LENT, jamais la moyenne. Sans ce chrono, un book qui traîne 40 s
+    # rallonge chaque cycle sans laisser la moindre trace — le journal
+    # n'imprimait que le nombre de cotes, dans l'ordre d'arrivée, sans dire de
+    # combien le dernier avait fait attendre les autres.
+    #
+    # Le temps est pris autour du `submit`, pas dans la lambda : ce qui compte
+    # est l'attente vécue par le cycle, pas le temps CPU du scraper. Les deux
+    # diffèrent quand le pool est saturé, et c'est justement ce cas qu'on veut
+    # voir.
+    t_fetch = time.monotonic()
+    lancé: dict = {}
+    durees: list[tuple[float, str, int]] = []
     with ThreadPoolExecutor(max_workers=max(1, len(tasks))) as executor:
-        futures = {executor.submit(fn): name for name, fn in tasks.items()}
+        futures = {}
+        for name, fn in tasks.items():
+            futures[executor.submit(fn)] = name
+            lancé[name] = time.monotonic()
         for future in as_completed(futures):
             name = futures[future]
+            dt = time.monotonic() - lancé[name]
             try:
                 quotes = future.result()
                 all_quotes.extend(quotes)
-                if quotes:
-                    console.print(f"\\[{sport}]   → {len(quotes):5d} quotes  {name}")
+                durees.append((dt, name, len(quotes)))
+                # Imprimé MÊME à zéro cote : « pas branché » et « branché mais
+                # vide » se ressemblaient trait pour trait dans le journal, et
+                # un book muet qui coûte 20 s est exactement ce qu'on cherche.
+                console.print(ligne_book(sport, name, dt, len(quotes)))
             except Exception as e:
-                console.print(f"[yellow]\\[{sport}]   {name} skipped: {e}[/yellow]")
+                durees.append((dt, name, -1))
+                console.print(ligne_book(sport, name, dt, 0, erreur=str(e)))
+    # Le chemin critique, nommé. C'est le seul book dont accélérer changerait
+    # la durée du cycle : tous les autres finissent avant lui de toute façon.
+    if durees:
+        dt, name, _n = max(durees)
+        total = time.monotonic() - t_fetch
+        deuxieme = sorted(durees, reverse=True)[1][0] if len(durees) > 1 else 0.0
+        # ⚠️ TENIR SOUS 80 COLONNES. Hors terminal, `rich` enveloppe à 80 et
+        # coupe la ligne en deux au milieu d'un mot — la version longue de
+        # cette ligne se cassait en « ... gain max\nsi Ladbrokes ... » dans
+        # valuebet.log. Aucune sonde ne parse cette ligne pour cette raison :
+        # `book_latency` recalcule tout depuis les lignes par book, qui sont
+        # courtes. Celle-ci est pour l'œil qui suit le journal en direct.
+        console.print(
+            f"[dim]\\[{sport}]   fetch {total:.1f}s · critique {name} {dt:.1f}s"
+            f" · 2e {deuxieme:.1f}s · gain {dt - deuxieme:.1f}s[/dim]")
     # Drop handicap quotes at the source: they're excluded from both value bets
     # and surebets, so parsing/storing/matching them is pure wasted CPU.
     # Filtering here lightens the whole downstream pipeline — critical on a

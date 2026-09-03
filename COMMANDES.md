@@ -628,3 +628,39 @@ modifie quoi que ce soit **sauf `repair_events --apply`**.
 ls scripts/*.py | xargs -n1 basename | sed 's/\.py$//'
 .venv/bin/python -m scripts.<nom> --help
 ```
+
+## Vitesse des cycles
+
+### `book_latency` — où passe le temps du fetch
+
+```bash
+.venv/bin/python -m scripts.book_latency
+.venv/bin/python -m scripts.book_latency --sport soccer --derniers 200
+```
+
+**Le point qui décide de tout** : `fetch_all_parallel` attend `as_completed`
+sur TOUS les books d'un sport. Le fetch coûte donc **le book le plus lent**,
+jamais la moyenne ni la somme. Accélérer un book qui répond en 2 s quand un
+autre en met 15 ne change **rien** à la durée du cycle.
+
+La sonde classe donc les books non par lenteur moyenne — un classement qui
+désigne le mauvais coupable — mais par **le temps qu'ils ont réellement fait
+perdre** : combien de fois chacun a tenu le chemin critique, et combien de
+secondes il a coûté **au-dessus du deuxième**. C'est ce dernier chiffre qui dit
+ce qu'un correctif rapporterait.
+
+⚠️ Elle ne mesure que le **fetch**. Un cycle vaut le fetch plus l'analyse, les
+écritures en base et les alertes. Elle compare son total aux lignes `Cycle N
+done in Xs` et dit explicitement quelle part reste hors fetch — si le gros du
+temps est ailleurs, aucun book n'est en cause.
+
+⚠️ Elle a besoin des durées par book, écrites par `fetch_all_parallel` **depuis
+le 03/09/2026**. Un journal antérieur, ou un daemon pas encore redémarré sur
+cette version, n'en a aucune : la sonde le dit au lieu d'afficher un tableau
+vide.
+
+Le format de ces lignes vit dans `orchestration.ligne_book`, partagé par la
+production et par le test — et il doit tenir **sous 80 colonnes**, parce que
+hors terminal `rich` enveloppe à 80 et couperait la ligne en deux, rendant la
+sonde muette sans que le format ait bougé. `tests/test_book_latency.py`
+verrouille les deux.
