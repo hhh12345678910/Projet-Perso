@@ -96,6 +96,22 @@ def _books_demandes(brut: str | None) -> set[str] | None:
     return out or None
 
 
+def _gains(rows: list, stake: float) -> list:
+    """Le P&L de chaque pari notable du lot, un par élément.
+
+    Extrait pour que le t de la différence entre deux lots disjoints puisse
+    être calculé : `_cellule` n'agrège que des moyennes, et la variance de
+    l'écart demande les gains individuels."""
+    out = []
+    for r in rows:
+        statut = clv_settle(r["market"], r["outcome_label"], r["line"],
+                            r["winner"], r["home_score"], r["away_score"])
+        p = clv_pnl(statut, float(r["odd_taken"]), stake)
+        if p is not None:
+            out.append(p)
+    return out
+
+
 def _cellule(rows: list, stake: float) -> dict:
     """Les deux mesures d'un groupe, chacune avec SON effectif."""
     matchs = {(r["home"], r["away"], (r["start_time"] or "")[:10]) for r in rows}
@@ -221,8 +237,32 @@ def main() -> int:
     if a.comparer:
         sur_cote = selectionner(porte)
         sur_fair = selectionner(lambda r: porte(_VueFairOdd(r)))
-        cles_c, cles_f = set(sur_cote), set(sur_fair)
-        communes = cles_c & cles_f
+
+        # ⚠️ Partition sur l'IDENTITÉ DU PARI (`vb.id`), JAMAIS sur la clé de
+        # déduplication. `selectionner` rejoue la dédup « meilleure cote prise »
+        # sur un vivier différent dans chaque régime : pour une même clé
+        # (équipes+jour+marché+pari), le représentant retenu peut être un AUTRE
+        # book, à un AUTRE prix. Partitionner sur la clé faisait tomber ces cas
+        # dans « gardées par les DEUX » et les sortait des deux lots exclusifs,
+        # alors que les deux colonnes de totaux les comptaient avec deux prix,
+        # deux CLV et deux P&L différents.
+        #
+        # Le biais était systématique ET orienté : il touche exactement les
+        # sélections dont la cote prise dépasse la bande mais dont la fair odd y
+        # retombe — donc le régime fair y promeut la cote la PLUS LONGUE de la
+        # même sélection, un pari de variance supérieure, invisible dans le
+        # tableau. Détecté par la revue adverse, puis confirmé sur les données
+        # réelles du 03/09 : les totaux ne se reconstituaient pas —
+        # 7 284 + 1 530 = 8 814 pour un total affiché de 8 855, 41 € manquants.
+        par_id_c = {r["id"]: r for r in sur_cote.values()}
+        par_id_f = {r["id"]: r for r in sur_fair.values()}
+        communs = par_id_c.keys() & par_id_f.keys()
+
+        # Combien de sélections changent de prix retenu d'un régime à l'autre.
+        # Tant que ce nombre n'est pas nul, les deux colonnes de totaux ne
+        # portent PAS sur les mêmes paris, et il faut le dire.
+        bascules = sum(1 for k in set(sur_cote) & set(sur_fair)
+                       if sur_cote[k]["id"] != sur_fair[k]["id"])
 
         print(f"\nCOMPARAISON DES DEUX PORTES — {porte_desc}")
         print(f"Books : {', '.join(sorted(books)) if books else 'tous'}"
@@ -244,7 +284,12 @@ def main() -> int:
                 ("CLV positives", "clv_positives_pct", " %", 1),
                 ("paris réglés", "n_regles", "", 0),
                 ("ROI", "roi_pct", " %", 2),
-                ("sigma du ROI", "sigma_roi", "", 1),
+                # ⚠️ Chaque σ teste « cette porte gagne-t-elle » contre zéro,
+                # SÉPARÉMENT. Les deux échantillons partagent l'essentiel de
+                # leurs paris : ces deux nombres NE SE SOUSTRAIENT PAS, et leur
+                # écart ne porte aucune significativité. Le seul t qui réponde
+                # à la question est celui de la différence, imprimé plus bas.
+                ("σ vs 0 (chaque porte seule)", "sigma_roi", "", 1),
                 ("P&L notionnel", "pnl_eur", " €", 0)):
             # Un signe n'a de sens que sur une grandeur qui peut être négative.
             # « CLV positives : +100,0 % » se lirait comme une variation.
@@ -256,23 +301,45 @@ def main() -> int:
 
         print("\nRECOUVREMENT — ce que chaque porte prend SEULE")
         print("-" * len(entete))
-        blocs = [
-            ("gardées par les DEUX", [sur_cote[k] for k in communes]),
-            ("SEULEMENT par la cote prise", [sur_cote[k] for k in cles_c - cles_f]),
-            ("SEULEMENT par la fair odd", [sur_fair[k] for k in cles_f - cles_c]),
-        ]
+        lot_c = [par_id_c[i] for i in par_id_c.keys() - communs]
+        lot_f = [par_id_f[i] for i in par_id_f.keys() - communs]
+        blocs = [("gardés par les DEUX", [par_id_c[i] for i in communs]),
+                 ("SEULEMENT par la cote prise", lot_c),
+                 ("SEULEMENT par la fair odd", lot_f)]
         for lib, sous in blocs:
             c = _cellule(sous, a.stake)
             roi = "—" if c["roi_pct"] is None else f"{c['roi_pct']:+.2f} %"
             clv = "—" if c["clv_moy_pct"] is None else f"{c['clv_moy_pct']:+.2f} %"
             pnl = "—" if c["pnl_eur"] is None else f"{c['pnl_eur']:+.0f} €"
-            print(f"  {lib:32} n={c['n_opportunites']:5}  "
+            # Même convention que `pnl_detections.report` : une ligne sous
+            # seuil est marquée. C'est ici qu'elle manquait le plus — le lot
+            # exclusif est par construction le plus petit du tableau, et c'est
+            # celui sur lequel la decision repose.
+            flag = " ⚠️" if c["n_regles"] < 30 else ""
+            print(f"  {lib:30} n={c['n_opportunites']:5}  "
                   f"réglés={c['n_regles']:5}  CLV {clv:>9}  ROI {roi:>9}  "
-                  f"P&L {pnl:>9}")
+                  f"P&L {pnl:>9}{flag}")
 
-        print("\n⚠️ Ce sont les DEUX dernières lignes qui décident, pas les "
-              "totaux : basculer\n   la porte revient exactement à échanger le "
-              "premier lot contre le second.")
+        # Le t de la DIFFÉRENCE, la seule quantité qui réponde à la question.
+        # Les échantillons sont APPARIÉS : la part commune s'annule exactement,
+        # donc la variance de l'écart ne depend QUE des deux lots disjoints.
+        gc, gf = _gains(lot_c, a.stake), _gains(lot_f, a.stake)
+        var = ((st.variance(gc) * len(gc) if len(gc) > 1 else 0.0)
+               + (st.variance(gf) * len(gf) if len(gf) > 1 else 0.0))
+        ecart = sum(gf) - sum(gc)
+        t = ecart / var ** 0.5 if var > 0 else None
+        print(f"\n  ÉCART NET de la bascule : {ecart:+.0f} € "
+              f"({'t = %+.2f' % t if t is not None else 't incalculable'})"
+              f"   — sous |t| = 2, c'est du bruit.")
+        if bascules:
+            print(f"  ⚠️ {bascules} sélection(s) changent de PRIX RETENU d'un "
+                  f"régime à l'autre : sur\n     celles-là, les deux colonnes "
+                  f"de totaux ne comparent pas le même pari.")
+
+        print("\n⚠️ Ce sont les DEUX dernières lignes du recouvrement qui "
+              "décident, pas les totaux.\n   La partition porte sur l'identité "
+              "du pari, donc les totaux se reconstituent\n   exactement : "
+              "commun + lot exclusif = total, de chaque côté.")
         print("\n⚠️ Sur un value bet, `fair_odd < odd_taken` toujours "
               "(ev = odd/fair − 1). La bascule\n   n'élargit donc pas la bande, "
               "elle la fait GLISSER vers le haut des cotes prises :\n   à 20 % "
