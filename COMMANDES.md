@@ -176,6 +176,24 @@ une clôture capturée, le ROI un résultat. Chaque colonne porte donc son
 effectif — comparer leurs moyennes suppose de vérifier d'abord que les deux
 se ressemblent.
 
+**Compare trois schémas de mise sur la même population** — fixe, quart de Kelly
+plafonné, et la règle de ton `.env` (35 € / 45 € au-dessus de `STAKE_EV_TIER`).
+Les trois sont reconstruits depuis le code de production, pas recopiés. Sort le
+ROI, le drawdown maximal et le capital engagé, plus la courbe d'équité point
+par point.
+
+```bash
+.venv/bin/python -m scripts.staking_curves --premium --books kambi,ladbrokes_be
+.venv/bin/python -m scripts.staking_curves --premium --books kambi,ladbrokes_be \
+    --out courbes.csv
+```
+
+⚠️ **Le plus gros P&L n'est pas le meilleur schéma.** Le quart de Kelly mise 2 à
+3 fois la mise fixe sur ce portefeuille : il gagne plus sur un edge positif ET
+creuse plus. Ce qui se compare, c'est le ROI (à euro risqué égal) et le
+drawdown. La bankroll est tenue FIXE, sans composition, sinon le tableau
+mesurerait la composition et non le schéma.
+
 ---
 
 ## 4. La CLV — le KPI du projet
