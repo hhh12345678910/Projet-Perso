@@ -511,10 +511,20 @@ def main() -> int:
         roi = "—" if l["roi_pct"] is None else f"{l['roi_pct']:+.2f}%"
         sig = "—" if l["sigma_roi"] is None else f"{l['sigma_roi']:.1f}"
         pnl = "—" if l["pnl_eur"] is None else f"{l['pnl_eur']:+.0f}€"
+        # Un ROI sur 11 paris s'imprime comme un ROI sur 400. Sur l'axe du
+        # delai les bandes lointaines fondent : sans marque, la ligne la plus
+        # spectaculaire du tableau est aussi la moins fiable, et rien ne le dit.
+        maigre = " ⚠️" if 0 < l["n_regles"] < 30 else ""
         print(f"{l['sport'][:8]:8} {l['tranche']:{larg}} "
               f"{l['n_opportunites']:5} {l['n_matchs']:6} {l['n_joues']:5} "
               f"{l['n_clv']:5} {clv:>8} {clv_pos:>6} "
-              f"{l['n_regles']:6} {gpn:>12} {roi:>8} {sig:>5} {pnl:>9}")
+              f"{l['n_regles']:6} {gpn:>12} {roi:>8} {sig:>5} {pnl:>9}{maigre}")
+
+    if any(0 < l["n_regles"] < 30 for l in lignes):
+        print("\n⚠️ = moins de 30 paris réglés dans la cellule. À cet effectif, "
+              "l'intervalle de\n   confiance du ROI dépasse largement l'écart "
+              "qu'on cherche à lire : la ligne est\n   un indice, pas un "
+              "résultat.")
 
     print("\n⚠️ `n_clv` et `réglés` ne décrivent PAS la même population : la CLV "
           "exige une clôture\n   capturée, le ROI un résultat. Comparer leurs "
