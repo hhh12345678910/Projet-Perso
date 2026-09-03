@@ -131,6 +131,33 @@ Si les seuils sont introuvables (ni canal en base, ni `.env` chargé), la
 commande **refuse de répondre** au lieu de retomber sur les défauts du code :
 un ROI plausible et faux coûte plus cher qu'une erreur franche (§18.3).
 
+Le tableau se découpe aussi **par catégorie de ligue** et **par ligue**, avec
+une ligne `⚠️ SANS LIGUE EN BASE` toujours affichée : sans elle, « je n'ai pas
+de détections dans ces compétitions » et « je n'ai pas leur ligue en base »
+donnent le même tableau rassurant.
+
+```bash
+.venv/bin/python -m scripts.pnl_detections --premium --min-ligue 40
+.venv/bin/python -m scripts.pnl_detections --premium --top-ligues 40
+```
+
+**Remplit `events.league` là où elle est vide**, depuis les fichiers de scores
+déjà sur disque — aucun réseau, aucun quota. La ligue ne vient que de Pinnacle
+(`main.py:982`) : tout événement du cadre de référence dont il ne nomme pas la
+compétition reste sans ligue pour toujours, et aucune analyse par championnat
+ne le voit. Sonde par défaut ; `--apply` écrit, sans jamais écraser une ligue
+déjà connue.
+
+```bash
+.venv/bin/python -m scripts.repair_leagues            # ce qui serait récupéré
+.venv/bin/python -m scripts.repair_leagues --apply    # écrit
+```
+
+⚠️ Il ne récupère que ce que le rapprochement lie — donc l'essentiel de ce qui
+porte un résultat, et rien des événements que `results-update` n'a pas su
+apparier. Le féminin et les jeunes sont **sous-récupérés par construction** :
+la barrière de classe se règle sur la ligue, celle qu'on cherche justement.
+
 ---
 
 ## 4. La CLV — le KPI du projet

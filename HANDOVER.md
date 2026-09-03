@@ -482,6 +482,7 @@ qu'une documentation muette** : elle fait perdre le temps de la vérifier.
 | `book_health` | un book est-il traité comme les autres, ou seulement collecté ? |
 | `cycle_speed` | vitesse des cycles, lue dans `valuebet.log` |
 | `repair_events` | recrée les lignes `events` des paris orphelins (**écrit en base**) |
+| `repair_leagues` | remplit `events.league` depuis les fichiers de scores (**écrit en base avec `--apply`**) — la ligue ne vient que de Pinnacle (`main.py:982`), donc tout événement qu'il ne nomme pas reste sans ligue à jamais |
 | `magic_probe_report` / `magic_probe_show` | inventaire et forme des sondes MagicBetting |
 
 ⚠️ **`market_supply` mérite d'être connue par cœur.** C'est elle qui a montré

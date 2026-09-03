@@ -187,6 +187,12 @@ def main() -> int:
                          "(implique --premium).")
     ap.add_argument("--stake", type=float, default=25.0,
                     help="Mise notionnelle par pari.")
+    ap.add_argument("--min-ligue", type=int, default=30, dest="min_ligue",
+                    metavar="N",
+                    help="Effectif minimum pour qu'une ligue soit détaillée "
+                         "(défaut 30).")
+    ap.add_argument("--top-ligues", type=int, default=25, dest="top_ligues",
+                    metavar="N", help="Nombre de ligues affichées (défaut 25).")
     a = ap.parse_args()
     if a.canal:
         a.premium = True
@@ -300,6 +306,53 @@ def main() -> int:
         for k, sub in sorted(by.items(), key=lambda kv: -len(kv[1])):
             report(f"    {k}", sub, warn=30)
         print()
+
+    # ── Par catégorie de ligue ────────────────────────────────────────────
+    # `leagues.categorize` est une fonction PURE du nom de ligue : la découpe
+    # se recalcule à chaque exécution et suit donc toute réparation de
+    # `events.league` (`scripts.repair_leagues`) sans rien à migrer.
+    from src.leagues import categorize  # noqa: E402
+
+    sans_ligue = [r for r in opp if not (r["league"] or "").strip()]
+    avec_ligue = [r for r in opp if (r["league"] or "").strip()]
+    by_cat = defaultdict(list)
+    for r in avec_ligue:
+        by_cat[categorize(r["league"])].append(r)
+    print("  par catégorie de ligue")
+    for k, sub in sorted(by_cat.items(), key=lambda kv: -len(kv[1])):
+        report(f"    {k}", sub, warn=30)
+    # ⚠️ Affiché MÊME à zéro, et en dernier. Sans cette ligne, « je n'ai pas de
+    # détections dans ces compétitions » et « je n'ai pas leur ligue en base »
+    # rendent le même tableau rassurant — c'est le §13.12, et le trou de
+    # `events.league` (main.py:982) le rend très réel ici.
+    report("    ⚠️ SANS LIGUE EN BASE", sans_ligue, warn=30)
+    if sans_ligue:
+        print(f"       {100.0 * len(sans_ligue) / len(opp):.1f} % des opportunités "
+              f"— la découpe ci-dessus ne les décrit pas.")
+        print("       `.venv/bin/python -m scripts.repair_leagues` en récupère "
+              "une partie.")
+    print()
+
+    # ── Par ligue ─────────────────────────────────────────────────────────
+    by_lg = defaultdict(list)
+    for r in avec_ligue:
+        by_lg[r["league"]].append(r)
+    gardees = [(k, s) for k, s in by_lg.items() if len(s) >= a.min_ligue]
+    print(f"  par ligue (≥ {a.min_ligue} opportunités ; "
+          f"{len(gardees)} sur {len(by_lg)} ligues distinctes)")
+    if not gardees:
+        print("    — aucune ligue n'atteint le seuil.")
+    for k, sub in sorted(gardees, key=lambda kv: -len(kv[1]))[:a.top_ligues]:
+        report(f"    {k[:38]}", sub, warn=a.min_ligue)
+    # Le §9 et le §20.8 ont tous deux mesuré qu'une découpe par ligue ne
+    # survit pas à un test de permutation : la meilleure ligue observée tombe
+    # dans ce que le pur hasard produit (p = 0,13 puis p = 0,62). Le rappeler
+    # ici évite d'aller couper la pire ligne du tableau.
+    print("\n  ⚠️ Deux mesures indépendantes (§9, §20.8) ont montré qu'un écart "
+          "entre ligues\n     ne survit pas à un test de permutation. Lis ce "
+          "tableau comme une piste à\n     retester, jamais comme une décision "
+          "de coupe.")
+    print()
     return 0
 
 
