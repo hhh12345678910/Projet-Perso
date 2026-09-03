@@ -2162,6 +2162,15 @@ celle de la PREMIÈRE détection et non de la mise ; et les bandes `< 0 (LIVE)`
 et `? (sans horaire)` sont imprimées si elles se remplissent, la première
 devant rester vide sous une porte prématch.
 
+⚠️ **Et surtout : la conclusion « le seul vrai trou est 24–48 h » ci-dessus a
+été tirée en comparant six cellules à une moyenne qui les contenait, sans
+corriger le nombre de comparaisons.** À dix bandes testées, un |t| de 2,3
+arrive par pur hasard sous une vérité parfaitement plate. L'outil imprime
+désormais un σ pour la CLV en plus de celui du ROI, et un bloc « chaque bande
+contre tout le reste » en t de Welch avec le seuil de Bonferroni du nombre de
+bandes réellement testées. **C'est ce bloc qui décide, jamais la comparaison
+d'une cellule à la ligne TOTAL.**
+
 **Par book** (toutes opportunités) :
 
 | Book | n | CLV | % positives | perte moy. quand négatif |
