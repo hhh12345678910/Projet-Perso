@@ -144,7 +144,8 @@ def main() -> int:
                vb.line, vb.odd_taken, vb.fair_odd, vb.ev_pct, vb.detected_at,
                {champ_perdu} AS closing_lost,
                e.sport AS sport, e.league AS league, e.start_time AS start_time,
-               (cs.id IS NOT NULL) AS a_cloture
+               (cs.id IS NOT NULL) AS a_cloture,
+               (cs.fair_odd IS NOT NULL) AS a_fair
         FROM value_bets vb
         LEFT JOIN clv_snapshots cs
                ON cs.value_bet_id = vb.id AND cs.closing = 1
@@ -174,8 +175,14 @@ def main() -> int:
 
     # « déplacé SANS » et « déplacé AVEC » : la part des horaires déplacés dans
     # chacun des deux lots. C'est leur ÉCART qui décide, pas leur niveau.
-    ent = (f"{'délai':16} {'opp':>6} {'clôture':>8} {'%':>6}   "
-           f"{'perdue':>6}   {'horaire déplacé':>16}   "
+    # DEUX taux, pas un. Cette sonde comptait tout snapshot `closing = 1`,
+    # alors que `clv_roi_matrix` exige en plus un `fair_odd` non nul — une
+    # clôture non déviguée ne produit aucune CLV. Les deux outils annonçaient
+    # donc deux « taux de capture » incomparables (96 % contre 68 % sur le
+    # football) sans que rien ne le signale. `snapshot` est ce que la capture a
+    # écrit ; `CLV util.` est ce que l'analyse peut réellement lire.
+    ent = (f"{'délai':16} {'opp':>6} {'snapshot':>8} {'%':>6} "
+           f"{'CLV util.':>9} {'%':>6}   {'perdue':>6}   "
            f"{'dépl.SANS':>9} {'dépl.AVEC':>9} {'z':>6}")
     print()
     print(ent)
@@ -187,17 +194,52 @@ def main() -> int:
         n = len(sub)
         avec = [r for r in sub if r["a_cloture"]]
         sans = [r for r in sub if not r["a_cloture"]]
+        util = sum(1 for r in sub if r["a_fair"])
         perdue = sum(1 for r in sub if r["closing_lost"])
-        dep = sum(1 for r in sub if deplace(r))
         # SANS d'abord : voir `_prop_diff`.
         p_sans, p_avec, _d, z = _prop_diff(
             sum(1 for r in sans if deplace(r)), len(sans),
             sum(1 for r in avec if deplace(r)), len(avec))
         f = lambda v: "—" if v is None else f"{100 * v:5.1f}%"  # noqa: E731
-        print(f"{lab:16} {n:6} {len(avec):8} {100 * len(avec) / n:5.1f}%   "
-              f"{perdue:6}   {dep:6} {100 * dep / n:8.1f}%   "
-              f"{f(p_sans):>7} {f(p_avec):>7} "
+        print(f"{lab:16} {n:6} {len(avec):8} {100 * len(avec) / n:5.1f}% "
+              f"{util:9} {100 * util / n:5.1f}%   {perdue:6}   "
+              f"{f(p_sans):>9} {f(p_avec):>9} "
               f"{('—' if z is None else f'{z:+.2f}'):>6}")
+
+    # L'HYPOTHÈSE SUIVANTE, testée ici. `closing_group` (storage.py:1848)
+    # apparie aussi sur `market` ET sur `line`. La ligne d'un handicap ou d'un
+    # total DÉRIVE avec le temps : un pari pris à −0,5 se retrouve coté −1,0 au
+    # coup d'envoi, et la recherche de clôture demande toujours −0,5. Plus le
+    # pari est pris tôt, plus la ligne a eu le temps de bouger — exactement la
+    # forme du déficit. Si l'hypothèse est juste, les marchés SANS ligne (h2h)
+    # gardent leur taux de capture loin du match, et seuls ceux À ligne
+    # s'effondrent. Si les deux s'effondrent pareil, elle est écartée aussi.
+    print("\nLA CAPTURE PAR MARCHÉ — la ligne dérive-t-elle hors de portée ?")
+    e2 = (f"{'marché':14} {'ligne':>6}   {'< 24 h':>8} {'%':>7}   "
+          f"{'>= 24 h':>8} {'%':>7}   {'chute':>7}")
+    print(e2)
+    print("-" * len(e2))
+    LOIN = {"24-48 h", "48-72 h", "72-96 h", "96-120 h", "120-168 h", "> 168 h"}
+    par_marche: dict[str, list] = defaultdict(list)
+    for r in gardees:
+        par_marche[(r["market"] or "?")].append(r)
+    for m in sorted(par_marche, key=lambda k: -len(par_marche[k])):
+        sub = par_marche[m]
+        if len(sub) < 30:
+            continue
+        avec_ligne = sum(1 for r in sub if r["line"] is not None)
+        court = [r for r in sub if _bande_delai(r) not in LOIN]
+        loin = [r for r in sub if _bande_delai(r) in LOIN]
+        if not court or not loin:
+            continue
+        tc = sum(1 for r in court if r["a_cloture"]) / len(court)
+        tl = sum(1 for r in loin if r["a_cloture"]) / len(loin)
+        print(f"{m[:14]:14} {100 * avec_ligne / len(sub):5.0f}%   "
+              f"{len(court):8} {100 * tc:6.1f}%   {len(loin):8} "
+              f"{100 * tl:6.1f}%   {100 * (tl - tc):+6.1f} pt")
+    print("\n  Une chute concentrée sur les marchés à ligne (handicaps, totaux) "
+          "confirme la\n  dérive de ligne ; une chute égale partout, y compris "
+          "sur un marché à 0 % de\n  ligne, l'écarte à son tour.")
 
     print("\nLE TÉMOIN, TOUTES BANDES CONFONDUES")
     print("-" * len(ent))

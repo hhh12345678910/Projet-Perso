@@ -269,6 +269,34 @@ que soit son niveau absolu. Elle tranche dans les trois sens et le dit.
 la nouvelle clé : un horaire déplacé alors que l'événement n'était plus scanné
 reste invisible. Le phénomène est donc **sous-estimé, jamais surestimé**.
 
+**Résultat mesuré (03/09/2026) : l'hypothèse est ÉCARTÉE.** Sur le football,
+3,82 % d'horaires déplacés parmi les paris sans clôture contre 2,67 % parmi
+ceux qui en ont une — z = +1,29. Tous sports, +3,42 points à z = +1,80. Ni
+l'un ni l'autre ne se distingue. Câbler `_event_key_like` dans `closing_group`
+reste une amélioration, mais ne récupérerait pas le déficit.
+
+⚠️ **Les per-bandes de la table tous sports sont trompeuses** (z de +3 à +10 sous
+24 h) : le tennis n'a pas d'heure de début fixe (`matcher.py:213`, trois heures
+de tolérance, jusqu'à onze clés par match au §17.8), donc « horaire déplacé »
+y mesure surtout la part de tennis de la bande. **La table `--sport soccer` est
+la seule lisible pour ce témoin.**
+
+**Deux taux de capture, pas un.** La colonne `snapshot` compte tout
+`clv_snapshots.closing = 1` ; la colonne `CLV util.` exige en plus un
+`fair_odd` non nul, ce qu'exige `clv_roi_matrix` pour son `n_clv` — une clôture
+non déviguée ne produit aucune CLV. Sans cette distinction les deux outils
+annonçaient deux taux incomparables (96 % contre 68 % sur le football) sans que
+rien ne le signale. `backfill-fair-lines` (`main.py:1770`) comble l'écart sur
+l'historique.
+
+**Le bloc `LA CAPTURE PAR MARCHÉ`** teste l'hypothèse suivante :
+`closing_group` apparie aussi sur `market` **et sur `line`**, et la ligne d'un
+handicap ou d'un total dérive avec le temps — un pari pris à −0,5 est coté −1,0
+au coup d'envoi, et la recherche demande toujours −0,5. Plus le pari est pris
+tôt, plus la ligne a bougé. Une chute concentrée sur les marchés à ligne la
+confirme ; une chute égale partout, y compris sur un marché à 0 % de ligne,
+l'écarte à son tour.
+
 **Compare trois schémas de mise sur la même population** — fixe, quart de Kelly
 plafonné, et la règle de ton `.env` (35 € / 45 € au-dessus de `STAKE_EV_TIER`).
 Les trois sont reconstruits depuis le code de production, pas recopiés. Sort le
