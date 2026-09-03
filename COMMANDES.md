@@ -176,6 +176,41 @@ une clôture capturée, le ROI un résultat. Chaque colonne porte donc son
 effectif — comparer leurs moyennes suppose de vérifier d'abord que les deux
 se ressemblent.
 
+**Le même tableau par DÉLAI avant le coup d'envoi** — `--axe delai`. Le §16.4
+mesurait la CLV par délai mais s'arrêtait à un seul bloc « > 48 h » ; cet axe
+le découpe en 48-72, 72-96, 96-120, 120-168 et > 168 h, et pose le ROI en face.
+La table tous sports confondus s'imprime **en premier**, parce que c'est la
+seule où le ROI garde un effectif lisible dans les bandes lointaines.
+
+```bash
+.venv/bin/python -m scripts.clv_roi_matrix --premium --books kambi,ladbrokes_be \
+    --axe delai --stake 35
+.venv/bin/python -m scripts.clv_roi_matrix --premium --books kambi,ladbrokes_be \
+    --axe delai --out clv_roi_delai.csv
+```
+
+⚠️ **Le délai est celui de la PREMIÈRE détection, pas de la mise.**
+`detected_at` ne bouge jamais (§14.5) : une opportunité vue à 60 h et encore
+affichée à 3 h du coup d'envoi compte en 48-72 h. Ces bandes répondent à
+« quand le prix est-il apparu », ce qui est bien la question de la CLV, mais
+elles ne prouvent pas qu'un pari soit resté plaçable sur toute la bande.
+
+⚠️ Deux bandes hors barème existent pour **se voir** plutôt que d'être réparties
+en silence : `< 0 (LIVE)` (détection après le coup d'envoi, §9) et
+`? (sans horaire)` (pas de ligne `events`, ou `detected_at` illisible). Sous la
+porte premium, qui est prématch, `< 0 (LIVE)` doit rester **vide** : si elle se
+remplit, c'est que la porte et le calcul du délai ne datent pas les paris de la
+même façon, et le tableau est à relire avant d'en tirer quoi que ce soit.
+
+⚠️ Le délai n'est pas indépendant du reste : les marchés ouverts tôt ne sont
+pas les mêmes ligues, ni les mêmes books, ni les mêmes cotes que ceux ouverts
+2 h avant. Un écart de ROI entre deux bandes peut n'être qu'un écart de
+composition — croiser avec `--axe cote` avant de conclure.
+
+⚠️ `--axe` est **refusé** avec `--comparer` : la comparaison des deux portes
+n'affiche que des totaux, et un drapeau ignoré en silence est précisément le
+mode de panne de ce projet (§11).
+
 **Compare trois schémas de mise sur la même population** — fixe, quart de Kelly
 plafonné, et la règle de ton `.env` (35 € / 45 € au-dessus de `STAKE_EV_TIER`).
 Les trois sont reconstruits depuis le code de production, pas recopiés. Sort le
@@ -188,10 +223,12 @@ par point.
     --out courbes.csv
 ```
 
-⚠️ **Le plus gros P&L n'est pas le meilleur schéma.** Le quart de Kelly mise 2 à
-3 fois la mise fixe sur ce portefeuille : il gagne plus sur un edge positif ET
-creuse plus. Ce qui se compare, c'est le ROI (à euro risqué égal) et le
-drawdown. La bankroll est tenue FIXE, sans composition, sinon le tableau
+⚠️ **Le plus gros P&L n'est pas le meilleur schéma.** Le quart de Kelly ne mise
+pas forcément plus que la mise fixe : à la bankroll du `.env` (1 250 €) il
+engage environ un tiers de MOINS, et le classement des P&L s'inverse
+mécaniquement sans qu'aucun edge n'ait bougé. Ce qui se compare, c'est le ROI
+(à euro risqué égal) et le drawdown — le P&L brut ne fait que refléter le
+capital engagé. La bankroll est tenue FIXE, sans composition, sinon le tableau
 mesurerait la composition et non le schéma.
 
 ---

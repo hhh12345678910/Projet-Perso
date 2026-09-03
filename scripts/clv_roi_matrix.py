@@ -28,8 +28,18 @@ Unibet + 711 + Bingoal + Scooore — le groupe est lu dans `reference.KAMBI_BOOK
 jamais recopié. Le filtre s'applique AVANT la déduplication : « le meilleur
 prix parmi les books que je joue vraiment », et non le meilleur prix du marché.
 
+AXE DES LIGNES
+--------------
+`--axe cote` (défaut) découpe par tranche de cote prise. `--axe delai` découpe
+par heures entre la détection et le coup d'envoi, et pousse le découpage au
+delà des « > 48 h » où le §16.4 s'arrêtait : 48-72, 72-96, 96-120, 120-168,
+> 168 h. Sur cet axe la table tous sports confondus est imprimée EN PREMIER,
+parce que c'est la seule où le ROI garde un effectif lisible dans les bandes
+lointaines.
+
 Usage :
     .venv/bin/python -m scripts.clv_roi_matrix --premium
+    .venv/bin/python -m scripts.clv_roi_matrix --premium --axe delai
     .venv/bin/python -m scripts.clv_roi_matrix --premium --books kambi,ladbrokes_be
     .venv/bin/python -m scripts.clv_roi_matrix --premium --books kambi,ladbrokes_be \\
         --out clv_roi.csv
@@ -41,6 +51,7 @@ import csv
 import sqlite3
 import statistics as st
 import sys
+from datetime import datetime, timezone
 from collections import defaultdict
 from pathlib import Path
 
@@ -78,11 +89,76 @@ class _VueFairOdd:
         return self._r["fair_odd"] if k == "odd_taken" else self._r[k]
 
 
+# Le decoupage fin demande par l'utilisateur : le §16.4 s'arretait a « > 48 h »
+# sur la CLV, sans jamais savoir ce qu'il y avait dedans. Les bornes suivent les
+# journees de calendrier parce que c'est ainsi que les books ouvrent leurs
+# marches, puis s'elargissent quand les effectifs fondent.
+BANDES_DELAI = [("0-2 h", 0.0, 2.0), ("2-6 h", 2.0, 6.0), ("6-12 h", 6.0, 12.0),
+                ("12-24 h", 12.0, 24.0), ("24-48 h", 24.0, 48.0),
+                ("48-72 h", 48.0, 72.0), ("72-96 h", 72.0, 96.0),
+                ("96-120 h", 96.0, 120.0), ("120-168 h", 120.0, 168.0),
+                ("> 168 h", 168.0, 1e9)]
+
+
+def _heures(brut) -> "float | None":
+    if not brut:
+        return None
+    try:
+        d = datetime.fromisoformat(str(brut).replace("Z", "+00:00"))
+    except ValueError:
+        return None
+    return (d if d.tzinfo else d.replace(tzinfo=timezone.utc)).timestamp()
+
+
+def _delai_h(row) -> "float | None":
+    """Heures entre la DETECTION et le coup d'envoi.
+
+    ⚠️ `detected_at` ne bouge JAMAIS : `insert_value_bet` ne cree qu'une ligne
+    par opportunite et rend l'existante sans rien reecrire quand le daemon la
+    redetecte (§14.5). Ce delai est donc celui de la PREMIERE detection, pas
+    celui de l'instant ou tu aurais mise. Un pari vu a 60 h puis encore present
+    a 3 h compte ici en 48-72 h.
+
+    ⚠️ Un delai negatif est une detection LIVE comparee a une ligne prematch
+    morte (§9, un tiers des detections a l'epoque). La porte premium est
+    prematch, donc ils sont deja ecartes — mais la bande `< 0` existe pour que
+    leur presence eventuelle SE VOIE au lieu d'etre repartie en silence."""
+    a, b = _heures(row["detected_at"]), _heures(row["start_time"])
+    return None if (a is None or b is None) else (b - a) / 3600.0
+
+
 def _bande(odd: float) -> str:
     for lab, lo, hi in BANDES_COTE:
         if lo <= odd < hi:
             return lab
     return "?"
+
+
+def _bande_delai(row) -> str:
+    h = _delai_h(row)
+    if h is None:
+        return "? (sans horaire)"
+    if h < 0:
+        return "< 0 (LIVE)"
+    for lab, lo, hi in BANDES_DELAI:
+        if lo <= h < hi:
+            return lab
+    return "?"
+
+
+# Les deux bandes hors barème existent pour SE VOIR (§11 : le mode de panne
+# du projet est le silence). « < 0 » est une detection live, « ? » une ligne
+# sans horaire de coup d'envoi ou sans `detected_at` exploitable.
+ORDRE_DELAI = (["< 0 (LIVE)"] + [lab for lab, _lo, _hi in BANDES_DELAI]
+               + ["? (sans horaire)"])
+
+
+def _axe(nom: str):
+    """(libellé de colonne, fonction de bande, ordre d'affichage)."""
+    if nom == "delai":
+        return "délai", _bande_delai, ORDRE_DELAI
+    return ("tranche", lambda r: _bande(float(r["odd_taken"])),
+            [lab for lab, _lo, _hi in BANDES_COTE])
 
 
 def _books_demandes(brut: str | None) -> set[str] | None:
@@ -171,6 +247,10 @@ def main() -> int:
                     help="Mise notionnelle par pari (défaut 25).")
     ap.add_argument("--out", default=None, metavar="CSV",
                     help="Écrire la table dans un CSV.")
+    ap.add_argument("--axe", choices=("cote", "delai"), default="cote",
+                    help="Axe des lignes : tranche de COTE (défaut) ou DÉLAI "
+                         "avant le coup d'envoi. Le délai découpe au-delà de "
+                         "48 h, là où le §16.4 s'arrêtait.")
     ap.add_argument("--porte-sur", choices=("cote", "fair"), default="cote",
                     dest="porte_sur",
                     help="Variable sur laquelle la bande de COTES du canal "
@@ -180,6 +260,10 @@ def main() -> int:
                     help="Rejouer les DEUX portes et afficher leur "
                          "recouvrement. Implique --premium.")
     a = ap.parse_args()
+    # Un drapeau ignoré en silence est exactement le mode de panne du projet.
+    if a.comparer and a.axe != "cote":
+        ap.error("--axe n'a pas de sens avec --comparer : la comparaison "
+                 "n'affiche que des totaux, sans découpage en bandes.")
     if a.canal or a.comparer:
         a.premium = True
     load_env_file()
@@ -374,21 +458,46 @@ def main() -> int:
     print(f"Mise notionnelle : {a.stake:g} €")
     print(f"{len(opp)} opportunités dédupliquées, sur {len(rows)} lignes\n")
 
+    col_axe, bande_de, ordre = _axe(a.axe)
+
     groupes: dict[tuple, list] = defaultdict(list)
     for r in opp:
-        groupes[((r["sport"] or "?"), _bande(float(r["odd_taken"])))].append(r)
+        groupes[((r["sport"] or "?"), bande_de(r))].append(r)
+
+    # Une bande absente de l'ordre canonique ne doit pas DISPARAÎTRE : elle
+    # s'ajoute en queue. Sans ça, un libellé imprévu retirerait ses paris du
+    # tableau sans rien dire, et les lignes ne sommeraient plus au TOTAL.
+    ordre = list(ordre) + sorted({k[1] for k in groupes} - set(ordre))
 
     lignes = []
+    # Sur l'axe du délai, les effectifs par sport fondent dans les bandes
+    # lointaines : la table tous sports confondus passe DEVANT, parce que
+    # c'est la seule où le ROI garde un effectif lisible au-delà de 48 h.
+    if a.axe == "delai":
+        par_bande: dict[str, list] = defaultdict(list)
+        for (_s, lab), sub in groupes.items():
+            par_bande[lab].extend(sub)
+        for lab in ordre:
+            if par_bande.get(lab):
+                lignes.append({"sport": "TOUS", "tranche": lab,
+                               **_cellule(par_bande[lab], a.stake)})
+        lignes.append({"sport": "TOUS", "tranche": "TOTAL",
+                       **_cellule(opp, a.stake)})
+
     for sport in sorted({k[0] for k in groupes}):
-        for lab, _lo, _hi in BANDES_COTE:
+        for lab in ordre:
             sub = groupes.get((sport, lab))
             if sub:
                 lignes.append({"sport": sport, "tranche": lab, **_cellule(sub, a.stake)})
         tout = [r for r in opp if (r["sport"] or "?") == sport]
         lignes.append({"sport": sport, "tranche": "TOTAL", **_cellule(tout, a.stake)})
-    lignes.append({"sport": "TOUS", "tranche": "TOTAL", **_cellule(opp, a.stake)})
+    if a.axe != "delai":
+        lignes.append({"sport": "TOUS", "tranche": "TOTAL", **_cellule(opp, a.stake)})
 
-    entete = (f"{'sport':8} {'tranche':8} {'opp':>5} {'matchs':>6} {'joués':>5} "
+    # Les libellés de délai vont jusqu'à « ? (sans horaire) » : une largeur
+    # figée à 8 les tronquerait ou décalerait toute la ligne.
+    larg = max(len(col_axe), max(len(l["tranche"]) for l in lignes))
+    entete = (f"{'sport':8} {col_axe:{larg}} {'opp':>5} {'matchs':>6} {'joués':>5} "
               f"{'n_clv':>5} {'CLV':>8} {'CLV+':>6} "
               f"{'réglés':>6} {'G/P/N':>12} {'ROI':>8} {'σ':>5} {'P&L':>9}")
     print(entete)
@@ -402,7 +511,7 @@ def main() -> int:
         roi = "—" if l["roi_pct"] is None else f"{l['roi_pct']:+.2f}%"
         sig = "—" if l["sigma_roi"] is None else f"{l['sigma_roi']:.1f}"
         pnl = "—" if l["pnl_eur"] is None else f"{l['pnl_eur']:+.0f}€"
-        print(f"{l['sport'][:8]:8} {l['tranche']:8} "
+        print(f"{l['sport'][:8]:8} {l['tranche']:{larg}} "
               f"{l['n_opportunites']:5} {l['n_matchs']:6} {l['n_joues']:5} "
               f"{l['n_clv']:5} {clv:>8} {clv_pos:>6} "
               f"{l['n_regles']:6} {gpn:>12} {roi:>8} {sig:>5} {pnl:>9}")
@@ -411,6 +520,20 @@ def main() -> int:
           "exige une clôture\n   capturée, le ROI un résultat. Comparer leurs "
           "moyennes suppose de regarder d'abord\n   si les deux effectifs se "
           "ressemblent.")
+
+    if a.axe == "delai":
+        print("\n⚠️ LE DÉLAI EST CELUI DE LA PREMIÈRE DÉTECTION, pas de la mise. "
+              "`detected_at` ne\n   bouge jamais (§14.5) : une opportunité vue à "
+              "60 h et encore affichée à 3 h\n   compte ici en 48-72 h. Ces "
+              "bandes mesurent QUAND LE PRIX EST APPARU, ce qui est\n   la "
+              "question posée à la CLV, mais elles ne prouvent pas qu'un pari "
+              "ait été\n   plaçable pendant toute la bande.")
+        print("\n⚠️ Le délai n'est pas indépendant du reste : les marchés "
+              "ouverts tôt ne sont pas\n   les mêmes ligues, ni les mêmes "
+              "books, ni les mêmes cotes que ceux ouverts à\n   2 h du coup "
+              "d'envoi. Un écart de ROI entre deux bandes peut donc être un "
+              "écart\n   de composition — croiser avec `--axe cote` avant de "
+              "conclure.")
 
     if a.out:
         champs = ["sport", "tranche", "n_opportunites", "n_matchs", "n_joues",

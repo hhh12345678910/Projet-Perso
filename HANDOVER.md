@@ -2153,6 +2153,15 @@ du bruit qui se résorbe. Au-delà de 48 h ça remonte : lignes d'ouverture sur
 marchés peu liquides, décalage réel mais mise praticable minuscule. **La coupe
 doit viser 24–48 h précisément, pas « tout ce qui est loin ».**
 
+⚠️ Ce tableau n'a **que la CLV**, et son « > 48 h » est un bloc opaque de 179
+opportunités. `scripts.clv_roi_matrix --axe delai` le remplace : mêmes bandes
+courtes, puis 48-72 / 72-96 / 96-120 / 120-168 / > 168 h, avec le **ROI** posé
+en face de la CLV et l'effectif de chacun. Deux pièges y sont rendus visibles
+plutôt que lissés — `detected_at` ne bouge jamais (§14.5), donc la bande est
+celle de la PREMIÈRE détection et non de la mise ; et les bandes `< 0 (LIVE)`
+et `? (sans horaire)` sont imprimées si elles se remplissent, la première
+devant rester vide sous une porte prématch.
+
 **Par book** (toutes opportunités) :
 
 | Book | n | CLV | % positives | perte moy. quand négatif |
