@@ -213,6 +213,10 @@ def _cellule(rows: list, stake: float) -> dict:
 
     mise = stake * len(gains)
     ecart = st.stdev(gains) if len(gains) > 1 else 0.0
+    # La CLV avait son effectif mais PAS sa precision. C'est pourtant elle qui
+    # decide : elle est ~8 fois moins bruitee par pari que le P&L, donc c'est
+    # le seul des deux instruments qui separe deux bandes a cet effectif.
+    ecart_clv = st.stdev(clvs) if len(clvs) > 1 else 0.0
     return {
         "n_opportunites": len(rows),
         "n_matchs": len(matchs),
@@ -229,7 +233,106 @@ def _cellule(rows: list, stake: float) -> dict:
         "pnl_eur": round(sum(gains), 2) if gains else None,
         "sigma_roi": (round(sum(gains) / (ecart * len(gains) ** 0.5), 1)
                       if ecart > 0 and gains else None),
+        "sigma_clv": (round(st.mean(clvs) * len(clvs) ** 0.5 / ecart_clv, 1)
+                      if ecart_clv > 0 and clvs else None),
     }
+
+
+def _vecteurs(rows: list, stake: float):
+    """(les CLV en %, les P&L en €) du lot — chacune avec SON effectif.
+
+    Les moyennes de `_cellule` ne suffisent pas pour tester deux lots l'un
+    contre l'autre : il faut les observations."""
+    clvs = [clv_pct(float(r["odd_taken"]), float(r["closing_fair_odd"])) * 100.0
+            for r in rows
+            if r["closing_fair_odd"] and float(r["closing_fair_odd"]) > 0]
+    return clvs, _gains(rows, stake)
+
+
+def _welch(a: list, b: list):
+    """(écart des moyennes, t de Welch) — variances inégales, effectifs inégaux.
+
+    Welch et non Student : les deux lots n'ont ni la même taille ni la même
+    dispersion, et le lot « le reste » est toujours le plus gros."""
+    if len(a) < 2 or len(b) < 2:
+        return None, None
+    d = st.mean(a) - st.mean(b)
+    v = st.variance(a) / len(a) + st.variance(b) / len(b)
+    return d, (d / v ** 0.5 if v > 0 else None)
+
+
+def _bloc_contre_le_reste(opp: list, bande_de, ordre: list, stake: float,
+                          col_axe: str) -> None:
+    """Chaque bande contre TOUT LE RESTE, corrigé du nombre de comparaisons.
+
+    ⚠️ Pourquoi ce bloc existe : lue seule, la table invite à comparer une
+    cellule à la ligne TOTAL. Ce test-là est faux deux fois — le TOTAL
+    CONTIENT la bande (les deux échantillons se chevauchent, donc l'écart-type
+    de l'écart est sous-estimé), et on le refait dix fois de suite sans jamais
+    corriger le seuil. À dix comparaisons, un |t| de 2,3 arrive par pur hasard
+    sous une vérité parfaitement plate.
+
+    ⚠️ Le test est fait TOUS SPORTS CONFONDUS, donc il ne sépare pas l'effet du
+    délai de celui de la composition : au-delà de 48 h la population est
+    quasi exclusivement du soccer. La dernière colonne imprime la part du sport
+    dominant de chaque bande pour que ce mélange se VOIE."""
+    presentes = [lab for lab in ordre if any(bande_de(r) == lab for r in opp)]
+    if len(presentes) < 2:
+        return
+    seuil = st.NormalDist().inv_cdf(1 - 0.025 / len(presentes))
+
+    print(f"\nCHAQUE BANDE CONTRE TOUT LE RESTE — le test qui répond à "
+          f"« où suis-je le moins bon »")
+    print(f"{len(presentes)} bandes testées, donc seuil de Bonferroni "
+          f"|t| ≥ {seuil:.2f} pour 5 % d'erreur sur TOUT le tableau.")
+    # 9 et non 8 : « +10.13 pt » fait 9 caracteres et decalait toute la ligne.
+    ent = (f"{col_axe:16} {'n_clv':>5} {'Δ CLV':>9} {'t':>6}   "
+           f"{'réglés':>6} {'Δ ROI':>9} {'t':>6}   {'sport dominant':>22}")
+    print(ent)
+    print("-" * len(ent))
+    retenues = []
+    for lab in presentes:
+        dedans = [r for r in opp if bande_de(r) == lab]
+        dehors = [r for r in opp if bande_de(r) != lab]
+        c_in, g_in = _vecteurs(dedans, stake)
+        c_out, g_out = _vecteurs(dehors, stake)
+        dc, tc = _welch(c_in, c_out)
+        dg, tg = _welch(g_in, g_out)
+        # Le P&L de Welch est en euros par pari : le ramener en points de ROI,
+        # sinon la colonne ne se compare pas à celle de la CLV.
+        dr = None if dg is None else dg / stake * 100.0
+        comptes: dict[str, int] = defaultdict(int)
+        for r in dedans:
+            comptes[(r["sport"] or "?")] += 1
+        dom, n_dom = max(comptes.items(), key=lambda kv: kv[1])
+        f = lambda v, u="": "—" if v is None else f"{v:+.2f}{u}"  # noqa: E731
+        ft = lambda v: "—" if v is None else f"{v:+.2f}"  # noqa: E731
+        marque = ""
+        if tc is not None and abs(tc) >= seuil:
+            marque += " CLV✔"
+        if tg is not None and abs(tg) >= seuil:
+            marque += " ROI✔"
+        print(f"{lab:16} {len(c_in):5} {f(dc, ' pt'):>9} {ft(tc):>6}   "
+              f"{len(g_in):6} {f(dr, ' pt'):>9} {ft(tg):>6}   "
+              f"{dom[:14]:>14} {100.0 * n_dom / len(dedans):5.0f} %{marque}")
+        retenues.append((lab, tc, tg))
+
+    survivants = [(l, tc, tg) for l, tc, tg in retenues
+                  if (tc is not None and abs(tc) >= seuil)
+                  or (tg is not None and abs(tg) >= seuil)]
+    print(f"\n✔ = franchit le seuil de Bonferroni. "
+          f"{len(survivants)} bande(s) sur {len(presentes)} le franchissent"
+          + (" : " + ", ".join(l for l, _, _ in survivants) if survivants
+             else " — aucune."))
+    if not survivants:
+        print("   Aucune bande ne se distingue du reste une fois le nombre de "
+              "comparaisons pris en\n   compte. Ce n'est pas « les bandes sont "
+              "égales » : c'est « à cet effectif, ce\n   tableau ne peut pas "
+              "les séparer ».")
+    print("\n⚠️ Ce test est TOUS SPORTS CONFONDUS : un écart peut être un écart "
+          "de composition\n   plutôt que de délai. La colonne « sport dominant "
+          "» dit à quel point la bande est\n   homogène — une bande à 99 % "
+          "soccer comparée à un reste mixte compare aussi\n   deux sports.")
 
 
 def main() -> int:
@@ -497,9 +600,11 @@ def main() -> int:
     # Les libellés de délai vont jusqu'à « ? (sans horaire) » : une largeur
     # figée à 8 les tronquerait ou décalerait toute la ligne.
     larg = max(len(col_axe), max(len(l["tranche"]) for l in lignes))
+    # Deux σ, donc deux noms : un « σ » unique se lisait comme s'il portait sur
+    # les deux mesures, alors qu'il ne portait que sur le ROI.
     entete = (f"{'sport':8} {col_axe:{larg}} {'opp':>5} {'matchs':>6} {'joués':>5} "
-              f"{'n_clv':>5} {'CLV':>8} {'CLV+':>6} "
-              f"{'réglés':>6} {'G/P/N':>12} {'ROI':>8} {'σ':>5} {'P&L':>9}")
+              f"{'n_clv':>5} {'CLV':>8} {'σCLV':>5} {'CLV+':>6} "
+              f"{'réglés':>6} {'G/P/N':>12} {'ROI':>8} {'σROI':>5} {'P&L':>9}")
     print(entete)
     print("-" * len(entete))
     for l in lignes:
@@ -510,6 +615,7 @@ def main() -> int:
         gpn = f"{l['gagnes']}/{l['perdus']}/{l['annules']}"
         roi = "—" if l["roi_pct"] is None else f"{l['roi_pct']:+.2f}%"
         sig = "—" if l["sigma_roi"] is None else f"{l['sigma_roi']:.1f}"
+        sig_c = "—" if l["sigma_clv"] is None else f"{l['sigma_clv']:.1f}"
         pnl = "—" if l["pnl_eur"] is None else f"{l['pnl_eur']:+.0f}€"
         # Un ROI sur 11 paris s'imprime comme un ROI sur 400. Sur l'axe du
         # delai les bandes lointaines fondent : sans marque, la ligne la plus
@@ -517,7 +623,7 @@ def main() -> int:
         maigre = " ⚠️" if 0 < l["n_regles"] < 30 else ""
         print(f"{l['sport'][:8]:8} {l['tranche']:{larg}} "
               f"{l['n_opportunites']:5} {l['n_matchs']:6} {l['n_joues']:5} "
-              f"{l['n_clv']:5} {clv:>8} {clv_pos:>6} "
+              f"{l['n_clv']:5} {clv:>8} {sig_c:>5} {clv_pos:>6} "
               f"{l['n_regles']:6} {gpn:>12} {roi:>8} {sig:>5} {pnl:>9}{maigre}")
 
     if any(0 < l["n_regles"] < 30 for l in lignes):
@@ -525,6 +631,8 @@ def main() -> int:
               "l'intervalle de\n   confiance du ROI dépasse largement l'écart "
               "qu'on cherche à lire : la ligne est\n   un indice, pas un "
               "résultat.")
+
+    _bloc_contre_le_reste(opp, bande_de, ordre, a.stake, col_axe)
 
     print("\n⚠️ `n_clv` et `réglés` ne décrivent PAS la même population : la CLV "
           "exige une clôture\n   capturée, le ROI un résultat. Comparer leurs "
@@ -547,8 +655,9 @@ def main() -> int:
 
     if a.out:
         champs = ["sport", "tranche", "n_opportunites", "n_matchs", "n_joues",
-                  "n_clv", "clv_moy_pct", "clv_positives_pct", "n_regles",
-                  "gagnes", "perdus", "annules", "roi_pct", "sigma_roi", "pnl_eur"]
+                  "n_clv", "clv_moy_pct", "sigma_clv", "clv_positives_pct",
+                  "n_regles", "gagnes", "perdus", "annules", "roi_pct",
+                  "sigma_roi", "pnl_eur"]
         with open(a.out, "w", newline="", encoding="utf-8") as f:
             w = csv.DictWriter(f, fieldnames=champs)
             w.writeheader()

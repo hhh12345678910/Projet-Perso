@@ -211,6 +211,29 @@ composition — croiser avec `--axe cote` avant de conclure.
 n'affiche que des totaux, et un drapeau ignoré en silence est précisément le
 mode de panne de ce projet (§11).
 
+### Les deux σ, et le bloc « chaque bande contre tout le reste »
+
+Le tableau imprime maintenant **`σCLV` et `σROI`**, et non un seul `σ` : la CLV
+avait son effectif mais pas sa précision, alors que c'est elle qui décide. Sur
+ce portefeuille la CLV est de l'ordre de **8 fois moins bruitée par pari** que
+le P&L — c'est le seul des deux instruments capable de séparer deux bandes aux
+effectifs disponibles.
+
+Sous le tableau, un bloc teste **chaque bande contre tout le reste**, en t de
+Welch, sur les deux mesures, avec le **seuil de Bonferroni** du nombre de
+bandes réellement testées (2,81 pour dix bandes) et un `✔` sur celles qui le
+franchissent.
+
+⚠️ **Ne compare jamais une cellule à la ligne TOTAL.** Ce test-là est faux deux
+fois : le TOTAL *contient* la bande (les échantillons se chevauchent, l'écart-type
+de l'écart est sous-estimé), et on le refait dix fois sans corriger le seuil. À
+dix comparaisons, **un |t| de 2,3 arrive par pur hasard** sous une vérité
+parfaitement plate. Le bloc existe pour rendre ce piège inaccessible.
+
+⚠️ Le bloc teste **tous sports confondus** : sa dernière colonne donne la part
+du sport dominant de chaque bande. Une bande à 99 % soccer comparée à un reste
+mixte compare aussi deux sports, pas seulement deux délais.
+
 **Compare trois schémas de mise sur la même population** — fixe, quart de Kelly
 plafonné, et la règle de ton `.env` (35 € / 45 € au-dessus de `STAKE_EV_TIER`).
 Les trois sont reconstruits depuis le code de production, pas recopiés. Sort le
