@@ -71,7 +71,13 @@ def _books_demandes(brut):
 
 
 def _drawdown(serie):
-    """Plus forte baisse pic-à-creux de la courbe, et le pic d'où elle part."""
+    """Plus forte baisse pic-à-creux, le sommet global, et le sommet d'où
+    cette baisse est partie.
+
+    ⚠️ Les deux derniers ne sont PAS la même chose, et les confondre rend le
+    tableau incohérent : une colonne « pic » qui vaut 1 644 € en face d'un P&L
+    final de +11 180 € se lit comme un bug alors qu'elle décrit seulement le
+    sommet d'où le pire creux a démarré. Elles sont donc rendues séparément."""
     pic = 0.0
     dd_max = 0.0
     pic_du_max = 0.0
@@ -81,7 +87,7 @@ def _drawdown(serie):
         creux = pic - v
         if creux > dd_max:
             dd_max, pic_du_max = creux, pic
-    return dd_max, pic_du_max
+    return dd_max, pic, pic_du_max
 
 
 def main() -> int:
@@ -209,18 +215,18 @@ def main() -> int:
 
     e = (f"{'schéma':16}{'mise moy':>10}{'mise max':>10}{'total misé':>13}"
          f"{'P&L':>11}{'ROI':>9}{'drawdown max':>15}{'% bankroll':>12}"
-         f"{'pic':>10}")
+         f"{'sommet':>11}{'creux parti de':>16}")
     print(e)
     print("-" * len(e))
     for lib, slug, _f in SCHEMAS:
         total = sum(mises[slug])
         pl = sum(gains[slug])
-        dd, pic = _drawdown(courbes[slug])
+        dd, sommet, pic_du_creux = _drawdown(courbes[slug])
         roi = 100.0 * pl / total if total else 0.0
         print(f"{lib:16}{st.mean(mises[slug]):9.1f}€{max(mises[slug]):9.0f}€"
               f"{total:12,.0f}€{pl:+10.0f}€{roi:+8.2f}%"
               f"{-dd:14,.0f}€{100.0 * dd / bankroll:11.1f}%"
-              f"{pic:9,.0f}€".replace(",", " "))
+              f"{sommet:10,.0f}€{pic_du_creux:15,.0f}€".replace(",", " "))
 
     print("\n⚠️ Le P&L le plus gros n'est PAS le meilleur schéma : Kelly mise "
           "plus, donc\n   il gagne plus sur un edge positif ET creuse plus. Ce "
