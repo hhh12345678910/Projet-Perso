@@ -303,9 +303,9 @@ def main() -> int:
         # LES DEUX tests comptent dans la famille : chercher un biais sur deux
         # dimensions puis corriger comme si on n'en avait cherché qu'une
         # reviendrait à s'accorder deux chances en n'en payant qu'une.
-        for t in (t_ev, t_co):
+        for dim, t in (("EV", t_ev), ("cote", t_co)):
             if t is not None:
-                lignes_test.append((lab, t))
+                lignes_test.append((lab, dim, t))
 
     av = [r for r in gardees if r["a_fair"]]
     sa = [r for r in gardees if not r["a_fair"]]
@@ -317,6 +317,34 @@ def main() -> int:
     else:
         seuil = (st.NormalDist().inv_cdf(1 - 0.025 / len(lignes_test))
                  if lignes_test else 1.96)
+        # LA MAGNITUDE, à côté de la significativité. À ces effectifs un
+        # décalage de 0,20 sur une cote moyenne de 3,00 est parfaitement
+        # détectable ET parfaitement négligeable : les deux sont vrais en même
+        # temps, et une table qui n'imprime que le t fait lire le premier
+        # constat comme s'il impliquait le contraire du second.
+        #
+        # La borne 1 pour 1 : l'EV vaut (cote / fair_odd_DÉTECTION − 1) × 100,
+        # la CLV vaut (cote / fair_odd_CLÔTURE − 1) × 100. Même numérateur,
+        # même forme — si la clôture ne bougeait pas de la détection, CLV = EV
+        # exactement. Un déplacement d'EV de X points ne peut donc pas en
+        # fabriquer plus de X en CLV. C'est un plafond, pas une estimation.
+        def _biais(bandes, champ_ok, champ_ko):
+            na = nt = 0
+            sa = sv = 0.0
+            for lab2, sub2 in par_bande.items():
+                if lab2 not in bandes:
+                    continue
+                a2 = _vals([r for r in sub2 if r["a_fair"]], champ_ok)
+                s2 = _vals([r for r in sub2 if not r["a_fair"]], champ_ko)
+                na += len(a2); nt += len(a2) + len(s2)
+                sa += sum(a2); sv += sum(a2) + sum(s2)
+            if not na or not nt:
+                return None
+            return sa / na - sv / nt
+
+        COURT = {l for l, _, _ in BANDES_DELAI if l not in LOIN}
+        b_court = _biais(COURT, "ev_pct", "ev_pct")
+        b_loin = _biais(LOIN, "ev_pct", "ev_pct")
         _d, t_co_tot = _welch(_vals(av, "odd_taken"), _vals(sa, "odd_taken"))
         print(f"{'TOUTES BANDES':16} {len(av):3}/{len(sa):<3} "
               f"{st.mean(_vals(av, 'ev_pct')):7.2f} "
@@ -326,27 +354,52 @@ def main() -> int:
               f"{st.mean(_vals(sa, 'odd_taken')):7.2f} "
               f"{('—' if d_co is None else f'{d_co:+.2f}'):>6} "
               f"{('—' if t_co_tot is None else f'{t_co_tot:+.2f}'):>6}")
-        pires = max(lignes_test, key=lambda kv: abs(kv[1]), default=None)
+        # TOUTES celles qui franchissent, pas seulement la pire. N'annoncer que
+        # le maximum masquait les autres : sur la base de production, deux
+        # tests franchissaient et un seul était nommé.
+        francs = sorted((x for x in lignes_test if abs(x[2]) >= seuil),
+                        key=lambda x: -abs(x[2]))
+        pire = max(lignes_test, key=lambda x: abs(x[2]), default=None)
         print(f"\n  Seuil de Bonferroni pour {len(lignes_test)} tests "
               f"(2 dimensions × {len(lignes_test) // 2} bandes) : "
-              f"|t| ≥ {seuil:.2f}.", end=" ")
-        if pires and abs(pires[1]) >= seuil:
-            print(f"La bande « {pires[0]} » le franchit\n  (t = {pires[1]:+.2f}) : "
-                  f"les paris qui y perdent leur clôture ne ressemblent PAS aux "
-                  f"autres.\n  Le déficit de capture y est SÉLECTIF et la CLV "
-                  f"mesurée sur cette bande est suspecte.\n  Un t POSITIF veut "
-                  f"dire que les paris CONSERVÉS ont l'EV (ou la cote) la plus "
-                  f"haute,\n  donc que la CLV de la bande est SURESTIMÉE — et "
-                  f"l'écart avec les bandes courtes\n  sous-estimé, pas "
-                  f"l'inverse.")
+              f"|t| ≥ {seuil:.2f}.")
+        if francs:
+            print(f"  {len(francs)} test(s) sur {len(lignes_test)} le "
+                  f"franchissent :")
+            for lab2, dim, t in francs:
+                sens = ("les paris CONSERVÉS ont la valeur la plus haute"
+                        if t > 0 else
+                        "les paris PERDUS ont la valeur la plus haute")
+                print(f"    · « {lab2} » sur {dim:4} : t = {t:+.2f} — {sens}")
+            print("  Dans ces bandes le déficit de capture est SÉLECTIF. "
+                  "Reste à savoir ce que ça PÈSE :\n  un t dit « distinguable "
+                  "de zéro », jamais « ça compte ».")
         else:
-            pire = f"{abs(pires[1]):.2f} (« {pires[0]} »)" if pires else "—"
-            print(f"Le maximum atteint est |t| = {pire},\n  sous le seuil. Les "
-                  f"paris qui perdent leur clôture ont le même EV et la même "
-                  f"cote\n  que ceux qui la gardent : sur les deux dimensions "
-                  f"observables qui prédisent la\n  CLV, les manquants sont un "
-                  f"échantillon NEUTRE, et le déficit de capture ne\n  fabrique "
-                  f"pas l'écart de CLV entre bandes.")
+            p = f"{abs(pire[2]):.2f} (« {pire[0]} » sur {pire[1]})" if pire else "—"
+            print(f"  Aucun ne le franchit, le maximum atteint étant |t| = {p}. "
+                  f"Les paris qui perdent\n  leur clôture ont le même EV et la "
+                  f"même cote que ceux qui la gardent : sur les deux\n  "
+                  f"dimensions observables qui prédisent la CLV, les manquants "
+                  f"sont un échantillon\n  NEUTRE, et le déficit de capture ne "
+                  f"fabrique pas l'écart de CLV entre bandes.")
+
+    if b_court is not None and b_loin is not None:
+        d = b_court - b_loin
+        print("\n  CE QUE CETTE SÉLECTIVITÉ DÉPLACE RÉELLEMENT")
+        print(f"    biais d'EV sur les bandes < 24 h : {b_court:+.3f} pt   "
+              f"sur les bandes >= 24 h : {b_loin:+.3f} pt")
+        print(f"    → biais induit sur le CONTRASTE court − lointain : "
+              f"{d:+.3f} point d'EV")
+        print(f"    La CLV ne peut pas réagir à l'EV plus que 1 pour 1 (même "
+              f"numérateur, seule la\n    référence change), donc cette "
+              f"sélectivité fabrique AU PLUS {abs(d):.3f} point de\n    "
+              f"l'écart de CLV entre les deux zones.", end=" ")
+        if d < 0:
+            print("Et son signe FLATTE la zone lointaine :\n    l'écart vrai "
+                  "est PLUS GRAND que l'écart mesuré, pas plus petit.")
+        else:
+            print("Son signe DÉSAVANTAGE la zone lointaine :\n    l'écart vrai "
+                  "est plus petit que l'écart mesuré, de ce montant au plus.")
 
     print("\nLE TÉMOIN, TOUTES BANDES CONFONDUES")
     print("-" * len(ent))
