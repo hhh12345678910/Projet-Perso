@@ -234,6 +234,41 @@ parfaitement plate. Le bloc existe pour rendre ce piège inaccessible.
 du sport dominant de chaque bande. Une bande à 99 % soccer comparée à un reste
 mixte compare aussi deux sports, pas seulement deux délais.
 
+### `closing_gap` — le déficit de CLV loin du match est-il un artefact ?
+
+`--axe delai` a mesuré que **le taux de capture de la clôture dépend du délai** :
+sur le football, canal premium, 69,6 % des opportunités détectées à moins de
+24 h ont une ligne de clôture, contre 63,2 % au-delà. Si les clôtures
+manquantes ne sont pas un échantillon aléatoire, une part du déficit de CLV
+des bandes lointaines est un défaut de mesure, pas un fait sur le marché.
+
+```bash
+.venv/bin/python -m scripts.closing_gap --premium
+.venv/bin/python -m scripts.closing_gap --premium --sport soccer
+```
+
+**L'hypothèse testée, avec son mécanisme.** `Storage.closing_group`
+(`storage.py:1848`) cherche la cote de clôture avec `WHERE event_key = ?`, une
+égalité **exacte**. Or `event_key` vaut `YYYYMMDDHHMM::home__vs__away`
+(`matcher.py:190`) : **la minute du coup d'envoi est dans la clé.** La clé d'un
+pari est figée à sa détection, celle des cotes capturées près du coup d'envoi
+porte l'horaire révisé — si Pinnacle a déplacé l'heure entre les deux,
+l'égalité échoue et la clôture est perdue. `Storage._event_key_like`
+(`storage.py:1293`) existe précisément pour ça, et `matcher.py:213` admet
+**trois heures** de tolérance parce qu'au tennis « un match commence quand le
+précédent sur le court se termine » — mais cette clé tolérante n'est utilisée
+que dans les six fonctions de déduplication d'alertes, **jamais dans la capture
+de clôture**. Et la probabilité qu'un horaire ait bougé croît avec le délai.
+
+**Le témoin est ce qui décide, pas le niveau.** La sonde compare la part
+d'horaires déplacés *parmi les paris sans clôture* à la même part *parmi ceux
+qui en ont une*. Si les deux sont égales, le déplacement n'explique rien, quel
+que soit son niveau absolu. Elle tranche dans les trois sens et le dit.
+
+⚠️ Elle ne voit un déplacement que si le daemon a créé une ligne `events` pour
+la nouvelle clé : un horaire déplacé alors que l'événement n'était plus scanné
+reste invisible. Le phénomène est donc **sous-estimé, jamais surestimé**.
+
 **Compare trois schémas de mise sur la même population** — fixe, quart de Kelly
 plafonné, et la règle de ton `.env` (35 € / 45 € au-dessus de `STAKE_EV_TIER`).
 Les trois sont reconstruits depuis le code de production, pas recopiés. Sort le

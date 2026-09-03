@@ -483,6 +483,8 @@ qu'une documentation muette** : elle fait perdre le temps de la vérifier.
 | `cycle_speed` | vitesse des cycles, lue dans `valuebet.log` |
 | `repair_events` | recrée les lignes `events` des paris orphelins (**écrit en base**) |
 | `repair_leagues` | remplit `events.league` depuis les fichiers de scores (**écrit en base avec `--apply`**) — la ligue ne vient que de Pinnacle (`main.py:982`), donc tout événement qu'il ne nomme pas reste sans ligue à jamais |
+| `clv_roi_matrix` | CLV **et** ROI dans une seule table, chacun avec son effectif — `--axe cote\|delai`, `--books`, `--premium`, et un test de chaque bande contre tout le reste corrigé de Bonferroni |
+| `closing_gap` | pourquoi la clôture manque, et est-ce que ça dépend du délai — teste si l'égalité EXACTE d'`event_key` de `closing_group` (`storage.py:1848`) perd les matchs dont l'horaire a bougé |
 | `magic_probe_report` / `magic_probe_show` | inventaire et forme des sondes MagicBetting |
 
 ⚠️ **`market_supply` mérite d'être connue par cœur.** C'est elle qui a montré

@@ -31,7 +31,7 @@ SONDES = [
     "crossclose", "market_supply", "market_expansion", "ev_outliers",
     "check_half_time", "check_tennis_totals", "discover_half_time",
     "handicap_conventions", "book_health", "scores_coverage", "repair_events",
-    "repair_leagues", "clv_roi_matrix", "staking_curves",
+    "repair_leagues", "clv_roi_matrix", "staking_curves", "closing_gap",
 ]
 
 
