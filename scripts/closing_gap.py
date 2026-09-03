@@ -262,8 +262,15 @@ def main() -> int:
     # construction inobservable. Deux lots équilibrés sur l'EV et sur la cote
     # rendent seulement un gros biais improbable.
     print("\nLES CLÔTURES MANQUANTES SONT-ELLES UN ÉCHANTILLON NEUTRE ?")
-    e3 = (f"{'délai':16} {'avec':>6} {'EV avec':>8} {'sans':>6} {'EV sans':>8} "
-          f"{'Δ EV':>7} {'t':>6}   {'cote avec':>9} {'cote sans':>9} {'Δ':>7}")
+    # La cote a SON t, comme l'EV. La première version imprimait son écart nu :
+    # un écart de 0,20 sur une moyenne de 3,00 se lit « petit » alors qu'à
+    # n = 1279 contre 484 il peut très bien être franc. Un écart sans son
+    # effectif ne se juge pas à l'œil, et la cote est l'autre dimension qui
+    # prédit la CLV — la laisser sans test laissait la moitié de la question
+    # ouverte en donnant l'air d'y avoir répondu.
+    e3 = (f"{'délai':16} {'avec':>6} {'EV avec':>7} {'EV sans':>7} "
+          f"{'Δ EV':>6} {'t':>6}   {'ct avec':>7} {'ct sans':>7} "
+          f"{'Δ ct':>6} {'t':>6}")
     print(e3)
     print("-" * len(e3))
 
@@ -287,14 +294,18 @@ def main() -> int:
         ev_a, ev_s = _vals(av, "ev_pct"), _vals(sa, "ev_pct")
         co_a, co_s = _vals(av, "odd_taken"), _vals(sa, "odd_taken")
         d_ev, t_ev = _welch(ev_a, ev_s)
-        d_co, _t_co = _welch(co_a, co_s)
+        d_co, t_co = _welch(co_a, co_s)
         m = lambda v: "—" if not v else f"{st.mean(v):.2f}"  # noqa: E731
-        g = lambda v, u="": "—" if v is None else f"{v:+.2f}{u}"  # noqa: E731
-        print(f"{lab:16} {len(av):6} {m(ev_a):>8} {len(sa):6} {m(ev_s):>8} "
-              f"{g(d_ev):>7} {g(t_ev):>6}   {m(co_a):>9} {m(co_s):>9} "
-              f"{g(d_co):>7}")
-        if t_ev is not None:
-            lignes_test.append((lab, t_ev))
+        g = lambda v: "—" if v is None else f"{v:+.2f}"  # noqa: E731
+        print(f"{lab:16} {len(av):3}/{len(sa):<3} {m(ev_a):>7} {m(ev_s):>7} "
+              f"{g(d_ev):>6} {g(t_ev):>6}   {m(co_a):>7} {m(co_s):>7} "
+              f"{g(d_co):>6} {g(t_co):>6}")
+        # LES DEUX tests comptent dans la famille : chercher un biais sur deux
+        # dimensions puis corriger comme si on n'en avait cherché qu'une
+        # reviendrait à s'accorder deux chances en n'en payant qu'une.
+        for t in (t_ev, t_co):
+            if t is not None:
+                lignes_test.append((lab, t))
 
     av = [r for r in gardees if r["a_fair"]]
     sa = [r for r in gardees if not r["a_fair"]]
@@ -306,22 +317,28 @@ def main() -> int:
     else:
         seuil = (st.NormalDist().inv_cdf(1 - 0.025 / len(lignes_test))
                  if lignes_test else 1.96)
-        print(f"{'TOUTES BANDES':16} {len(av):6} "
-              f"{st.mean(_vals(av, 'ev_pct')):8.2f} {len(sa):6} "
-              f"{st.mean(_vals(sa, 'ev_pct')):8.2f} {d_ev:+7.2f} "
+        _d, t_co_tot = _welch(_vals(av, "odd_taken"), _vals(sa, "odd_taken"))
+        print(f"{'TOUTES BANDES':16} {len(av):3}/{len(sa):<3} "
+              f"{st.mean(_vals(av, 'ev_pct')):7.2f} "
+              f"{st.mean(_vals(sa, 'ev_pct')):7.2f} {d_ev:+6.2f} "
               f"{('—' if t_ev is None else f'{t_ev:+.2f}'):>6}   "
-              f"{st.mean(_vals(av, 'odd_taken')):9.2f} "
-              f"{st.mean(_vals(sa, 'odd_taken')):9.2f} "
-              f"{('—' if d_co is None else f'{d_co:+.2f}'):>7}")
+              f"{st.mean(_vals(av, 'odd_taken')):7.2f} "
+              f"{st.mean(_vals(sa, 'odd_taken')):7.2f} "
+              f"{('—' if d_co is None else f'{d_co:+.2f}'):>6} "
+              f"{('—' if t_co_tot is None else f'{t_co_tot:+.2f}'):>6}")
         pires = max(lignes_test, key=lambda kv: abs(kv[1]), default=None)
-        print(f"\n  Seuil de Bonferroni pour {len(lignes_test)} bandes : "
+        print(f"\n  Seuil de Bonferroni pour {len(lignes_test)} tests "
+              f"(2 dimensions × {len(lignes_test) // 2} bandes) : "
               f"|t| ≥ {seuil:.2f}.", end=" ")
         if pires and abs(pires[1]) >= seuil:
             print(f"La bande « {pires[0]} » le franchit\n  (t = {pires[1]:+.2f}) : "
-                  f"dans cette bande, les paris qui perdent leur clôture n'ont "
-                  f"PAS le même\n  EV que les autres. Le déficit de capture y "
-                  f"est SÉLECTIF et la CLV mesurée sur\n  cette bande est "
-                  f"suspecte.")
+                  f"les paris qui y perdent leur clôture ne ressemblent PAS aux "
+                  f"autres.\n  Le déficit de capture y est SÉLECTIF et la CLV "
+                  f"mesurée sur cette bande est suspecte.\n  Un t POSITIF veut "
+                  f"dire que les paris CONSERVÉS ont l'EV (ou la cote) la plus "
+                  f"haute,\n  donc que la CLV de la bande est SURESTIMÉE — et "
+                  f"l'écart avec les bandes courtes\n  sous-estimé, pas "
+                  f"l'inverse.")
         else:
             pire = f"{abs(pires[1]):.2f} (« {pires[0]} »)" if pires else "—"
             print(f"Le maximum atteint est |t| = {pire},\n  sous le seuil. Les "
