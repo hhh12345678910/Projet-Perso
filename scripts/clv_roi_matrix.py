@@ -55,6 +55,29 @@ from scripts.pnl_detections import BANDES_COTE, porte_de_canal  # noqa: E402
 _ALIAS = {"kambi": tuple(b.value for b in KAMBI_BOOKS)}
 
 
+class _VueFairOdd:
+    """La même ligne, vue avec `fair_odd` là où la porte lit `odd_taken`.
+
+    C'est le seul moyen de rejouer la porte EXACTE de production sur une autre
+    variable sans dupliquer une seule de ses règles (§17.7) — qu'elle vienne
+    des canaux en base ou de `TelegramConfig`, elle passe par `__getitem__`.
+
+    ⚠️ Rappel utile pour lire le résultat : `ev = odd_taken / fair_odd - 1`,
+    donc sur un value bet `fair_odd < odd_taken` TOUJOURS. Basculer la bande
+    de cotes sur la fair odd décale donc chaque pari vers le BAS : une bande
+    1,5–4 sur la fair accepte une cote prise allant jusqu'à 4,8 à 20 % d'EV,
+    et rejette les cotes prises entre 1,5 et 1,5×(1+EV). Ce n'est pas un
+    élargissement uniforme, c'est un glissement.
+    """
+    __slots__ = ("_r",)
+
+    def __init__(self, r) -> None:
+        self._r = r
+
+    def __getitem__(self, k):
+        return self._r["fair_odd"] if k == "odd_taken" else self._r[k]
+
+
 def _bande(odd: float) -> str:
     for lab, lo, hi in BANDES_COTE:
         if lo <= odd < hi:
@@ -132,8 +155,16 @@ def main() -> int:
                     help="Mise notionnelle par pari (défaut 25).")
     ap.add_argument("--out", default=None, metavar="CSV",
                     help="Écrire la table dans un CSV.")
+    ap.add_argument("--porte-sur", choices=("cote", "fair"), default="cote",
+                    dest="porte_sur",
+                    help="Variable sur laquelle la bande de COTES du canal "
+                         "est évaluée : la cote prise (production) ou la fair "
+                         "odd. ANALYSE SEULE — ne change aucun réglage.")
+    ap.add_argument("--comparer", action="store_true",
+                    help="Rejouer les DEUX portes et afficher leur "
+                         "recouvrement. Implique --premium.")
     a = ap.parse_args()
-    if a.canal:
+    if a.canal or a.comparer:
         a.premium = True
     load_env_file()
 
@@ -141,6 +172,10 @@ def main() -> int:
     porte_desc = "aucune — toutes les détections"
     if a.premium:
         porte, porte_desc = porte_de_canal(a.db, a.canal)
+        if a.porte_sur == "fair" and not a.comparer:
+            brute = porte
+            porte = lambda r: brute(_VueFairOdd(r))  # noqa: E731
+            porte_desc += "  ·  bande de cotes évaluée sur la FAIR ODD"
 
     books = _books_demandes(a.books)
 
@@ -148,7 +183,7 @@ def main() -> int:
     con.row_factory = sqlite3.Row
     rows = list(con.execute("""
         SELECT vb.id, vb.event_key, vb.book, vb.market, vb.outcome_label,
-               vb.line, vb.odd_taken, vb.ev_pct, vb.detected_at,
+               vb.line, vb.odd_taken, vb.fair_odd, vb.ev_pct, vb.detected_at,
                e.sport AS sport, e.league AS league,
                e.home AS home, e.away AS away, e.start_time AS start_time,
                cs.fair_odd AS closing_fair_odd,
@@ -163,6 +198,88 @@ def main() -> int:
     """))
     if not rows:
         raise SystemExit("Aucune détection en base.")
+
+    def selectionner(predicat):
+        """Les opportunités dédupliquées que cette porte laisserait passer.
+
+        La déduplication reste sur la COTE PRISE dans les deux régimes : c'est
+        elle qui paie, et changer aussi le critère de « meilleur prix » ferait
+        varier deux choses à la fois."""
+        gardees = [r for r in rows
+                   if (books is None or (r["book"] or "").lower() in books)
+                   and (predicat is None or predicat(r))]
+        best = {}
+        for r in gardees:
+            cle = ((r["home"] or "").lower(), (r["away"] or "").lower(),
+                   (r["start_time"] or "")[:10], r["market"],
+                   r["outcome_label"], r["line"])
+            prev = best.get(cle)
+            if prev is None or float(r["odd_taken"]) > float(prev["odd_taken"]):
+                best[cle] = r
+        return best
+
+    if a.comparer:
+        sur_cote = selectionner(porte)
+        sur_fair = selectionner(lambda r: porte(_VueFairOdd(r)))
+        cles_c, cles_f = set(sur_cote), set(sur_fair)
+        communes = cles_c & cles_f
+
+        print(f"\nCOMPARAISON DES DEUX PORTES — {porte_desc}")
+        print(f"Books : {', '.join(sorted(books)) if books else 'tous'}"
+              f"   ·   mise notionnelle {a.stake:g} €")
+        print("\nLa bande d'EV et toutes les autres règles sont IDENTIQUES. "
+              "Seule change\nla variable sur laquelle la bande de COTES est "
+              "évaluée.\n")
+
+        entete = (f"{'':34}{'porte COTE PRISE':>18}{'porte FAIR ODD':>18}")
+        print(entete)
+        print("-" * len(entete))
+        ca, fa = _cellule(list(sur_cote.values()), a.stake), \
+            _cellule(list(sur_fair.values()), a.stake)
+        for lib, cle, suf, dec in (
+                ("opportunités", "n_opportunites", "", 0),
+                ("matchs distincts", "n_matchs", "", 0),
+                ("paris valorisés en CLV", "n_clv", "", 0),
+                ("CLV moyenne", "clv_moy_pct", " %", 2),
+                ("CLV positives", "clv_positives_pct", " %", 1),
+                ("paris réglés", "n_regles", "", 0),
+                ("ROI", "roi_pct", " %", 2),
+                ("sigma du ROI", "sigma_roi", "", 1),
+                ("P&L notionnel", "pnl_eur", " €", 0)):
+            # Un signe n'a de sens que sur une grandeur qui peut être négative.
+            # « CLV positives : +100,0 % » se lirait comme une variation.
+            signe = not (cle.startswith("n_") or cle == "clv_positives_pct")
+            f = (lambda v, s=signe: "—" if v is None else
+                 (f"{v:+.{dec}f}{suf}" if s
+                  else f"{v:,.{dec}f}{suf}".replace(",", " ")))
+            print(f"{lib:34}{f(ca[cle]):>18}{f(fa[cle]):>18}")
+
+        print("\nRECOUVREMENT — ce que chaque porte prend SEULE")
+        print("-" * len(entete))
+        blocs = [
+            ("gardées par les DEUX", [sur_cote[k] for k in communes]),
+            ("SEULEMENT par la cote prise", [sur_cote[k] for k in cles_c - cles_f]),
+            ("SEULEMENT par la fair odd", [sur_fair[k] for k in cles_f - cles_c]),
+        ]
+        for lib, sous in blocs:
+            c = _cellule(sous, a.stake)
+            roi = "—" if c["roi_pct"] is None else f"{c['roi_pct']:+.2f} %"
+            clv = "—" if c["clv_moy_pct"] is None else f"{c['clv_moy_pct']:+.2f} %"
+            pnl = "—" if c["pnl_eur"] is None else f"{c['pnl_eur']:+.0f} €"
+            print(f"  {lib:32} n={c['n_opportunites']:5}  "
+                  f"réglés={c['n_regles']:5}  CLV {clv:>9}  ROI {roi:>9}  "
+                  f"P&L {pnl:>9}")
+
+        print("\n⚠️ Ce sont les DEUX dernières lignes qui décident, pas les "
+              "totaux : basculer\n   la porte revient exactement à échanger le "
+              "premier lot contre le second.")
+        print("\n⚠️ Sur un value bet, `fair_odd < odd_taken` toujours "
+              "(ev = odd/fair − 1). La bascule\n   n'élargit donc pas la bande, "
+              "elle la fait GLISSER vers le haut des cotes prises :\n   à 20 % "
+              "d'EV, une bande 1,5–4 sur la fair accepte jusqu'à 4,8 de cote "
+              "prise et\n   rejette tout ce qui est pris sous 1,8.")
+        print("\nAnalyse seule — aucun réglage n'a été lu autrement ni modifié.")
+        return 0
 
     # Filtre de books AVANT la déduplication : on veut le meilleur prix parmi
     # les books qu'on joue, pas le meilleur prix du marché.
