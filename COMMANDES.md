@@ -113,8 +113,23 @@ C'est le chiffre sans biais de sélection, celui qui répond au §20.4.
 
 ```bash
 .venv/bin/python -m scripts.pnl_detections
-.venv/bin/python -m scripts.pnl_detections --premium     # canal premium seul
+.venv/bin/python -m scripts.pnl_detections --premium          # ce qui part vraiment
+.venv/bin/python -m scripts.pnl_detections --canal "Premium"  # un canal nommé
 ```
+
+⚠️ `--premium` lit la porte RÉELLE : les canaux configurés en base (§24) s'il
+y en a, sinon les seuils de `TelegramConfig`. Il ne recopie plus aucun nombre.
+La porte retenue est imprimée avant le tableau — **lis-la avant les chiffres** :
+
+```
+PORTE PREMIUM — canal « Premium » lu en base, 2 règle(s)
+PORTE PREMIUM — porte historique — standard EV ≥ 8 % cote 1.5–4 ; longue
+                EV ≥ 20 % cote 4–6 ; sports exclus de la longue : tennis
+```
+
+Si les seuils sont introuvables (ni canal en base, ni `.env` chargé), la
+commande **refuse de répondre** au lieu de retomber sur les défauts du code :
+un ROI plausible et faux coûte plus cher qu'une erreur franche (§18.3).
 
 ---
 

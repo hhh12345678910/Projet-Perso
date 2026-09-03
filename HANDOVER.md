@@ -6569,9 +6569,19 @@ ne protège rien** — le vérifier fait partie du travail, pas de la finition.
   d'origine, dans `_PRESENTATION` d'`alerter.py`. Échafaudage de migration
   assumé : un canal créé par l'utilisateur n'a ni en-tête ni bouton. À porter
   sur une colonne de `channels`.
-- **`pnl_detections.is_premium()`** code toujours ses seuils en dur et ignore le
-  sport. Il ignore donc l'exclusion tennis (§22.9), la voie critique grosses
-  cotes (§23.5) **et** maintenant les canaux configurables.
+- ~~**`pnl_detections.is_premium()`** code toujours ses seuils en dur~~ —
+  **CORRIGÉ le 03/09.** `is_premium` est remplacée par `porte_de_canal()`, qui
+  charge les canaux par le même chemin que l'alerter (`channels.charger`) et
+  décide par la même fonction (`routing.canaux_pour`), liste ENTIÈRE passée
+  pour que l'exclusivité d'un canal prioritaire joue comme en production. Sans
+  canal en base, repli sur `TelegramConfig` — **jamais** sur le constructeur nu,
+  dont les défauts effaçaient silencieusement l'exclusion tennis (trouvé en
+  écrivant le correctif : le tennis en cote 5 à 25 % d'EV repassait la porte).
+  Seuils introuvables ⇒ la commande refuse de répondre. Nouveau `--canal NOM`
+  pour mesurer n'importe quel canal. La porte retenue est imprimée avant le
+  tableau. ⚠️ **`clv_split --premium` porte encore le même défaut** : il lit
+  bien `TelegramConfig`, mais ignore `premium_hi_sports_exclus` et ne connaît
+  pas les canaux en base.
 - **Le surplus du dédoublonnage par canal** est estimé à **+0,75 %** (plancher :
   la base ne garde que deux points par opportunité). Mesuré en production :
   271 alertes/jour contre 297 avant, donc rien d'inquiétant. À reconfirmer sur
