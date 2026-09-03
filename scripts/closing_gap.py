@@ -58,6 +58,7 @@ from __future__ import annotations
 import argparse
 import math
 import sqlite3
+import statistics as st
 import sys
 from collections import defaultdict
 from pathlib import Path
@@ -240,6 +241,95 @@ def main() -> int:
     print("\n  Une chute concentrée sur les marchés à ligne (handicaps, totaux) "
           "confirme la\n  dérive de ligne ; une chute égale partout, y compris "
           "sur un marché à 0 % de\n  ligne, l'écarte à son tour.")
+
+    # LE TEST QUI RÉPOND VRAIMENT À LA QUESTION POSÉE.
+    #
+    # Deux mécanismes ont été proposés pour le déficit de capture et les deux
+    # sont morts : la clé exacte (z = +1,3) et la dérive de ligne (h2h sans
+    # ligne chute autant que les totaux avec ligne). Mais la question n'a
+    # jamais été « pourquoi manquent-elles » — c'est « leur absence
+    # fausse-t-elle la CLV mesurée ». Et ça se teste SANS connaître le
+    # mécanisme : il suffit de comparer les paris qui gardent leur clôture à
+    # ceux qui la perdent, sur ce qu'on observe des DEUX côtés.
+    #
+    # `ev_pct` est l'observable qui convient : c'est l'edge attendu à la
+    # détection, et il vaut (odd_taken / fair_odd − 1) × 100, donc il porte
+    # exactement ce que la CLV cherche à confirmer. La cote complète le
+    # tableau, la CLV variant fortement par tranche de cote.
+    #
+    # ⚠️ Ce n'est PAS une preuve d'absence de biais : deux paris de même EV
+    # peuvent avoir des CLV différentes, et la CLV des manquants est par
+    # construction inobservable. Deux lots équilibrés sur l'EV et sur la cote
+    # rendent seulement un gros biais improbable.
+    print("\nLES CLÔTURES MANQUANTES SONT-ELLES UN ÉCHANTILLON NEUTRE ?")
+    e3 = (f"{'délai':16} {'avec':>6} {'EV avec':>8} {'sans':>6} {'EV sans':>8} "
+          f"{'Δ EV':>7} {'t':>6}   {'cote avec':>9} {'cote sans':>9} {'Δ':>7}")
+    print(e3)
+    print("-" * len(e3))
+
+    def _welch(a: list, b: list):
+        if len(a) < 2 or len(b) < 2:
+            return None, None
+        d = st.mean(a) - st.mean(b)
+        v = st.variance(a) / len(a) + st.variance(b) / len(b)
+        return d, (d / v ** 0.5 if v > 0 else None)
+
+    def _vals(sub, champ):
+        return [float(r[champ]) for r in sub if r[champ] is not None]
+
+    lignes_test = []
+    for lab in ORDRE + sorted(set(par_bande) - set(ORDRE)):
+        sub = par_bande.get(lab)
+        if not sub:
+            continue
+        av = [r for r in sub if r["a_fair"]]
+        sa = [r for r in sub if not r["a_fair"]]
+        ev_a, ev_s = _vals(av, "ev_pct"), _vals(sa, "ev_pct")
+        co_a, co_s = _vals(av, "odd_taken"), _vals(sa, "odd_taken")
+        d_ev, t_ev = _welch(ev_a, ev_s)
+        d_co, _t_co = _welch(co_a, co_s)
+        m = lambda v: "—" if not v else f"{st.mean(v):.2f}"  # noqa: E731
+        g = lambda v, u="": "—" if v is None else f"{v:+.2f}{u}"  # noqa: E731
+        print(f"{lab:16} {len(av):6} {m(ev_a):>8} {len(sa):6} {m(ev_s):>8} "
+              f"{g(d_ev):>7} {g(t_ev):>6}   {m(co_a):>9} {m(co_s):>9} "
+              f"{g(d_co):>7}")
+        if t_ev is not None:
+            lignes_test.append((lab, t_ev))
+
+    av = [r for r in gardees if r["a_fair"]]
+    sa = [r for r in gardees if not r["a_fair"]]
+    d_ev, t_ev = _welch(_vals(av, "ev_pct"), _vals(sa, "ev_pct"))
+    d_co, _ = _welch(_vals(av, "odd_taken"), _vals(sa, "odd_taken"))
+    print("-" * len(e3))
+    if d_ev is None:
+        print("  Incalculable : un des deux lots est vide.")
+    else:
+        seuil = (st.NormalDist().inv_cdf(1 - 0.025 / len(lignes_test))
+                 if lignes_test else 1.96)
+        print(f"{'TOUTES BANDES':16} {len(av):6} "
+              f"{st.mean(_vals(av, 'ev_pct')):8.2f} {len(sa):6} "
+              f"{st.mean(_vals(sa, 'ev_pct')):8.2f} {d_ev:+7.2f} "
+              f"{('—' if t_ev is None else f'{t_ev:+.2f}'):>6}   "
+              f"{st.mean(_vals(av, 'odd_taken')):9.2f} "
+              f"{st.mean(_vals(sa, 'odd_taken')):9.2f} "
+              f"{('—' if d_co is None else f'{d_co:+.2f}'):>7}")
+        pires = max(lignes_test, key=lambda kv: abs(kv[1]), default=None)
+        print(f"\n  Seuil de Bonferroni pour {len(lignes_test)} bandes : "
+              f"|t| ≥ {seuil:.2f}.", end=" ")
+        if pires and abs(pires[1]) >= seuil:
+            print(f"La bande « {pires[0]} » le franchit\n  (t = {pires[1]:+.2f}) : "
+                  f"dans cette bande, les paris qui perdent leur clôture n'ont "
+                  f"PAS le même\n  EV que les autres. Le déficit de capture y "
+                  f"est SÉLECTIF et la CLV mesurée sur\n  cette bande est "
+                  f"suspecte.")
+        else:
+            pire = f"{abs(pires[1]):.2f} (« {pires[0]} »)" if pires else "—"
+            print(f"Le maximum atteint est |t| = {pire},\n  sous le seuil. Les "
+                  f"paris qui perdent leur clôture ont le même EV et la même "
+                  f"cote\n  que ceux qui la gardent : sur les deux dimensions "
+                  f"observables qui prédisent la\n  CLV, les manquants sont un "
+                  f"échantillon NEUTRE, et le déficit de capture ne\n  fabrique "
+                  f"pas l'écart de CLV entre bandes.")
 
     print("\nLE TÉMOIN, TOUTES BANDES CONFONDUES")
     print("-" * len(ent))

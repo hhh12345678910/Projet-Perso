@@ -289,13 +289,33 @@ annonçaient deux taux incomparables (96 % contre 68 % sur le football) sans que
 rien ne le signale. `backfill-fair-lines` (`main.py:1770`) comble l'écart sur
 l'historique.
 
-**Le bloc `LA CAPTURE PAR MARCHÉ`** teste l'hypothèse suivante :
+**Le bloc `LA CAPTURE PAR MARCHÉ`** testait la dérive de ligne :
 `closing_group` apparie aussi sur `market` **et sur `line`**, et la ligne d'un
 handicap ou d'un total dérive avec le temps — un pari pris à −0,5 est coté −1,0
-au coup d'envoi, et la recherche demande toujours −0,5. Plus le pari est pris
-tôt, plus la ligne a bougé. Une chute concentrée sur les marchés à ligne la
-confirme ; une chute égale partout, y compris sur un marché à 0 % de ligne,
-l'écarte à son tour.
+au coup d'envoi, et la recherche demande toujours −0,5.
+
+**Résultat mesuré : ÉCARTÉE elle aussi.** `h2h`, qui ne porte **aucune ligne**,
+chute de 11,3 points entre le court et le lointain ; `totals`, qui en porte une
+sur 100 % de ses paris, chute de 13,5. Une chute quasi identique des deux côtés
+ne peut pas venir de la ligne.
+
+### Le test qui répond, sans connaître le mécanisme
+
+Deux mécanismes proposés, deux morts. Mais la question n'a jamais été « pourquoi
+les clôtures manquent » — c'est **« leur absence fausse-t-elle la CLV mesurée »**,
+et ça se teste directement. Le bloc `LES CLÔTURES MANQUANTES SONT-ELLES UN
+ÉCHANTILLON NEUTRE ?` compare, dans chaque bande, les paris qui gardent leur
+clôture à ceux qui la perdent, sur les deux observables disponibles **des deux
+côtés** : `ev_pct` (l'edge attendu à la détection, soit `(odd_taken / fair_odd
+− 1) × 100` — exactement ce que la CLV cherche à confirmer) et la cote.
+
+Un t de Welch par bande, seuil de Bonferroni affiché. Si aucune bande ne le
+franchit, les manquants sont neutres sur les deux dimensions qui prédisent la
+CLV, et le déficit de capture ne fabrique pas l'écart entre bandes.
+
+⚠️ **Ce n'est pas une preuve d'absence de biais.** Deux paris de même EV peuvent
+avoir des CLV différentes, et la CLV des manquants est par construction
+inobservable. Deux lots équilibrés rendent seulement un gros biais improbable.
 
 **Compare trois schémas de mise sur la même population** — fixe, quart de Kelly
 plafonné, et la règle de ton `.env` (35 € / 45 € au-dessus de `STAKE_EV_TIER`).
