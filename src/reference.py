@@ -41,6 +41,11 @@ _TWIN_BOOK_GROUPS: tuple[tuple[Book, ...], ...] = (
 _TWIN_PRIMARY = {grp: grp[0] for grp in _TWIN_BOOK_GROUPS}
 _TWIN_OF = {b: grp for grp in _TWIN_BOOK_GROUPS for b in grp}
 
+# Le groupe Kambi, exposé pour les sondes qui veulent raisonner « les comptes
+# que je joue » plutôt que « ce book précis ». Le recopier ailleurs le ferait
+# diverger le jour où un cinquième jumeau apparaît (§17.7).
+KAMBI_BOOKS: tuple[Book, ...] = _TWIN_BOOK_GROUPS[0]
+
 
 def merge_twin_book_value_bets(bets: list[ValueBet]) -> list[ValueBet]:
     """Collapse identical value bets coming from twin books (same Kambi feed,

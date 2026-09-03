@@ -45,6 +45,15 @@ from src.clv import pnl as clv_pnl  # noqa: E402
 from src.clv import settle as clv_settle  # noqa: E402
 
 
+# ⚠️ Hissé au niveau module pour que `clv_roi_matrix` lise LES MÊMES bornes.
+# Le §21.17 ne se lit qu'en superposant la table de CLV et celle du P&L : deux
+# découpages différents rendraient la contradiction illisible, et c'est
+# exactement ce qu'on cherche à mesurer. `test_clv_split_cote` verrouille ces
+# valeurs — elles ne bougent pas sans que trois tables cessent de se comparer.
+BANDES_COTE = [("1.0-1.8", 1.0, 1.8), ("1.8-2.3", 1.8, 2.3), ("2.3-3.0", 2.3, 3.0),
+               ("3.0-4.0", 3.0, 4.0), ("4.0-6.0", 4.0, 6.0), ("> 6.0", 6.0, 1e9)]
+
+
 class _Bet:
     """Le minimum que `routing.canaux_pour` lit sur un pari."""
     __slots__ = ("ev_pct", "odd_taken", "book", "market")
@@ -290,9 +299,7 @@ def main() -> int:
     # basses, négatif sur les hautes. Si le ROI décroît régulièrement quand la
     # cote monte, ce n'est pas la malchance, c'est la méthode de devig.
     print("  par tranche de cote  ⚠️ décroissance régulière = devig suspect")
-    bands = [("1.0-1.8", 1.0, 1.8), ("1.8-2.3", 1.8, 2.3), ("2.3-3.0", 2.3, 3.0),
-             ("3.0-4.0", 3.0, 4.0), ("4.0-6.0", 4.0, 6.0), ("> 6.0", 6.0, 1e9)]
-    for lab, lo, hi in bands:
+    for lab, lo, hi in BANDES_COTE:
         report(f"    cote {lab}",
                [r for r in opp if lo <= float(r["odd_taken"]) < hi], warn=30)
     print()

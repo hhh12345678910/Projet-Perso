@@ -158,6 +158,24 @@ porte un résultat, et rien des événements que `results-update` n'a pas su
 apparier. Le féminin et les jeunes sont **sous-récupérés par construction** :
 la barrière de classe se règle sur la ligue, celle qu'on cherche justement.
 
+**Affiche la CLV ET le ROI dans la même table**, par sport et par tranche de
+cote, aux mêmes bornes que `pnl_detections` — c'est la superposition que le
+§21.17 réclame. `--books` accepte l'alias **`kambi`** (Unibet + 711 + Bingoal
++ Scooore, lu dans `reference.KAMBI_BOOKS`), et le filtre s'applique AVANT la
+déduplication : le meilleur prix parmi les books que tu joues, pas celui du
+marché.
+
+```bash
+.venv/bin/python -m scripts.clv_roi_matrix --premium --books kambi,ladbrokes_be
+.venv/bin/python -m scripts.clv_roi_matrix --premium --books kambi,ladbrokes_be \
+    --out clv_roi.csv
+```
+
+⚠️ `n_clv` et `réglés` ne décrivent **pas la même population** : la CLV exige
+une clôture capturée, le ROI un résultat. Chaque colonne porte donc son
+effectif — comparer leurs moyennes suppose de vérifier d'abord que les deux
+se ressemblent.
+
 ---
 
 ## 4. La CLV — le KPI du projet
