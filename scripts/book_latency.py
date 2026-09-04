@@ -82,7 +82,7 @@ def main() -> int:
 
     # (cycle, sport) → [(durée, book, n_cotes)] ; -1 en n_cotes = échec
     par_lot: dict[tuple, list] = defaultdict(list)
-    phases: list[tuple[dict, float]] = []
+    phases: list[tuple[int, str, dict, float]] = []
     travail: dict[int, int] = {}
     cycle = 0
     for ligne in chemin.read_text(errors="replace").splitlines():
@@ -98,7 +98,8 @@ def main() -> int:
         if m:
             if not (a.sport and m.group(1) != a.sport):
                 paires = re.findall(r"([a-zéè]+) ([\d.]+)", m.group(2))
-                phases.append(({k: float(v) for k, v in paires},
+                phases.append((cycle, m.group(1),
+                               {k: float(v) for k, v in paires},
                                float(m.group(3))))
             continue
         m = RE_OK.match(ligne.strip())
@@ -162,6 +163,19 @@ def main() -> int:
     print(f"\nOÙ PASSE LE TEMPS DU FETCH — {chemin}")
     print(f"{n_lots} lots (cycle × sport), cycles {cycles[0]} à {cycles[-1]}"
           + (f", sport {a.sport}" if a.sport else ""))
+    # ⚠️ UN JOURNAL COUVRE PLUSIEURS VERSIONS DU CODE. Les durées par book
+    # remontent à leur mise en place, les lignes de phases à la leur : quand
+    # les deux échantillons ont des tailles très différentes, le tableau des
+    # books mélange l'avant et l'après d'un changement, et une optimisation
+    # récente y est diluée dans des milliers de mesures anciennes.
+    if phases and len(phases) * 4 < n_lots:
+        c_ph = sorted({c for c, _s, _d, _t in phases})
+        print(f"\n⚠️ CE TABLEAU MÉLANGE PLUSIEURS RÉGIMES. Les durées par book "
+              f"couvrent {n_lots} lots\n   (cycles {cycles[0]}–{cycles[-1]}), "
+              f"les phases seulement {len(phases)}\n   (cycles "
+              f"{c_ph[0]}–{c_ph[-1]}). Tout changement récent est donc noyé "
+              f"dans l'ancien.\n   Relancer avec `--derniers "
+              f"{max(1, len(c_ph))}` pour ne juger que le régime courant.")
 
     ent = (f"{'book':14} {'n':>4} {'méd.':>6} {'p90':>6} {'max':>6}   "
            f"{'critique':>8} {'%':>5}   {'coût total':>10} {'par lot':>8}  éch.")
@@ -198,24 +212,33 @@ def main() -> int:
 
     # Le fetch n'est qu'une part du cycle. Sans cette comparaison, on
     # optimiserait des books alors que le temps est en base ou en analyse.
-    communs = [c for c in cycles if c in travail]
+    # ⚠️ COMPARAISON CORRIGÉE. La première version soustrayait la moyenne DU
+    # FETCH SUR TOUS LES LOTS de la durée du CYCLE — or le cycle est le MAX sur
+    # les sports, pas leur moyenne. L'écart gonflait mécaniquement, et la sonde
+    # annonçait « le reste dépasse le fetch, le gros du temps est ailleurs »
+    # quand le tableau des phases, sur les mêmes cycles, disait 74 % de fetch.
+    # Une sonde qui contredit sa propre mesure est pire qu'une sonde muette.
+    #
+    # Le bon rapprochement est cycle contre MAX PAR CYCLE du total des phases,
+    # puisque c'est exactement ce que le daemon attend.
+    par_cycle: dict[int, float] = {}
+    for c, _sp, _d, t in phases:
+        par_cycle[c] = max(par_cycle.get(c, 0.0), t)
+    communs = [c for c in par_cycle if c in travail]
     if communs:
-        f_moy = somme_crit / n_lots
-        t_moy = st.mean([travail[c] for c in communs])
-        sports = len({s for _, s in par_lot})
-        print(f"\n  ⚠️ LE FETCH N'EST PAS LE CYCLE. Cycle annoncé : "
-              f"{t_moy:.0f}s de médiane sur {len(communs)} cycles ;\n"
-              f"     fetch du lot le plus lent : ~{f_moy:.1f}s "
-              f"({sports} sport(s) en parallèle).\n"
-              f"     Reste ~{max(0.0, t_moy - f_moy):.0f}s hors fetch — "
-              f"analyse, écritures en base, alertes.")
-        if t_moy - f_moy > f_moy:
-            print("     Ce reste DÉPASSE le fetch : optimiser les books ne "
-                  "peut pas rendre plus que\n     la moitié, et le gros du "
-                  "temps est ailleurs.")
-    else:
-        print("\n  ⚠️ Aucune ligne « Cycle N done in Xs » lisible : impossible "
-              "de dire quelle part\n     du cycle le fetch représente.")
+        t_moy = st.median([travail[c] for c in communs])
+        p_moy = st.median([par_cycle[c] for c in communs])
+        print(f"\n  LE CYCLE ET LE SPORT LE PLUS LENT — {len(communs)} cycles "
+              f"où les deux sont lisibles")
+        print(f"     cycle annoncé      : {t_moy:.1f}s de médiane")
+        print(f"     sport le plus lent : {p_moy:.1f}s de médiane")
+        print(f"     écart              : {t_moy - p_moy:+.1f}s — ce que le "
+              f"cycle coûte EN PLUS du\n                          sport le "
+              f"plus lent (démarrage des fils, journal).")
+    elif travail:
+        print("\n  ⚠️ Aucun cycle ne porte À LA FOIS un `done in` et des lignes "
+              "de phases : la part\n     du fetch dans le cycle n'est pas "
+              "calculable sur ce journal.")
     # ── Le partage du temps HORS fetch ────────────────────────────────────
     # Le fetch était la seule chose mesurée, et il ne fait que la moitié du
     # cycle. Sans ce bloc on optimisait des scrapers en ignorant une part
@@ -229,22 +252,23 @@ def main() -> int:
 def _bloc_phases(phases: list) -> None:
     """Le partage du temps d'un scan de sport, fetch compris."""
     if phases:
-        noms = sorted({k for d, _ in phases for k in d},
-                      key=lambda k: -sum(d.get(k, 0.0) for d, _ in phases))
-        tot = st.mean([t for _, t in phases])
+        noms = sorted({k for _c, _s, d, _t in phases for k in d},
+                      key=lambda k: -sum(d.get(k, 0.0)
+                                         for _c, _s, d, _t in phases))
+        tot = st.mean([t for _c, _s, _d, t in phases])
         print(f"\nOÙ PASSE LE TEMPS D'UN SPORT — {len(phases)} scans mesurés")
         e2 = f"{'phase':10} {'médiane':>8} {'p90':>7} {'max':>7} {'part':>6}"
         print(e2)
         print("-" * len(e2))
         for k in noms:
-            v = [d.get(k, 0.0) for d, _ in phases]
+            v = [d.get(k, 0.0) for _c, _s, d, _t in phases]
             print(f"{k:10} {st.median(v):7.1f}s {_pcent(v, .9):6.1f}s "
                   f"{max(v):6.1f}s {100 * st.mean(v) / tot if tot else 0:5.0f}%")
         print("-" * len(e2))
-        print(f"{'TOTAL':10} {st.median([t for _, t in phases]):7.1f}s "
-              f"{_pcent([t for _, t in phases], .9):6.1f}s "
-              f"{max(t for _, t in phases):6.1f}s {'100%':>6}")
-        reste = st.mean([d.get("reste", 0.0) for d, _ in phases])
+        tots = [t for _c, _s, _d, t in phases]
+        print(f"{'TOTAL':10} {st.median(tots):7.1f}s {_pcent(tots, .9):6.1f}s "
+              f"{max(tots):6.1f}s {'100%':>6}")
+        reste = st.mean([d.get("reste", 0.0) for _c, _s, d, _t in phases])
         if tot and reste / tot > 0.25:
             print(f"\n  ⚠️ « reste » pèse {100 * reste / tot:.0f} % : c'est du "
                   f"temps qu'aucune phase ne revendique.\n     Tant qu'il "
