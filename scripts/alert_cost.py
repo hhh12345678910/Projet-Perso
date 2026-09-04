@@ -68,7 +68,7 @@ RE_ENVOI = re.compile(r"^\[(\w+)\]\s+→ (\d+) value bet alert\(s\) sent\s*$")
 RE_BETS = re.compile(r"^\[(\w+)\]\s+value bets: (\d+) total\s*$")
 RE_429 = re.compile(r"Telegram 429 \[chat=([^\]]*)\] — pause (\d+)s")
 RE_COOLDOWN = re.compile(r"Telegram cooldown (\d+)s restant \[chat=([^\]]*)\]")
-RE_NON200 = re.compile(r"Telegram non-200 \((\d+)\)")
+RE_NON200 = re.compile(r"Telegram non-200 \((\d+)\) \[chat=([^\]]*)\]:?(.*)$")
 
 
 def _moy(xs: list[float]) -> float:
@@ -98,6 +98,30 @@ def _pearson(xy: list[tuple[float, float]]) -> float | None:
     return num / (dx * dy)
 
 
+def _quantification(durees: list[float], intervalle: float) -> tuple[float, float] | None:
+    """`dRest` tombe-t-il sur des MULTIPLES ENTIERS de l'intervalle ?
+
+    C'EST LE TEST QUI NE DÉPEND PAS DE LA LIVRAISON. Un envoi qui échoue dort
+    quand même : `_send` réserve son créneau et fait sa pause AVANT le POST.
+    Compter les alertes délivrées ne voit donc rien quand tout échoue — mais
+    la signature arithmétique, elle, reste : n pauses de 3,2 s font 3,2 n
+    secondes, plus une constante (le POST, les requêtes de dédoublonnage).
+
+    Test de Rayleigh sur les restes modulo l'intervalle : R proche de 1 dit
+    que tous les restes coïncident, donc que les durées sont espacées de
+    multiples exacts. Un temps qui viendrait d'ailleurs les disperserait.
+
+    Rend (R, p) ou None si l'échantillon est trop petit."""
+    xs = [d for d in durees if d >= intervalle]
+    n = len(xs)
+    if n < 3 or intervalle <= 0:
+        return None
+    import cmath
+    z = sum(cmath.exp(2j * cmath.pi * (d % intervalle) / intervalle) for d in xs)
+    R = abs(z) / n
+    return R, min(1.0, 2.718281828459045 ** (-n * R * R))
+
+
 def lire(chemin: Path, sport: str | None) -> tuple[list, list, dict]:
     """Rend (lots, ordre_lots, incidents). Un lot = (clé, sport, dRest, tot,
     alertes, paris)."""
@@ -106,10 +130,18 @@ def lire(chemin: Path, sport: str | None) -> tuple[list, list, dict]:
     alertes: dict[tuple, int] = {}
     paris: dict[tuple, int] = {}
     incidents = {"429": 0, "cooldown": 0, "non200": 0, "pause_max": 0}
+    # ⚠️ ATTRIBUÉS AU CYCLE. La première version comptait les incidents sur
+    # TOUT le journal sans les rattacher : « 2086 non-200 » ne disait pas si
+    # c'était hier ou maintenant, donc ne disait rien.
+    par_cycle: dict[tuple, dict[str, int]] = defaultdict(
+        lambda: {"429": 0, "cooldown": 0, "non200": 0})
+    codes: dict[tuple, int] = defaultdict(int)
+    exemples: list[str] = []
     ordre_lots: list[tuple] = []
     serie, dernier_num = 0, None
     cle = (0, 0)
-    for ligne in chemin.read_text(errors="replace").splitlines():
+    lignes_fichier = chemin.read_text(errors="replace").splitlines()
+    for i, ligne in enumerate(lignes_fichier):
         m = RE_CYCLE.search(ligne)
         if m:
             num = int(m.group(1))
@@ -125,13 +157,24 @@ def lire(chemin: Path, sport: str | None) -> tuple[list, list, dict]:
         m = RE_429.search(ligne)
         if m:
             incidents["429"] += 1
+            par_cycle[cle]["429"] += 1
             incidents["pause_max"] = max(incidents["pause_max"], int(m.group(2)))
             continue
         if RE_COOLDOWN.search(ligne):
             incidents["cooldown"] += 1
+            par_cycle[cle]["cooldown"] += 1
             continue
-        if RE_NON200.search(ligne):
+        m = RE_NON200.search(ligne)
+        if m:
             incidents["non200"] += 1
+            par_cycle[cle]["non200"] += 1
+            codes[(m.group(1), m.group(2))] += 1
+            # ⚠️ `rich` ENVELOPPE À 80 COLONNES HORS TERMINAL : le corps de la
+            # réponse, qui est LA raison de l'échec, part sur les lignes
+            # suivantes. Les recoller serait fragile — on les rend brutes.
+            if len(exemples) < 3:
+                exemples.append("\n".join(
+                    lignes_fichier[i:i + 4]))
             continue
         nu = ligne.strip()
         m = RE_PHASES.match(nu)
@@ -164,6 +207,9 @@ def lire(chemin: Path, sport: str | None) -> tuple[list, list, dict]:
         # zéro mesure. Les paris, eux, sont toujours imprimés.
         lots.append((k[0], k[1], dRest[k], tot.get(k, 0.0),
                      alertes.get(k, 0), paris.get(k, 0)))
+    incidents["par_cycle"] = dict(par_cycle)
+    incidents["codes"] = dict(codes)
+    incidents["exemples"] = exemples
     return lots, ordre_lots, incidents
 
 
@@ -208,8 +254,39 @@ def main() -> int:
           + (f", sport {a.sport}" if a.sport else ""))
     print(f"Intervalle attendu entre deux messages : {a.intervalle:.2f} s")
 
-    # ── LE TÉMOIN, EN PREMIER ────────────────────────────────────────
-    # Il a le droit de dire non, et on le lit avant tout le reste.
+    # ── LA QUANTIFICATION, EN PREMIER ────────────────────────────────
+    # LE SEUL TEST QUI NE DÉPENDE PAS DE LA LIVRAISON. Un envoi qui échoue
+    # dort quand même : `_send` réserve son créneau et fait sa pause AVANT le
+    # POST. Compter les alertes délivrées ne voit donc RIEN quand tout échoue.
+    # La signature arithmétique, elle, survit.
+    q = _quantification([l[2] for l in lots], a.intervalle)
+    print("\n── LA SIGNATURE : dRest tombe-t-il sur des multiples de "
+          "l'intervalle ? ──")
+    if q is None:
+        print(f"  Moins de 3 lots au-dessus de {a.intervalle:.2f} s : "
+              "indécidable.")
+        quant_ok = False
+    else:
+        R, pval = q
+        quant_ok = R >= 0.8
+        print(f"  concentration des restes (Rayleigh) : R = {R:.3f}, "
+              f"p ≈ {pval:.2g}")
+        gros = sorted({round(l[2], 1) for l in lots if l[2] >= a.intervalle},
+                      reverse=True)[:8]
+        if gros:
+            print("  les durées observées, décomposées :")
+            for d in gros:
+                n = round(d / a.intervalle)
+                print(f"    {d:7.1f} s = {a.intervalle:.2f} × {n:3d} "
+                      f"+ {d - a.intervalle * n:+.2f} s")
+        print("  → " + ("des multiples ENTIERS : ce sont bien des pauses "
+                        "comptées une par une."
+                        if quant_ok else
+                        "pas de multiples entiers : le temps ne vient pas "
+                        "d'un compte de pauses."))
+
+    # ── LE TÉMOIN ────────────────────────────────────────────────────
+    # Il a le droit de dire non, et on le lit avant la corrélation.
     sans = [l for l in lots if l[4] == 0]
     avec = [l for l in lots if l[4] > 0]
     print("\n── TÉMOIN : les cycles qui n'ont RIEN envoyé ──")
@@ -254,9 +331,11 @@ def main() -> int:
           f"messages que de paris délivrés.")
 
     # ── LE VERDICT ───────────────────────────────────────────────────
-    # ⚠️ SENS DU TEST. « Confirmée » exige les TROIS : un témoin muet ou
-    # presque, une corrélation forte, et une pente au moins égale à
-    # l'intervalle. Il manque n'importe laquelle et on ne conclut pas.
+    # TROIS ISSUES, PAS DEUX. Entre « le temps vient des pauses et les envois
+    # arrivent » et « le temps vient d'ailleurs », il y a le cas qui a
+    # réellement mordu le 04/09 : LES PAUSES ONT LIEU ET LES ENVOIS ÉCHOUENT.
+    # Une sonde binaire l'aurait classé « écarté » et aurait envoyé chercher
+    # le temps là où il n'est pas.
     print("\n── VERDICT ──")
     seuil_temoin = 2 * a.intervalle
     temoin_ok = moy_sans is None or moy_sans <= seuil_temoin
@@ -265,9 +344,27 @@ def main() -> int:
     # descendre bien sous l'intervalle (dédoublonnage) ; ce qu'elle ne peut
     # pas, c'est impliquer plus de messages sur un canal que de paris.
     borne_ok = not avec or len(depassements) <= len(avec) * 0.1
-    if temoin_ok and correl_ok and borne_ok:
-        gagne = _moy([l[2] for l in lots])
-        tot_moy = _moy([l[3] for l in lots])
+    gagne = _moy([l[2] for l in lots])
+    tot_moy = _moy([l[3] for l in lots])
+    # ⚠️ SUR LES LOTS QUI ONT VRAIMENT FAIT DES PAUSES. Moyenner soccer à
+    # 118 s avec tennis à 0,1 s annoncerait « 18 pauses par lot » là où soccer
+    # en fait 37 — un chiffre qui n'est vrai nulle part.
+    _paues = [l[2] for l in lots if l[2] >= a.intervalle]
+    n_msg = (_moy(_paues) / a.intervalle) if (_paues and a.intervalle > 0) else 0.0
+    delivres = sum(l[4] for l in lots)
+    if quant_ok and inc["non200"] and delivres * 4 < n_msg * max(1, len(_paues)):
+        print("  LES PAUSES ONT LIEU — ET LES ENVOIS ÉCHOUENT.")
+        print(f"  dRest porte la signature de {n_msg:.0f} pause(s) par lot "
+              f"sur les {len(_paues)} qui en font,\n  mais {delivres} "
+              f"alerte(s) seulement ont été délivrées sur {len(lots)} lots, "
+              f"et le journal\n  compte {inc['non200']} réponses non-200.")
+        print("  `_send` réserve son créneau et DORT AVANT le POST : un envoi "
+              "qui échoue\n  coûte exactement le même temps qu'un envoi qui "
+              "réussit. Le cycle paie\n  le plein tarif pour des messages que "
+              "personne ne reçoit.")
+        print("  ⚠️ LA PANNE N'EST PAS LA LENTEUR, C'EST LE SILENCE. Voir le "
+              "bloc INCIDENTS.")
+    elif temoin_ok and correl_ok and borne_ok:
         print("  HYPOTHÈSE CONFIRMÉE : le temps part dans les pauses de "
               "l'envoi Telegram.")
         print(f"  dRest moyen {gagne:.1f} s sur un cycle moyen de "
@@ -298,15 +395,38 @@ def main() -> int:
                   f"seules.")
 
     # ── INCIDENTS ────────────────────────────────────────────────────
-    print("\n── INCIDENTS TELEGRAM SUR TOUT LE JOURNAL ──")
-    print(f"  429 (flood)      : {inc['429']}"
-          + (f", pause la plus longue demandée {inc['pause_max']} s"
-             if inc["429"] else ""))
-    print(f"  envois reportés  : {inc['cooldown']} (cooldown actif)")
-    print(f"  réponses non-200 : {inc['non200']}")
-    if inc["429"] == 0 and inc["cooldown"] == 0:
-        print("  Aucun 429 : ce n'est PAS une tempête de back-off, c'est le "
-              "rythme nominal.")
+    print("\n── INCIDENTS TELEGRAM ──")
+    gardes = {l[0] for l in lots}
+    recents = {"429": 0, "cooldown": 0, "non200": 0}
+    for c, d in inc["par_cycle"].items():
+        if c in gardes:
+            for k in recents:
+                recents[k] += d[k]
+    print(f"                     sur les cycles retenus / sur tout le journal")
+    print(f"  429 (flood)      : {recents['429']:>7} / {inc['429']}"
+          + (f"  (pause max demandée {inc['pause_max']} s)" if inc["429"] else ""))
+    print(f"  envois reportés  : {recents['cooldown']:>7} / {inc['cooldown']}")
+    print(f"  réponses non-200 : {recents['non200']:>7} / {inc['non200']}")
+    if inc["429"] == 0 and inc["cooldown"] == 0 and not inc["non200"]:
+        print("  Rien : ni 429 ni échec. Le rythme est nominal.")
+    elif inc["429"] == 0 and inc["cooldown"] == 0:
+        print("  Aucun 429 : ce n'est PAS une tempête de back-off. Mais les "
+              "non-200 ci-dessus\n  sont des messages PERDUS — le cycle a payé "
+              "leur pause pour rien.")
+    if inc["codes"]:
+        print("\n  par code et par canal :")
+        for (code, chat), n in sorted(inc["codes"].items(), key=lambda kv: -kv[1]):
+            print(f"    HTTP {code}  chat {chat:<18} {n:>6} fois")
+    if inc["exemples"]:
+        # ⚠️ BRUTES, SUR PLUSIEURS LIGNES. `rich` enveloppe à 80 colonnes hors
+        # terminal : le corps de la réponse — LA raison de l'échec — part sur
+        # les lignes suivantes. Les recoller serait fragile ; les rendre
+        # telles quelles ne ment jamais.
+        print("\n  les premières, telles quelles (le corps est enveloppé par "
+              "rich à 80 col.) :")
+        for ex in inc["exemples"]:
+            print("    " + "\n    ".join(ex.splitlines()))
+            print()
 
     # ── LES PIRES LOTS ───────────────────────────────────────────────
     pires = sorted(lots, key=lambda l: -l[2])[:10]

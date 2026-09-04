@@ -748,10 +748,39 @@ envois reportés pour cooldown, réponses non-200. Zéro 429 signifie que le
 ralentissement est le **rythme nominal**, pas une tempête de back-off : c'est
 la distinction qui décide du correctif.
 
-`tests/test_alert_cost.py` plante quatre journaux — l'hypothèse vraie, le
-témoin qui dit non, la borne franchie, et le cas réel à pente 1,6 s qui doit
-rester **confirmable** — et vérifie que le verdict bascule dans chacun.
-Inverser la condition fait tomber trois tests.
+**Le troisième verdict, celui qui a servi.** Entre « le temps vient des pauses
+et les alertes arrivent » et « le temps vient d'ailleurs », il y a le cas qui
+a réellement mordu : **les pauses ont lieu ET les envois échouent**. `_send`
+réserve son créneau et **dort AVANT le POST** — un envoi qui échoue coûte
+exactement le même temps qu'un envoi qui réussit. Compter les alertes
+*délivrées* ne voit alors rien du tout.
+
+C'est pourquoi le premier bloc de la sonde est **la signature** : `dRest`
+tombe-t-il sur des multiples entiers de l'intervalle ? Test de Rayleigh sur
+les restes modulo l'intervalle. Sur le journal du 04/09 : R = 1,000, p ≈
+9 × 10⁻⁴, et la décomposition parle d'elle-même —
+
+```
+118.6 s = 3.20 ×  37 + +0.20 s
+115.4 s = 3.20 ×  36 + +0.20 s
+112.2 s = 3.20 ×  35 + +0.20 s
+109.0 s = 3.20 ×  34 + +0.20 s
+```
+
+Ce test ne dépend pas de la livraison. C'est le seul qui pouvait parler quand
+tout échouait.
+
+Le bloc INCIDENTS distingue enfin **les cycles retenus** du **journal entier**
+(« 2086 non-200 » sans date ne dit pas si c'est hier ou maintenant), compte
+par code HTTP et par canal, et rend les premières lignes **brutes** — le corps
+de la réponse, qui est la raison de l'échec, est enveloppé par `rich` à 80
+colonnes et le recoller serait fragile.
+
+`tests/test_alert_cost.py` plante six journaux — l'hypothèse vraie, le
+témoin qui dit non, la borne franchie, le cas réel à pente 1,6 s qui doit
+rester **confirmable**, les pauses-qui-échouent, et son inverse — et vérifie
+que le verdict bascule dans chacun. Inverser la condition fait tomber trois
+tests.
 
 ### `UNIBET_PARALLEL_TERMS` — la queue d'Unibet
 

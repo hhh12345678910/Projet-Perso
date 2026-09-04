@@ -231,7 +231,12 @@ def test_les_incidents_telegram_sont_comptes(tmp_path):
     ]
     p = _journal(lignes, tmp_path)
     _, _, inc = lire(p, None)
-    assert inc == {"429": 1, "cooldown": 1, "non200": 1, "pause_max": 47}
+    assert (inc["429"], inc["cooldown"], inc["non200"], inc["pause_max"]) == (1, 1, 1, 47)
+    # Attribués au CYCLE : « 2086 non-200 » sur tout le journal ne dit pas si
+    # c'est hier ou maintenant, donc ne dit rien.
+    assert inc["par_cycle"][(1, 1)] == {"429": 1, "cooldown": 1, "non200": 1}
+    assert inc["codes"] == {("400", "-100123"): 1}
+    assert "Bad Request" in inc["exemples"][0]
 
 
 def test_un_journal_sans_ligne_de_phases_le_dit(tmp_path, monkeypatch):
@@ -249,3 +254,58 @@ def test_un_journal_absent_le_dit(tmp_path, monkeypatch):
     with pytest.raises(SystemExit) as e:
         main()
     assert "introuvable" in str(e.value)
+
+
+# ── Le troisième verdict : les pauses ont lieu, les envois échouent ──
+
+def test_quantification_detecte_des_multiples_entiers():
+    """Les vraies durées du 04/09 : 3,20 × N + 0,20 s, pour N = 34 à 37."""
+    from scripts.alert_cost import _quantification
+    R, pval = _quantification([118.6, 118.6, 115.4, 112.2, 109.0, 109.0, 109.0], 3.2)
+    assert R > 0.99, R
+    assert pval < 0.01
+
+
+def test_quantification_ne_voit_rien_dans_du_bruit():
+    """Sept durées tirées au hasard : le test doit REFUSER de voir un
+    peigne. Sans ça il confirmerait n'importe quoi."""
+    from scripts.alert_cost import _quantification
+    R, _ = _quantification([118.6, 91.3, 47.9, 133.1, 62.4, 105.7, 20.2], 3.2)
+    assert R < 0.6, R
+
+
+def test_les_pauses_ont_lieu_et_les_envois_echouent(tmp_path, capsys, monkeypatch):
+    """LE CAS RÉEL DU 04/09, celui qu'une sonde binaire aurait mal classé.
+
+    dRest porte la signature de 34-37 pauses par cycle, mais ZÉRO alerte
+    délivrée et 2086 non-200 : les envois partent, dorment leurs 3,2 s, et
+    échouent. Dire « hypothèse écartée » enverrait chercher le temps ailleurs
+    alors qu'il est exactement là — et raterait que l'utilisateur ne reçoit
+    plus rien."""
+    lignes = []
+    for i, d in enumerate([118.6, 118.6, 115.4, 112.2, 109.0, 109.0, 109.0], start=1):
+        lignes += _cycle(i, d, 0, 80, d + 30.0)
+        lignes += ["Telegram non-200 (400) [chat=-100123]: Bad Request: can't "
+                   "parse entities"] * 35
+    p = _journal(lignes, tmp_path)
+    monkeypatch.setattr("sys.argv", ["alert_cost", "--log", str(p)])
+    main()
+    out = capsys.readouterr().out
+    assert "LES PAUSES ONT LIEU — ET LES ENVOIS ÉCHOUENT" in out, out
+    assert "HYPOTHÈSE CONFIRMÉE" not in out
+    assert "can't" in out or "parse entities" in out, "l'erreur brute manque"
+
+
+def test_des_envois_qui_reussissent_ne_declenchent_pas_ce_verdict(
+        tmp_path, capsys, monkeypatch):
+    """Le garde-fou de l'inverse : quand les alertes partent VRAIMENT, le
+    verdict « les envois échouent » ne doit pas se déclencher."""
+    lignes = []
+    for i, n in enumerate([0, 10, 40, 74, 30, 0, 20], start=1):
+        lignes += _cycle(i, 1.6 * n, n, n + 4, 28.5 + 1.6 * n)
+    p = _journal(lignes, tmp_path)
+    monkeypatch.setattr("sys.argv", ["alert_cost", "--log", str(p)])
+    main()
+    out = capsys.readouterr().out
+    assert "LES PAUSES ONT LIEU — ET LES ENVOIS ÉCHOUENT" not in out
+    assert "HYPOTHÈSE CONFIRMÉE" in out

@@ -149,6 +149,38 @@ def _sport_prefix(sport: str | None) -> str:
     return f"{emoji} " if emoji else ""
 
 
+def _ht(x) -> str:
+    """Un texte venu d'un flux, rendu inoffensif pour `parse_mode=HTML`.
+
+    ⚠️ CE QUI ARRIVE SANS ELLE. Telegram refuse le message ENTIER avec un
+    400 « can't parse entities » dès qu'un `&` nu ou un `<` traîne dedans —
+    et « Brighton & Hove Albion », « Bosnia & Herzegovina », « Guinée-Bissau
+    U<19 » sont des noms parfaitement ordinaires. Le message n'est pas
+    tronqué, il n'existe pas.
+
+    Et l'échec est PERMANENT, pas transitoire : `send_value_bet` ne marque le
+    pari comme notifié que si l'envoi réussit. Un pari dont le nom casse le
+    HTML est donc réessayé à CHAQUE cycle, indéfiniment, en payant sa pause
+    de `min_send_interval_s` à chaque fois. Ces paris s'accumulent pendant que
+    les envois valides, eux, se marquent et sortent de la file : au bout de
+    quelques cycles, la file ne contient plus QUE des messages impossibles.
+    Mesuré le 04/09 : 34 à 37 pauses par cycle de soccer, soit 109 à 119 s de
+    cycle, pour zéro alerte reçue.
+
+    `quote=False` : on n'échappe pas les guillemets. Le texte n'est jamais
+    placé dans un attribut, et `&quot;` s'afficherait tel quel dans le
+    message."""
+    from html import escape
+    return escape(str(x), quote=False)
+
+
+def _nom_book(b) -> str:
+    """Le nom lisible d'un book, échappé. Passe par `_ht` comme tout le
+    reste : `_BOOK_NAMES` est écrit à la main aujourd'hui, mais le repli
+    `b.value` vient du modèle et rien ne garantit qu'il le restera."""
+    return _ht(_BOOK_NAMES.get(b, getattr(b, "value", b)))
+
+
 def _prettify_team_name(normalized: str) -> str:
     """Resolve a space-stripped event-key fragment back to its human-readable
     name via the teams registry (populated by every scraper when it sees an
@@ -419,15 +451,16 @@ def format_surebet(sb: Surebet, sport: str | None = None, is_live: bool = False)
     parsed = parse_event_key(sb.event_key)
     if parsed is not None:
         start, home_norm, away_norm = parsed
-        matchup = f"{_prettify_team_name(home_norm)} vs {_prettify_team_name(away_norm)}"
+        matchup = (f"{_ht(_prettify_team_name(home_norm))} vs "
+                   f"{_ht(_prettify_team_name(away_norm))}")
         when_line = f"📅 {_format_kickoff(start)}\n"
     else:
-        matchup = sb.event_key
+        matchup = _ht(sb.event_key)
         when_line = ""
 
     line_suffix = f" {sb.line}" if sb.line is not None else ""
     legs_lines = "\n".join(
-        f"  • <b>{label}</b> @ {odd:.2f} — {_BOOK_NAMES.get(book, book.value)}"
+        f"  • <b>{_ht(label)}</b> @ {odd:.2f} — {_nom_book(book)}"
         for label, (odd, book) in sb.legs.items()
     )
     if sb.suspicious:
@@ -444,7 +477,7 @@ def format_surebet(sb: Surebet, sport: str | None = None, is_live: bool = False)
 
     return (
         f"{header_emoji} +{sb.margin * 100:.2f}% (ROI {sb.roi * 100:.2f}%)\n"
-        f"{_sport_prefix(sport)}{matchup} — {sb.market.value}{line_suffix}\n"
+        f"{_sport_prefix(sport)}{matchup} — {_ht(sb.market.value)}{line_suffix}\n"
         f"{when_line}"
         f"{legs_lines}"
         f"{suspect_footer}"
@@ -460,10 +493,11 @@ def format_middle(m: Middle, sport: str | None = None, total_stake: float = 100.
     parsed = parse_event_key(m.event_key)
     if parsed is not None:
         start, home_norm, away_norm = parsed
-        matchup = f"{_prettify_team_name(home_norm)} vs {_prettify_team_name(away_norm)}"
+        matchup = (f"{_ht(_prettify_team_name(home_norm))} vs "
+                   f"{_ht(_prettify_team_name(away_norm))}")
         when_line = f"📅 {_format_kickoff(start)}\n"
     else:
-        matchup = m.event_key
+        matchup = _ht(m.event_key)
         when_line = ""
 
     o_odd, o_book = m.over_leg
@@ -492,8 +526,8 @@ def format_middle(m: Middle, sport: str | None = None, total_stake: float = 100.
         f"🎯 <b>MIDDLE +{m.ev_pct:.2f}% EV</b> — proba gap {m.mid_prob * 100:.1f}%\n"
         f"{_sport_prefix(sport)}{matchup}\n"
         f"{when_line}"
-        f"  • <b>Over {m.low_line:g}</b> @ {o_odd:.2f} — {_BOOK_NAMES.get(o_book, o_book.value)}  → {s_over:.0f}€\n"
-        f"  • <b>Under {m.high_line:g}</b> @ {u_odd:.2f} — {_BOOK_NAMES.get(u_book, u_book.value)}  → {s_under:.0f}€\n"
+        f"  • <b>Over {m.low_line:g}</b> @ {o_odd:.2f} — {_nom_book(o_book)}  → {s_over:.0f}€\n"
+        f"  • <b>Under {m.high_line:g}</b> @ {u_odd:.2f} — {_nom_book(u_book)}  → {s_under:.0f}€\n"
         f"<i>Middle (les deux gagnent) si total = {gap_txt}</i>"
         f"{miss_line}"
     )
@@ -529,16 +563,17 @@ def format_clv_alert(
     parsed = parse_event_key(bet["event_key"])
     if parsed is not None:
         start, home_norm, away_norm = parsed
-        matchup = f"{_prettify_team_name(home_norm)} vs {_prettify_team_name(away_norm)}"
+        matchup = (f"{_ht(_prettify_team_name(home_norm))} vs "
+                   f"{_ht(_prettify_team_name(away_norm))}")
         when_line = f"📅 {_format_kickoff(start)} (dans {mins_to_kickoff} min)\n"
     else:
-        matchup = bet["event_key"]
+        matchup = _ht(bet["event_key"])
         when_line = f"📅 Dans {mins_to_kickoff} min\n"
 
     try:
-        book_name = _BOOK_NAMES.get(_Book(bet["book"]), bet["book"])
+        book_name = _nom_book(_Book(bet["book"]))
     except ValueError:
-        book_name = bet["book"]
+        book_name = _ht(bet["book"])
 
     header = (
         f"🔥 <b>CLV ÉLEVÉ {clv_pct:+.2f}% confirmé</b> — {book_name}"
@@ -555,7 +590,8 @@ def format_clv_alert(
         f"{header}\n"
         f"{_sport_prefix(sport)}{matchup}\n"
         f"{when_line}"
-        f"Pari : <b>{bet['outcome_label']}{line_suffix}</b> @ {float(bet['odd_taken']):.2f}\n"
+        f"Pari : <b>{_ht(bet['outcome_label'])}{line_suffix}</b> @ "
+        f"{float(bet['odd_taken']):.2f}\n"
         f"Ligne juste actuelle : {current_pin_odd:.2f}"
         f"{stake_line}"
     )
@@ -569,24 +605,25 @@ def format_value_bet(bet: ValueBet, sport: str | None = None,
     Optionally takes the sport string to surface a per-sport emoji.
     bankroll converts the stored quarter-Kelly% into a concrete € stake."""
     book_name = " / ".join(
-        _BOOK_NAMES.get(b, b.value) for b in (bet.book, *bet.also_books)
+        _nom_book(b) for b in (bet.book, *bet.also_books)
     )
 
     # Try to extract a readable home/away + kickoff from the event_key.
     parsed = parse_event_key(bet.event_key)
     if parsed is not None:
         start, home_norm, away_norm = parsed
-        matchup = f"{_prettify_team_name(home_norm)} vs {_prettify_team_name(away_norm)}"
+        matchup = (f"{_ht(_prettify_team_name(home_norm))} vs "
+                   f"{_ht(_prettify_team_name(away_norm))}")
         when_line = f"📅 {_format_kickoff(start)}{_time_to_kickoff(start)}\n"
     else:
         # Fall back to the raw key if it doesn't parse — better than crashing.
-        matchup = bet.event_key
+        matchup = _ht(bet.event_key)
         when_line = ""
 
     line_suffix = f" {bet.outcome.line}" if bet.outcome.line is not None else ""
     # Only some sources carry a competition name, so this line is conditional
     # rather than showing an empty placeholder.
-    league_line = f"🏆 {bet.league}\n" if bet.league else ""
+    league_line = f"🏆 {_ht(bet.league)}\n" if bet.league else ""
     # Only flagged when it isn't Pinnacle. A fallback reference is thinner, so
     # the same EV% deserves less confidence — and silently presenting the two
     # as equivalent is how a shaky number gets treated as a sure thing.
@@ -600,7 +637,7 @@ def format_value_bet(bet: ValueBet, sport: str | None = None,
     ref_suffix = ""
     ref_line = ""
     if bet.reference_book is not None and bet.reference_book is not Book.PINNACLE:
-        ref_name = _BOOK_NAMES.get(bet.reference_book, bet.reference_book.value)
+        ref_name = _nom_book(bet.reference_book)
         ref_suffix = f" · réf. <b>{ref_name}</b>"
         ref_line = (
             f"🔵 <b>Fair odd calculée sur {ref_name}</b> — Pinnacle ne price pas "
@@ -637,7 +674,7 @@ def format_value_bet(bet: ValueBet, sport: str | None = None,
         f"{_sport_prefix(sport)}{matchup}\n"
         f"{league_line}"
         f"{when_line}"
-        f"Pari : <b>{bet.outcome.label}{line_suffix}</b> @ {bet.odd_taken:.2f} "
+        f"Pari : <b>{_ht(bet.outcome.label)}{line_suffix}</b> @ {bet.odd_taken:.2f} "
         f"(fair {bet.fair_odd:.2f}{ref_suffix})\n"
         f"{ref_line}"
         f"{_advised_stake_line(bet.ev_pct, bet.kelly_stake_pct, bankroll)}"
@@ -1322,9 +1359,10 @@ def format_late_market(event_key: str, book: Book, quotes: list,
     parsed = parse_event_key(event_key)
     if parsed is not None:
         _, home_norm, away_norm = parsed
-        matchup = f"{_prettify_team_name(home_norm)} vs {_prettify_team_name(away_norm)}"
+        matchup = (f"{_ht(_prettify_team_name(home_norm))} vs "
+                   f"{_ht(_prettify_team_name(away_norm))}")
     else:
-        matchup = event_key
+        matchup = _ht(event_key)
     edges = edges or {}
     # Une ligne par issue retenue, la plus grosse d'abord : c'est celle-là
     # qu'on joue. Le marché seul (« totals 2.5 ») ne dit ni de quel côté ni
@@ -1335,7 +1373,8 @@ def format_late_market(event_key: str, book: Book, quotes: list,
                                    if q.outcome.line is not None else "")
         gap = edges.get(_edge_key(q))
         gap_txt = f"  <b>+{gap:.0f}%</b> vs live" if gap is not None else ""
-        lines.append(f"• {q.market.value} <b>{label}</b> @ {q.decimal_odd:.2f}{gap_txt}")
+        lines.append(f"• {_ht(q.market.value)} <b>{_ht(label)}</b> "
+                     f"@ {q.decimal_odd:.2f}{gap_txt}")
     best = max(edges.values(), default=None)
     # Le score change tout : « les deux équipes marquent » sur un 1-1 est déjà
     # gagné, et c'est invisible sans cette ligne. Absent quand le flux live
@@ -1343,13 +1382,13 @@ def format_late_market(event_key: str, book: Book, quotes: list,
     # à un 0-0.
     if score is not None:
         h, a, minute = score
-        score_line = f"⚽ <b>Score : {h}-{a}</b>  ({minute}')\n"
+        score_line = f"⚽ <b>Score : {_ht(h)}-{_ht(a)}</b>  ({_ht(minute)}')\n"
     else:
         score_line = "❔ Score inconnu — vérifie avant de jouer.\n"
     titre = ("🥅 <b>BUT — MARCHÉ TOUJOURS OUVERT</b>" if is_goal
              else "⏱️ <b>MARCHÉ EN RETARD</b>")
     return (
-        f"{titre} — {_BOOK_NAMES.get(book, book.value)}\n"
+        f"{titre} — {_nom_book(book)}\n"
         f"{_sport_prefix(sport)}{matchup}\n"
         f"{score_line}"
         f"Commencé depuis <b>{minutes_late:.0f} min</b> selon Pinnacle, "
