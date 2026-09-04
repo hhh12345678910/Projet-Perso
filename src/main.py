@@ -1005,34 +1005,44 @@ def _daemon_scan_sport(
         # match déjà commencé. Placé avant l'analyse de value, mais après le
         # fetch : il lui faut la réponse Pinnacle de CE cycle pour savoir quels
         # matchs sont encore prématch.
-        if _LATE_MARKET_ENABLED:
-            try:
-                # Scores en direct, football seulement : le dump live couvre tous
-                # les sports mais un « score » de tennis change à chaque point.
-                _goals: set[str] = set()
-                if current_sport == "soccer":
-                    _now_scores = read_live_scores(betano_file)
-                    if _now_scores:
-                        _goals = goals_since_last_cycle(_now_scores, _LIVE_SCORES)
-                        _LIVE_SCORES.update(_now_scores)
-                        forget_finished_scores(_LIVE_SCORES, datetime.now(timezone.utc))
-                        if _goals:
-                            console.print(f"\\[{current_sport}]   ⚽ buts détectés : {len(_goals)}")
-                _stats: Counter = Counter()
-                _late = find_late_markets(
-                    pinnacle_q, soft_raw, current_sport, datetime.now(timezone.utc),
-                    prior_odds=storage.odds_before, stats=_stats)
-                # Sans ces compteurs, un filtre trop strict et un book sans
-                # erreur donnent la même chose : rien. Le journal doit dire
-                # laquelle des deux situations on observe.
-                if _stats:
-                    console.print(
-                        f"\\[{current_sport}]   marchés en retard — "
-                        + ", ".join(f"{k} {v}" for k, v in sorted(_stats.items()))
-                    )
-                _report_late_markets(_late, current_sport, tg_cfg, goals=_goals)
-            except Exception as e:                              # noqa: BLE001
-                console.print(f"[yellow]\\[{current_sport}]   late-markets skipped: {e}[/yellow]")
+        # ⚠️ PHASE NOMMÉE APRÈS COUP, ET C'EST LA LEÇON. `reste` pesait
+        # 67 % du temps d'un sport et personne ne savait de quoi il était
+        # fait — la sonde le disait elle-même : « tant qu'il domine, nommer
+        # une phase de plus rapporte davantage qu'optimiser celles qu'on
+        # voit ». `find_late_markets` interroge `odds_before` une à deux fois
+        # par couple (événement, book) : ajouter un book qui couvre un
+        # millier d'événements ajoute autant de requêtes contre `quotes`,
+        # table de plusieurs dizaines de Go. C'est le suspect du cycle passé
+        # de 26 s à 137 s le 04/09 en activant MeridianBet.
+        with ch("retards"):
+            if _LATE_MARKET_ENABLED:
+                try:
+                    # Scores en direct, football seulement : le dump live couvre tous
+                    # les sports mais un « score » de tennis change à chaque point.
+                    _goals: set[str] = set()
+                    if current_sport == "soccer":
+                        _now_scores = read_live_scores(betano_file)
+                        if _now_scores:
+                            _goals = goals_since_last_cycle(_now_scores, _LIVE_SCORES)
+                            _LIVE_SCORES.update(_now_scores)
+                            forget_finished_scores(_LIVE_SCORES, datetime.now(timezone.utc))
+                            if _goals:
+                                console.print(f"\\[{current_sport}]   ⚽ buts détectés : {len(_goals)}")
+                    _stats: Counter = Counter()
+                    _late = find_late_markets(
+                        pinnacle_q, soft_raw, current_sport, datetime.now(timezone.utc),
+                        prior_odds=storage.odds_before, stats=_stats)
+                    # Sans ces compteurs, un filtre trop strict et un book sans
+                    # erreur donnent la même chose : rien. Le journal doit dire
+                    # laquelle des deux situations on observe.
+                    if _stats:
+                        console.print(
+                            f"\\[{current_sport}]   marchés en retard — "
+                            + ", ".join(f"{k} {v}" for k, v in sorted(_stats.items()))
+                        )
+                    _report_late_markets(_late, current_sport, tg_cfg, goals=_goals)
+                except Exception as e:                              # noqa: BLE001
+                    console.print(f"[yellow]\\[{current_sport}]   late-markets skipped: {e}[/yellow]")
         remember_pinnacle_events(pinnacle_q, time.monotonic())
 
         if not pinnacle_q:
