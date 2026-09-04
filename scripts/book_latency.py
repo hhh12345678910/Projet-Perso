@@ -80,25 +80,44 @@ def main() -> int:
             "La sortie du daemon va dans valuebet.log, PAS dans journalctl — "
             "c'est scan-daemon.sh qui redirige.")
 
-    # (cycle, sport) → [(durée, book, n_cotes)] ; -1 en n_cotes = échec
+    # ⚠️ TOUT EST INDEXÉ PAR (SÉRIE, CYCLE), JAMAIS PAR CYCLE SEUL.
+    #
+    # Un redémarrage remet le compteur à 1, et un journal en contient plusieurs.
+    # Indexer par numéro seul faisait entrer en collision le cycle 20 d'avant
+    # et le cycle 20 d'après — et surtout, `--derniers N` prenait les N PLUS
+    # GRANDS NUMÉROS, c'est-à-dire la fin de la série la plus LONGUE, donc la
+    # plus ANCIENNE. Demander « les 40 derniers cycles » après un redémarrage
+    # rendait exactement les 40 cycles d'avant le redémarrage : l'option censée
+    # isoler le régime courant servait l'ancien, en silence.
+    #
+    # La série s'incrémente dès que le numéro n'augmente pas strictement.
     par_lot: dict[tuple, list] = defaultdict(list)
-    phases: list[tuple[int, str, dict, float]] = []
-    travail: dict[int, int] = {}
-    cycle = 0
+    phases: list[tuple[tuple, str, dict, float]] = []
+    travail: dict[tuple, int] = {}
+    ordre_lots: list[tuple] = []          # (série, cycle) dans l'ordre du fichier
+    serie, dernier_num, cycle = 0, None, 0
+    cle = (0, 0)
     for ligne in chemin.read_text(errors="replace").splitlines():
         m = RE_CYCLE.search(ligne)
         if m:
-            cycle = int(m.group(1))
+            num = int(m.group(1))
+            if dernier_num is None or num <= dernier_num:
+                serie += 1
+            dernier_num, cycle = num, num
+            cle = (serie, num)
+            if cle not in ordre_lots:
+                ordre_lots.append(cle)
             continue
         m = RE_FAIT.search(ligne)
         if m:
-            travail[int(m.group(1))] = int(m.group(2))
+            # Rattaché à la série COURANTE, pas au numéro nu.
+            travail[(serie, int(m.group(1)))] = int(m.group(2))
             continue
         m = RE_PHASES.match(ligne.strip())
         if m:
             if not (a.sport and m.group(1) != a.sport):
                 paires = re.findall(r"([a-zéè]+) ([\d.]+)", m.group(2))
-                phases.append((cycle, m.group(1),
+                phases.append((cle, m.group(1),
                                {k: float(v) for k, v in paires},
                                float(m.group(3))))
             continue
@@ -112,7 +131,7 @@ def main() -> int:
             sp, book, dt, n = m.group(1), m.group(2), float(m.group(3)), -1
         if a.sport and sp != a.sport:
             continue
-        par_lot[(cycle, sp)].append((dt, book, n))
+        par_lot[(cle, sp)].append((dt, book, n))
 
     # ⚠️ NE SORTIR QUE SI LES DEUX MANQUENT. La première version sortait dès
     # qu'aucune durée par book n'était trouvée — elle jetait donc les lignes de
@@ -137,8 +156,14 @@ def main() -> int:
         return 0
 
     if a.derniers:
-        gardes = sorted({c for c, _ in par_lot})[-a.derniers:]
+        # Par ordre du FICHIER, et appliqué aux DEUX tableaux : filtrer les
+        # books sans filtrer les phases faisait comparer deux périodes.
+        gardes = set(ordre_lots[-a.derniers:])
         par_lot = {k: v for k, v in par_lot.items() if k[0] in gardes}
+        phases = [p for p in phases if p[0] in gardes]
+        if not par_lot and not phases:
+            raise SystemExit(
+                f"--derniers {a.derniers} ne garde aucun cycle mesuré.")
 
     # Par book : ses durées, ses passages en chemin critique, le temps qu'il a
     # réellement coûté (l'écart avec le deuxième — le gain qu'il offrirait).
@@ -159,9 +184,10 @@ def main() -> int:
         somme_crit += pire[0]
 
     n_lots = len(par_lot)
-    cycles = sorted({c for c, _ in par_lot})
+    cycles = [c for c in ordre_lots if any(k[0] == c for k in par_lot)]
     print(f"\nOÙ PASSE LE TEMPS DU FETCH — {chemin}")
-    print(f"{n_lots} lots (cycle × sport), cycles {cycles[0]} à {cycles[-1]}"
+    print(f"{n_lots} lots (cycle × sport), cycles {cycles[0][1]} à "
+          f"{cycles[-1][1]} sur {len({c[0] for c in cycles})} série(s)"
           + (f", sport {a.sport}" if a.sport else ""))
     # ⚠️ UN JOURNAL COUVRE PLUSIEURS VERSIONS DU CODE. Les durées par book
     # remontent à leur mise en place, les lignes de phases à la leur : quand
@@ -169,11 +195,11 @@ def main() -> int:
     # books mélange l'avant et l'après d'un changement, et une optimisation
     # récente y est diluée dans des milliers de mesures anciennes.
     if phases and len(phases) * 4 < n_lots:
-        c_ph = sorted({c for c, _s, _d, _t in phases})
+        c_ph = [c for c in ordre_lots if any(p[0] == c for p in phases)]
         print(f"\n⚠️ CE TABLEAU MÉLANGE PLUSIEURS RÉGIMES. Les durées par book "
-              f"couvrent {n_lots} lots\n   (cycles {cycles[0]}–{cycles[-1]}), "
+              f"couvrent {n_lots} lots\n   (cycles {cycles[0][1]}–{cycles[-1][1]}), "
               f"les phases seulement {len(phases)}\n   (cycles "
-              f"{c_ph[0]}–{c_ph[-1]}). Tout changement récent est donc noyé "
+              f"{c_ph[0][1]}–{c_ph[-1][1]}). Tout changement récent est donc noyé "
               f"dans l'ancien.\n   Relancer avec `--derniers "
               f"{max(1, len(c_ph))}` pour ne juger que le régime courant.")
 
@@ -221,7 +247,7 @@ def main() -> int:
     #
     # Le bon rapprochement est cycle contre MAX PAR CYCLE du total des phases,
     # puisque c'est exactement ce que le daemon attend.
-    par_cycle: dict[int, float] = {}
+    par_cycle: dict[tuple, float] = {}
     for c, _sp, _d, t in phases:
         par_cycle[c] = max(par_cycle.get(c, 0.0), t)
     communs = [c for c in par_cycle if c in travail]
