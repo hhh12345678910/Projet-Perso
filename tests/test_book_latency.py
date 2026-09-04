@@ -112,13 +112,54 @@ def test_la_ligne_de_phases_est_lue_par_la_sonde(sport):
     ch = _ChronoFige({"fetch": 12.0, "base": 8.0, "fair": 1.0, "marques": 0.5}, 26.0)
     rendu = _rendu(ligne_phases(sport, ch))
     assert "\n" not in rendu, f"enveloppée par rich : {rendu!r}"
+    assert len(rendu) <= 80, f"{len(rendu)} colonnes : {rendu!r}"
     m = RE_PHASES.match(rendu.strip())
     assert m, f"la regex ne matche pas : {rendu!r}"
     assert m.group(1) == sport
     assert float(m.group(3)) == pytest.approx(26.0)
     paires = dict(re.findall(r"([a-zéè]+) ([\d.]+)", m.group(2)))
-    assert {k: float(v) for k, v in paires.items()} == {
-        "fetch": 12.0, "base": 8.0, "fair": 1.0, "marques": 0.5, "reste": 4.5}
+    vus = {k: float(v) for k, v in paires.items()}
+    # `marques` est sous le seuil d'impression de 0,05 s ? Non — 0,5 s. Mais
+    # les noms sont ABRÉGÉS : la sonde lit ce qui est imprimé, pas les clés.
+    assert vus["fetch"] == 12.0 and vus["base"] == 8.0
+    assert vus["reste"] == pytest.approx(4.5)
+
+
+@pytest.mark.parametrize("sport", ["volleyball", "soccer"])
+def test_la_ligne_tient_sous_80_colonnes_avec_NEUF_phases(sport):
+    """Le piège qui a réellement mordu le 04/09 : ajouter une phase a fait
+    dépasser 80 colonnes, `rich` a coupé la ligne, `tot` est passé à la ligne
+    suivante — et le tableau des phases est devenu incohérent avec le journal
+    SANS RIEN DIRE. Neuf phases, c'est ce que la production imprime."""
+    from scripts.book_latency import RE_PHASES as R
+    from src.orchestration import ligne_phases
+    ch = _ChronoFige({"fetch": 123.4, "base": 98.7, "fair": 45.6,
+                      "retards": 33.2, "marques": 12.1, "clv_alertes": 95.2,
+                      "detection": 12.1, "surebets": 2.4, "middles": 1.1}, 999.9)
+    rendu = _rendu(ligne_phases(sport, ch))
+    assert "\n" not in rendu, f"ENVELOPPÉE : {rendu!r}"
+    assert len(rendu) <= 80, f"{len(rendu)} colonnes : {rendu!r}"
+    assert R.match(rendu.strip()), f"illisible à la sonde : {rendu!r}"
+    assert "tot 999.9s" in rendu, "le total doit survivre à la troncature"
+    assert "+" in rendu, "les phases omises doivent être ANNONCÉES, pas tues"
+
+
+def test_une_phase_negligeable_n_est_pas_imprimee():
+    """Sous 0,05 s une phase n'apprend rien et vole de la place à celles qui
+    comptent. La sonde traite une phase absente comme nulle."""
+    from src.orchestration import ligne_phases
+    ch = _ChronoFige({"fetch": 10.0, "marques": 0.0, "retards": 0.001}, 12.0)
+    rendu = _rendu(ligne_phases("soccer", ch))
+    assert "marq" not in rendu and "retd" not in rendu
+    assert "fetch 10.0" in rendu
+
+
+def test_un_chrono_vide_reste_lisible():
+    """Sortie anticipée : aucune phase, mais `reste` et `tot` doivent rester."""
+    from scripts.book_latency import RE_PHASES as R
+    from src.orchestration import ligne_phases
+    rendu = _rendu(ligne_phases("soccer", _ChronoFige({}, 3.0)))
+    assert R.match(rendu.strip()) and "tot 3.0s" in rendu
 
 
 def test_le_chrono_cumule_les_passages_d_une_meme_phase():

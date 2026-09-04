@@ -1206,6 +1206,7 @@ def _daemon_scan_sport(
             f"({100 * _written / _offered if _offered else 0:.1f} %)"
         )
 
+        _t_phase = time.monotonic()
         # ── CLV pre-kickoff alerts ────────────────────────────────────
         if tg_cfg is not None and tg_cfg.clv_window_minutes > 0:
             now_utc = datetime.now(timezone.utc)
@@ -1266,6 +1267,8 @@ def _daemon_scan_sport(
                 if clv_sent:
                     console.print(f"\\[{current_sport}]   → {len(clv_sent)} CLV alert(s) sent")
 
+        ch.par_phase["clv_alertes"] = time.monotonic() - _t_phase
+        _t_phase = time.monotonic()
         # ── Value bets ───────────────────────────────────────────────
         bets = merge_twin_book_value_bets(find_value_bets(soft_q, fair, cfg))
         bets.sort(key=lambda b: b.ev_pct, reverse=True)
@@ -1343,6 +1346,8 @@ def _daemon_scan_sport(
             if sent:
                 console.print(f"\\[{current_sport}]   → {len(sent)} value bet alert(s) sent")
 
+        ch.par_phase["detection"] = time.monotonic() - _t_phase
+        _t_phase = time.monotonic()
         # ── Surebets ─────────────────────────────────────────────────
         # Surebets use a wider pool than value bets: events Pinnacle doesn't
         # price still count, as long as two distinct books cover both sides.
@@ -1388,6 +1393,8 @@ def _daemon_scan_sport(
                 if sent_sb:
                     console.print(f"\\[{current_sport}]   → {len(sent_sb)} surebet alert(s) sent")
 
+        ch.par_phase["surebets"] = time.monotonic() - _t_phase
+        _t_phase = time.monotonic()
         # ── Middles ──────────────────────────────────────────────────
         # Totals middles priced against Pinnacle's devigged ladder. Uses the
         # remapped soft quotes (aligned to the Pinnacle reference keys) so the
@@ -1434,6 +1441,15 @@ def _daemon_scan_sport(
 
     # ── Persist dedup marks outside the sport catch so a scraper/analysis
     # failure never prevents already-sent alerts from being recorded. ──────
+    # La dernière section nommée se solde ici. `reste` reste ce que personne
+    # ne revendique — et c'est lui qu'il faut regarder en premier.
+    try:
+        ch.par_phase["middles"] = time.monotonic() - _t_phase
+    except NameError:
+        # Sortie anticipée (Pinnacle muet) : les sections n'ont pas été
+        # atteintes, il n'y a rien à solder.
+        pass
+
     # Chronométré à plat plutôt qu'avec `with` : envelopper le `try` aurait
     # demandé de réindenter vingt lignes de code de production pour une mesure,
     # et un `with` à l'intérieur du `try` aurait laissé une indentation bâtarde.

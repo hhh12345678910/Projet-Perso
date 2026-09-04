@@ -975,16 +975,50 @@ class Chrono:
         return max(0.0, self.total() - sum(self.par_phase.values()))
 
 
+# Noms courts : la ligne DOIT tenir sous 80 colonnes (voir ci-dessous).
+_ABREGE = {"fetch": "fetch", "fair": "fair", "base": "base", "retards": "retd",
+           "marques": "marq", "clv_alertes": "clv", "detection": "detc",
+           "surebets": "sure", "middles": "midl"}
+
+
 def ligne_phases(sport: str, ch: "Chrono") -> str:
     """Le partage du temps d'un sport, en une ligne sous 80 colonnes.
 
-    ⚠️ Même contrainte que `ligne_book` : hors terminal `rich` enveloppe à 80
-    et couperait la ligne, la rendant illisible à toute sonde. Les noms de
-    phase sont courts pour cette raison, pas par négligence."""
-    bouts = " ".join(f"{k} {v:.1f}" for k, v in sorted(
-        ch.par_phase.items(), key=lambda kv: -kv[1]))
-    return (f"[dim]\\[{sport}]   ⏱ {bouts} reste {ch.reste():.1f} "
-            f"tot {ch.total():.1f}s[/dim]")
+    ⚠️ HORS TERMINAL, `rich` ENVELOPPE À 80 ET COUPE LA LIGNE. Une ligne
+    coupée n'est plus lisible par la regex de `scripts/book_latency.py` : la
+    sonde en perd une partie et ses statistiques deviennent fausses SANS RIEN
+    DIRE. C'est arrivé le 04/09 en ajoutant la phase `retards` — la ligne a
+    dépassé 80 colonnes, `tot` est passé à la ligne suivante, et le tableau des
+    phases est devenu incohérent avec les lignes brutes du journal.
+
+    Deux garde-fous, dans cet ordre :
+      * les phases sous 0,05 s ne sont pas imprimées — à ce niveau elles
+        n'apprennent rien, et la sonde traite une phase absente comme nulle ;
+      * si ça ne suffit pas, seules les plus grosses restent, et la ligne dit
+        combien ont été omises au lieu de les taire.
+
+    `reste` et `tot` sont TOUJOURS imprimés : ce sont eux qui disent où
+    chercher, et la regex de la sonde s'ancre sur `tot`."""
+    queue = f" reste {ch.reste():.1f} tot {ch.total():.1f}s"
+    tete = f"[{sport}]   ⏱ "                      # tel que `rich` le rendra
+    budget = 80 - len(tete) - len(queue)
+    parts = [(_ABREGE.get(k, k[:4]), v)
+             for k, v in sorted(ch.par_phase.items(), key=lambda kv: -kv[1])
+             if v >= 0.05]
+    gardees: list[str] = []
+    largeur = 0
+    for n, (nom, v) in enumerate(parts):
+        morceau = f"{nom} {v:.1f}"
+        omis = len(parts) - n
+        # Garder la place d'annoncer ce qu'on omet, sinon le dernier morceau
+        # entre et l'aveu, non.
+        reserve = len(f" +{omis}") if omis > 1 else 0
+        if largeur + len(morceau) + 1 + reserve > budget:
+            gardees.append(f"+{omis}")
+            break
+        gardees.append(morceau)
+        largeur += len(morceau) + 1
+    return f"[dim]\\[{sport}]   ⏱ {' '.join(gardees)}{queue}[/dim]"
 
 
 def fetch_all_parallel(
