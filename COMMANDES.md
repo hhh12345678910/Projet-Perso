@@ -768,3 +768,43 @@ question.** Environ un tiers des paris n'a pas de clôture capturée : leur ROI
 compte, leur CLV est inconnue. Les jeter ferait lire « le ROI par tranche de
 CLV » sur la sous-population dont on a réussi à mesurer la CLV — une sélection,
 pas un échantillon. Elle est donc imprimée avec les autres.
+
+## MeridianBet — débloqué le 04/09
+
+**Le blocage n'était pas TrafficGuard.** L'API répondait `401 invalid_token` :
+un refus d'**authentification**, pas un filtrage d'ASN. L'IP de la VM passe
+très bien — c'est l'en-tête `Authorization: Bearer` qui manquait.
+
+**Le jeton se prend par la porte d'entrée.** Chaque page HTML du site embarque
+un jeton NEUF dans son `<script id="ng-state">`, sous `NEW_TOKEN`. Un `GET`
+anonyme suffit, sans navigateur, sans pont, sans compte. C'est un jeton invité
+(`scope: ["GENERAL"]`, `permissions: []`), bon pour lire l'offre publique.
+
+| réglage | défaut | rôle |
+|---|---|---|
+| `MERIDIAN_TOKEN_URL` | `https://meridiansports.be/en/betting/football/` | la page où prendre le jeton |
+| `MERIDIAN_TOKEN_MARGIN_SEC` | `300` | marge avant expiration |
+| `MERIDIAN_TIME_FILTER` | `ALL` | fenêtre de l'offre |
+| `BOOKS_DISABLED=meridianbet` | — | **coupe-circuit** |
+
+⚠️ `NEW_TOKEN` est du **JSON encodé dans une chaîne**. Un `.get()` direct rend
+la chaîne entière, l'en-tête part invalide, l'API répond 401 et le book paraît
+cassé alors que le jeton était là.
+
+⚠️ `overUnder` et `handicap` sont portés par le **groupe**, jamais par la
+sélection. Les chercher sur la sélection rendrait des totaux **sans ligne**,
+inutilisables pour l'appariement.
+
+⚠️ L'`Origin` s'envoie **sans le `www.`** — c'est ce que le navigateur fait, et
+une origine qui ne correspond pas est ce qu'un anti-bot vérifie en premier.
+
+**Le coût** : une page de ~1,5 Mo par heure pour renouveler le jeton, partagée
+entre tous les sports par un verrou. Négligeable.
+
+**Repli** : si l'API se ferme, le même `ng-state` contient l'offre elle-même
+(`matches-today-58-leagues`), lisible **sans aucun jeton**. Aucun autre book du
+portefeuille n'a deux voies indépendantes.
+
+**À vérifier après activation** : `scripts/book_health.py meridianbet` (le book
+traverse-t-il toute la chaîne ?) et `scripts.book_latency --derniers 40` (est-il
+devenu le chemin critique du cycle ?).

@@ -1002,9 +1002,13 @@ def fetch_all_parallel(
         # "711":           lambda: fetch_sevenelevenbe_quotes(sport),  # Kambi jumeau d'Unibet -> desactive (anti rate-limit)
         # "Bingoal":       lambda: fetch_bingoal_quotes(sport),  # Kambi jumeau d'Unibet -> desactive (anti rate-limit)
         # "Scooore":       lambda: fetch_scooore_quotes(sport),  # Kambi jumeau d'Unibet -> desactive (anti rate-limit)
-        # MeridianBet: scraper prêt mais l'API exige un token (anti-bot
-        # TrafficGuard) -> réactiver ici une fois le token capturé.
-        # "MeridianBet": lambda: fetch_meridian_quotes(sport),
+        # MeridianBet : DÉBLOQUÉ le 04/09. Le blocage n'était pas TrafficGuard
+        # mais un simple `Authorization: Bearer` manquant — l'API répondait
+        # `401 invalid_token`, un refus d'authentification et non un filtrage
+        # d'ASN. Le jeton invité se prend dans le `<script id="ng-state">` de
+        # n'importe quelle page du site, servie sans jeton à l'IP de la VM.
+        # Coupe-circuit : BOOKS_DISABLED=meridianbet.
+        "MeridianBet": lambda: fetch_meridian_quotes(sport),
         # BetFirst : le 403 est tombé (vérifié le 06/08). Servi depuis un cache
         # rafraîchi EN FOND — le cycle ne l'attend jamais. Voir
         # fetch_betfirst_quotes : même paginé en parallèle il reste le plus lent
