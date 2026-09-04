@@ -135,18 +135,42 @@ def test_journal_ou_le_temoin_dit_non(tmp_path, capsys, monkeypatch):
     assert "portent quand même" in out
 
 
-def test_journal_ou_la_pente_est_trop_faible(tmp_path, capsys, monkeypatch):
-    """Parfaitement corrélé, témoin muet — mais 0,3 s par pari : les pauses de
-    3,2 s n'expliquent pas ce volume, et la sonde refuse de conclure."""
+def test_une_pente_sous_l_intervalle_reste_confirmee(tmp_path, capsys,
+                                                     monkeypatch):
+    """LE CAS RÉEL DU 04/09, ET L'ERREUR DE LA PREMIÈRE VERSION.
+
+    118,6 s pour 74 paris = 1,60 s par pari, moitié moins que l'intervalle de
+    3,2 s. La sonde exigeait alors une pente d'au moins 0,8 × l'intervalle et
+    aurait rejeté l'hypothèse sur les données mêmes qui l'ont fait naître.
+
+    Le modèle est un MAXIMUM PAR CHAT : une pente sous l'intervalle dit
+    seulement qu'un pari sur deux est dédoublonné sur le canal le plus chargé.
+    C'est normal, et ça doit rester confirmable."""
     lignes = []
-    for i, n in enumerate([0, 5, 12, 37, 20, 0, 8], start=1):
-        lignes += _cycle(i, 0.3 * n, n, n + 4, 25.0)
+    for i, n in enumerate([0, 10, 40, 74, 30, 0, 20], start=1):
+        # La moitié des paris passe le dédoublonnage sur le canal le plus
+        # chargé : dRest = 3,2 × n/2 = 1,6 n.
+        lignes += _cycle(i, 1.6 * n, n, n + 4, 28.5 + 1.6 * n)
     p = _journal(lignes, tmp_path)
     monkeypatch.setattr("sys.argv", ["alert_cost", "--log", str(p)])
     main()
     out = capsys.readouterr().out
-    assert "HYPOTHÈSE ÉCARTÉE" in out
-    assert "est sous" in out
+    assert "HYPOTHÈSE CONFIRMÉE" in out, out
+
+
+def test_journal_ou_la_borne_est_franchie(tmp_path, capsys, monkeypatch):
+    """Témoin muet, corrélation parfaite — mais 10 s par pari, soit trois
+    messages par pari sur UN canal. Un canal reçoit au plus un message par
+    pari : les pauses ne peuvent pas produire ce temps."""
+    lignes = []
+    for i, n in enumerate([0, 5, 12, 37, 20, 0, 8], start=1):
+        lignes += _cycle(i, 10.0 * n, n, n + 4, 25.0 + 10.0 * n)
+    p = _journal(lignes, tmp_path)
+    monkeypatch.setattr("sys.argv", ["alert_cost", "--log", str(p)])
+    main()
+    out = capsys.readouterr().out
+    assert "HYPOTHÈSE ÉCARTÉE" in out, out
+    assert "plus de messages" in out
 
 
 def test_l_absence_de_ligne_d_envoi_vaut_zero_pas_inconnu(tmp_path):

@@ -9,23 +9,39 @@ la limite de Telegram étant d'environ 20 messages/minute et par groupe). Rien
 n'est asynchrone : le cycle est à l'arrêt pendant ces pauses. Un cycle qui
 délivre N messages porte donc N × 3,2 s de sommeil pur.
 
-Si c'est vrai, `dRest` — la part du bloc des value bets qu'aucune sous-phase
-(`find`, `insVB`, `feat`, `seed`, `suivi`) ne revendique, c'est-à-dire
-essentiellement `send_alerts` — doit être PROPORTIONNELLE au nombre d'alertes
-délivrées, avec un coefficient d'au moins `min_send_interval_s`.
+LE MODÈLE EXACT — CE N'EST PAS UNE SOMME, C'EST UN MAXIMUM
+----------------------------------------------------------
+`_next_slot` est tenu PAR CHAT. Deux canaux ont deux budgets indépendants :
+envoyer le même pari à deux canaux ne coûte pas deux pauses, la seconde part
+pendant la pause de la première. Le coût d'un cycle est donc
 
-CE QUI LA TUERAIT
------------------
-Des cycles SANS aucune alerte délivrée mais avec un `dRest` important. La
-sonde calcule cette moyenne-là en premier et l'affiche en premier : c'est le
-témoin, et il a le droit de dire non. Un coefficient très inférieur à
-`min_send_interval_s` la tuerait aussi — le temps viendrait d'ailleurs.
+    dRest ≈ min_send_interval_s × (messages sur le canal LE PLUS CHARGÉ)
 
-⚠️ `→ N value bet alert(s) sent` COMPTE DES PARIS, PAS DES MESSAGES. Un pari
-routé vers deux canaux vaut deux messages, donc deux pauses. Le coefficient
-mesuré est un temps PAR PARI DÉLIVRÉ ; divisé par `min_send_interval_s`, il
-donne le nombre moyen de canaux par pari. C'est une information, pas une
-anomalie.
+et non × le nombre total de messages. C'est ce qui condamne le correctif
+naïf : paralléliser les canaux ne rendrait rien, ils le sont déjà de fait.
+
+⚠️ PREMIÈRE VERSION DE CETTE SONDE : FAUSSE. Elle exigeait une pente d'au
+moins 0,8 × l'intervalle et aurait donc REJETÉ l'hypothèse sur le journal du
+04/09 — 118,6 s pour 74 paris, soit 1,60 s par pari, sous le seuil. Le tort
+était au seuil, pas aux données : avec un maximum par chat, la pente PAR PARI
+DÉLIVRÉ est librement inférieure à l'intervalle dès qu'un pari sur deux est
+dédoublonné sur le canal le plus chargé. Un test qui ne peut conclure que dans
+un sens n'est pas un test.
+
+CE QUI LA TUE VRAIMENT
+----------------------
+1. Des cycles SANS aucune alerte délivrée mais avec un `dRest` important. La
+   sonde calcule cette moyenne-là EN PREMIER et l'affiche en premier : c'est
+   le témoin, et il a le droit de dire non.
+2. `dRest` qui ne suit pas le nombre d'alertes (corrélation faible).
+3. Un `dRest` qui implique PLUS de messages sur un canal qu'il n'y a de paris
+   délivrés. Un canal reçoit au plus un message par pari : au-delà de cette
+   borne, les pauses ne peuvent pas expliquer le temps, quelque chose d'autre
+   est dans `dRest`.
+
+⚠️ `→ N value bet alert(s) sent` COMPTE DES PARIS, PAS DES MESSAGES. C'est la
+raison d'être de la borne du point 3 : on n'observe pas les messages, mais on
+connaît leur plafond.
 
 Usage :
     .venv/bin/python -m scripts.alert_cost
@@ -222,8 +238,20 @@ def main() -> int:
     print(f"  corrélation de Pearson       : "
           + (f"{r:+.3f}" if r is not None else "N/A (moins de 3 lots)"))
     if pente is not None and a.intervalle > 0:
-        print(f"  soit {pente / a.intervalle:.2f} message(s) par pari délivré "
-              f"— le nombre moyen de canaux touchés.")
+        print(f"  soit {pente / a.intervalle:.2f} message(s) sur le canal le "
+              f"plus chargé, par pari délivré.")
+        print("  (< 1 est NORMAL : c'est la part des paris que le "
+              "dédoublonnage écarte\n   sur ce canal-là. > 1 serait "
+              "impossible — voir la borne ci-dessous.)")
+
+    # ── LA BORNE ────────────────────────────────────────────────────
+    # Un canal reçoit AU PLUS un message par pari délivré. Le nombre de
+    # messages qu'implique dRest ne peut donc pas dépasser le nombre de paris.
+    depassements = [l for l in avec
+                    if l[2] / a.intervalle > l[4] * 1.15 + 1]
+    print("\n── LA BORNE : pas plus d'un message par pari et par canal ──")
+    print(f"  {len(depassements)} lot(s) sur {len(avec)} impliquent PLUS de "
+          f"messages que de paris délivrés.")
 
     # ── LE VERDICT ───────────────────────────────────────────────────
     # ⚠️ SENS DU TEST. « Confirmée » exige les TROIS : un témoin muet ou
@@ -233,8 +261,11 @@ def main() -> int:
     seuil_temoin = 2 * a.intervalle
     temoin_ok = moy_sans is None or moy_sans <= seuil_temoin
     correl_ok = r is not None and r >= 0.8
-    pente_ok = pente is not None and pente >= a.intervalle * 0.8
-    if temoin_ok and correl_ok and pente_ok:
+    # ⚠️ UNE BORNE SUPÉRIEURE, PAS UN PLANCHER. La pente peut légitimement
+    # descendre bien sous l'intervalle (dédoublonnage) ; ce qu'elle ne peut
+    # pas, c'est impliquer plus de messages sur un canal que de paris.
+    borne_ok = not avec or len(depassements) <= len(avec) * 0.1
+    if temoin_ok and correl_ok and borne_ok:
         gagne = _moy([l[2] for l in lots])
         tot_moy = _moy([l[3] for l in lots])
         print("  HYPOTHÈSE CONFIRMÉE : le temps part dans les pauses de "
@@ -245,6 +276,10 @@ def main() -> int:
               + " du cycle.")
         print(f"  Sans l'envoi dans le fil du scan, le cycle vaudrait "
               f"{tot_moy - gagne:.1f} s.")
+        if a.intervalle > 0:
+            print(f"  Soit {gagne / a.intervalle:.0f} message(s) par cycle sur "
+                  f"le canal le plus chargé,\n  à {a.intervalle:.2f} s de "
+                  f"sommeil chacun.")
     else:
         print("  HYPOTHÈSE ÉCARTÉE — le temps de `dRest` ne vient pas (que) de "
               "l'envoi Telegram :")
@@ -256,11 +291,11 @@ def main() -> int:
             print("    · dRest ne suit pas le nombre d'alertes "
                   + (f"(r = {r:+.3f}, il faudrait ≥ +0,800)" if r is not None
                      else "(trop peu de lots pour le dire)") + " ;")
-        if not pente_ok:
-            print("    · la pente "
-                  + (f"({pente:.2f} s/pari)" if pente is not None else "(N/A)")
-                  + f" est sous {a.intervalle * 0.8:.2f} s — les pauses "
-                    "n'expliquent pas ce volume.")
+        if not borne_ok:
+            print(f"    · {len(depassements)} lot(s) portent un dRest qui "
+                  f"impliquerait plus de messages\n      sur un canal qu'il "
+                  f"n'y a de paris délivrés — impossible pour des pauses "
+                  f"seules.")
 
     # ── INCIDENTS ────────────────────────────────────────────────────
     print("\n── INCIDENTS TELEGRAM SUR TOUT LE JOURNAL ──")

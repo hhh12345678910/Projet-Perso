@@ -702,10 +702,21 @@ faux sur ces deux lignes-là.
 **dort dans le fil du scan** (`_time.sleep`) pour respecter
 `min_send_interval_s` — 3,2 s par défaut, la limite de Telegram étant d'environ
 20 messages par minute et par groupe. Rien n'est asynchrone : **le cycle est à
-l'arrêt pendant ces pauses.** Un cycle qui délivre N messages porte N × 3,2 s
-de sommeil pur, et c'est ce que `dRest` mesure.
+l'arrêt pendant ces pauses**, et c'est ce que `dRest` mesure.
 
-La sonde teste cette hypothèse au lieu de la supposer, et dans cet ordre :
+**Le modèle exact est un MAXIMUM, pas une somme.** `_next_slot` est tenu **par
+chat** : deux canaux ont deux budgets indépendants, et le même pari envoyé à
+deux canaux ne coûte pas deux pauses — le second part pendant la pause du
+premier. Donc
+
+```
+dRest ≈ min_send_interval_s × (messages sur le canal LE PLUS CHARGÉ)
+```
+
+C'est ce qui condamne le correctif naïf : **paralléliser les canaux ne
+rendrait rien**, ils le sont déjà de fait.
+
+La sonde teste l'hypothèse au lieu de la supposer, et dans cet ordre :
 
 1. **le témoin d'abord** — le `dRest` moyen des cycles qui n'ont envoyé
    **aucune** alerte. S'il est gros, l'hypothèse est morte et le reste du
@@ -713,23 +724,33 @@ La sonde teste cette hypothèse au lieu de la supposer, et dans cet ordre :
 2. la **pente** d'une droite passant par l'origine (zéro alerte doit coûter
    zéro seconde — une régression libre absorberait le coût dans l'ordonnée à
    l'origine et le ferait disparaître) et la **corrélation de Pearson** ;
-3. le **verdict**, qui exige les trois : témoin muet, r ≥ +0,80, pente ≥ 0,8 ×
-   l'intervalle. Il en manque une et la sonde refuse de conclure, en disant
-   laquelle.
+3. **la borne** : un canal reçoit au plus un message par pari, donc
+   `dRest / intervalle` ne peut pas dépasser le nombre de paris délivrés.
+   Au-delà, les pauses n'expliquent pas le temps.
 
-⚠️ **`→ N value bet alert(s) sent` compte des PARIS, pas des messages.** Un
-pari routé vers deux canaux vaut deux messages, donc deux pauses. La pente est
-donc un temps **par pari délivré** ; divisée par `min_send_interval_s`, elle
-donne le nombre moyen de canaux touchés par pari. C'est une information, pas
-une anomalie.
+Le verdict exige les trois. Il en manque une et la sonde refuse de conclure,
+en disant laquelle.
+
+⚠️ **La première version de cette sonde était fausse, dans le sens qui compte.**
+Elle exigeait une pente d'au moins 0,8 × l'intervalle et aurait donc **rejeté**
+l'hypothèse sur le journal qui l'a fait naître : 118,6 s pour 74 paris font
+1,60 s par pari, moitié moins que 3,2 s. Le tort était au seuil. Avec un
+maximum par chat, **une pente sous l'intervalle est normale** — elle dit qu'un
+pari sur deux est dédoublonné sur le canal le plus chargé. Un plancher est le
+mauvais test ; la borne supérieure du point 3 est le bon.
+
+⚠️ **`→ N value bet alert(s) sent` compte des PARIS, pas des messages.** C'est
+la raison d'être de la borne : on n'observe pas les messages, mais on connaît
+leur plafond.
 
 Le dernier bloc compte les incidents Telegram sur **tout** le journal — 429,
 envois reportés pour cooldown, réponses non-200. Zéro 429 signifie que le
 ralentissement est le **rythme nominal**, pas une tempête de back-off : c'est
 la distinction qui décide du correctif.
 
-`tests/test_alert_cost.py` plante les deux journaux — celui où l'hypothèse est
-vraie et celui où le témoin dit non — et vérifie que le verdict bascule.
+`tests/test_alert_cost.py` plante quatre journaux — l'hypothèse vraie, le
+témoin qui dit non, la borne franchie, et le cas réel à pente 1,6 s qui doit
+rester **confirmable** — et vérifie que le verdict bascule dans chacun.
 Inverser la condition fait tomber trois tests.
 
 ### `UNIBET_PARALLEL_TERMS` — la queue d'Unibet
