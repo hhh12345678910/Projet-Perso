@@ -484,7 +484,8 @@ qu'une documentation muette** : elle fait perdre le temps de la vérifier.
 | `repair_events` | recrée les lignes `events` des paris orphelins (**écrit en base**) |
 | `repair_leagues` | remplit `events.league` depuis les fichiers de scores (**écrit en base avec `--apply`**) — la ligue ne vient que de Pinnacle (`main.py:982`), donc tout événement qu'il ne nomme pas reste sans ligue à jamais |
 | `clv_roi_matrix` | CLV **et** ROI dans une seule table, chacun avec son effectif — `--axe cote\|delai`, `--books`, `--premium`, et un test de chaque bande contre tout le reste corrigé de Bonferroni |
-| `closing_gap` | pourquoi la clôture manque, et est-ce que ça dépend du délai — teste si l'égalité EXACTE d'`event_key` de `closing_group` (`storage.py:1848`) perd les matchs dont l'horaire a bougé |
+| `closing_gap` | pourquoi la clôture manque, et est-ce que ça dépend du délai — teste trois mécanismes et dit ce que chacun PÈSE, pas seulement s'il est significatif (§25.5) |
+| `book_latency` | où passe le temps d'un cycle : quel book tient le chemin critique et combien de secondes il fait perdre **au-dessus du deuxième**, plus le partage fetch / fair / base / marques / reste (§25.6) |
 | `magic_probe_report` / `magic_probe_show` | inventaire et forme des sondes MagicBetting |
 
 ⚠️ **`market_supply` mérite d'être connue par cœur.** C'est elle qui a montré
@@ -1050,6 +1051,12 @@ fichiers prématch vieillissent — normal, sans conséquence (garde à 30 min).
 ---
 
 ## 12. Pinnacle — le plafond du système (soirée du 30/07)
+
+⚠️ **PÉRIMÉ DEPUIS LE 03/09.** Pinnacle n'est plus le plafond. Avec
+`PINNACLE_MIN_INTERVAL_SEC=60` il est servi par cache la plupart des cycles :
+mesuré, médiane 0,7 s et chemin critique du fetch **11 % du temps seulement**.
+Le goulot est chez les books soft — Unibet d'abord, puis EliteSports après sa
+correction. Voir §25.6 et §25.7.
 
 ### Le symptôme
 
@@ -2172,6 +2179,14 @@ désormais un σ pour la CLV en plus de celui du ROI, et un bloc « chaque bande
 contre tout le reste » en t de Welch avec le seuil de Bonferroni du nombre de
 bandes réellement testées. **C'est ce bloc qui décide, jamais la comparaison
 d'une cellule à la ligne TOTAL.**
+
+⚠️ **MESURÉ LE 03/09 : LA REMONTÉE AU-DELÀ DE 48 H N'EXISTE PAS, ET LA COUPE
+NE DOIT VISER RIEN DU TOUT.** Le découpage fin donne 48-72 h +6,54 %, 72-96 h
++7,25 %, 96-120 h +8,88 %, 120-168 h +8,55 %, > 168 h +5,75 %. La « remontée »
+annoncée ci-dessus (+5,44 % puis +9,10 %, soit +3,66 points sur n=179) vaut en
+réalité **+0,86 point à t = +0,79** tous sports, +1,39 point à t = +1,21 dans
+le football. Ce n'est pas un trou localisé qui se referme, c'est un **plateau
+bas** sur tout ce qui dépasse 24 h. Voir §25.3.
 
 **Par book** (toutes opportunités) :
 
@@ -6617,3 +6632,309 @@ ne protège rien** — le vérifier fait partie du travail, pas de la finition.
 Toujours **`refactor/prepare-live`**, poussée en parallèle sur
 `claude/resume-clarification-1541xa` (la branche par défaut) à chaque commit.
 Les deux pointent sur le même commit. La VM tourne sur `refactor/prepare-live`.
+
+---
+
+## 25. Session du 03/09 — la CLV validée comme KPI, et le cycle raccourci de 20 %
+
+Deux chantiers sans rapport : finir l'analyse par délai commencée au §16.4, et
+accélérer les cycles. Le premier a produit la validation que le projet n'avait
+jamais faite — **la CLV prédit réellement le ROI** — et a tué trois hypothèses
+au passage. Le second a rendu 20 % de l'horloge en une ligne de configuration.
+
+### 25.1 La CLV prédit le ROI — la validation qui manquait
+
+Le KPI du projet est la CLV depuis le début, et personne n'avait jamais vérifié
+qu'elle annonce quoi que ce soit. `clv_roi_matrix --axe clv` le fait.
+
+**Football, porte premium, tous books :**
+
+| CLV réalisée | n réglés | % gagnés | cote moy. gagnante | ROI |
+|---|---|---|---|---|
+| < 0 % | 732 | 31,0 % | 2,71 | **−15,87 %** |
+| 0–5 % | 332 | 40,4 % | 2,61 | +5,36 % |
+| 5–10 % | 570 | 41,2 % | 2,44 | +1,04 % |
+| 10–20 % | 636 | 43,1 % | 2,63 | +13,72 % |
+| > 20 % | 485 | 48,2 % | 3,12 | **+50,66 %** |
+
+Les deux extrêmes franchissent le seuil de Bonferroni **sur le ROI** :
+`< 0 %` à t = −5,57 et `> 20 %` à t = +6,51. Le tennis reproduit le profil
+indépendamment (+1,23 % → −24,55 % → +39,16 % → +40,02 % → +66,43 %).
+
+**Ce qui emporte la démonstration est le taux de gain**, monotone de 31,0 % à
+48,2 %. Ce n'est pas un effet de composition de cotes : la cote moyenne des
+gagnants monte AUSSI (2,71 → 3,12). Les deux vont dans le même sens, donc les
+paris à haute CLV gagnent plus souvent **et** plus gros.
+
+⚠️ **La bande `sans clôture` est imprimée avec les autres, et c'est délibéré.**
+1 756 opportunités football (1 158 réglées, ROI +8,98 %) n'ont pas de CLV. Les
+jeter ferait lire « le ROI par tranche de CLV » sur la seule sous-population
+dont on a réussi à mesurer la CLV — une sélection, pas un échantillon. Son ROI
+de +8,98 % est proche du +8,80 % global : cette population n'est pas anormale.
+
+### 25.2 L'EV détectée, elle, ne prédit rien de mesurable
+
+`--axe ev` montre les trois bandes franchissant le seuil **sur la CLV**
+(t = −15,80 · +10,57 · +10,48). **C'est quasi circulaire et ça ne prouve
+presque rien** : `EV = odd/fair_détection − 1` et `CLV = odd/fair_clôture − 1`
+partagent le numérateur, et les deux dénominateurs sont fortement corrélés. Une
+EV élevée entraîne une CLV élevée par construction, sauf si la ligne bouge
+contre soi.
+
+Ce qui n'est pas circulaire, c'est EV → ROI. Et là **aucune bande ne franchit
+le seuil** (t = +0,02 · −0,89 · +1,84), les ROI ne sont même pas monotones :
+football +8,57 / +6,74 / +33,09 %, tennis +14,26 / +1,66 / +66,40 %.
+
+**Le seuil d'EV dit ce qu'on va capturer en CLV, pas ce qu'on va gagner.**
+
+### 25.3 Le délai : la frontière est à 24 h, et il n'y a rien à couper
+
+| | n_clv | CLV | IC 95 % |
+|---|---|---|---|
+| < 24 h | 3 414 | +10,10 % | [+9,53 ; +10,67] |
+| ≥ 24 h | 1 116 | +7,16 % | [+6,16 ; +8,16] |
+
+Écart **−2,94 points, t = −5,01**, intervalles **disjoints**. À sport constant
+(football seul) : −2,10 points, t = −3,32 — donc ~29 % de l'écart apparent
+était un effet de composition de sports.
+
+Le même contraste sur le ROI donne −2,86 points à **t = −0,59**, et sur les
+deux books réellement joués **+0,23 point à t = +0,04** : le signe du ROI n'est
+même pas stable d'un échantillon à l'autre.
+
+**Les dix bandes ont une CLV positive hors de tout doute**, σ de 3,1 (`> 168 h`)
+à 22,1 (`0-2 h`). Couper `≥ 24 h` retirerait **25 % du volume valorisé à
++7,16 % de CLV** pour remonter une moyenne mécaniquement. **Ne rien couper.**
+La seule action défendable serait de baisser la mise au-delà de 24 h à
+proportion de l'edge (35 € → 25 €, Kelly), et elle ne rapporte quasiment rien.
+
+Au tennis le signe s'inverse : la CLV **monte** avec le délai (+11,41 % à
+0-2 h → +16,94 % à 12-24 h). Mais sa couverture de résultats loin du match
+s'effondre (20 % à 24-48 h, 9 % à 48-72 h) : le tennis lointain ne peut être
+jugé que sur la CLV.
+
+### 25.4 Le ROI ne tranchera jamais cette question — le calcul
+
+L'écart-type par pari vaut **142 points de ROI contre 17 points de CLV** : le
+P&L est **8,3 fois plus bruité par observation**.
+
+* trancher 2,9 points sur le **ROI** demande **38 916 paris réglés par
+  groupe**. Il y en a 1 290 → facteur 30 manquant, soit **6,1 ans** à la
+  cadence mesurée (4 723 réglés en 74 jours, 63,8/jour).
+* la **CLV** en demande **525**. Il y en a 1 116 → déjà 2,1× le nécessaire.
+
+**C'est la démonstration chiffrée de pourquoi le KPI est la CLV.** À retenir
+avant toute future question posée au ROI.
+
+### 25.5 Le déficit de capture : trois mécanismes testés, trois rejetés
+
+Le taux de capture de la clôture dépend du délai (football, population
+dédupliquée exigeant un `fair_odd` : 69,6 % sous 24 h contre 63,2 % au-delà ;
+en snapshots bruts sur la même population, 100,0 % à 0-2 h contre 77,2 % au-delà
+de 168 h).
+
+⚠️ **Deux taux de capture, et les confondre fait conclure de travers.**
+`closing_gap` compte tout `clv_snapshots.closing = 1` ; `clv_roi_matrix` exige
+en plus un `fair_odd` non nul pour son `n_clv`, une clôture non déviguée ne
+produisant aucune CLV. Les deux outils annonçaient donc 96 % et 68 % sur la
+même population sans que rien ne le signale. La colonne `CLV util.` rend
+l'écart lisible. Trois explications
+proposées, toutes trois **réfutées par la mesure** :
+
+1. **Égalité exacte d'`event_key`.** `closing_group` (`storage.py:1848`)
+   cherche avec `WHERE event_key = ?` alors que la clé porte la minute du coup
+   d'envoi (`matcher.py:190`), et la clé tolérante `_event_key_like`
+   (`storage.py:1293`) n'est utilisée que dans la déduplication d'alertes.
+   Mécanisme plausible — **z = +1,25, rejeté**. Le câblage reste une
+   amélioration, mais ne récupérerait pas le déficit.
+2. **Dérive de ligne.** `closing_group` apparie aussi sur `line`, qui bouge.
+   **Rejeté** : `h2h`, qui ne porte aucune ligne, chute de 11,3 points entre le
+   court et le lointain ; `totals`, qui en porte une partout, de 13,5.
+3. **Sélectivité des manquants.** Deux tests sur quatorze franchissent le
+   seuil, mais **ce qu'ils pèsent est borné** : le biais induit sur le
+   contraste vaut **−0,376 point d'EV**, et la CLV ne peut pas réagir à l'EV
+   plus que 1 pour 1 (même numérateur, seule la référence change). Il explique
+   donc **au plus 18 %** de l'écart de 2,10 points — et son signe **flatte** la
+   zone lointaine, donc l'écart vrai est plus grand que le mesuré.
+
+⚠️ **Un t dit « distinguable de zéro », jamais « ça compte ».** À ces
+effectifs, un décalage de cote de 0,20 sur une moyenne de 3,00 (6,7 %) est
+parfaitement détectable ET parfaitement négligeable. La sonde imprime désormais
+la magnitude à côté du t.
+
+**Trou restant, non bouché : 2 021 clôtures (24 %) sont capturées sans ligne
+juste**, donc invisibles à la CLV. `backfill-fair-lines` existe mais la purge à
+deux jours sur 74 jours d'historique n'en laisse presque rien. Le stock
+n'augmente plus : `close_lines` refuse d'écrire un snapshot qu'il ne peut pas
+déviguer.
+
+### 25.6 Le cycle : 48 → 38 s, et où passe le reste
+
+`BREATHER` valait **20** alors qu'il n'est pas dans `.env` (défaut 10 dans
+`scan-daemon.sh:22`) — il était donc posé ailleurs dans l'environnement.
+
+| | période | travail | sommeil déduit |
+|---|---|---|---|
+| avant | 48,2 s | 28,3 s | 19,8 s |
+| après (`BREATHER=10`) | **38,4 s** | 28,6 s | 9,8 s |
+
+**−20 % d'horloge, travail inchangé** (+0,3 s, du bruit). 75 → 94 cycles/heure.
+Effet de bord calculé : Pinnacle passe d'un fetch toutes les 96 s à toutes les
+77 s (+25 %), plafonné par `PINNACLE_MIN_INTERVAL_SEC=60`. Si les 403
+reviennent, le porter à 90 ramène **sous** la charge d'avant.
+
+**Le partage du temps d'un sport** (`book_latency`, second tableau) :
+
+| phase | médiane | part |
+|---|---|---|
+| fetch | 14,6 s | **74 %** |
+| reste | 5,0 s | 21 % |
+| fair | 0,6 s | 3 % |
+| base | 0,3 s | 2 % |
+| marques | 0,0 s | 0 % |
+
+⚠️ **Les écritures en base ne coûtent RIEN** — 0,3 s, 2 %. Le devig 0,6 s. La
+déduplication d'alertes, zéro. Toute optimisation SQL serait du temps perdu.
+Le seul poste non nommé est `reste` (5,0 s), qui contient détection, surebets,
+middles, alertes, marchés en retard et Smarkets.
+
+### 25.7 Unibet : 101 requêtes en file indienne
+
+`fetch_all_events` interrogeait **un endpoint par compétition**, jusqu'à 101,
+**séquentiellement** — coût = N × latence, et une requête qui repart en
+tenacity (3 tentatives, recul 1 à 8 s) ajoutait son recul à toutes les
+suivantes. D'où médiane 12,1 s mais **p90 à 23,4 s**.
+
+Parallélisé à 6 fils (`UNIBET_PARALLEL_TERMS`). Résultat : médiane **6,2 s**,
+chemin critique **52 % → 3 %**, coût 139 s → 1 s. Le goulot s'est déplacé sur
+**EliteSports** (43 % du chemin critique).
+
+⚠️ **Le plafond est volontairement bas.** Kambi limite le débit — c'est la
+raison pour laquelle les trois jumeaux (711, Bingoal, Scooore) sont désactivés
+— et Unibet est l'un des deux books du canal premium.
+
+⚠️ **L'ordre de fusion est préservé, et c'est la seule chose qui rendait ce
+changement risqué.** La déduplication garde le PREMIER exemplaire d'un
+`event_id` : fusionner dans l'ordre d'arrivée des threads aurait changé quel
+exemplaire gagne selon quelle requête avait répondu ce jour-là — non
+déterministe, et invisible puisque le NOMBRE d'événements ne bouge pas.
+
+**Effet sur la fraîcheur**, souvent sous-estimé : `parse_listview`
+(`unibet.py:255`) pose **un seul** `now` après toutes les requêtes. La première
+cote du lot était donc datée jusqu'à 12,1 s trop jeune ; c'est 6,2 s au pire.
+Âge moyen d'une cote Unibet : **30,2 s → 22,3 s**, soit 26 % de vieillissement
+en moins (période/2 + étalement/2).
+
+### 25.8 Les gels, et l'alerte qui n'existait pas
+
+Sur 10 192 cycles (5,7 jours) : 16 cycles au-dessus de 60 s, **2 126 s
+perdues, 6,3 minutes de cécité par jour** — sans détection ET sans capture de
+clôture.
+
+| créneau | gels | perdu | part |
+|---|---|---|---|
+| 04 h | 6 | 1 347 s | 63 % |
+| 07 h | 5 | 412 s | **19 % — INEXPLIQUÉ** |
+| 05 h | 3 | 209 s | 10 % |
+| 13 h · 18 h | 2 | 158 s | 8 % |
+
+04 h + 05 h = 73 % : la purge (§18.4), documentée et assumée. À 224 s de
+moyenne au lieu des 9-24 minutes qu'annonçait le §18.4 — le budget porté à
+7 200 s et l'écriture parcimonieuse ont réglé l'essentiel.
+
+⚠️ **AUCUNE ALERTE NE POUVAIT PARTIR.** `_pinnacle_health` et `_book_health`
+surveillent tous deux l'**absence** de données — « ce book a-t-il répondu ? ».
+Pendant un gel, chaque book finit par répondre, en retard : aucun n'est muet.
+Le cycle long servait même d'argument pour ÉCARTER un seuil de durée sur les
+books, sans devenir jamais lui-même un motif d'alerte.
+
+`_cycle_health` comble le trou. Les trois réglages sortent des données :
+
+| réglage | défaut | pourquoi |
+|---|---|---|
+| `CYCLE_SLOW_SEC` | `90` | cycle normal 28 s de médiane, 43 s au pire hors gel → 3,2× la médiane, 2,1× le pire cas |
+| `CYCLE_SLOW_CYCLES` | `2` | un cycle isolé arrive ; deux d'affilée sont un état. 2 × 90 s = 180 s |
+| `CYCLE_SLOW_QUIET_UTC` | `03:45-05:30` | la purge, 73 % des gels |
+
+⚠️ **Le compteur avance PENDANT la fenêtre de silence, seul l'envoi attend.**
+Une panne commencée à 04:30 et durant jusqu'à 06:00 alerte dès la sortie, avec
+les cycles de la purge comptés dedans. Si la fenêtre arrêtait le compteur, la
+purge effacerait exactement les pannes qu'on veut voir. Le créneau de 07 h
+n'est **pas** silencé.
+
+### 25.9 Les outils ajoutés
+
+| outil | ce qu'il répond |
+|---|---|
+| `clv_roi_matrix --axe cote\|delai\|ev\|clv` | CLV et ROI dans une table, chacun avec son effectif |
+| `clv_roi_matrix --jours N` | fenêtre récente, filtre sur `detected_at`, **avant** la déduplication |
+| colonne `σCLV` | la précision de la CLV, qui manquait alors que c'est elle qui décide |
+| bloc « chaque bande contre tout le reste » | t de Welch contre le complément, seuil de Bonferroni affiché |
+| `closing_gap` | pourquoi la clôture manque, avec témoin et magnitude |
+| `book_latency` | où passe le temps d'un cycle, par book et par phase |
+| `orchestration.Chrono` / `ligne_phases` / `ligne_book` | l'instrumentation, format partagé production ↔ sonde |
+| `_cycle_health` | l'alerte de lenteur |
+
+### 25.10 Les défauts trouvés dans mes propres sondes
+
+Tous trouvés **en testant sur des valeurs plantées**, jamais en relisant.
+
+1. **`_prop_diff` : verdicts inversés.** Les deux branches de conclusion
+   étaient écrites pour l'ordre inverse des arguments — la sonde aurait annoncé
+   « hypothèse écartée » exactement quand elle est confirmée.
+2. **`book_latency` : comparaison structurellement fausse.** Elle soustrayait
+   la moyenne du fetch **sur tous les lots** de la durée du cycle, qui est le
+   **max sur les sports**. Elle annonçait « le reste dépasse le fetch » quand
+   son propre tableau des phases disait 74 % de fetch. L'estimation de 13,6 s
+   hors fetch valait 4,7 s — **2,9 fois trop**.
+3. **`--derniers N` servait l'ancien régime.** Il prenait les N plus GRANDS
+   numéros de cycle, or un redémarrage remet le compteur à 1 : « les 40
+   derniers cycles » rendait les 40 d'AVANT le redémarrage. Tout est désormais
+   indexé par `(série, cycle)`.
+4. **Les matchs pas encore joués comptés comme échecs de capture.** Sur
+   `--jours 7`, le taux tombait à 8,7 % en 48-72 h et 0 % au-delà de 168 h :
+   ces matchs n'avaient pas commencé. **Le témoin de la clé exacte en était
+   contaminé** — « sans clôture » devenait synonyme de « match futur », et un
+   match futur a plus de chances d'avoir vu son horaire révisé. La fenêtre
+   7 jours annonçait l'hypothèse SOUTENUE (z = +2,23) là où l'historique
+   complet la rejette (+1,25).
+5. **`rich` enveloppe à 80 colonnes hors terminal.** Une ligne de journal de
+   150 caractères se coupait en deux au milieu d'un mot, illisible à toute
+   regex. Les formats vivent maintenant dans une fonction partagée par la
+   production et le test, avec une assertion de largeur.
+
+**La leçon commune : un jeu d'essai dégénéré ne prouve rien.** Le premier
+fixture avait la même CLV partout — σ y valait `None` et le test de Welch
+n'avait rien à mordre. Chaque sonde de cette session a été vérifiée sur des
+valeurs plantées dont la réponse était calculée indépendamment, et sur la
+variante dangereuse pour confirmer que le test la fait tomber.
+
+### 25.11 Ce qui reste ouvert
+
+1. **L'optimisme de cote — la seule chose qui puisse encore bouger la CLV de
+   points entiers.** Rien n'enregistre le prix réellement obtenu. L'appariement
+   HAR du §« Résultats réels » donne **+8,26 %** sur les paris réglés contre
+   +10,18 % en natif — presque deux points, dans le mauvais sens. Cette ligne
+   n'a ni effectif ni σ, mais c'est la seule mesure jamais faite sur des prix
+   réels. Un export HAR frais + `settle --from` la referait sur 2 574 paris au
+   lieu de ~767.
+2. **Le créneau de gels de 07 h** — 19 % du temps perdu, hors purge, inexpliqué.
+3. **`reste` = 5,0 s par sport (21 %)** — le seul poste non nommé du cycle.
+4. **EliteSports**, nouveau chemin critique du fetch (43 %).
+5. **`tools/line_speed.py` est cassé** depuis l'écriture parcimonieuse : il
+   comptait les cotes identiques, or `quotes` n'enregistre plus que les
+   changements. Personne ne peut donc convertir des secondes de fraîcheur en
+   points de CLV. `odds_history` porte la bonne donnée.
+6. **310 opportunités** en basket/hockey/volley/`unknown` passent la porte
+   premium avec **zéro résultat** exploitable.
+7. **Trois tests en échec, antérieurs à cette session** :
+   `test_routage_branche::test_le_bouton_jouer_reste_sur_le_premium`,
+   `test_corrections::test_the_curve_runs_to_kickoff_not_to_alignment`, et
+   `test_sondes_help[ev_outliers]` (`ev_outliers.py:82` ouvre la base avant de
+   répondre à `--help`).
+
+### 25.12 La branche
+
+Toujours **`refactor/prepare-live`**. 1 554 tests passent, plus les trois
+échecs ci-dessus. Deux modules ne se collectent pas dans un environnement sans
+`openpyxl` — sur la VM ils tournent.
