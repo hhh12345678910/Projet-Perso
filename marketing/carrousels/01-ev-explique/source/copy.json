@@ -1,0 +1,231 @@
+{
+ "series": "01 — EV expliqué",
+ "tagline": "Sports Betting Intelligence",
+ "swipe": "Glisse",
+ "legal": "18+ · Jouez de manière responsable",
+ "slides": [
+  {
+   "kind": "cover",
+   "kicker": "Série · Les bases du value betting",
+   "num": "01",
+   "title": "EV expliqué",
+   "body": "Un pari peut être bon et perdre, mauvais et gagner : voici la seule mesure qui les départage avant le coup d’envoi."
+  },
+  {
+   "kind": "quote",
+   "kicker": "02 / 10 · Définition",
+   "title": "L’espérance, c’est quoi ?",
+   "body": "L’EV (expected value) est le gain moyen d’un pari si vous pouviez le rejouer des milliers de fois. Elle ne dit pas ce que le prochain pari va donner. Elle dit ce qu’il vaut.",
+   "quote": "« Ce que vaut un pari <span class=\"hl\">en moyenne</span>, si on le rejouait 1 000 fois. »",
+   "capLeft": "1 pari = un résultat",
+   "capRight": "1 000 paris = une moyenne"
+  },
+  {
+   "kind": "formula",
+   "kicker": "03 / 10 · La formule",
+   "title": "Trois nombres, une soustraction",
+   "body": "Positif : le bookmaker vous paie plus que votre risque réel. Négatif : il vous paie moins. Zéro : le pari est équitable.",
+   "terms": [
+    {
+     "v": "EV",
+     "lab": "espérance<br>de gain",
+     "cls": "ev"
+    },
+    {
+     "op": "="
+    },
+    {
+     "v": "cote",
+     "lab": "ce que le book<br>vous paie"
+    },
+    {
+     "op": "×"
+    },
+    {
+     "v": "proba",
+     "lab": "votre vraie chance<br>de gagner"
+    },
+    {
+     "op": "−"
+    },
+    {
+     "v": "1",
+     "lab": "votre mise"
+    }
+   ],
+   "note": "Le résultat est un nombre décimal : × 100 pour l’exprimer en %. Exemple : 2,12 × 0,50 − 1 = +0,06, soit +6 %."
+  },
+  {
+   "kind": "compare",
+   "kicker": "04 / 10 · Pile ou face",
+   "title": "Même pièce, deux cotes",
+   "body": "La pièce n’a pas changé. Seule la cote a bougé, et elle suffit à faire basculer le pari du bon au mauvais côté.",
+   "head": {
+    "left": "Pile ou face",
+    "right": "vraie probabilité : 50 %"
+   },
+   "cards": [
+    {
+     "lbl": "Cote proposée",
+     "odd": "2,10",
+     "calc": "2,10 × 0,50 − 1 = +0,05",
+     "res": "+5 %",
+     "tone": "pos",
+     "win": true
+    },
+    {
+     "lbl": "Cote proposée",
+     "odd": "1,90",
+     "calc": "1,90 × 0,50 − 1 = −0,05",
+     "res": "−5 %",
+     "tone": "neg"
+    }
+   ]
+  },
+  {
+   "kind": "bars",
+   "kicker": "05 / 10 · La marge",
+   "title": "Le book ne vous donne jamais 50 %",
+   "bodyFirst": true,
+   "body": "Converties en probabilités, les cotes d’un bookmaker dépassent toujours 100 %. L’excédent, c’est sa marge, payée à chaque pari.",
+   "rows": [
+    {
+     "who": "Pile",
+     "w": 52.6,
+     "label": "1,90 → 52,6 %"
+    },
+    {
+     "who": "Face",
+     "w": 52.6,
+     "label": "1,90 → 52,6 %"
+    }
+   ],
+   "total": {
+    "who": "Total",
+    "label": "105,3 %",
+    "over": 5.3
+   },
+   "legend": {
+    "text": "Ce qui dépasse 100 % est la marge du bookmaker.",
+    "val": "5,3 %"
+   }
+  },
+  {
+   "kind": "steps",
+   "kicker": "06 / 10 · La méthode",
+   "title": "D’où sort la « vraie » probabilité ?",
+   "bodyFirst": true,
+   "body": "Personne ne la connaît. Mais le marché le plus affûté s’en approche de très près.",
+   "steps": [
+    {
+     "h": "Partir du marché le plus affûté",
+     "d": "Pinnacle : marges minuscules, cotes corrigées par les gros joueurs."
+    },
+    {
+     "h": "Retirer sa marge",
+     "d": "On ramène ses cotes à un total de 100 %."
+    },
+    {
+     "h": "Obtenir la probabilité juste",
+     "d": "C’est la fair odd : la cote sans marge."
+    },
+    {
+     "h": "Comparer aux books belges",
+     "d": "Toute cote au-dessus de la fair odd est un pari +EV."
+    }
+   ]
+  },
+  {
+   "kind": "calc",
+   "kicker": "07 / 10 · Cas concret",
+   "title": "Un pari +EV, en vrai",
+   "body": "Six euros d’espérance pour cent misés. Pas une certitude : une moyenne, qui ne se voit qu’en répétant.",
+   "lines": [
+    {
+     "k": "Référence",
+     "v": "1,95 / 1,95",
+     "small": "Pinnacle"
+    },
+    {
+     "k": "Fair",
+     "v": "50 % / 50 %",
+     "small": "marge retirée"
+    },
+    {
+     "k": "Book belge",
+     "v": "2,12",
+     "small": "sur le même camp"
+    }
+   ],
+   "total": {
+    "k": "EV",
+    "expr": "2,12 × 0,50 − 1 = +0,06",
+    "res": "+6 %",
+    "tone": "pos"
+   }
+  },
+  {
+   "kind": "chart",
+   "kicker": "08 / 10 · La variance",
+   "title": "Un pari +EV peut perdre. Souvent.",
+   "body": "À +6 % par pari, la moitié se perdent quand même. Sur 1 000 paris, l’espérance finit par peser plus lourd que la chance, sans jamais l’effacer.",
+   "odds": 2.12,
+   "band": true,
+   "legend": [
+    "Espérance : +6 % par pari",
+    "6 parcours simulés",
+    "± 1 écart-type"
+   ]
+  },
+  {
+   "kind": "list",
+   "kicker": "09 / 10 · À retenir",
+   "title": "Ce que l’EV n’est pas",
+   "body": "L’EV ne prédit pas un match. Elle mesure si le prix qu’on vous propose est bon.",
+   "items": [
+    {
+     "ok": false,
+     "t": "Un pari gagné",
+     "s": "— un pari +EV peut perdre"
+    },
+    {
+     "ok": false,
+     "t": "Un pourcentage de réussite",
+     "s": "— 70 % de paris gagnés peut être perdant"
+    },
+    {
+     "ok": false,
+     "t": "Une « grosse cote »",
+     "s": "— seule la cote face à la proba compte"
+    },
+    {
+     "ok": true,
+     "t": "Un avantage mesurable",
+     "s": "— répété, il devient un résultat"
+    }
+   ]
+  },
+  {
+   "kind": "cta",
+   "title": "La suite arrive",
+   "body": "Suivez <b>@equodds</b> pour ne pas rater la série.",
+   "pills": [
+    {
+     "t": "01 — EV",
+     "state": "done"
+    },
+    {
+     "t": "02 — Fair odds"
+    },
+    {
+     "t": "03 — CLV",
+     "state": "soon"
+    }
+   ],
+   "next": {
+    "k": "Prochain épisode",
+    "h": "02 — Fair odds : d’où vient la vraie probabilité"
+   }
+  }
+ ]
+}

@@ -1,0 +1,32 @@
+:root{
+  --navy:#0B1F3A; --blue:#2563EB; --sky:#38BDF8; --green:#22C55E; --light:#F5F7FA; --white:#FFFFFF;
+  --red:#EF4444;
+  --ink-2:rgba(11,31,58,.72); --ink-3:rgba(11,31,58,.50); --line:rgba(11,31,58,.10);
+  --display:'Montserrat',system-ui,sans-serif; --text:'Manrope',system-ui,sans-serif;
+}
+*{box-sizing:border-box}
+body{margin:0;background:#E5E7EB;font-family:var(--text);color:var(--navy);-webkit-font-smoothing:antialiased}
+.deck{display:flex;flex-direction:column;gap:40px;padding:40px;align-items:center}
+.slide{position:relative;width:1080px;height:1350px;background:var(--white);overflow:hidden;display:flex;flex-direction:column;padding:72px 80px 64px}
+.top{display:flex;align-items:center;justify-content:space-between;height:64px}
+.lockup{display:flex;align-items:center;gap:14px}
+.lockup svg{height:52px;width:auto}
+.lockup .word{font-family:var(--display);font-weight:800;font-size:38px;letter-spacing:-.01em;color:var(--navy);line-height:1}
+.counter{font-family:var(--text);font-weight:700;font-size:26px;color:var(--ink-3);letter-spacing:.06em}
+.counter b{color:var(--navy);font-weight:800}
+.content{flex:1;display:flex;flex-direction:column;justify-content:center;gap:36px;padding:24px 0}
+.kicker{font-family:var(--text);font-weight:700;font-size:26px;letter-spacing:.22em;text-transform:uppercase;color:var(--blue)}
+h1,h2{margin:0;font-family:var(--display);font-weight:800;color:var(--navy);text-wrap:balance}
+h2{font-size:78px;line-height:1.06;letter-spacing:-.015em}
+.body{font-family:var(--text);font-weight:500;font-size:36px;line-height:1.42;color:var(--ink-2);text-wrap:pretty;margin:0}
+.body b,.body strong{color:var(--navy);font-weight:700}
+.body .pos{color:var(--green);font-weight:800}
+.body .neg{color:var(--red);font-weight:800}
+.bottom{display:flex;align-items:center;justify-content:space-between;height:48px}
+.series{font-family:var(--text);font-weight:700;font-size:24px;color:var(--ink-3);letter-spacing:.02em}
+.swipe{display:flex;align-items:center;gap:12px;font-family:var(--text);font-weight:700;font-size:24px;color:var(--blue)}
+.swipe svg{width:28px;height:28px}
+.card{background:var(--light);border-radius:32px;padding:48px 52px}
+.mono{font-variant-numeric:tabular-nums}
+.pos{color:var(--green)} .neg{color:var(--red)}
+.rule{height:2px;background:var(--line);border:0;margin:0}

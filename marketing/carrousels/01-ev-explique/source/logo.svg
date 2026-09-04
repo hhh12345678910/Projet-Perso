@@ -1,0 +1,20 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="120 210 760 520" width="760" height="520">
+  <defs>
+    <linearGradient id="eq-g" gradientUnits="userSpaceOnUse" x1="175" y1="686" x2="862" y2="243">
+      <stop offset="0" stop-color="#2563EB"/>
+      <stop offset="0.55" stop-color="#1E90F5"/>
+      <stop offset="1" stop-color="#38BDF8"/>
+    </linearGradient>
+  </defs>
+  <g fill="url(#eq-g)" stroke="url(#eq-g)">
+    <!-- heartbeat + spine, continues into the top bar -->
+    <polyline points="175,518 268,518 318,419 378,628 558,279 800,279"
+      fill="none" stroke-width="72" stroke-linecap="round" stroke-linejoin="round"/>
+    <!-- top bar right end, slanted parallel to the spine -->
+    <polygon stroke="none" points="760,243 862,243 827,315 760,315"/>
+    <!-- middle bar (detached) -->
+    <polygon stroke="none" points="527,430 794,430 759,502 492,502"/>
+    <!-- bottom bar (detached) -->
+    <polygon stroke="none" points="464,614 830,614 795,686 429,686"/>
+  </g>
+</svg>
