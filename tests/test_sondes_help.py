@@ -32,7 +32,7 @@ SONDES = [
     "check_half_time", "check_tennis_totals", "discover_half_time",
     "handicap_conventions", "book_health", "scores_coverage", "repair_events",
     "repair_leagues", "clv_roi_matrix", "staking_curves", "closing_gap",
-    "book_latency", "alert_cost",
+    "book_latency", "alert_cost", "noms_hostiles",
 ]
 
 

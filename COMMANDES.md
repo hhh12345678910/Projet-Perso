@@ -776,6 +776,29 @@ par code HTTP et par canal, et rend les premières lignes **brutes** — le corp
 de la réponse, qui est la raison de l'échec, est enveloppé par `rich` à 80
 colonnes et le recoller serait fragile.
 
+### `noms_hostiles` — quel nom aurait cassé le HTML
+
+```bash
+.venv/bin/python -m scripts.noms_hostiles
+```
+
+L'échappement corrige la classe entière ; cette sonde répond à l'autre
+question, celle que le correctif ne répond pas : **quel nom, et venu d'où ?**
+C'est ce qui dit si rallumer un book est sûr. Elle liste les valeurs de
+`events.league`, `events.home`, `events.away` et `teams.display_name` qui
+contiennent un `&` nu ou un `<`, avec leur contexte.
+
+⚠️ **Elle donne les suspects, pas le coupable.** Un nom hostile en base n'a
+cassé une alerte que si un pari a réellement été routé sur ce match. Et son
+résultat négatif est faible dans un seul sens : `events` ne garde que les
+matchs connus, un match joué en sort — zéro suspect aujourd'hui ne dit rien
+de ce que la base contenait pendant la panne. La sonde le dit elle-même au
+lieu de laisser lire « innocent ».
+
+⚠️ **`&amp;`, `&lt;` et `&#233;` sont des entités VALIDES** et ne sont pas
+signalées : les accuser ferait échapper deux fois et afficherait
+« &amp;amp; » à l'écran. Onze tests verrouillent les deux sens.
+
 ### Les trois morceaux de `dRest` : `tgIni`, `dedup`, `envoi`
 
 `dRest` disait « le temps est dans le bloc des alertes » sans dire **lequel
