@@ -51,6 +51,13 @@ RE_KO = re.compile(r"^\[(\w+)\]\s+(\S+)\s+([\d.]+)s skipped:")
 RE_FAIT = re.compile(r"Cycle (\d+) done in (\d+)s")
 # `[sport]   ⏱ base 8.2 fetch 12.1 fair 0.4 reste 3.8 tot 24.5s`
 RE_PHASES = re.compile(r"^\[(\w+)\]\s+⏱\s+(.*?)\s+tot\s+([\d.]+)s\s*$")
+# ⚠️ `[A-Za-z]`, PAS `[a-z]`. Les abréviations de `_ABREGE` contiennent des
+# majuscules (`dRest`, `insVB`) : une classe minuscule seule capturait « est »
+# à la place de `dRest`, et ne trouvait AUCUNE paire pour `insVB` — la phase
+# disparaissait du tableau sans que rien ne le signale. Le test ne le voyait
+# pas parce qu'il RECOPIAIT la regex au lieu de l'importer (§17.7 : une sonde
+# doit lire la même source que la production, sinon elle ment).
+RE_PAIRE = re.compile(r"([A-Za-zéè_]+) ([\d.]+)")
 
 
 def _pcent(vals: list[float], p: float) -> float:
@@ -116,7 +123,7 @@ def main() -> int:
         m = RE_PHASES.match(ligne.strip())
         if m:
             if not (a.sport and m.group(1) != a.sport):
-                paires = re.findall(r"([a-zéè]+) ([\d.]+)", m.group(2))
+                paires = RE_PAIRE.findall(m.group(2))
                 phases.append((cle, m.group(1),
                                {k: float(v) for k, v in paires},
                                float(m.group(3))))

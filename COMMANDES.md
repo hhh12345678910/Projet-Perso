@@ -681,6 +681,57 @@ qu'optimiser celles qu'on voit déjà** — la sonde le dit d'elle-même au-del�
 ⚠️ Comme les durées par book, ces lignes sont écrites depuis le 03/09/2026 et
 demandent un daemon redémarré.
 
+⚠️ **La regex qui lisait ces phases perdait les deux seules à majuscule.**
+`([a-zéè]+)` lisait `dRest` comme **« est »** — une phase renommée en silence —
+et ne trouvait **aucune** paire dans `insVB` — une phase purement disparue.
+Corrigé le 04/09 en `([A-Za-zéè_]+)`, exposé en `RE_PAIRE` et **importé** par
+le test au lieu d'y être recopié : c'est la recopie qui a caché le bug pendant
+toute sa durée de vie (§17.7 — une sonde doit lire la même source que la
+production, sinon elle ment). Tout tableau de phases lu avant le 04/09 est
+faux sur ces deux lignes-là.
+
+### `alert_cost` — ce que l'envoi des alertes coûte au cycle
+
+```bash
+.venv/bin/python -m scripts.alert_cost
+.venv/bin/python -m scripts.alert_cost --derniers 20
+.venv/bin/python -m scripts.alert_cost --sport soccer
+```
+
+**Le problème qu'elle nomme.** `TelegramAlerter._send` réserve un créneau puis
+**dort dans le fil du scan** (`_time.sleep`) pour respecter
+`min_send_interval_s` — 3,2 s par défaut, la limite de Telegram étant d'environ
+20 messages par minute et par groupe. Rien n'est asynchrone : **le cycle est à
+l'arrêt pendant ces pauses.** Un cycle qui délivre N messages porte N × 3,2 s
+de sommeil pur, et c'est ce que `dRest` mesure.
+
+La sonde teste cette hypothèse au lieu de la supposer, et dans cet ordre :
+
+1. **le témoin d'abord** — le `dRest` moyen des cycles qui n'ont envoyé
+   **aucune** alerte. S'il est gros, l'hypothèse est morte et le reste du
+   tableau ne la sauvera pas ;
+2. la **pente** d'une droite passant par l'origine (zéro alerte doit coûter
+   zéro seconde — une régression libre absorberait le coût dans l'ordonnée à
+   l'origine et le ferait disparaître) et la **corrélation de Pearson** ;
+3. le **verdict**, qui exige les trois : témoin muet, r ≥ +0,80, pente ≥ 0,8 ×
+   l'intervalle. Il en manque une et la sonde refuse de conclure, en disant
+   laquelle.
+
+⚠️ **`→ N value bet alert(s) sent` compte des PARIS, pas des messages.** Un
+pari routé vers deux canaux vaut deux messages, donc deux pauses. La pente est
+donc un temps **par pari délivré** ; divisée par `min_send_interval_s`, elle
+donne le nombre moyen de canaux touchés par pari. C'est une information, pas
+une anomalie.
+
+Le dernier bloc compte les incidents Telegram sur **tout** le journal — 429,
+envois reportés pour cooldown, réponses non-200. Zéro 429 signifie que le
+ralentissement est le **rythme nominal**, pas une tempête de back-off : c'est
+la distinction qui décide du correctif.
+
+`tests/test_alert_cost.py` plante les deux journaux — celui où l'hypothèse est
+vraie et celui où le témoin dit non — et vérifie que le verdict bascule.
+Inverser la condition fait tomber trois tests.
+
 ### `UNIBET_PARALLEL_TERMS` — la queue d'Unibet
 
 Unibet interroge **un endpoint par compétition** (`termKey`), jusqu'à 101 par

@@ -106,7 +106,7 @@ class _ChronoFige:
 
 @pytest.mark.parametrize("sport", ["volleyball", "basketball", "soccer"])
 def test_la_ligne_de_phases_est_lue_par_la_sonde(sport):
-    from scripts.book_latency import RE_PHASES
+    from scripts.book_latency import RE_PAIRE, RE_PHASES
     from src.orchestration import ligne_phases
 
     ch = _ChronoFige({"fetch": 12.0, "base": 8.0, "fair": 1.0, "marques": 0.5}, 26.0)
@@ -117,7 +117,10 @@ def test_la_ligne_de_phases_est_lue_par_la_sonde(sport):
     assert m, f"la regex ne matche pas : {rendu!r}"
     assert m.group(1) == sport
     assert float(m.group(3)) == pytest.approx(26.0)
-    paires = dict(re.findall(r"([a-zéè]+) ([\d.]+)", m.group(2)))
+    # ⚠️ LA REGEX DE LA SONDE, IMPORTÉE. Ce test la RECOPIAIT, et c'est pour
+    # ça qu'il n'a jamais vu que `([a-zéè]+)` lisait `dRest` comme « est » et
+    # perdait `insVB` : le test et la production divergeaient en silence.
+    paires = dict(RE_PAIRE.findall(m.group(2)))
     vus = {k: float(v) for k, v in paires.items()}
     # `marques` est sous le seuil d'impression de 0,05 s ? Non — 0,5 s. Mais
     # les noms sont ABRÉGÉS : la sonde lit ce qui est imprimé, pas les clés.
@@ -195,3 +198,22 @@ def test_le_reste_ne_devient_jamais_negatif():
     ch = Chrono()
     ch.par_phase["a"] = 1000.0
     assert ch.reste() == 0.0
+
+
+@pytest.mark.parametrize("cle,abrege", [("detc_reste", "dRest"), ("insVB", "insVB")])
+def test_les_phases_a_majuscule_survivent_a_la_lecture(cle, abrege):
+    """Le bug trouvé le 04/09 en cherchant d'où venaient 118 s de cycle : les
+    deux seules abréviations à majuscule étaient les deux seules illisibles.
+    `dRest` devenait « est » (une phase renommée en silence), `insVB` ne
+    matchait rien du tout (une phase disparue). Les deux sans un mot."""
+    from scripts.book_latency import RE_PAIRE, RE_PHASES
+    from src.orchestration import Chrono, ligne_phases
+
+    ch = Chrono()
+    ch.par_phase.update({cle: 118.6, "fetch": 20.9})
+    rendu = _rendu(ligne_phases("soccer", ch))
+    m = RE_PHASES.match(rendu.strip())
+    assert m, f"la regex ne matche pas : {rendu!r}"
+    vus = dict(RE_PAIRE.findall(m.group(2)))
+    assert abrege in vus, f"{abrege} perdu dans {vus}"
+    assert float(vus[abrege]) == pytest.approx(118.6)
