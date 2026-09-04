@@ -1068,6 +1068,31 @@ def fetch_all_parallel(
         # Aucune authentification, aucun anti-bot, et l'IP de datacenter est
         # acceptée : pas de pont navigateur, contrairement à Betano, Circus et
         # MagicBetting. Vérifié depuis la VM le 22/08 (§21.19).
+        #
+        # ⚠️ COUPÉ LE 04/09 PAR BOOKS_DISABLED. Le scraper marche parfaitement ;
+        # c'est le book qui ne vaut pas son prix. Mesuré par
+        # `scripts/book_exclusif.py` sur 620 opportunités et 531 clôtures :
+        #
+        #   CLV globale        -2,75 % ± 0,85  (t = -3,2)  — négative, et sûre
+        #   quand il est SEUL  -0,39 % ± 1,50  (t = -0,3)  — statistiquement nulle
+        #   quand un autre l'a -3,77 % ± 1,02  (t = -3,7)
+        #
+        # Aucune cellule où il rapporte quelque chose. Ses 29 % d'opportunités
+        # exclusives — les seules qui disparaissent vraiment — valent zéro ; les
+        # 71 % restantes sont des doublons qu'un autre book proposait mieux
+        # tarifés 387 fois sur 438.
+        #
+        # Et il coûtait 7,9 s par cycle en tenant le chemin critique du fetch
+        # 75 % du temps. C'est exactement le profil documenté pour BetFirst
+        # ci-dessus — « là pour la donnée, pas pour être joué » — sauf que
+        # BetFirst se sert d'un cache de fond à 0,2 s et celui-ci non.
+        #
+        # ⚠️ EV +9,19 % pour une CLV de -2,75 % : 12 points d'écart. Il détecte
+        # de la valeur que la clôture contredit systématiquement. Ses prix sont
+        # mauvais, OU ses cotes sont mal appariées (mauvaise ligne, mauvaise
+        # orientation) — la coupure supprime le symptôme sans trancher entre les
+        # deux, et si c'est un défaut d'appariement il peut toucher d'autres
+        # books. À reprendre avant de le rallumer.
         "EliteSports":   lambda: fetch_elitesports_quotes(sport),
     }
     # The live dump mixes every sport, so it's parsed once (on the sport that
