@@ -462,6 +462,24 @@ def main() -> int:
                 f"(sur {avant} au total).")
         fenetre = (f"Fenêtre : {a.jours:g} derniers jours — {len(rows)} lignes "
                    f"sur {avant} ({100 * len(rows) / avant:.0f} %)")
+        # ⚠️ UNE FENÊTRE COURTE EST PLEINE DE MATCHS PAS ENCORE JOUÉS.
+        # La CLV exige une clôture (capturée après le coup d'envoi) et le ROI
+        # un résultat : un pari détecté avant-hier pour un match de dimanche
+        # n'a ni l'une ni l'autre. Ils ne manquent pas, ils n'existent PAS
+        # ENCORE — et comme les paris à long délai sont mécaniquement plus
+        # souvent à venir, ils disparaissent des colonnes CLV et ROI en
+        # proportion de leur délai. Les colonnes `opp` et `n_clv`/`réglés` ne
+        # décrivent alors plus la même population du tout.
+        maintenant = datetime.now(timezone.utc).timestamp()
+        n_avenir = sum(1 for r in rows
+                       if (_heures(r["start_time"]) or 0.0) > maintenant)
+        if n_avenir:
+            fenetre += (
+                f"\n⚠️ {n_avenir} lignes ({100 * n_avenir / len(rows):.0f} %) "
+                f"portent sur des matchs PAS ENCORE JOUÉS : ni CLV ni\n"
+                f"   résultat, et d'autant plus souvent que le délai est long. "
+                f"Les colonnes CLV et ROI\n   d'une fenêtre courte décrivent "
+                f"donc les matchs DÉJÀ joués, pas la fenêtre entière.")
 
     def selectionner(predicat):
         """Les opportunités dédupliquées que cette porte laisserait passer.

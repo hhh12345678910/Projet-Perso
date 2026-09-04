@@ -177,12 +177,49 @@ def main() -> int:
                if (a.sport is None or (r["sport"] or "") == a.sport)
                and _dans_fenetre(r)
                and (porte is None or porte(r))]
+
+    # ⚠️ UN MATCH PAS ENCORE JOUÉ N'A PAS DE CLÔTURE — ET CE N'EST PAS UN DÉFAUT.
+    #
+    # La clôture est capturée APRÈS le coup d'envoi (`close-lines`). Un pari
+    # détecté avant-hier pour un match de dimanche n'en a donc aucune, et rien
+    # ne cloche. Les compter dans le dénominateur fabrique un effondrement du
+    # taux de capture qui SUIT EXACTEMENT LE DÉLAI — plus le match est loin,
+    # plus il a de chances d'être encore à venir.
+    #
+    # Mesuré sur une fenêtre de 7 jours : le taux tombait à 8,7 % en 48-72 h et
+    # 0 % au-delà de 168 h. Rien n'était cassé : ces matchs n'avaient pas
+    # commencé. Sans cette séparation, la sonde répondait à « la capture
+    # échoue-t-elle ? » par la proportion de matchs encore à venir.
+    #
+    # PIRE, le témoin de la clé exacte en était contaminé : « sans clôture »
+    # devenait synonyme de « match futur », et un match futur a par
+    # construction plus de chances d'avoir vu son horaire encore révisé. Le
+    # z de la fenêtre 7 jours annonçait l'hypothèse SOUTENUE (+2,23) là où
+    # l'historique complet la rejetait (+1,25) : il mesurait le confondant.
+    maintenant = datetime.now(timezone.utc).timestamp()
+    a_venir = [r for r in gardees
+               if (_heures(r["start_time"]) or 0.0) > maintenant]
+    gardees = [r for r in gardees
+               if (_heures(r["start_time"]) or 0.0) <= maintenant]
     if not gardees:
-        raise SystemExit("Aucune détection ne passe ce filtre.")
+        raise SystemExit(
+            "Aucune détection JOUÉE ne passe ce filtre"
+            + (f" ({len(a_venir)} portent sur des matchs à venir)."
+               if a_venir else "."))
 
     print(f"\nÉCART DE CAPTURE DE LA CLÔTURE — porte : {desc}")
     print(f"Sport : {a.sport or 'tous'}   ·   {len(gardees)} opportunités"
           + (f"   ·   {a.jours:g} derniers jours" if a.jours else ""))
+    if a_venir:
+        total = len(gardees) + len(a_venir)
+        print(f"\n⚠️ {len(a_venir)} opportunités ({100 * len(a_venir) / total:.0f} % "
+              f"des {total}) portent sur des matchs PAS ENCORE JOUÉS :\n"
+              f"   elles n'ont pas de clôture parce que le coup d'envoi n'a pas "
+              f"eu lieu, pas parce que\n   la capture a échoué. Elles sont "
+              f"EXCLUES de tout ce qui suit — les compter ferait\n   chuter le "
+              f"taux en fonction du délai et transformerait « la capture "
+              f"échoue-t-elle ? »\n   en « quelle part des matchs est encore à "
+              f"venir ? ».")
     if not a_perdu:
         print("⚠️ Colonne `closing_lost` absente de cette base : la colonne "
               "« perdue » lira 0 partout.")
