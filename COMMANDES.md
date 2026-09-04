@@ -776,7 +776,35 @@ par code HTTP et par canal, et rend les premières lignes **brutes** — le corp
 de la réponse, qui est la raison de l'échec, est enveloppé par `rich` à 80
 colonnes et le recoller serait fragile.
 
-`tests/test_alert_cost.py` plante six journaux — l'hypothèse vraie, le
+### « Suis-je revenu comme avant ? » — le bloc AVANT / APRÈS
+
+```bash
+.venv/bin/python -m scripts.alert_cost --depuis-redemarrage
+```
+
+Aucune moyenne unique ne répond à cette question : il en faut **deux**, et
+elles sont séparées par le **redémarrage**, pas par un nombre de cycles.
+`--derniers 20` juste après un redémarrage enjambe la coupure, moyenne
+l'avant et l'après, et fait croire à une demi-guérison. La sonde le dit
+maintenant d'elle-même quand la fenêtre enjambe une série.
+
+Le bloc AVANT / APRÈS compare les deux dernières séries sur quatre lignes :
+
+```
+                             avant       après   verdict
+  dRest moyen               57.0 s       7.7 s   MIEUX
+  cycle moyen (tot)         81.9 s      29.8 s   MIEUX
+  alertes délivrées            0          19     MIEUX
+  réponses non-200           213           0     MIEUX
+```
+
+⚠️ **Le sens du verdict dépend de la ligne.** Moins de secondes est un
+progrès ; **moins d'alertes délivrées est une régression.** Une flèche unique
+pour les quatre lignes dirait le contraire de la vérité une fois sur deux —
+et c'est précisément le piège de cette panne-là, où le système est devenu
+plus rapide en devenant muet. Deux tests plantent les deux cas.
+
+`tests/test_alert_cost.py` plante dix journaux — l'hypothèse vraie, le
 témoin qui dit non, la borne franchie, le cas réel à pente 1,6 s qui doit
 rester **confirmable**, les pauses-qui-échouent, et son inverse — et vérifie
 que le verdict bascule dans chacun. Inverser la condition fait tomber trois

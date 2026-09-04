@@ -207,7 +207,11 @@ def test_derniers_prend_la_serie_recente_pas_la_plus_longue(tmp_path, capsys,
     main()
     out = capsys.readouterr().out
     assert "2 lots" in out
-    assert "100.0" not in out
+    # Les tableaux analysés ne portent que la nouvelle série. Le bloc
+    # AVANT/APRÈS, lui, DOIT montrer l'ancienne — c'est son travail.
+    tetes = out.split("── AVANT / APRÈS")[0]
+    assert "100.0" not in tetes, tetes
+    assert "AVANT / APRÈS" in out
 
 
 def test_le_filtre_sport(tmp_path):
@@ -309,3 +313,78 @@ def test_des_envois_qui_reussissent_ne_declenchent_pas_ce_verdict(
     out = capsys.readouterr().out
     assert "LES PAUSES ONT LIEU — ET LES ENVOIS ÉCHOUENT" not in out
     assert "HYPOTHÈSE CONFIRMÉE" in out
+
+
+# ── « Suis-je revenu comme avant ? » ─────────────────────────────────
+
+def _serie(depart: int, n: int, drest: float, alertes: int, non200: int,
+           tot: float) -> list[str]:
+    l = []
+    for i in range(depart, depart + n):
+        l += _cycle(i, drest, alertes, 80, tot)
+        l += ["Telegram non-200 (400) [chat=-100123]: Bad Request"] * non200
+    return l
+
+
+def test_le_bloc_avant_apres_dit_mieux_quand_ca_va_mieux(tmp_path, capsys,
+                                                         monkeypatch):
+    """Cycles de 147 s, zéro alerte, 37 non-200 par cycle — puis, après le
+    redémarrage, 28 s, 20 alertes, zéro non-200."""
+    lignes = _serie(1, 6, 118.6, 0, 37, 147.1) + _serie(1, 6, 2.0, 20, 0, 28.5)
+    p = _journal(lignes, tmp_path)
+    monkeypatch.setattr("sys.argv", ["alert_cost", "--log", str(p)])
+    main()
+    out = capsys.readouterr().out
+    bloc = out.split("── AVANT / APRÈS LE DERNIER REDÉMARRAGE ──")[1]
+    for ligne in bloc.splitlines():
+        if ligne.strip().startswith(("dRest moyen", "cycle moyen",
+                                     "alertes délivrées", "réponses non-200")):
+            assert "MIEUX" in ligne, ligne
+
+
+def test_le_bloc_avant_apres_dit_pire_quand_les_alertes_disparaissent(
+        tmp_path, capsys, monkeypatch):
+    """LE SENS DU TEST. Moins de secondes est un progrès, moins d'alertes
+    délivrées est une régression : une flèche unique pour les quatre lignes
+    dirait le contraire de la vérité une fois sur deux."""
+    lignes = _serie(1, 6, 60.0, 30, 0, 90.0) + _serie(1, 6, 2.0, 0, 5, 28.5)
+    p = _journal(lignes, tmp_path)
+    monkeypatch.setattr("sys.argv", ["alert_cost", "--log", str(p)])
+    main()
+    out = capsys.readouterr().out
+    bloc = out.split("── AVANT / APRÈS LE DERNIER REDÉMARRAGE ──")[1]
+    dico = {}
+    for ligne in bloc.splitlines():
+        for nom in ("dRest moyen", "alertes délivrées", "réponses non-200"):
+            if ligne.strip().startswith(nom):
+                dico[nom] = "MIEUX" if "MIEUX" in ligne else "PIRE"
+    assert dico["dRest moyen"] == "MIEUX"          # plus rapide
+    assert dico["alertes délivrées"] == "PIRE"     # mais muet
+    assert dico["réponses non-200"] == "PIRE"
+
+
+def test_depuis_redemarrage_ne_garde_que_la_serie_en_cours(tmp_path, capsys,
+                                                           monkeypatch):
+    lignes = _serie(1, 10, 118.6, 0, 37, 147.1) + _serie(1, 3, 2.0, 20, 0, 28.5)
+    p = _journal(lignes, tmp_path)
+    monkeypatch.setattr("sys.argv", ["alert_cost", "--log", str(p),
+                                     "--depuis-redemarrage"])
+    main()
+    out = capsys.readouterr().out
+    tetes = out.split("── AVANT / APRÈS")[0]
+    assert "sur 1 série(s)" in tetes
+    assert "118.6" not in tetes, tetes
+    assert "ENJAMBE UN REDÉMARRAGE" not in tetes
+
+
+def test_une_fenetre_qui_enjambe_un_redemarrage_le_dit(tmp_path, capsys,
+                                                       monkeypatch):
+    """Sans cet avertissement, `--derniers 20` juste après un redémarrage
+    moyenne l'avant et l'après et fait croire à une demi-guérison."""
+    lignes = _serie(1, 3, 118.6, 0, 37, 147.1) + _serie(1, 3, 2.0, 20, 0, 28.5)
+    p = _journal(lignes, tmp_path)
+    monkeypatch.setattr("sys.argv", ["alert_cost", "--log", str(p),
+                                     "--derniers", "20"])
+    main()
+    out = capsys.readouterr().out
+    assert "ENJAMBE UN REDÉMARRAGE" in out

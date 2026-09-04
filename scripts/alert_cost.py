@@ -221,6 +221,12 @@ def main() -> int:
     ap.add_argument("--sport", default=None, help="Un seul sport.")
     ap.add_argument("--derniers", type=int, default=0, metavar="N",
                     help="Ne garder que les N derniers cycles (ordre du fichier).")
+    ap.add_argument("--depuis-redemarrage", action="store_true",
+                    dest="depuis_redemarrage",
+                    help="Ne garder que la série en cours (depuis le dernier "
+                         "redémarrage du daemon). C'est ce qu'il faut pour "
+                         "mesurer un correctif : `--derniers N` enjambe le "
+                         "redémarrage et mélange l'avant et l'après.")
     ap.add_argument("--intervalle", type=float,
                     default=float(os.getenv("TELEGRAM_MIN_SEND_INTERVAL", "3.2")),
                     help="min_send_interval_s attendu (défaut : la valeur de "
@@ -241,6 +247,18 @@ def main() -> int:
             "`dRest` est écrit depuis le 04/09/2026 : un journal antérieur, ou "
             "un daemon\npas encore redémarré sur cette version, n'en a pas.")
 
+    # ⚠️ TOUS LES LOTS, AVANT TOUT FILTRE. Le bloc AVANT/APRÈS compare deux
+    # séries : le filtrer reviendrait à comparer une série à elle-même.
+    tous = list(lots)
+
+    if a.depuis_redemarrage:
+        derniere = max(c[0] for c in ordre_lots) if ordre_lots else 0
+        lots = [l for l in lots if l[0][0] == derniere]
+        if not lots:
+            raise SystemExit(
+                "La série en cours ne contient aucun cycle mesuré.\n"
+                "Le daemon vient peut-être de redémarrer : laisser tourner "
+                "quelques minutes.")
     if a.derniers:
         gardes = set(ordre_lots[-a.derniers:])
         lots = [l for l in lots if l[0] in gardes]
@@ -253,6 +271,11 @@ def main() -> int:
           f"{cycles[-1][1]} sur {len({c[0] for c in cycles})} série(s)"
           + (f", sport {a.sport}" if a.sport else ""))
     print(f"Intervalle attendu entre deux messages : {a.intervalle:.2f} s")
+    if len({c[0] for c in cycles}) > 1:
+        print("\n⚠️ CETTE FENÊTRE ENJAMBE UN REDÉMARRAGE. Les moyennes "
+              "ci-dessous mélangent\n   l'avant et l'après — c'est exactement "
+              "ce qu'il ne faut pas pour juger un\n   correctif. Relancer avec "
+              "`--depuis-redemarrage`, ou lire le bloc AVANT/APRÈS.")
 
     # ── LA QUANTIFICATION, EN PREMIER ────────────────────────────────
     # LE SEUL TEST QUI NE DÉPENDE PAS DE LA LIVRAISON. Un envoi qui échoue
@@ -427,6 +450,50 @@ def main() -> int:
         for ex in inc["exemples"]:
             print("    " + "\n    ".join(ex.splitlines()))
             print()
+
+    # ── AVANT / APRÈS LE DERNIER REDÉMARRAGE ─────────────────────────
+    # LA QUESTION QU'ON POSE VRAIMENT APRÈS UN CORRECTIF. Aucune moyenne
+    # unique n'y répond : il faut deux fenêtres, et elles sont séparées par le
+    # redémarrage, pas par un nombre de cycles.
+    series = sorted({c[0] for c in ordre_lots})
+    if len(series) >= 2:
+        av_s, ap_s = series[-2], series[-1]
+        av = [l for l in tous if l[0][0] == av_s]
+        ap = [l for l in tous if l[0][0] == ap_s]
+        print(f"\n── AVANT / APRÈS LE DERNIER REDÉMARRAGE ──")
+        print(f"  série {av_s} = avant ({len(av)} lots), "
+              f"série {ap_s} = après ({len(ap)} lots)")
+
+        def _n200(ls):
+            cs = {l[0] for l in ls}
+            return sum(d["non200"] for c, d in inc["par_cycle"].items() if c in cs)
+
+        rangs = [
+            ("dRest moyen", lambda ls: _moy([l[2] for l in ls]), " s", False, 1),
+            ("cycle moyen (tot)", lambda ls: _moy([l[3] for l in ls]), " s", False, 1),
+            ("alertes délivrées", lambda ls: float(sum(l[4] for l in ls)), "", True, 0),
+            ("réponses non-200", lambda ls: float(_n200(ls)), "", False, 0),
+        ]
+        print(f"  {'':<20} {'avant':>11} {'après':>11}   verdict")
+        for nom, f, unite, haut_bon, dec in rangs:
+            a_, b_ = f(av), f(ap)
+            # ⚠️ LE SENS DÉPEND DE LA LIGNE. Moins de secondes est un progrès ;
+            # moins d'alertes délivrées est une régression. Une flèche unique
+            # pour les quatre dirait le contraire de la vérité une fois sur deux.
+            if abs(b_ - a_) < 1e-9:
+                v = "inchangé"
+            elif (b_ > a_) == haut_bon:
+                v = "MIEUX"
+            else:
+                v = "PIRE"
+            print(f"  {nom:<20} {a_:>9.{dec}f}{unite:<2} "
+                  f"{b_:>9.{dec}f}{unite:<2}   {v}")
+        print("  ⚠️ Une série qui vient de démarrer a peu de cycles : laisser "
+              "tourner\n     quelques minutes avant de conclure.")
+    else:
+        print("\n── AVANT / APRÈS LE DERNIER REDÉMARRAGE ──")
+        print("  Une seule série dans ce journal : rien à comparer. Le bloc "
+              "apparaîtra\n  au prochain redémarrage du daemon.")
 
     # ── LES PIRES LOTS ───────────────────────────────────────────────
     pires = sorted(lots, key=lambda l: -l[2])[:10]
