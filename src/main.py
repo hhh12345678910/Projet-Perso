@@ -1270,21 +1270,28 @@ def _daemon_scan_sport(
         ch.par_phase["clv_alertes"] = time.monotonic() - _t_phase
         _t_phase = time.monotonic()
         # ── Value bets ───────────────────────────────────────────────
+        _t_e = time.monotonic()
         bets = merge_twin_book_value_bets(find_value_bets(soft_q, fair, cfg))
         bets.sort(key=lambda b: b.ev_pct, reverse=True)
+        ch.par_phase["find"] = time.monotonic() - _t_e
+        _t_e = time.monotonic()
         bet_ids = [storage.insert_value_bet(b) for b in bets]
+        ch.par_phase["insVB"] = time.monotonic() - _t_e
         console.print(f"\\[{current_sport}]   value bets: {len(bets)} total")
 
         # Features permanentes. Enveloppé : c'est de la collecte annexe, le
         # pari est déjà en base et un scan ne doit jamais tomber pour ça.
         _now = datetime.now(timezone.utc)
         try:
+            _t_e = time.monotonic()
             storage.insert_bet_features(build_bet_features(
                 bets, bet_ids, pinnacle_q, soft_q, fair, current_sport, _now,
             ))
+            ch.par_phase["feat"] = time.monotonic() - _t_e
             # Ouvrir le suivi de correction, puis confronter les suivis déjà
             # ouverts aux cotes de ce cycle. Les deux dans le même try : c'est
             # de la collecte, elle ne doit jamais faire tomber un scan.
+            _t_e = time.monotonic()
             storage.seed_corrections([
                 (vid, b.detected_at.isoformat(),
                  (parse_event_key(b.event_key) or (None,))[0].isoformat()
@@ -1293,6 +1300,7 @@ def _daemon_scan_sport(
                  b.outcome.label, b.outcome.line, b.odd_taken, b.fair_odd)
                 for b, vid in zip(bets, bet_ids)
             ])
+            ch.par_phase["seed"] = time.monotonic() - _t_e
             # Le suivi est la partie du cycle dont le coût grandit avec la
             # borne d'âge : chaque suivi ouvert est relu ET réécrit. Sans cette
             # mesure, un cycle qui s'allonge ne dirait pas d'où vient le temps.
@@ -1303,6 +1311,7 @@ def _daemon_scan_sport(
                 secondary_quotes=secondary,
             )
             storage.update_corrections(obs, corr, algn, hist)
+            ch.par_phase["suivi"] = time.monotonic() - _t0
             _ms = (time.monotonic() - _t0) * 1000
             console.print(
                 f"\\[{current_sport}]   suivi : {len(_open)} ouverts, "
@@ -1346,7 +1355,16 @@ def _daemon_scan_sport(
             if sent:
                 console.print(f"\\[{current_sport}]   → {len(sent)} value bet alert(s) sent")
 
-        ch.par_phase["detection"] = time.monotonic() - _t_phase
+        # ⚠️ SOUSTRAIRE LES ENFANTS DU PARENT. `find`, `insVB`, `feat`,
+        # `seed` et `suivi` sont DANS le bloc des value bets : les compter en
+        # plus de lui ferait additionner deux fois le même temps, et `reste`
+        # deviendrait négatif — donc écrêté à zéro, donc muet, alors que c'est
+        # lui qui dit où chercher. Ce qui reste ici est la part du bloc
+        # qu'aucun enfant ne revendique : l'envoi des alertes et la glue.
+        _enfants = sum(ch.par_phase.get(k, 0.0)
+                       for k in ("find", "insVB", "feat", "seed", "suivi"))
+        ch.par_phase["detc_reste"] = max(
+            0.0, time.monotonic() - _t_phase - _enfants)
         _t_phase = time.monotonic()
         # ── Surebets ─────────────────────────────────────────────────
         # Surebets use a wider pool than value bets: events Pinnacle doesn't
