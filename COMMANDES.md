@@ -707,3 +707,31 @@ changerait quel exemplaire gagne — un changement de données non déterministe
 déguisé en optimisation, et invisible puisque le NOMBRE d'événements ne bouge
 pas. `tests/test_unibet_parallele.py` le verrouille avec des retards qui
 inversent délibérément l'ordre d'arrivée.
+
+## Alerte « cycles ralentis »
+
+**La lenteur n'avait aucun capteur.** `_pinnacle_health` et `_book_health`
+surveillent tous deux l'**absence** de données — « ce book a-t-il répondu ? ».
+Pendant un gel de trois minutes, chaque book finit par répondre, en retard :
+aucun n'est « muet », et rien ne se déclenchait. Mesuré sur 10 192 cycles
+(5,7 jours) : **16 gels, 2 126 s perdues, 6,3 minutes de cécité par jour**,
+sans détection **ni** capture de clôture — et pas une alerte.
+
+| réglage | défaut | pourquoi |
+|---|---|---|
+| `CYCLE_SLOW_SEC` | `90` | cycle normal : 28 s de médiane, 31 s de p90, 43 s au pire hors gel. 90 s = 3,2× la médiane et 2,1× le pire cas normal |
+| `CYCLE_SLOW_CYCLES` | `2` | un cycle isolé arrive ; deux d'affilée décrivent un état. 2 × 90 s = 180 s, le gel qui a motivé l'alerte |
+| `CYCLE_SLOW_QUIET_UTC` | `03:45-05:30` | la purge (04:00 UTC, §18.4) fait 73 % des gels — 04 h et 05 h réunies |
+
+⚠️ **Le compteur avance PENDANT la fenêtre de silence ; seul l'envoi attend.**
+Une panne réelle commencée à 04:30 et durant jusqu'à 06:00 alerte dès la sortie
+de fenêtre, avec les cycles de la purge comptés dedans. Si la fenêtre arrêtait
+le compteur, la purge effacerait exactement les pannes qu'on veut voir.
+`tests/test_cycle_health.py` le verrouille — et la variante dangereuse fait
+tomber ce test.
+
+⚠️ **Le créneau de 07 h n'est PAS silencé** : 5 gels, 412 s, 19 % du total, et
+il reste inexpliqué. C'est précisément ce qu'on veut voir arriver.
+
+⚠️ Un `CYCLE_SLOW_QUIET_UTC` illisible ne silence **rien** et le dit. Le défaut
+sûr d'une alerte est de parler, pas de se taire.

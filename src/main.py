@@ -206,6 +206,119 @@ def _pinnacle_health(sport: str, *, ok: bool, tg_cfg) -> None:
         )
 
 
+# ── Cycle qui ralentit ────────────────────────────────────────────────────
+#
+# LA LENTEUR N'AVAIT AUCUN CAPTEUR. `_pinnacle_health` et `_book_health`
+# surveillent tous deux l'ABSENCE de données — « ce book a-t-il répondu ? ».
+# Pendant un gel de trois minutes, chaque book finit par répondre, en retard :
+# aucun n'est « muet », et rien ne se déclenche. Le cycle long servait même
+# d'argument pour ÉCARTER un seuil de durée sur les books (voir plus haut),
+# sans qu'il devienne jamais lui-même un motif d'alerte.
+#
+# Mesuré sur 10 192 cycles (5,7 jours) : 16 cycles au-dessus de 60 s, 2 126 s
+# perdus, soit 6,3 minutes de cécité par jour. Pendant ce temps rien n'est
+# détecté ET aucune clôture n'est capturée — ce CLV-là ne se rattrape pas.
+#
+# SEUIL À 90 s. Un cycle normal fait 28 s de médiane, 31 s de p90, et le pire
+# observé hors gel est 43 s. 90 s vaut 3,2 fois la médiane et 2,1 fois ce pire
+# cas : au-dessus, ce n'est plus une variation, c'est un état.
+#
+# DEUX CYCLES CONSÉCUTIFS, parce qu'un cycle isolé arrive (un book qui hoquette)
+# alors que deux d'affilée décrivent une situation. Deux cycles à 90 s font
+# 180 s d'aveuglement — précisément le gel qui a motivé cette alerte.
+#
+# ⚠️ FENÊTRE DE SILENCE PENDANT LA PURGE. Elle tombe à 04:00 UTC et fait monter
+# les cycles à plusieurs minutes (§18.4) : c'est documenté, assumé, et mesuré à
+# 73 % des gels (04 h et 05 h réunies). Sans cette fenêtre, l'alerte partirait
+# chaque nuit — et le §18.4 le dit déjà : « un message qui ne peut qu'alarmer
+# n'informe pas ». Une alerte nocturne qu'on apprend à ignorer est pire que pas
+# d'alerte, parce qu'elle couvre celles qui comptent.
+#
+# ⚠️ LE COMPTEUR TOURNE QUAND MÊME PENDANT LA FENÊTRE. Seul l'ENVOI est
+# suspendu. Une panne réelle qui commence à 04:30 et dure jusqu'à 06:00 doit
+# alerter dès la sortie de fenêtre, pas être effacée par elle.
+#
+# Le créneau de 07 h — 5 gels, 412 s, 19 % du total — n'est PAS couvert par la
+# fenêtre : il est inexpliqué, et c'est justement ce qu'on veut voir arriver.
+_CYCLE_SLOW_SEC = float(os.getenv("CYCLE_SLOW_SEC", "90"))
+_CYCLE_SLOW_CYCLES = int(os.getenv("CYCLE_SLOW_CYCLES", "2"))
+_CYCLE_QUIET_UTC = os.getenv("CYCLE_SLOW_QUIET_UTC", "03:45-05:30")
+_CYCLE_SLOW: dict = {"suite": 0, "depuis": None, "alerte": False, "pire": 0.0,
+                     "perdu": 0.0}
+
+
+def _dans_fenetre(quand: datetime, fenetre: str) -> bool:
+    """La fenêtre de silence, « HH:MM-HH:MM » en UTC, minuit compris.
+
+    Une fenêtre vide ne silence rien : c'est la façon de désactiver la
+    suspension sans toucher au code."""
+    fenetre = (fenetre or "").strip()
+    if not fenetre:
+        return False
+    try:
+        a, b = fenetre.split("-")
+        h1, m1 = (int(x) for x in a.split(":"))
+        h2, m2 = (int(x) for x in b.split(":"))
+    except ValueError:
+        # Un réglage illisible ne doit pas faire taire l'alerte NI la rendre
+        # bavarde : on ne silence rien, et on le dit une fois.
+        console.print(f"[yellow]CYCLE_SLOW_QUIET_UTC={fenetre!r} illisible — "
+                      f"aucune fenêtre de silence[/yellow]")
+        return False
+    debut, fin, t = h1 * 60 + m1, h2 * 60 + m2, quand.hour * 60 + quand.minute
+    return debut <= t < fin if debut <= fin else (t >= debut or t < fin)
+
+
+def _cycle_health(elapsed: float, tg_cfg, *, quand: datetime | None = None) -> None:
+    """Alerter quand les cycles s'allongent, et dire quand c'est fini.
+
+    Le message de rétablissement porte le temps d'aveuglement cumulé : c'est
+    lui qui dit si des clôtures ont pu être perdues, pas le nombre de cycles."""
+    quand = quand or datetime.now(timezone.utc)
+    st = _CYCLE_SLOW
+
+    if elapsed < _CYCLE_SLOW_SEC:
+        if st["alerte"]:
+            send_system_alert(
+                tg_cfg,
+                f"✅ <b>Cycles revenus à la normale</b>\n"
+                f"{st['suite']} cycles lents, {_fmt_minutes(st['perdu'])} "
+                f"cumulées, pire cycle {st['pire']:.0f} s. Les clôtures des "
+                f"matchs partis pendant ce temps ont pu être manquées.",
+                print_fn=lambda x: console.print(f"[yellow]{x}[/yellow]"),
+            )
+        st.update(suite=0, depuis=None, alerte=False, pire=0.0, perdu=0.0)
+        return
+
+    # Le compte AVANCE toujours, même sous silence : c'est l'envoi qui attend.
+    st["suite"] += 1
+    st["pire"] = max(st["pire"], elapsed)
+    st["perdu"] += elapsed
+    if st["depuis"] is None:
+        st["depuis"] = quand
+    if st["alerte"] or st["suite"] < _CYCLE_SLOW_CYCLES:
+        return
+    if _dans_fenetre(quand, _CYCLE_QUIET_UTC):
+        console.print(
+            f"[dim]cycles lents ({st['suite']}) — alerte suspendue, "
+            f"fenêtre de purge {_CYCLE_QUIET_UTC}[/dim]")
+        return
+
+    st["alerte"] = True
+    send_system_alert(
+        tg_cfg,
+        f"🚨 <b>Cycles ralentis</b>\n"
+        f"{st['suite']} cycles d'affilée au-dessus de {_CYCLE_SLOW_SEC:.0f} s "
+        f"(pire : {st['pire']:.0f} s), depuis "
+        f"{st['depuis'].strftime('%H:%M')} UTC.\n"
+        f"Les cotes vieillissent, les détections partent en retard et les "
+        f"lignes de clôture peuvent être manquées.\n"
+        f"À vérifier : <code>.venv/bin/python -m scripts.book_latency "
+        f"--derniers 40</code>",
+        print_fn=lambda x: console.print(f"[yellow]{x}[/yellow]"),
+    )
+
+
 # Un softbook muet ne se voit NULLE PART aujourd'hui. Le 16/08, Betano est
 # resté quatre heures sans une seule cote — onglet fermé — et le seul symptôme
 # était une ligne dans `valuebet.log` que personne ne lisait. Pendant ce temps
@@ -1392,6 +1505,7 @@ def daemon(
 
         elapsed = (datetime.now(timezone.utc) - t0).total_seconds()
         console.print(f"\n[dim]Cycle {cycle} done in {elapsed:.0f}s — next in {breather}s[/dim]")
+        _cycle_health(elapsed, tg_cfg)
         time.sleep(breather)
 
 
