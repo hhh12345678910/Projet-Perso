@@ -776,6 +776,37 @@ par code HTTP et par canal, et rend les premières lignes **brutes** — le corp
 de la réponse, qui est la raison de l'échec, est enveloppé par `rich` à 80
 colonnes et le recoller serait fragile.
 
+### `book_exclusif` — ce que couper un book coûterait
+
+```bash
+.venv/bin/python -m scripts.book_exclusif
+.venv/bin/python -m scripts.book_exclusif --book elitesports --avec unibet_be --jours 30
+```
+
+⚠️ **« Combien de paris viennent de ce book » est la MAUVAISE question.** Un
+pari que trois autres books proposent aussi ne disparaît pas quand on coupe
+celui-ci : il se rabat sur le meilleur des autres, souvent à quelques
+centièmes de cote près. Compter tout son volume comme une perte ferait
+renoncer à une coupure gratuite ; ignorer sa part exclusive ferait couper un
+book irremplaçable. La sonde sépare les deux.
+
+Deux tableaux. Le premier donne sa CLV **selon qu'il est seul ou accompagné** —
+globale, seul, avec un book nommé (`--avec`), avec n'importe quel autre. Le
+second chiffre la coupure : combien d'opportunités **disparaîtraient**
+entièrement et à quelle CLV, et pour celles qui seraient **rabattues**, la
+cote et la CLV du remplaçant.
+
+⚠️ **La CLV décide, pas l'EV.** Les deux colonnes sont là. L'EV dit ce que le
+calcul croyait au moment de la détection ; la CLV dit ce que le marché a
+validé. Un book peut sembler généreux parce que son prix est faux — c'est le
+mode de défaillance le plus courant.
+
+⚠️ **L'identité d'un pari est équipes + jour + marché + pari** (§17.8), jamais
+`event_key`. Deux détections du même jour comptent donc comme la même
+opportunité même à plusieurs heures d'écart. La sonde **dit combien** sont
+dans ce cas : l'erreur va dans le sens qui FLATTE la coupure, donc la perte
+réelle est au moins celle annoncée.
+
 ### `noms_hostiles` — quel nom aurait cassé le HTML
 
 ```bash
