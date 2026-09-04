@@ -204,12 +204,30 @@ def main() -> int:
     # sur le MEILLEUR autre book. C'est cette cote-là qu'il faut comparer, pas
     # zéro — sinon la coupure paraît catastrophique alors qu'elle ne coûte
     # souvent que quelques centièmes de cote.
+    # ⚠️ DEUX REMPLAÇANTS, ET C'EST TOUT L'ENJEU DE LA COMPARAISON.
+    #
+    # Le MAXIMUM des autres books est le remplaçant réel — c'est celui qu'on
+    # jouerait. Mais un maximum sur dix books est SUPÉRIEUR À N'IMPORTE LEQUEL
+    # d'entre eux par construction : comparer un book à ce maximum le fait
+    # paraître mauvais même s'il est parfaitement dans la moyenne. Publier ce
+    # seul chiffre inviterait à lire « couper ce book ferait GAGNER 11 points
+    # de CLV », ce qui est faux : ces cotes-là sont déjà disponibles
+    # aujourd'hui, alertées depuis l'autre book. La coupure ne les crée pas.
+    #
+    # La MÉDIANE des autres books n'a pas ce biais. C'est elle qui dit si le
+    # book est réellement moins cher que ses concurrents, ou seulement moins
+    # cher que le meilleur d'entre eux — deux conclusions opposées.
     ecarts, clv_avant, clv_apres = [], [], []
+    ecarts_med, clv_med = [], []
     for o in accompagnees:
         mien = o["books"][cible]
         autres = [r for b, r in o["books"].items() if b != cible]
         remplacant = max(autres, key=lambda r: float(r["odd_taken"]))
         ecarts.append(float(remplacant["odd_taken"]) / float(mien["odd_taken"]) - 1.0)
+        cotes = sorted(float(r["odd_taken"]) for r in autres)
+        mediane = cotes[len(cotes) // 2] if len(cotes) % 2 else (
+            (cotes[len(cotes) // 2 - 1] + cotes[len(cotes) // 2]) / 2)
+        ecarts_med.append(mediane / float(mien["odd_taken"]) - 1.0)
         # La clôture du remplaçant si elle existe, sinon celle de n'importe
         # quelle ligne du groupe : c'est le MÊME match et le MÊME pari, donc
         # la même ligne de clôture.
@@ -217,6 +235,7 @@ def main() -> int:
         if cl and float(cl) > 0:
             clv_avant.append(clv_pct(float(mien["odd_taken"]), float(cl)) * 100)
             clv_apres.append(clv_pct(float(remplacant["odd_taken"]), float(cl)) * 100)
+            clv_med.append(clv_pct(mediane, float(cl)) * 100)
 
     print("\n── CE QUE LA COUPURE COÛTERAIT VRAIMENT ──")
     pc_seules = 100 * len(seules) / len(opportunites)
@@ -241,6 +260,22 @@ def main() -> int:
             print(f"    CLV {st.mean(clv_avant):+.2f} % → "
                   f"{st.mean(clv_apres):+.2f} % ({d:+.2f} point(s)), sur "
                   f"{len(clv_avant)} clôtures")
+        print(f"\n    ⚠️ CE « MEILLEUR AUTRE BOOK » EST UN MAXIMUM SUR "
+              f"PLUSIEURS BOOKS, donc supérieur\n       à chacun d'eux par "
+              f"construction. Il ne dit PAS que couper ferait gagner\n"
+              f"       ces points : ces cotes sont déjà alertées aujourd'hui "
+              f"depuis l'autre\n       book. La coupure retire des doublons "
+              f"moins bien tarifés, elle ne crée rien.")
+        print(f"    Le même calcul contre la MÉDIANE des autres books, qui "
+              f"n'a pas ce biais :")
+        print(f"      cote {100 * st.mean(ecarts_med):+.2f} % en moyenne"
+              + (f", CLV {st.mean(clv_med):+.2f} %" if clv_med else ""))
+        if clv_med and clv_avant:
+            verdict = ("RÉELLEMENT moins bien tarifé que ses concurrents"
+                       if st.mean(clv_med) > st.mean(clv_avant) else
+                       "aussi bien tarifé que ses concurrents — l'écart au "
+                       "maximum est un effet de sélection")
+            print(f"      → {cible} est {verdict}.")
     else:
         print("  · aucune n'est proposée ailleurs : TOUT disparaîtrait.")
 

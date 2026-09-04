@@ -200,3 +200,52 @@ def test_sans_cloture_la_valeur_est_inconnue_pas_nulle(tmp_path, capsys,
     main()
     out = capsys.readouterr().out
     assert "INCONNUE, pas nulle" in out
+
+
+# ── Le biais du maximum, et son contrôle ─────────────────────────────
+
+def test_le_maximum_sur_plusieurs_books_est_avoue_comme_biaise(
+        tmp_path, capsys, monkeypatch):
+    """⚠️ LE CHIFFRE QUI INDUIT EN ERREUR. Le « meilleur autre book » est un
+    MAXIMUM sur N books, donc supérieur à chacun d'eux par construction.
+    Publié seul, il se lit « couper ferait gagner ces points » — ce qui est
+    faux : ces cotes sont déjà alertées aujourd'hui depuis l'autre book."""
+    lignes = []
+    for i in range(1, 6):
+        lignes.append((i, "elitesports", f"A{i}", f"B{i}", "2026-09-01",
+                       "h2h", "home", 2.00, 5.0, 2.00, T))
+        # Trois concurrents ÉQUIVALENTS à EliteSports, dont un un peu au-dessus
+        # par simple bruit. Le max les dépasse tous ; la médiane, non.
+        for j, cote in enumerate((1.98, 2.00, 2.12)):
+            lignes.append((100 * (j + 1) + i, f"book{j}", f"A{i}", f"B{i}",
+                           "2026-09-01", "h2h", "home", cote, 3.0, 2.00, T))
+    p = _base(tmp_path, lignes)
+    monkeypatch.setattr("sys.argv", ["book_exclusif", "--db", str(p)])
+    main()
+    out = capsys.readouterr().out
+    assert "MAXIMUM SUR PLUSIEURS BOOKS" in out
+    assert "elle ne crée rien" in out
+    # Max = 2,12 (+6,00 %) mais médiane = 2,00 (+0,00 %) : le book est en
+    # réalité tarifé comme ses concurrents.
+    assert "cote +6.00 %" in out
+    assert "cote +0.00 %" in out
+    assert "effet de sélection" in out
+
+
+def test_un_book_reellement_moins_cher_est_declare_tel(tmp_path, capsys,
+                                                       monkeypatch):
+    """Le contrôle doit aussi savoir dire oui : ici TOUS les concurrents sont
+    au-dessus, pas seulement le meilleur."""
+    lignes = []
+    for i in range(1, 6):
+        lignes.append((i, "elitesports", f"A{i}", f"B{i}", "2026-09-01",
+                       "h2h", "home", 2.00, 5.0, 2.00, T))
+        for j, cote in enumerate((2.20, 2.22, 2.24)):
+            lignes.append((100 * (j + 1) + i, f"book{j}", f"A{i}", f"B{i}",
+                           "2026-09-01", "h2h", "home", cote, 3.0, 2.00, T))
+    p = _base(tmp_path, lignes)
+    monkeypatch.setattr("sys.argv", ["book_exclusif", "--db", str(p)])
+    main()
+    out = capsys.readouterr().out
+    assert "RÉELLEMENT moins bien tarifé" in out
+    assert "effet de sélection" not in out

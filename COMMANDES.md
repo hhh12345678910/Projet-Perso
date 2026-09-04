@@ -801,6 +801,16 @@ calcul croyait au moment de la détection ; la CLV dit ce que le marché a
 validé. Un book peut sembler généreux parce que son prix est faux — c'est le
 mode de défaillance le plus courant.
 
+⚠️ **« Le meilleur autre book » est un MAXIMUM sur plusieurs books**, donc
+supérieur à chacun d'eux par construction. Lu seul, il donne l'illusion que
+couper ferait *gagner* ces points de CLV — c'est faux : ces cotes sont déjà
+alertées aujourd'hui depuis l'autre book, la coupure ne les crée pas, elle
+retire des doublons moins bien tarifés. La sonde imprime donc aussi le même
+calcul contre la **médiane** des autres books, qui n'a pas ce biais, et
+tranche : le book est-il réellement moins cher que ses concurrents, ou
+seulement moins cher que le meilleur d'entre eux ? Deux conclusions opposées,
+et deux tests plantent les deux cas.
+
 ⚠️ **L'identité d'un pari est équipes + jour + marché + pari** (§17.8), jamais
 `event_key`. Deux détections du même jour comptent donc comme la même
 opportunité même à plusieurs heures d'écart. La sonde **dit combien** sont
