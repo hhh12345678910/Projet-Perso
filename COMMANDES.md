@@ -776,6 +776,48 @@ par code HTTP et par canal, et rend les premières lignes **brutes** — le corp
 de la réponse, qui est la raison de l'échec, est enveloppé par `rich` à 80
 colonnes et le recoller serait fragile.
 
+### Les trois morceaux de `dRest` : `tgIni`, `dedup`, `envoi`
+
+`dRest` disait « le temps est dans le bloc des alertes » sans dire **lequel
+des trois morceaux** le prend. Ils sont maintenant nommés :
+
+| phase | ce qu'elle mesure | ce qui la fait grossir |
+|---|---|---|
+| `tgIni` | la construction de l'alerter — trois lectures en base | rien : une fois par appel |
+| `dedup` | **deux requêtes SQL par pari ET par canal** | le nombre de paris × le nombre de canaux |
+| `envoi` | la pause de `min_send_interval_s` + le POST | le nombre de messages réellement tentés |
+
+Plus une ligne de **comptes** (jamais des durées — voir l'avertissement
+ci-dessous) :
+
+```
+[soccer]   alertes : 380 dédoub. (88.4s), 0 envois (0.0s)
+```
+
+**Pourquoi `dedup` est le suspect structurel.** Chaque appel fait deux
+requêtes `event_key LIKE 'YYYYMMDD%::equipes'`, et SQLite **ne peut pas
+servir un `LIKE` par index** tant que `case_sensitive_like` est à OFF (le
+défaut) : `idx_nvb_lookup` existe et ne sert à rien ici. Chaque requête
+balaie donc `notified_value_bets` en entier, et le nombre d'appels est
+`paris × canaux`. Rallumer quatre books multiplie les paris, donc les
+requêtes, donc le cycle — sans qu'une seule alerte parte.
+
+⚠️ **`nDedup` et `nEnvoi` sont des COMPTES, jamais des phases.** S'ils
+entraient dans `par_phase`, `ligne_phases` les afficherait comme des secondes
+et `reste` les soustrairait : 380 dédoublonnages deviendraient 380 secondes.
+Un test le verrouille.
+
+⚠️ **Les trois sont soustraites de `detc_reste`**, comme les cinq
+sous-phases d'avant. Sans ça le même temps serait compté deux fois, `reste`
+deviendrait négatif — donc écrêté à zéro, donc muet — et c'est précisément
+lui qui dit où chercher. Un test le verrouille aussi.
+
+⚠️ **Le temps du dédoublonnage est compté même quand il écarte le pari**
+(`finally`, pas fin de fonction). C'est LE cas qui compte : un cycle
+entièrement dédoublonné n'envoie rien, donc n'affiche aucune alerte, et c'est
+pourtant là que passe tout son temps. C'est exactement ce que la production a
+montré le 04/09 — 96 s de `dRest`, zéro alerte, zéro erreur.
+
 ### « Suis-je revenu comme avant ? » — le bloc AVANT / APRÈS
 
 ```bash

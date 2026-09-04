@@ -887,17 +887,31 @@ class TelegramAlerter:
     _cooldown_until: dict[str, float] = {}   # chat_id -> epoch to skip sends until (post-429)
 
     def __init__(self, config: TelegramConfig, *, client: httpx.Client | None = None,
-                 print_fn=print, canaux=None, storage=None):
+                 print_fn=print, canaux=None, storage=None, chrono=None):
         self.config = config
         self._client = client or httpx.Client(timeout=10.0)
         self._owns_client = client is None
         self._print = print_fn
+        # ⚠️ TROIS COMPTEURS, PAS UN. `dRest` disait « le temps est dans le
+        # bloc des alertes » sans dire lequel des trois morceaux le prend : la
+        # construction (trois lectures en base), le dédoublonnage (deux
+        # requêtes par pari ET par canal), ou l'envoi (la pause de
+        # `min_send_interval_s` plus le POST). Trois hypothèses concurrentes
+        # que seule une mesure sépare — et le 04/09 a coûté cinq hypothèses
+        # fausses pour avoir voulu s'en passer.
+        #
+        # `chrono` est un dict FOURNI PAR L'APPELANT : il survit à
+        # l'alerter, qui est reconstruit à chaque cycle.
+        self._chrono = {} if chrono is None else chrono
+        _t0 = _time.monotonic()
         self._played_keys, self._played_markets = _load_played_keys()
         self._books_off = _load_books_alert_off()
         # `canaux=None` lit la base. `canaux=()` FORCE le chemin historique —
         # c'est ainsi que le harnais de comparaison obtient les deux routages
         # depuis la MEME fonction de production, sans en reimplementer aucun.
         self._canaux = _load_channels(print_fn) if canaux is None else list(canaux)
+        self._chrono["tgIni"] = (self._chrono.get("tgIni", 0.0)
+                                 + _time.monotonic() - _t0)
         self._storage = storage
 
     def close(self) -> None:
@@ -1085,13 +1099,22 @@ class TelegramAlerter:
         cfg, st = self.config, self._base()
         cle = (bet.event_key, bet.book.value, bet.market.value,
                bet.outcome.label, bet.outcome.line)
-        if st.value_bet_notify_count(*cle, chat_id=chat_id) >= cfg.valuebet_max_alerts:
-            return False
-        if cfg.valuebet_dedup and st.value_bet_already_notified(
-                *cle, current_ev_pct=bet.ev_pct,
-                ev_delta_pct=cfg.valuebet_ev_delta_pct, chat_id=chat_id):
-            return False
-        return True
+        _t0 = _time.monotonic()
+        try:
+            if st.value_bet_notify_count(*cle, chat_id=chat_id) >= cfg.valuebet_max_alerts:
+                return False
+            if cfg.valuebet_dedup and st.value_bet_already_notified(
+                    *cle, current_ev_pct=bet.ev_pct,
+                    ev_delta_pct=cfg.valuebet_ev_delta_pct, chat_id=chat_id):
+                return False
+            return True
+        finally:
+            # `finally` : les trois sorties passent par ici, y compris les deux
+            # qui rendent False. Compter seulement le chemin nominal cacherait
+            # exactement le cas cher — celui où tout est dédoublonné.
+            self._chrono["dedup"] = (self._chrono.get("dedup", 0.0)
+                                     + _time.monotonic() - _t0)
+            self._chrono["nDedup"] = self._chrono.get("nDedup", 0.0) + 1
 
     def _router(self, bet: ValueBet, text: str, *, sport: str | None,
                 is_live: bool) -> bool:
@@ -1216,6 +1239,16 @@ class TelegramAlerter:
             return slot
 
     def _send(self, text: str, chat_id: str, reply_markup: dict | None = None) -> bool:
+        _t0 = _time.monotonic()
+        try:
+            return self._send_mesure(text, chat_id, reply_markup)
+        finally:
+            self._chrono["envoi"] = (self._chrono.get("envoi", 0.0)
+                                     + _time.monotonic() - _t0)
+            self._chrono["nEnvoi"] = self._chrono.get("nEnvoi", 0.0) + 1
+
+    def _send_mesure(self, text: str, chat_id: str,
+                     reply_markup: dict | None = None) -> bool:
         slot = self._reserve_slot(chat_id)
         if slot is None:
             return False
@@ -1436,7 +1469,8 @@ def send_late_market_alerts(
 
 
 def send_alerts(bets: list[ValueBet], config: TelegramConfig | None,
-                *, print_fn=print, sport: str | None = None) -> list[ValueBet]:
+                *, print_fn=print, sport: str | None = None,
+                chrono: dict | None = None) -> list[ValueBet]:
     """Fire a Telegram message for each bet that clears the EV threshold.
     Returns the bets actually delivered (so the caller marks only those as
     notified — a rate-limited/failed send stays unmarked and is retried).
@@ -1444,7 +1478,7 @@ def send_alerts(bets: list[ValueBet], config: TelegramConfig | None,
     if config is None or not bets:
         return []
     sent: list[ValueBet] = []
-    with TelegramAlerter(config, print_fn=print_fn) as alerter:
+    with TelegramAlerter(config, print_fn=print_fn, chrono=chrono) as alerter:
         for b in bets:
             if alerter.send_value_bet(b, sport=sport):
                 sent.append(b)

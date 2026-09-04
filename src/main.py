@@ -1343,11 +1343,26 @@ def _daemon_scan_sport(
                     )
                 )
             ]
+            _ch_tg: dict[str, float] = {}
             sent = send_alerts(
                 vb_candidates, tg_cfg,
                 print_fn=lambda s: console.print(f"[yellow]{s}[/yellow]"),
-                sport=current_sport,
+                sport=current_sport, chrono=_ch_tg,
             )
+            # Les trois morceaux de l'envoi, nommés. `nDedup`/`nEnvoi` sont des
+            # COMPTES, pas des durées : ils vont sur leur propre ligne, jamais
+            # dans `par_phase`, sinon `ligne_phases` les afficherait comme des
+            # secondes et `reste` les soustrairait.
+            for _k in ("tgIni", "dedup", "envoi"):
+                if _ch_tg.get(_k):
+                    ch.par_phase[_k] = _ch_tg[_k]
+            if _ch_tg.get("nDedup") or _ch_tg.get("nEnvoi"):
+                console.print(
+                    f"\\[{current_sport}]   alertes : "
+                    f"{int(_ch_tg.get('nDedup', 0))} dédoub. "
+                    f"({_ch_tg.get('dedup', 0.0):.1f}s), "
+                    f"{int(_ch_tg.get('nEnvoi', 0))} envois "
+                    f"({_ch_tg.get('envoi', 0.0):.1f}s)")
             now_mark = datetime.now(timezone.utc)
             # Mark only what actually sent — deferred/rate-limited bets stay
             # unmarked and get retried next cycle instead of being lost.
@@ -1362,7 +1377,8 @@ def _daemon_scan_sport(
         # lui qui dit où chercher. Ce qui reste ici est la part du bloc
         # qu'aucun enfant ne revendique : l'envoi des alertes et la glue.
         _enfants = sum(ch.par_phase.get(k, 0.0)
-                       for k in ("find", "insVB", "feat", "seed", "suivi"))
+                       for k in ("find", "insVB", "feat", "seed", "suivi",
+                                 "tgIni", "dedup", "envoi"))
         ch.par_phase["detc_reste"] = max(
             0.0, time.monotonic() - _t_phase - _enfants)
         _t_phase = time.monotonic()

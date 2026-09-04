@@ -979,7 +979,9 @@ class Chrono:
 _ABREGE = {"fetch": "fetch", "fair": "fair", "base": "base", "retards": "retd",
            "marques": "marq", "clv_alertes": "clv", "detection": "detc",
            "surebets": "sure", "middles": "midl", "find": "find",
-           "insVB": "insVB", "feat": "feat", "seed": "seed", "suivi": "suiv", "detc_reste": "dRest"}
+           "insVB": "insVB", "feat": "feat", "seed": "seed", "suivi": "suiv",
+           "detc_reste": "dRest", "tgIni": "tgIni", "dedup": "dedup",
+           "envoi": "envoi"}
 
 
 def ligne_phases(sport: str, ch: "Chrono") -> str:
