@@ -735,3 +735,36 @@ il reste inexpliqué. C'est précisément ce qu'on veut voir arriver.
 
 ⚠️ Un `CYCLE_SLOW_QUIET_UTC` illisible ne silence **rien** et le dit. Le défaut
 sûr d'une alerte est de parler, pas de se taire.
+
+## Deux nouveaux axes et une fenêtre temporelle
+
+```bash
+--jours 7        # ne garder que les détections des 7 derniers jours
+--axe ev         # découper par tranche d'EV DÉTECTÉE
+--axe clv        # découper par tranche de CLV RÉALISÉE
+```
+
+`--jours` existe sur `clv_roi_matrix` **et** sur `closing_gap`, avec le même
+découpage, pour que « taux de capture de la semaine » et « CLV de la semaine »
+portent sur la même population.
+
+⚠️ Le filtre porte sur `detected_at`, qui **ne bouge jamais** (§14.5) : une
+opportunité vue il y a dix jours et encore affichée hier est **hors** d'une
+fenêtre de sept jours. La fenêtre découpe *quand le prix est apparu*.
+
+⚠️ Il s'applique **avant** la déduplication. Filtrer après elle pourrait retenir
+un exemplaire hors fenêtre puis le jeter alors qu'un exemplaire dedans
+existait — l'opportunité disparaîtrait sans raison.
+
+`--axe ev` réutilise `_ev_bucket` de `main.py`, celui-là même dont se sert
+`clv-report` : recopier ses bornes ferait diverger deux outils qui prétendent
+découper la même chose (§17.7).
+
+`--axe clv` répond à **la** question du projet : une CLV élevée annonce-t-elle
+un ROI élevé ? C'est la validation du KPI lui-même.
+
+⚠️ **La bande `sans clôture` n'est pas un déchet, c'est la moitié de la
+question.** Environ un tiers des paris n'a pas de clôture capturée : leur ROI
+compte, leur CLV est inconnue. Les jeter ferait lire « le ROI par tranche de
+CLV » sur la sous-population dont on a réussi à mesurer la CLV — une sélection,
+pas un échantillon. Elle est donc imprimée avec les autres.

@@ -61,11 +61,13 @@ import sqlite3
 import statistics as st
 import sys
 from collections import defaultdict
+from datetime import datetime, timezone
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 from src.config import load_env_file  # noqa: E402
-from scripts.clv_roi_matrix import BANDES_DELAI, _bande_delai  # noqa: E402
+from scripts.clv_roi_matrix import (BANDES_DELAI, _bande_delai,  # noqa: E402
+                                    _heures)
 from scripts.pnl_detections import porte_de_canal  # noqa: E402
 
 ORDRE = ["< 0 (LIVE)"] + [l for l, _, _ in BANDES_DELAI] + ["? (sans horaire)"]
@@ -112,6 +114,9 @@ def main() -> int:
                     help="Restreindre à la porte RÉELLE du canal premium.")
     ap.add_argument("--canal", default=None, metavar="NOM",
                     help="Un autre canal, par son nom exact (implique --premium).")
+    ap.add_argument("--jours", type=float, default=0, metavar="N",
+                    help="Ne garder que les détections des N derniers jours "
+                         "(filtre sur `detected_at`, qui ne bouge jamais).")
     ap.add_argument("--sport", default=None,
                     help="Un seul sport (le football porte 74 %% du volume).")
     a = ap.parse_args()
@@ -155,14 +160,29 @@ def main() -> int:
     if not rows:
         raise SystemExit("Aucune détection en base.")
 
+    # La fenêtre porte sur `detected_at` — la même que `clv_roi_matrix`, pour
+    # que « taux de capture de la semaine » et « CLV de la semaine » parlent de
+    # la même population. Deux outils qui découpent le temps différemment
+    # rendraient leurs chiffres incomparables sans que rien ne le signale.
+    limite = (datetime.now(timezone.utc).timestamp() - a.jours * 86400
+              if a.jours else None)
+
+    def _dans_fenetre(r) -> bool:
+        if limite is None:
+            return True
+        t = _heures(r["detected_at"])
+        return t is not None and t >= limite
+
     gardees = [r for r in rows
                if (a.sport is None or (r["sport"] or "") == a.sport)
+               and _dans_fenetre(r)
                and (porte is None or porte(r))]
     if not gardees:
         raise SystemExit("Aucune détection ne passe ce filtre.")
 
     print(f"\nÉCART DE CAPTURE DE LA CLÔTURE — porte : {desc}")
-    print(f"Sport : {a.sport or 'tous'}   ·   {len(gardees)} opportunités")
+    print(f"Sport : {a.sport or 'tous'}   ·   {len(gardees)} opportunités"
+          + (f"   ·   {a.jours:g} derniers jours" if a.jours else ""))
     if not a_perdu:
         print("⚠️ Colonne `closing_lost` absente de cette base : la colonne "
               "« perdue » lira 0 partout.")

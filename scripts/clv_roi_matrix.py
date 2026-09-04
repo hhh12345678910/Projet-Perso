@@ -62,6 +62,7 @@ from src.clv import settle as clv_settle  # noqa: E402
 from src.config import load_env_file  # noqa: E402
 from src.reference import KAMBI_BOOKS  # noqa: E402
 from scripts.pnl_detections import BANDES_COTE, porte_de_canal  # noqa: E402
+from src.main import _EV_BUCKET_ORDER, _ev_bucket  # noqa: E402
 
 _ALIAS = {"kambi": tuple(b.value for b in KAMBI_BOOKS)}
 
@@ -153,10 +154,42 @@ ORDRE_DELAI = (["< 0 (LIVE)"] + [lab for lab, _lo, _hi in BANDES_DELAI]
                + ["? (sans horaire)"])
 
 
+BANDES_CLV = [("< 0 %", -1e9, 0.0), ("0-5 %", 0.0, 5.0), ("5-10 %", 5.0, 10.0),
+              ("10-20 %", 10.0, 20.0), ("> 20 %", 20.0, 1e9)]
+SANS_CLOTURE = "sans clôture"
+ORDRE_CLV = [lab for lab, _lo, _hi in BANDES_CLV] + [SANS_CLOTURE]
+
+
+def _bande_clv(row) -> str:
+    """La tranche de CLV d'un pari, ou « sans clôture » s'il n'en a pas.
+
+    ⚠️ CETTE BANDE-LÀ N'EST PAS UN DÉCHET, C'EST LA MOITIÉ DE LA QUESTION.
+    Un tiers des paris n'a pas de clôture capturée : leur ROI compte, leur CLV
+    est inconnue. Les jeter ferait lire « le ROI par tranche de CLV » sur la
+    sous-population dont on a réussi à mesurer la CLV — une sélection, pas un
+    échantillon. Elle est donc imprimée avec les autres."""
+    v = row["closing_fair_odd"]
+    if not v or float(v) <= 0:
+        return SANS_CLOTURE
+    clv = clv_pct(float(row["odd_taken"]), float(v)) * 100.0
+    for lab, lo, hi in BANDES_CLV:
+        if lo <= clv < hi:
+            return lab
+    return SANS_CLOTURE
+
+
 def _axe(nom: str):
     """(libellé de colonne, fonction de bande, ordre d'affichage)."""
     if nom == "delai":
         return "délai", _bande_delai, ORDRE_DELAI
+    if nom == "ev":
+        # `_ev_bucket` vient de `main.py`, celui-là même que `clv-report`
+        # utilise : recopier ses bornes ici ferait diverger deux outils qui
+        # prétendent découper la même chose (§17.7).
+        return ("EV détectée", lambda r: _ev_bucket(float(r["ev_pct"] or 0.0)),
+                list(_EV_BUCKET_ORDER))
+    if nom == "clv":
+        return "CLV réalisée", _bande_clv, ORDRE_CLV
     return ("tranche", lambda r: _bande(float(r["odd_taken"])),
             [lab for lab, _lo, _hi in BANDES_COTE])
 
@@ -342,6 +375,12 @@ def main() -> int:
     ap.add_argument("--db", default="data/valuebet.db")
     ap.add_argument("--premium", action="store_true",
                     help="Filtrer par la porte RÉELLE du canal premium.")
+    ap.add_argument("--jours", type=float, default=0, metavar="N",
+                    help="Ne garder que les détections des N derniers jours. "
+                         "Le filtre porte sur `detected_at`, qui ne bouge "
+                         "jamais (§14.5) : une opportunité vue il y a 10 jours "
+                         "et encore affichée hier est HORS d'une fenêtre de 7 "
+                         "jours.")
     ap.add_argument("--canal", default=None, metavar="NOM",
                     help="Un autre canal, par son nom exact (implique --premium).")
     ap.add_argument("--books", default=None, metavar="LISTE",
@@ -350,7 +389,8 @@ def main() -> int:
                     help="Mise notionnelle par pari (défaut 25).")
     ap.add_argument("--out", default=None, metavar="CSV",
                     help="Écrire la table dans un CSV.")
-    ap.add_argument("--axe", choices=("cote", "delai"), default="cote",
+    ap.add_argument("--axe", choices=("cote", "delai", "ev", "clv"),
+                    default="cote",
                     help="Axe des lignes : tranche de COTE (défaut) ou DÉLAI "
                          "avant le coup d'envoi. Le délai découpe au-delà de "
                          "48 h, là où le §16.4 s'arrêtait.")
@@ -401,6 +441,27 @@ def main() -> int:
     """))
     if not rows:
         raise SystemExit("Aucune détection en base.")
+
+    # ⚠️ FENÊTRE APPLIQUÉE AVANT LA DÉDUPLICATION. La dédup garde la meilleure
+    # cote d'un même pari : filtrer après elle pourrait retenir un exemplaire
+    # hors fenêtre puis le jeter, alors qu'un exemplaire DANS la fenêtre
+    # existait — l'opportunité disparaîtrait sans raison.
+    #
+    # ⚠️ Le filtre porte sur `detected_at`, qui ne bouge JAMAIS (§14.5) : une
+    # opportunité vue il y a dix jours et encore affichée hier est HORS d'une
+    # fenêtre de sept jours. La fenêtre découpe QUAND LE PRIX EST APPARU.
+    fenetre = ""
+    if a.jours:
+        limite = datetime.now(timezone.utc).timestamp() - a.jours * 86400
+        avant = len(rows)
+        rows = [r for r in rows
+                if (_heures(r["detected_at"]) or 0.0) >= limite]
+        if not rows:
+            raise SystemExit(
+                f"Aucune détection dans les {a.jours:g} derniers jours "
+                f"(sur {avant} au total).")
+        fenetre = (f"Fenêtre : {a.jours:g} derniers jours — {len(rows)} lignes "
+                   f"sur {avant} ({100 * len(rows) / avant:.0f} %)")
 
     def selectionner(predicat):
         """Les opportunités dédupliquées que cette porte laisserait passer.
@@ -559,6 +620,8 @@ def main() -> int:
     print(f"\nCLV ET ROI — porte : {porte_desc}")
     print(f"Books : {', '.join(sorted(books)) if books else 'tous'}")
     print(f"Mise notionnelle : {a.stake:g} €")
+    if fenetre:
+        print(fenetre)
     print(f"{len(opp)} opportunités dédupliquées, sur {len(rows)} lignes\n")
 
     col_axe, bande_de, ordre = _axe(a.axe)
