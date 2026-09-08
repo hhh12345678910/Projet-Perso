@@ -555,65 +555,19 @@ def _bloc_contre_le_reste(opp: list, bande_de, ordre: list, stake: float,
           "soccer comparée à un reste mixte compare aussi\n   deux sports.")
 
 
-def main() -> int:
-    ap = argparse.ArgumentParser(
-        description=__doc__,
-        formatter_class=argparse.RawDescriptionHelpFormatter)
-    ap.add_argument("--db", default="data/valuebet.db")
-    ap.add_argument("--premium", action="store_true",
-                    help="Filtrer par la porte RÉELLE du canal premium.")
-    ap.add_argument("--depuis", default=None, metavar="AAAA-MM-JJ",
-                    help="Ne garder que les détections À PARTIR de ce jour "
-                         "inclus (UTC). Se combine avec --jusqu-a pour une "
-                         "période exacte, et s'oppose à --jours qui compte "
-                         "depuis maintenant.")
-    ap.add_argument("--jusqu-a", default=None, metavar="AAAA-MM-JJ",
-                    dest="jusqu_a",
-                    help="Ne garder que les détections JUSQU'À ce jour "
-                         "INCLUS (UTC) — la journée entière est comprise.")
-    ap.add_argument("--jours", type=float, default=0, metavar="N",
-                    help="Ne garder que les détections des N derniers jours. "
-                         "Le filtre porte sur `detected_at`, qui ne bouge "
-                         "jamais (§14.5) : une opportunité vue il y a 10 jours "
-                         "et encore affichée hier est HORS d'une fenêtre de 7 "
-                         "jours.")
-    ap.add_argument("--canal", default=None, metavar="NOM",
-                    help="Un autre canal, par son nom exact (implique --premium).")
-    ap.add_argument("--books", default=None, metavar="LISTE",
-                    help="Books séparés par des virgules. Alias : kambi.")
-    ap.add_argument("--stake", type=float, default=25.0,
-                    help="Mise notionnelle par pari (défaut 25).")
-    ap.add_argument("--out", default=None, metavar="CSV",
-                    help="Écrire la table dans un CSV.")
-    ap.add_argument("--axe",
-                    choices=("cote", "delai", "ev", "clv", "semaine"),
-                    default="cote",
-                    help="Axe des lignes : tranche de COTE (défaut), DÉLAI "
-                         "avant le coup d'envoi, EV détectée, CLV réalisée, "
-                         "ou SEMAINE de détection. Le délai découpe au-delà "
-                         "de 48 h, là où le §16.4 s'arrêtait.")
-    ap.add_argument("--lister", action="store_true",
-                    help="Après les tableaux, lister chaque opportunité "
-                         "NOMMÉE : match, marché, pari, book, cote, EV, CLV, "
-                         "résultat, P&L. Une moyenne ne se vérifie pas ; une "
-                         "ligne, si.")
-    ap.add_argument("--porte-sur", choices=("cote", "fair"), default="cote",
-                    dest="porte_sur",
-                    help="Variable sur laquelle la bande de COTES du canal "
-                         "est évaluée : la cote prise (production) ou la fair "
-                         "odd. ANALYSE SEULE — ne change aucun réglage.")
-    ap.add_argument("--comparer", action="store_true",
-                    help="Rejouer les DEUX portes et afficher leur "
-                         "recouvrement. Implique --premium.")
-    a = ap.parse_args()
-    # Un drapeau ignoré en silence est exactement le mode de panne du projet.
-    if a.comparer and a.axe != "cote":
-        ap.error("--axe n'a pas de sens avec --comparer : la comparaison "
-                 "n'affiche que des totaux, sans découpage en bandes.")
-    if a.canal or a.comparer:
-        a.premium = True
-    load_env_file()
+def preparer(a):
+    """Tout ce qui précède l'affichage : la porte, les books, les lignes, la
+    fenêtre, et la fonction de sélection/déduplication.
 
+    ⚠️ EXTRAIT POUR ÊTRE PARTAGÉ, PAS POUR FAIRE JOLI. Le rapport HTML doit
+    montrer EXACTEMENT les chiffres que cette commande imprime. Recopier chez
+    lui la requête SQL, la porte du canal et la clé de déduplication ferait
+    deux outils qui prétendent mesurer la même chose et divergeraient au
+    premier changement — c'est le §17.7, et c'est déjà arrivé deux fois dans
+    ce projet.
+
+    Rend (porte, porte_desc, books, rows, fenetre, selectionner).
+    """
     porte = None
     porte_desc = "aucune — toutes les détections"
     if a.premium:
@@ -673,6 +627,71 @@ def main() -> int:
             if prev is None or float(r["odd_taken"]) > float(prev["odd_taken"]):
                 best[cle] = r
         return best
+
+    return porte, porte_desc, books, rows, fenetre, selectionner
+
+
+def main() -> int:
+    ap = argparse.ArgumentParser(
+        description=__doc__,
+        formatter_class=argparse.RawDescriptionHelpFormatter)
+    ap.add_argument("--db", default="data/valuebet.db")
+    ap.add_argument("--premium", action="store_true",
+                    help="Filtrer par la porte RÉELLE du canal premium.")
+    ap.add_argument("--depuis", default=None, metavar="AAAA-MM-JJ",
+                    help="Ne garder que les détections À PARTIR de ce jour "
+                         "inclus (UTC). Se combine avec --jusqu-a pour une "
+                         "période exacte, et s'oppose à --jours qui compte "
+                         "depuis maintenant.")
+    ap.add_argument("--jusqu-a", default=None, metavar="AAAA-MM-JJ",
+                    dest="jusqu_a",
+                    help="Ne garder que les détections JUSQU'À ce jour "
+                         "INCLUS (UTC) — la journée entière est comprise.")
+    ap.add_argument("--jours", type=float, default=0, metavar="N",
+                    help="Ne garder que les détections des N derniers jours. "
+                         "Le filtre porte sur `detected_at`, qui ne bouge "
+                         "jamais (§14.5) : une opportunité vue il y a 10 jours "
+                         "et encore affichée hier est HORS d'une fenêtre de 7 "
+                         "jours.")
+    ap.add_argument("--canal", default=None, metavar="NOM",
+                    help="Un autre canal, par son nom exact (implique --premium).")
+    ap.add_argument("--books", default=None, metavar="LISTE",
+                    help="Books séparés par des virgules. Alias : kambi.")
+    ap.add_argument("--stake", type=float, default=25.0,
+                    help="Mise notionnelle par pari (défaut 25).")
+    ap.add_argument("--out", default=None, metavar="CSV",
+                    help="Écrire la table dans un CSV.")
+    ap.add_argument("--axe",
+                    choices=("cote", "delai", "ev", "clv", "semaine"),
+                    default="cote",
+                    help="Axe des lignes : tranche de COTE (défaut), DÉLAI "
+                         "avant le coup d'envoi, EV détectée, CLV réalisée, "
+                         "ou SEMAINE de détection. Le délai découpe au-delà "
+                         "de 48 h, là où le §16.4 s'arrêtait.")
+    ap.add_argument("--lister", action="store_true",
+                    help="Après les tableaux, lister chaque opportunité "
+                         "NOMMÉE : match, marché, pari, book, cote, EV, CLV, "
+                         "résultat, P&L. Une moyenne ne se vérifie pas ; une "
+                         "ligne, si.")
+    ap.add_argument("--porte-sur", choices=("cote", "fair"), default="cote",
+                    dest="porte_sur",
+                    help="Variable sur laquelle la bande de COTES du canal "
+                         "est évaluée : la cote prise (production) ou la fair "
+                         "odd. ANALYSE SEULE — ne change aucun réglage.")
+    ap.add_argument("--comparer", action="store_true",
+                    help="Rejouer les DEUX portes et afficher leur "
+                         "recouvrement. Implique --premium.")
+    a = ap.parse_args()
+    # Un drapeau ignoré en silence est exactement le mode de panne du projet.
+    if a.comparer and a.axe != "cote":
+        ap.error("--axe n'a pas de sens avec --comparer : la comparaison "
+                 "n'affiche que des totaux, sans découpage en bandes.")
+    if a.canal or a.comparer:
+        a.premium = True
+    load_env_file()
+
+    (porte, porte_desc, books, rows, fenetre,
+     selectionner) = preparer(a)
 
     if a.comparer:
         sur_cote = selectionner(porte)

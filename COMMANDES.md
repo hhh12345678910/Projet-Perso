@@ -776,6 +776,47 @@ par code HTTP et par canal, et rend les premières lignes **brutes** — le corp
 de la réponse, qui est la raison de l'échec, est enveloppé par `rich` à 80
 colonnes et le recoller serait fragile.
 
+### `rapport_clv_roi` — le document, généré depuis la base
+
+```bash
+.venv/bin/python -m scripts.rapport_clv_roi --premium \
+    --books kambi,ladbrokes_be --depuis 2026-08-01 --jusqu-a 2026-09-08 \
+    --out ~/rapport_aout.html
+
+.venv/bin/python -m scripts.rapport_clv_roi --premium \
+    --books kambi,ladbrokes_be --depuis 2026-07-01 --axe semaine --lister \
+    --out ~/rapport_semaines.html
+```
+
+Ouvrir dans un navigateur, puis **Imprimer → Enregistrer en PDF**. Les règles
+`@media print` sont écrites pour ça : A4 paysage, aucune coupure au milieu
+d'un tableau.
+
+**Pourquoi ce script existe.** Le PDF du 3 septembre a été fabriqué à la main
+depuis une sortie collée dans une conversation. Refaire le même document un
+mois plus tard demandait de tout recoller et de refaire confiance à un
+intermédiaire — et une liste de 3 900 lignes ne passe de toute façon pas par
+un copier-coller.
+
+⚠️ **Il ne recalcule rien.** Il appelle `clv_roi_matrix.preparer` et
+`_cellule` — les fonctions mêmes qui produisent la sortie texte. Si le tableau
+HTML et le tableau texte diffèrent un jour, c'est un **bug**, pas une
+variante : un test compare les deux sorties sur la même base et tombe si
+quelqu'un recopie la requête ici (§17.7).
+
+⚠️ **Il n'interprète rien.** Le PDF du 3/09 portait une section « Lecture »
+écrite à la main. Un script ne peut pas écrire ça honnêtement, et lui en faire
+produire une imitation serait pire que rien — une prose générée ressemble à
+une analyse sans en être une. La section « Ce que les chiffres disent » ne
+contient que des énoncés **calculés** : effectifs sous seuil, sports dont le
+ROI repose sur moins d'un tiers de leurs opportunités, écart entre les deux
+populations. L'interprétation reste au lecteur.
+
+⚠️ **La couleur ne porte jamais seule.** Toute valeur colorée porte son signe,
+toute cellule sous 30 paris réglés porte une icône et un `title`. Le document
+s'imprime, souvent en noir et blanc, et se lit par des gens qui ne distinguent
+pas le rouge du vert.
+
 ### Périodes exactes, semaines, et la liste nommée
 
 ```bash
