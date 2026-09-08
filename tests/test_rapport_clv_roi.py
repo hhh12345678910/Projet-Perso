@@ -224,3 +224,21 @@ def test_une_base_vide_le_dit(tmp_path, monkeypatch):
     monkeypatch.setattr("sys.argv", ["r", "--db", str(p), "--out", str(out)])
     with pytest.raises(SystemExit):
         main()
+
+
+def test_les_milliers_ne_se_coupent_pas_en_fin_de_ligne(tmp_path, monkeypatch):
+    """⚠️ VU DANS LE PDF DU 8/09. Le sous-titre affichait « sur 25 » puis
+    « 758 lignes » à la ligne suivante : le navigateur avait coupé le nombre
+    sur son séparateur de milliers. Un nombre coupé en deux n'est plus un
+    nombre, c'est deux nombres — et celui-là disait le volume de la mesure.
+
+    L'espace fine insécable (U+202F) l'interdit."""
+    from scripts.rapport_clv_roi import FINE, _entier
+
+    assert _entier(25758) == f"25{FINE}758"
+    assert " " not in _entier(1234567), "espace ordinaire dans un millier"
+    page = _ecrire(tmp_path, monkeypatch, _jeu())
+    # Aucun groupe de milliers séparé par une espace ordinaire dans la page.
+    import re
+    assert not re.search(r"\d \d{3}\b", page), \
+        re.search(r".{40}\d \d{3}\b.{20}", page).group(0)

@@ -155,8 +155,15 @@ def _num(v, suffixe="", dec=2, signe=True) -> str:
     return f'<span class="{classe}">{_e(txt)}</span>' if classe else _e(txt)
 
 
+#: Espace fine INSÉCABLE (U+202F). Une espace ordinaire laisse le navigateur
+#: couper « 25 758 » en fin de ligne — et le PDF du 8/09 l'a fait : le sous-titre
+#: affichait « sur 25 » puis « 758 lignes » à la ligne suivante. Un nombre coupé
+#: en deux n'est plus un nombre, c'est deux nombres.
+FINE = "\u202f"
+
+
 def _entier(v) -> str:
-    return "—" if v is None else f"{v:,}".replace(",", " ")
+    return "—" if v is None else f"{v:,}".replace(",", FINE)
 
 
 COLONNES = [("opp.", "n_opportunites"), ("matchs", "n_matchs"),
