@@ -776,6 +776,48 @@ par code HTTP et par canal, et rend les premières lignes **brutes** — le corp
 de la réponse, qui est la raison de l'échec, est enveloppé par `rich` à 80
 colonnes et le recoller serait fragile.
 
+### Périodes exactes, semaines, et la liste nommée
+
+```bash
+# ROI d'une période EXACTE (bornes incluses des deux côtés)
+.venv/bin/python -m scripts.clv_roi_matrix --premium \
+    --depuis 2026-08-01 --jusqu-a 2026-09-08
+
+# Semaine par semaine, avec le nom de chaque pari
+.venv/bin/python -m scripts.clv_roi_matrix --premium \
+    --depuis 2026-07-01 --axe semaine --lister
+```
+
+⚠️ **`--jours` et `--depuis`/`--jusqu-a` ne se combinent pas.** `--jours`
+compte depuis *maintenant* et glisse donc avec l'heure ; les deux autres
+fixent des dates. Leur intersection n'a pas de bornes énonçables, et la
+commande refuse plutôt que de rendre un chiffre.
+
+⚠️ **`--jusqu-a` est INCLUSIVE.** `--jusqu-a 2026-09-08` contient le
+8 septembre en entier. Couper à minuit jetterait une journée de détections
+sans rien dire — et personne ne compte les lignes qu'il ne voit pas.
+
+⚠️ Une date mal écrite (`01/08/2026`) **lève une erreur qui donne le format**,
+elle ne filtre pas silencieusement. Une fenêtre vide qu'on croit pleine est le
+mode de panne dominant du projet (§11).
+
+**`--axe semaine`** découpe par semaine de **détection** — la semaine où le
+prix est apparu, donc où le système a travaillé, et non celle du coup
+d'envoi. Chaque semaine est étiquetée par la date ISO de son lundi
+(`2026-08-31 (S36)`) : un numéro seul ne se trie pas d'une année sur l'autre
+et ne dit pas de quand il parle, et c'est ce tri qui ordonne les lignes.
+
+**`--lister`** ajoute, sous les tableaux, **chaque opportunité nommée** :
+match, marché, pari, book, cote, EV, CLV, statut et P&L, groupés par bande de
+l'axe courant. Une moyenne ne se vérifie pas ; une ligne, si — c'est la seule
+sortie du projet où l'on peut reconnaître un match et confirmer que le
+résultat enregistré est bien celui qu'on a vu.
+
+⚠️ Elle liste les opportunités **dédupliquées** — exactement les lignes qui
+ont produit les tableaux au-dessus, pas les détections brutes. Les deux
+diffèrent d'un facteur dix. Et un pari non réglé porte **⏳** avec un tiret,
+jamais `0,00 €` : on ne sait pas encore, ce n'est pas zéro.
+
 ### `book_exclusif` — ce que couper un book coûterait
 
 ```bash

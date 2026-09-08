@@ -51,7 +51,7 @@ import csv
 import sqlite3
 import statistics as st
 import sys
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from collections import defaultdict
 from pathlib import Path
 
@@ -178,8 +178,34 @@ def _bande_clv(row) -> str:
     return SANS_CLOTURE
 
 
+def _bande_semaine(row) -> str:
+    """La semaine ISO de la DÉTECTION, étiquetée par son lundi.
+
+    ⚠️ ÉTIQUETÉE PAR UNE DATE, PAS PAR UN NUMÉRO. « S28 » ne se trie pas d'une
+    année sur l'autre et ne dit à personne de quand il parle ; « 2026-07-06 »
+    fait les deux. Le numéro ISO suit entre parenthèses, pour ceux qui
+    raisonnent en semaines.
+
+    ⚠️ SUR `detected_at`, PAS SUR LE COUP D'ENVOI. C'est la semaine où le prix
+    est apparu — donc où le système a travaillé. Un pari détecté le dimanche
+    pour un match du mercredi appartient à la semaine du dimanche : c'est la
+    seule lecture qui permette de juger une semaine de production."""
+    t = _heures(row["detected_at"])
+    if t is None:
+        return "? (sans date)"
+    d = datetime.fromtimestamp(t, timezone.utc).date()
+    lundi = d - timedelta(days=d.weekday())
+    return f"{lundi.isoformat()} (S{d.isocalendar()[1]:02d})"
+
+
 def _axe(nom: str):
     """(libellé de colonne, fonction de bande, ordre d'affichage)."""
+    if nom == "semaine":
+        # Ordre canonique VIDE, et c'est voulu : les semaines présentes
+        # dépendent des données. L'appelant complète l'ordre par un tri des
+        # libellés observés, et le libellé commence par une date ISO
+        # précisément pour que ce tri soit chronologique.
+        return "semaine (lundi)", _bande_semaine, []
     if nom == "delai":
         return "délai", _bande_delai, ORDRE_DELAI
     if nom == "ev":
@@ -192,6 +218,167 @@ def _axe(nom: str):
         return "CLV réalisée", _bande_clv, ORDRE_CLV
     return ("tranche", lambda r: _bande(float(r["odd_taken"])),
             [lab for lab, _lo, _hi in BANDES_COTE])
+
+
+def _jour_utc(brut: str, nom: str) -> float:
+    """Un `AAAA-MM-JJ` en secondes epoch UTC, ou une erreur qui dit le format.
+
+    ⚠️ UNE DATE MAL ÉCRITE NE DOIT PAS PASSER EN SILENCE. `2026-13-01` ou
+    `01/08/2026` lèveraient une ValueError nue quelque part plus loin, ou pire,
+    seraient acceptés par un `try/except` complaisant et filtreraient TOUT.
+    Une fenêtre vide qu'on croit pleine est le mode de panne du projet."""
+    try:
+        d = datetime.strptime(brut, "%Y-%m-%d")
+    except ValueError:
+        raise SystemExit(
+            f"{nom} : « {brut} » n'est pas une date AAAA-MM-JJ. "
+            f"Exemple : {nom} 2026-08-01") from None
+    return d.replace(tzinfo=timezone.utc).timestamp()
+
+
+def _appliquer_fenetre(rows: list, a) -> tuple:
+    """Restreint les lignes à la période demandée, et DIT ce qu'elle contient.
+
+    ⚠️ FENÊTRE APPLIQUÉE AVANT LA DÉDUPLICATION. La dédup garde la meilleure
+    cote d'un même pari : filtrer après elle pourrait retenir un exemplaire
+    hors fenêtre puis le jeter, alors qu'un exemplaire DANS la fenêtre
+    existait — l'opportunité disparaîtrait sans raison.
+
+    ⚠️ Le filtre porte sur `detected_at`, qui ne bouge JAMAIS (§14.5) : une
+    opportunité vue il y a dix jours et encore affichée hier est HORS d'une
+    fenêtre de sept jours. La fenêtre découpe QUAND LE PRIX EST APPARU.
+    """
+    depuis = getattr(a, "depuis", None)
+    jusqu_a = getattr(a, "jusqu_a", None)
+    jours = getattr(a, "jours", 0)
+    if jours and (depuis or jusqu_a):
+        raise SystemExit(
+            "--jours compte depuis MAINTENANT, --depuis/--jusqu-a fixent des "
+            "dates.\nLes combiner donnerait une fenêtre dont personne ne peut "
+            "dire les bornes : choisir l'un ou l'autre.")
+    if not (jours or depuis or jusqu_a):
+        return rows, ""
+
+    avant = len(rows)
+    if jours:
+        lo = datetime.now(timezone.utc).timestamp() - jours * 86400
+        hi = float("inf")
+        libelle = f"{jours:g} derniers jours"
+    else:
+        lo = _jour_utc(depuis, "--depuis") if depuis else float("-inf")
+        # ⚠️ BORNE HAUTE INCLUSIVE. « --jusqu-a 2026-09-08 » doit contenir le
+        # 8 septembre EN ENTIER. Prendre minuit du 8 jetterait silencieusement
+        # une journée de détections — et personne ne compte les lignes qu'il
+        # ne voit pas.
+        hi = (_jour_utc(jusqu_a, "--jusqu-a") + 86400) if jusqu_a else float("inf")
+        if lo > hi:
+            raise SystemExit(
+                f"--depuis {depuis} est APRÈS --jusqu-a {jusqu_a} : la fenêtre "
+                f"est vide par construction.")
+        libelle = " ".join(filter(None, [
+            f"du {depuis}" if depuis else "depuis le début",
+            f"au {jusqu_a} inclus" if jusqu_a else "à aujourd'hui"]))
+
+    gardees = []
+    sans_date = 0
+    for r in rows:
+        t = _heures(r["detected_at"])
+        if t is None:
+            # ⚠️ COMPTÉES, PAS JETÉES EN SILENCE. Une ligne sans `detected_at`
+            # exploitable ne peut appartenir à aucune fenêtre ; le dire évite
+            # de chercher plus tard pourquoi les totaux ne se recollent pas.
+            sans_date += 1
+            continue
+        if lo <= t < hi:
+            gardees.append(r)
+    rows = gardees
+    if not rows:
+        raise SystemExit(
+            f"Aucune détection sur la période ({libelle}), sur {avant} au "
+            f"total.")
+
+    fenetre = (f"Fenêtre : {libelle} — {len(rows)} lignes sur {avant} "
+               f"({100 * len(rows) / avant:.0f} %)")
+    if sans_date:
+        fenetre += f"\n   {sans_date} ligne(s) sans date de détection exploitable, écartées."
+
+    # ⚠️ UNE FENÊTRE COURTE EST PLEINE DE MATCHS PAS ENCORE JOUÉS.
+    # La CLV exige une clôture (capturée après le coup d'envoi) et le ROI un
+    # résultat : un pari détecté avant-hier pour un match de dimanche n'a ni
+    # l'une ni l'autre. Ils ne manquent pas, ils n'existent PAS ENCORE — et
+    # comme les paris à long délai sont mécaniquement plus souvent à venir, ils
+    # disparaissent des colonnes CLV et ROI en proportion de leur délai. Les
+    # colonnes `opp` et `n_clv`/`réglés` ne décrivent alors plus la même
+    # population du tout.
+    maintenant = datetime.now(timezone.utc).timestamp()
+    n_avenir = sum(1 for r in rows
+                   if (_heures(r["start_time"]) or 0.0) > maintenant)
+    if n_avenir:
+        fenetre += (
+            f"\n⚠️ {n_avenir} lignes ({100 * n_avenir / len(rows):.0f} %) "
+            f"portent sur des matchs PAS ENCORE JOUÉS : ni CLV ni\n"
+            f"   résultat, et d'autant plus souvent que le délai est long. "
+            f"Les colonnes CLV et ROI\n   d'une fenêtre courte décrivent "
+            f"donc les matchs DÉJÀ joués, pas la fenêtre entière.")
+    return rows, fenetre
+
+
+def _lister(opp: list, stake: float, bande_de) -> None:
+    """Chaque opportunité, NOMMÉE, groupée par bande de l'axe courant.
+
+    ⚠️ POURQUOI CETTE SORTIE EXISTE. Une moyenne ne se vérifie pas. Un ROI de
+    +12 % sur 2 574 paris peut venir d'un flux sain ou de trois coups de chance
+    sur des cotes à 8,00 — et rien dans la table ne les distingue. La liste
+    nommée est la seule sortie de ce projet où l'on peut reconnaître un match,
+    se rappeler l'avoir vu passer, et vérifier que le résultat enregistré est
+    bien celui qu'on a vu.
+
+    ⚠️ ELLE LISTE LES OPPORTUNITÉS DÉDUPLIQUÉES, donc exactement les lignes qui
+    ont produit les tableaux au-dessus — pas les détections brutes. Les deux
+    diffèrent d'un facteur dix, et lister les brutes ferait des totaux qui ne
+    recollent pas avec ce qui précède.
+    """
+    par_bande: dict = defaultdict(list)
+    for r in opp:
+        par_bande[bande_de(r)].append(r)
+
+    print("\n\n══ LES PARIS, UN PAR UN ══")
+    print("Statut : ✅ gagné · ❌ perdu · ➖ annulé · ⏳ pas encore réglé")
+    for bande in sorted(par_bande):
+        lot = par_bande[bande]
+        # Le plus récent d'abord : c'est celui dont on se souvient.
+        lot.sort(key=lambda r: str(r["detected_at"] or ""), reverse=True)
+        gains = _gains(lot, stake)
+        mise = stake * len(gains)
+        entete = f"── {bande} — {len(lot)} paris"
+        if gains:
+            entete += (f", {len(gains)} réglés, ROI "
+                       f"{100 * sum(gains) / mise:+.2f} %, "
+                       f"P&L {sum(gains):+.0f} €")
+        else:
+            entete += ", aucun réglé"
+        print(f"\n{entete}")
+        for r in lot:
+            statut = clv_settle(r["market"], r["outcome_label"], r["line"],
+                                r["winner"], r["home_score"], r["away_score"])
+            pnl = clv_pnl(statut, float(r["odd_taken"]), stake)
+            marque = {"won": "✅", "lost": "❌"}.get(
+                statut, "⏳" if pnl is None else "➖")
+            cl = r["closing_fair_odd"]
+            # ⚠️ « — » ET PAS 0,00 %. Une CLV sans clôture est INCONNUE. Écrire
+            # zéro la ferait entrer dans les moyennes de l'œil du lecteur.
+            clv = (f"{clv_pct(float(r['odd_taken']), float(cl)) * 100:+6.2f}%"
+                   if cl and float(cl) > 0 else "     —")
+            pari = f"{r['outcome_label']}"
+            if r["line"] is not None:
+                pari += f" {r['line']:g}"
+            match = f"{r['home'] or '?'} - {r['away'] or '?'}"
+            print(f"  {marque} {(r['start_time'] or '')[:10]} "
+                  f"{match[:34]:<34} {str(r['market'])[:10]:<10} "
+                  f"{pari[:14]:<14} @{float(r['odd_taken']):5.2f} "
+                  f"{(r['book'] or '')[:12]:<12} "
+                  f"EV{float(r['ev_pct'] or 0):+6.2f}% CLV{clv} "
+                  + (f"{pnl:+7.2f} €" if pnl is not None else "       —"))
 
 
 def _books_demandes(brut: str | None) -> set[str] | None:
@@ -375,6 +562,15 @@ def main() -> int:
     ap.add_argument("--db", default="data/valuebet.db")
     ap.add_argument("--premium", action="store_true",
                     help="Filtrer par la porte RÉELLE du canal premium.")
+    ap.add_argument("--depuis", default=None, metavar="AAAA-MM-JJ",
+                    help="Ne garder que les détections À PARTIR de ce jour "
+                         "inclus (UTC). Se combine avec --jusqu-a pour une "
+                         "période exacte, et s'oppose à --jours qui compte "
+                         "depuis maintenant.")
+    ap.add_argument("--jusqu-a", default=None, metavar="AAAA-MM-JJ",
+                    dest="jusqu_a",
+                    help="Ne garder que les détections JUSQU'À ce jour "
+                         "INCLUS (UTC) — la journée entière est comprise.")
     ap.add_argument("--jours", type=float, default=0, metavar="N",
                     help="Ne garder que les détections des N derniers jours. "
                          "Le filtre porte sur `detected_at`, qui ne bouge "
@@ -389,11 +585,18 @@ def main() -> int:
                     help="Mise notionnelle par pari (défaut 25).")
     ap.add_argument("--out", default=None, metavar="CSV",
                     help="Écrire la table dans un CSV.")
-    ap.add_argument("--axe", choices=("cote", "delai", "ev", "clv"),
+    ap.add_argument("--axe",
+                    choices=("cote", "delai", "ev", "clv", "semaine"),
                     default="cote",
-                    help="Axe des lignes : tranche de COTE (défaut) ou DÉLAI "
-                         "avant le coup d'envoi. Le délai découpe au-delà de "
-                         "48 h, là où le §16.4 s'arrêtait.")
+                    help="Axe des lignes : tranche de COTE (défaut), DÉLAI "
+                         "avant le coup d'envoi, EV détectée, CLV réalisée, "
+                         "ou SEMAINE de détection. Le délai découpe au-delà "
+                         "de 48 h, là où le §16.4 s'arrêtait.")
+    ap.add_argument("--lister", action="store_true",
+                    help="Après les tableaux, lister chaque opportunité "
+                         "NOMMÉE : match, marché, pari, book, cote, EV, CLV, "
+                         "résultat, P&L. Une moyenne ne se vérifie pas ; une "
+                         "ligne, si.")
     ap.add_argument("--porte-sur", choices=("cote", "fair"), default="cote",
                     dest="porte_sur",
                     help="Variable sur laquelle la bande de COTES du canal "
@@ -450,36 +653,7 @@ def main() -> int:
     # ⚠️ Le filtre porte sur `detected_at`, qui ne bouge JAMAIS (§14.5) : une
     # opportunité vue il y a dix jours et encore affichée hier est HORS d'une
     # fenêtre de sept jours. La fenêtre découpe QUAND LE PRIX EST APPARU.
-    fenetre = ""
-    if a.jours:
-        limite = datetime.now(timezone.utc).timestamp() - a.jours * 86400
-        avant = len(rows)
-        rows = [r for r in rows
-                if (_heures(r["detected_at"]) or 0.0) >= limite]
-        if not rows:
-            raise SystemExit(
-                f"Aucune détection dans les {a.jours:g} derniers jours "
-                f"(sur {avant} au total).")
-        fenetre = (f"Fenêtre : {a.jours:g} derniers jours — {len(rows)} lignes "
-                   f"sur {avant} ({100 * len(rows) / avant:.0f} %)")
-        # ⚠️ UNE FENÊTRE COURTE EST PLEINE DE MATCHS PAS ENCORE JOUÉS.
-        # La CLV exige une clôture (capturée après le coup d'envoi) et le ROI
-        # un résultat : un pari détecté avant-hier pour un match de dimanche
-        # n'a ni l'une ni l'autre. Ils ne manquent pas, ils n'existent PAS
-        # ENCORE — et comme les paris à long délai sont mécaniquement plus
-        # souvent à venir, ils disparaissent des colonnes CLV et ROI en
-        # proportion de leur délai. Les colonnes `opp` et `n_clv`/`réglés` ne
-        # décrivent alors plus la même population du tout.
-        maintenant = datetime.now(timezone.utc).timestamp()
-        n_avenir = sum(1 for r in rows
-                       if (_heures(r["start_time"]) or 0.0) > maintenant)
-        if n_avenir:
-            fenetre += (
-                f"\n⚠️ {n_avenir} lignes ({100 * n_avenir / len(rows):.0f} %) "
-                f"portent sur des matchs PAS ENCORE JOUÉS : ni CLV ni\n"
-                f"   résultat, et d'autant plus souvent que le délai est long. "
-                f"Les colonnes CLV et ROI\n   d'une fenêtre courte décrivent "
-                f"donc les matchs DÉJÀ joués, pas la fenêtre entière.")
+    rows, fenetre = _appliquer_fenetre(rows, a)
 
     def selectionner(predicat):
         """Les opportunités dédupliquées que cette porte laisserait passer.
@@ -733,6 +907,9 @@ def main() -> int:
               "d'envoi. Un écart de ROI entre deux bandes peut donc être un "
               "écart\n   de composition — croiser avec `--axe cote` avant de "
               "conclure.")
+
+    if a.lister:
+        _lister(opp, a.stake, bande_de)
 
     if a.out:
         champs = ["sport", "tranche", "n_opportunites", "n_matchs", "n_joues",
