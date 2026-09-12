@@ -58,14 +58,25 @@ travail à jour.
 La mesure de CLV qui fait autorité reste §18.1 (+9,49 % sur 2 025 opportunités
 premium, 23,8 σ), confirmée le 17/08 sur 6 486 opportunités — voir §20.8.
 
-État du code : **§15, §17 et §18 décrivent ce qui tourne aujourd'hui.** La §16 n'a
-modifié aucun code — c'était une session de mesure. La §17, elle, a modifié le
-code : Smarkets est en production comme seconde référence sharp.
+État du code : **la §26 décrit ce qui tourne aujourd'hui** (12/09/2026). Les
+§15, §17 et §18 décrivaient l'état de leur époque. La §16 n'a modifié aucun
+code — c'était une session de mesure. La §17, elle, a modifié le code :
+Smarkets est passé en production comme seconde référence sharp.
+
+> ⛔ **Et il a été ÉTEINT le 16/08**, trois jours plus tard, sans jamais être
+> rallumé. `SMARKETS_ENABLED` vaut 0 par défaut et le book n'est pas dans le
+> registre de `fetch_all_parallel`. **Pinnacle reste le point de défaillance
+> unique du système.**
 
 ⚠️ **La branche de travail est `claude/resume-clarification-1541xa`**, qui est
 aussi la branche par défaut du dépôt et celle que la VM suit. **Développer
 ailleurs recrée le piège des §13 et §14** — du code commité qui n'atteint
 jamais la production.
+
+> ⚠️ **Inventaire périmé (12/09).** Les branches réelles sont
+> `claude/resume-clarification-1541xa`, `claude/valuedylan-ifsu3o` et
+> **`refactor/prepare-live`** — c'est cette dernière qui porte le travail
+> courant. `claude/resume-clarification-restructure-kpx0l3` n'existe plus.
 
 ⚠️ **Et le dépôt n'a plus une seule branche : il en a trois** (constaté le
 21/08). La garantie écrite au §17.1 ne tient donc plus. Aucune ne diverge à ce
@@ -176,18 +187,23 @@ src/
   models.py       OddQuote, ValueBet, FairLine, Book, MarketType
   devig.py        Shin / power / multiplicatif        (82 l.)
   ev.py           EV%, Kelly                          (28 l.)
-  matcher.py      appariement flou des événements     (213 l.)
+  matcher.py      appariement flou des événements     (433 l.)
   surebet.py      arbitrages inter-books              (141 l.)
   middle.py       middles sur totaux                  (136 l.)
-  clv.py          agrégation CLV                      (85 l.)
+  clv.py          agrégation CLV                      (130 l.)
   storage.py      SQLite
   alerter.py      formatage + routage Telegram
   main.py         orchestration + CLI
+  orchestration.py registre des books, cycle de fetch, BOOKS_DISABLED
+  detection.py    detection des value bets
+  reference.py    books jumeaux, remappage, canonicalisation surebet
+  late_markets.py marches prematch restes ouverts
+  channels.py / routing.py / canaux_telegram.py   canaux configurables
   scrapers/       un module par book
-tests/            244 tests, tous verts
+tests/            1 812 tests collectés sur 113 fichiers (12/09/2026)
 ```
 
-Le cœur (devig, EV, matcher, surebet, middle, clv) fait **685 lignes totalement
+Le cœur (devig, EV, matcher, surebet, middle, clv) fait **956 lignes totalement
 indépendantes du pays** — ajouter un marché étranger, c'est ajouter des
 scrapers, pas réécrire le moteur.
 
@@ -206,18 +222,19 @@ scrapers, pas réécrire le moteur.
 | **BetFirst** | ✅ réactivé le 06/08 | **hors du cycle**, cache de fond — pires prix du portefeuille (§15.2) |
 | Betcenter | ❌ | cotes erronées — répond (40 313 cotes), mais reste dehors |
 | 711 / Bingoal / Scooore | ❌ | jumeaux Kambi d'Unibet, prix identiques. Répondent tous les trois |
-| MeridianBet | ❌ | token anti-bot — répond, 0 cote |
+| MeridianBet | ⏸️ **inscrit, coupé par `BOOKS_DISABLED`** | Le blocage n'était PAS TrafficGuard mais un `Authorization: Bearer` manquant — débloqué le 04/09 (§26.6). Présent dans `fetch_all_parallel`, éteint par l'environnement. |
 | Bet777 | ❌ | Gaming1/Ardent, aucun scraper. Écarté par l'utilisateur le 06/08 |
-| **Smarkets** | ✅ **2ᵉ référence sharp** | exchange, API publique. Repli STRICT derrière Pinnacle — voir §17.5 |
+| Smarkets | ⛔ **ÉTEINT depuis le 16/08** | `SMARKETS_ENABLED` vaut 0 par défaut et le book n'est PAS dans le registre de `fetch_all_parallel`. Il n'est plus référence de repli. Le §17.5 porte son propre bandeau « périmé ». |
 | **MagicBetting** | ✅ via navigateur | **Digitain**, payloads chiffrés déchiffrés par leur propre WASM — §18.6. Football seul, 27 matchs |
-| **EliteSports** | ✅ **en production le 22/08** | **Plateforme NEUVE** (marque blanche FM Gaming) — donc prix indépendants. Aucune auth, aucun anti-bot, IP datacenter acceptée : **pas de pont**. Football 1 523 / tennis 35 (h2h seul, aucun total) — §21.19 |
+| EliteSports | ⛔ **COUPÉ le 04/09** (§26.8) | **Plateforme NEUVE** (marque blanche FM Gaming) — donc prix indépendants. Aucune auth, aucun anti-bot, IP datacenter acceptée : **pas de pont**. Football 1 523 / tennis 35 (h2h seul, aucun total) — §21.19 |
 
 ⚠️ `tools/book_revive_check.py` sonde les books désactivés et dit lesquels
 répondent encore. Leurs motifs vieillissent : « compte limité » pour Golden
 Palace ne concernait que le PARI, son API ne demande aucune authentification.
 Lancer cette sonde avant de croire un motif écrit il y a un mois.
 
-**Sports scannés : soccer, tennis** (`SPORT_LIST` dans `.env`). Basket retiré
+**Sports scannés : soccer, tennis** (`SPORT_LIST` dans `.env`).
+⚠️ Le défaut du DÉPÔT est `soccer,tennis,hockey` (`scan-daemon.sh:21`, `main.py:3991`) : une VM neuve, sans `.env`, scanne aussi le hockey — un sport sans chaîne de résultats. Basket retiré
 (pas d'alertes souhaitées), volley retiré (Pinnacle ne price que 2 événements →
 aucune ligne de référence possible).
 
@@ -357,7 +374,7 @@ intention.**
 ./tools/detect-platform.sh https://www.bet777.be/fr
 
 # Ponts navigateur — fraîcheur et cadence (les deux doivent être < 60 s)
-ls -l data/circus/ data/prematch/ data/betano.json && date -u
+ls -l data/circus/ data/prematch/ data/betano.json data/scores/soccer/ && date -u
 sudo journalctl -u betano-ingest --since "5 min ago" --no-pager \
   | grep -oP "(?<=-> )\S+|(?<=prematch ')[a-z]+" | sort | uniq -c
 sudo journalctl -u betano-ingest --since "30 min ago" --no-pager | grep -P "\] [45]\d\d "
@@ -376,7 +393,7 @@ node tools/circus-ingest.selftest.js tools/circus-ingest.user.js  # 7 scénarios
 # Après toute modification de bot_listener.py : sudo systemctl restart valuebet-listener
 sudo journalctl -u valuebet-listener --since "5 min ago" --no-pager | grep -v systemd
 
-grep "done in" valuebet.log | tail -5        # durée des cycles (~17 s normal)
+grep "done in" valuebet.log | tail -5        # durée des cycles (~30 s normal depuis le 04/09 ; ~34 s avant)
 tac valuebet.log | awk '/══ CYCLE/{c++} c<5' | tac | grep -oiP '\b\w[\w ]*(?= skipped:)' | sort | uniq -c
 
 # Tests — TOUJOURS avec le repertoire, jamais `pytest` seul (voir ci-dessous)
@@ -387,8 +404,7 @@ tac valuebet.log | awk '/══ CYCLE/{c++} c<5' | tac | grep -oiP '\b\w[\w ]*(?
 voir avec la cause. `test_alerts.py` à la racine n'est pas une suite pytest
 mais le script d'envoi manuel du §20.6 ; il lève `SystemExit` à l'import quand
 la config Telegram est absente, et pytest meurt en `INTERNALERROR` avant
-d'avoir collecté quoi que ce soit — « no tests ran », sur un dépôt dont les 696
-tests sont verts. **Toujours `pytest tests/`.** C'est aussi ce qui a fait
+d'avoir collecté quoi que ce soit — « no tests ran », sur un dépôt dont les tests sont verts (1 812 collectés au 12/09). **Toujours `pytest tests/`.** C'est aussi ce qui a fait
 échouer la vérification de bout en bout du §20.6, restée en attente depuis le
 18/08 : le script s'arrête sur une config vide avant d'atteindre la chaîne
 qu'il est censé prouver.
@@ -404,12 +420,20 @@ qu'il est censé prouver.
 | `valuebet-close-lines.timer` | **Capture horaire des lignes de clôture** |
 
 Les services s'appellent `valuebet-daemon` et `betano-ingest`, **pas**
+
+> ⚠️ **Quatre ponts, pas deux** : Betano, Circus, MagicBetting et les scores
+> passent tous par `betano-ingest`.
+
 `valuebet` ni `valuebet-ingest`. `betano-ingest` sert aussi Circus, malgré son
 nom. Ses logs vont au journal systemd, il n'y a pas de fichier
 `betano-ingest.log`.
 
 ⚠️ **`valuebet-listener` ne figurait pas dans ce tableau** jusqu'au 04/08 au
 soir, alors qu'il tourne depuis juillet — le chercher a coûté un aller-retour.
+
+> ⚠️ **Faux** : `scripts/valuebet-listener.service.in` existe et `setup.sh`
+> l'installe comme les autres.
+
 Il n'a aucun fichier d'unité dans le dépôt, il n'existe que sur la VM. Un seul
 process doit faire le `getUpdates` : deux instances se volent les updates et le
 bouton « Jouer » devient erratique.
@@ -422,8 +446,13 @@ est **définitivement perdu**.
 
 ### 4.1 Les sondes de `scripts/` — aucune n'était documentée ici
 
-20 sondes existent, **aucune n'apparaissait dans ce document** : elles se
+les sondes existent (39 modules au 12/09), **aucune n'apparaissait dans ce document** : elles se
 redécouvraient par `ls`, ou pas du tout. Toutes se lancent en
+
+> ⚠️ **Toujours faux pour deux sondes** : `ev_outliers` prend `--help` pour un
+> nom de book, `magic_probe_show` pour un motif. Le test `test_sondes_help`
+> échoue sur `ev_outliers` — c'est un échec CONNU, pas un test cassé.
+
 `.venv/bin/python -m scripts.<nom>` et acceptent `--help`. Aucune ne modifie
 quoi que ce soit, sauf mention contraire.
 
@@ -433,9 +462,12 @@ POSITIONNEL et prenaient `--help` pour la donnée : `book_health --help`
 répondait « Aucune détection pour --help sur la fenêtre », un message qui
 envoie chercher un book absent au lieu d'aider. Et `repair_events --help`
 **s'exécutait** au lieu d'afficher son aide — inoffensif parce que l'écriture
+
+> ⚠️ Plus la seule : `repair_leagues` écrit aussi en base (`--apply`).
+
 exige `--apply`, mais c'est la seule sonde qui écrit en base, donc le pire
 endroit où poser ce défaut. Corrigé, et `tests/test_sondes_help.py` lance
-les 15 sondes à arguments en sous-processus pour que la promesse reste vraie.
+les sondes à arguments en sous-processus pour que la promesse reste vraie.
 
 ⚠️ `cycle_speed` et `magic_probe_report` n'ont volontairement AUCUN argument :
 ils lisent `valuebet.log` et le répertoire des sondes, donc ne répondent que
@@ -561,6 +593,10 @@ rafraîchissement du cycle de scan comme pour Circus et Betano.
    `data/paris_track.csv` (EV de départ, CLV réel, mise fictive de 25 €).
    `track-update` régénère le fichier, `settle --from` y injecte les résultats.
    `clv-report` sépare désormais « paris joués » et « toutes détections ».
+
+> ✅ **FAIT.** Deux sources de scores automatiques existent, avec la table
+> `results`, la commande `results-update` et la sonde `scores_coverage`.
+
 3. **Résultats automatiques** — il n'existe encore aucune source de scores. Les
    scores se saisissent à la main dans le fichier de suivi, ou s'importent
    depuis l'historique de paris du book. Piste la plus propre : capturer le
@@ -569,6 +605,10 @@ rafraîchissement du cycle de scan comme pour Circus et Betano.
    de mesures propres, et sur les paris **joués** plutôt que les détections.
 
 ### Priorité 1 bis — une seconde référence sharp ✅ FAITE LE 13/08
+
+> ⛔ **NON RÉSOLU.** Smarkets a été **éteint le 16/08**, trois jours après sa
+> mise en production, et n'a jamais été rallumé. Pinnacle reste le point de
+> défaillance unique du système.
 
 ⚠️ **Cette section est résolue — voir §17.5.** Smarkets tourne en production
 depuis le 13/08, en repli strict derrière Pinnacle. Gain mesuré : +19 matchs de
@@ -602,11 +642,20 @@ est un fournisseur de données commercial qui les revend sous licence.
 ### Priorité 2 — bookmakers
 - ✅ **Circus** : en production depuis le 30/07, football et tennis, cycle de
   30 s. Voir §10 et §11.
+
+> ⛔ **Deux erreurs.** Magic Betting est **Digitain**, pas Gaming1 — et il est
+> **déjà construit et en production** depuis le 16/08. Seul Bet777 reste un
+> candidat Gaming1 non intégré, et l'utilisateur l'a écarté le 06/08.
+
 - **Bet777 et Magic Betting** : même plateforme Gaming1, seul `ROOM` change dans
   le userscript. ⚠️ **Mesurer avant de construire** : ce sont des books du même
   opérateur (Ardent), donc probablement le même flux de prix — exactement la
   situation d'Unibet / 711 / Bingoal / Scooore, dont les CLV sont indiscernables.
   Trois books jumeaux ne valent pas mieux qu'un.
+
+> ⚠️ **Faux au présent** : BetFirst est collecté depuis le 06/08, servi par un
+> cache de fond pour ne jamais tenir le cycle. Il n'est pas désactivé.
+
 - **BetFirst** : fonctionnel, désactivé faute de compte. Mesuré depuis :
   c'est le book qui offre les **pires prix** (−3,20 points de CLV à sélection
   identique, voir §9). Sa perte n'en est pas une.
@@ -616,6 +665,13 @@ est un fournisseur de données commercial qui les revend sous licence.
 books tiennent dans une fourchette de 2,7 points de CLV (Betano +10,8 % à Unibet
 +8,1 %). L'edge vient de la détection, pas du choix du bookmaker. Un book de
 plus n'apporte donc pas un meilleur prix mais **du volume** — des paires
+
+> ⛔ **Consigne périmée, et dangereuse.** « Du volume » n'est pas un bien en
+> soi : EliteSports apportait du volume à CLV **négative** (−2,75 %), et ses
+> opportunités exclusives ne valaient rien. Ce qui décide d'un book, c'est sa
+> **CLV exclusive** et son coût de chemin critique — `scripts/book_exclusif.py`
+> les mesure tous les deux (§26.8).
+
 book × match supplémentaires sur des matchs déjà couverts. C'est ce nombre de
 paires qu'il faut suivre, pas le nombre de books.
 
@@ -631,6 +687,11 @@ Conséquence, et elle contredit le fonctionnement actuel : jouer 45 petits paris
 envoyés au book — et beaucoup moins de fatigue.
 
 **À faire :**
+
+> ✅ **FAIT et actif par défaut** : `_round_stake` (paliers 1 €/5 €/10 €) et
+> `_round_stake5` dans `src/alerter.py:30`. Une mise à 17,43 € n'est plus
+> possible.
+
 - Arrondir les mises (17,43 € est la signature d'un calculateur — c'est le
   signal de détection le plus fort et le plus simple à corriger)
 - Une fois le CLV confirmé, monter les mises sur les meilleurs signaux
@@ -667,12 +728,20 @@ value bets, pas plus. Tester un book avant d'investir dans une infrastructure.
 Écarté pour l'instant : aucun exchange n'est licencié en Belgique (Betfair
 renvoie 403 depuis la VM, testé). Avec un CLV de +10 %, la stratégie back/lay
 serait pourtant rentable (10 % − 2 % de commission ≈ 8 % verrouillés sans risque
+
+> ⛔ **Plus vrai depuis le 21-22/08** : `SCAN_SUREBETS` et `SCAN_MIDDLES`
+> valent 0 par défaut, et la coupure porte sur le **calcul**, pas seulement
+> sur l'envoi. Aucun surebet ni middle n'est détecté sans les rallumer.
+
 de résultat). L'équivalent accessible existe déjà dans le système : les
 **surebets** et **middles** inter-books, détectés à chaque cycle.
 
 ---
 
 ## 7. Contraintes permanentes à ne pas oublier
+
+> ⚠️ **TROIS onglets, pas deux** : MagicBetting (Digitain, bloqué par
+> Cloudflare sur toute IP datacenter) a rejoint Betano et Circus.
 
 1. **Deux onglets doivent rester ouverts en permanence** sur une machine
    allumée : Betano et Circus. DataDome bloque l'IP de la VM pour le premier,
@@ -850,16 +919,32 @@ Pinnacle.
 
 750 détections sur 2 274 ont un délai négatif : elles comparent une cote live à
 une ligne Pinnacle **prématch**, périmée depuis le coup d'envoi. Elles affichent
+
+> ⚠️ **Le mécanisme décrit ci-dessous est celui dont on a mesuré qu'il NE
+> MARCHE PAS.** Chez Pinnacle, `isLive` restait `False` sur 21 matchs
+> commencés depuis 5 à 240 minutes (mesuré le 22/08). Le garde effectif est
+> `start_time <= now` — voir `src/scrapers/pinnacle.py:399`.
+
 +20,5 % de CLV, ce qui est absurde. Le scraper Pinnacle ignore délibérément les
 matchs en cours (`isLive`), donc il n'existe aucune référence live.
 
 Elles n'atteignent aucun canal (premium et critique sont prématch, le canal
 principal est plafonné à 8 % d'EV) — donc elles ne sont pas jouées, mais elles
+
+> ✅ **FAIT.** `VALUEBET_SCAN_LIVE` vaut 0 par défaut depuis le 30/07 (§11) et
+> la détection écarte tout événement dont le coup d'envoi est passé. Ce n'est
+> plus « ce qui reste ».
+
 polluent toute statistique globale. **Nettoyage le plus rentable qui reste.**
 
 ---
 
 ## 10. Gaming1 / Ardent — protocole rétro-conçu
+
+> ⛔ **ERREUR — Magic Betting n'est PAS Gaming1.** Il tourne sur **Digitain**,
+> avec son propre déchiffrement WebAssembly (§15.6, `src/scrapers/magicbetting.py`).
+> Le scraper Circus ne l'ouvre pas. Cette section ne vaut que pour **Circus et
+> Bet777** — plus **BlitzBet**, identifié Gaming1 le 08/09 (§26.11).
 
 Circus, Bet777 et Magic Betting tournent sur la plateforme maison d'Ardent. Ni
 Kambi ni Altenar. Un seul scraper ouvrirait les trois, et ce serait la première
@@ -1055,6 +1140,10 @@ fichiers prématch vieillissent — normal, sans conséquence (garde à 30 min).
 ⚠️ **PÉRIMÉ DEPUIS LE 03/09.** Pinnacle n'est plus le plafond. Avec
 `PINNACLE_MIN_INTERVAL_SEC=60` il est servi par cache la plupart des cycles :
 mesuré, médiane 0,7 s et chemin critique du fetch **11 % du temps seulement**.
+
+> ⚠️ Ce bandeau est lui-même périmé depuis le 04/09 : **EliteSports a été
+> coupé** (§26.8). Le goulot du fetch est aujourd'hui Ladbrokes.
+
 Le goulot est chez les books soft — Unibet d'abord, puis EliteSports après sa
 correction. Voir §25.6 et §25.7.
 
@@ -1341,7 +1430,7 @@ le mode de défaillance le plus coûteux du projet :
 1. `tenacity` ré-emballe l'échec final dans `RetryError`, qui n'est **pas** une
    `HTTPStatusError`.
 2. Le tri par code HTTP de `fetch_pinnacle_quotes` ne la voyait donc jamais.
-3. L'exception traversait `_fetch_all_parallel`, y était journalisée en
+3. L'exception traversait `fetch_all_parallel`, y était journalisée en
    « Pinnacle skipped », et `_PINNACLE_FAILED` n'était jamais posé.
 4. Le cycle affichait alors `Pinnacle sans événement (hors-saison ?) —
    skipping` — sur du football, un 4 août.
@@ -1402,7 +1491,7 @@ indiscernables.
 
 ## 14. Session du 04/08 au soir — Telegram, marchés en retard, mesure
 
-Branche **`claude/resume-clarification-1541xa`**, neuf commits de `4f64b1f` à
+Branche **`claude/resume-clarification-1541xa`**, douze commits de `4f64b1f` à
 `9c38213`. Quatre chantiers : le routage des canaux, une commande `/scan` sur
 Telegram, la réécriture du détecteur de marchés en retard, et l'analyse
 complète du CLV sur les données exportées.
@@ -1813,7 +1902,7 @@ vieillissent, et deux étaient trompeurs** :
 Jamais mesuré en CLV faute de données ; il l'est maintenant.
 
 **BetFirst** paginait séquentiellement, jusqu'à 50 pages sur 7 jours. Or
-`_fetch_all_parallel` attend TOUS les books avant de rendre la main : le cycle
+`fetch_all_parallel` attend TOUS les books avant de rendre la main : le cycle
 serait passé de 20 s à 80 s — exactement ce qui a fait retirer Smarkets (§5).
 Deux corrections, puis une troisième :
 1. pages en parallèle, **4 workers seulement** (ce book avait été coupé sur un
@@ -4257,7 +4346,7 @@ projet. Corrigé.
 **Les handicaps — première mesure à faire, 21/08.** Le blocage n'est pas le
 mappage : `betano.py`, `unibet.py`, `goldenpalace.py`, `ladbrokes.py` et
 `betcenter.py` **parsent déjà** les handicaps, ils sont jetés en aval
-(`_fetch_all_parallel`). Toute la question est la convention de ligne, et elle
+(`fetch_all_parallel`). Toute la question est la convention de ligne, et elle
 se mesure :
 
 ```bash
@@ -4270,7 +4359,7 @@ côtés, le signe se déduit de home/away) ou refusé. Un book qui MÊLE les deu
 conventions est refusé : lire son signe serait juste une fois sur deux, et
 l'erreur ne lèverait rien.
 
-⚠️ `_fetch_all_parallel` accepte désormais `keep_handicaps=True`, réservé aux
+⚠️ `fetch_all_parallel` accepte désormais `keep_handicaps=True`, réservé aux
 sondes. La production continue de les jeter. Ce détour évite de refaire la
 collecte dans la sonde — une sonde qui recalcule autre chose que la production
 ment (§17.7).
@@ -5242,7 +5331,7 @@ extrait du HAR (226 cotes, 10 événements), 7 tests d'intégration, et la sonde
 d'acceptation `elitesports-check` qui appelle l'API réelle sans rien écrire.
 
 **Câblage effectué**, exactement comme les autres softbooks :
-`fetch_elitesports_quotes` dans le registre de `_fetch_all_parallel`, libellé
+`fetch_elitesports_quotes` dans le registre de `fetch_all_parallel`, libellé
 dans `_BOOK_NAMES`, donc suivi des cotes, détection d'EV, alertes, CLV et P&L
 au même titre que Ladbrokes ou Golden Palace. Coupable par `BOOKS_DISABLED`,
 et mutable par `/book` sans couper la collecte (§15.3).
@@ -6140,6 +6229,10 @@ pas une conclusion.
 **Repère de départ à comparer dans un mois : premium à +6,48 % sur 1 153
 paris.**
 
+> ⚠️ **Le titre anticipe.** Cette section ne coupe rien : elle mesure −2,25 %
+> de CLV sur 339 paris, et c'est tout. La coupure réelle date du **04/09**,
+> sur 620 opportunités et 531 clôtures — voir §26.8.
+
 ### 22.10 Elitesports coupé
 
 Seul book à CLV négative : **−2,25 %** sur 339 paris, **48,4 % de positives**.
@@ -6807,6 +6900,11 @@ suivantes. D'où médiane 12,1 s mais **p90 à 23,4 s**.
 
 Parallélisé à 6 fils (`UNIBET_PARALLEL_TERMS`). Résultat : médiane **6,2 s**,
 chemin critique **52 % → 3 %**, coût 139 s → 1 s. Le goulot s'est déplacé sur
+
+> ⛔ **Conclusion périmée.** Le goulot annoncé ici a été SUPPRIMÉ le 04/09,
+> pas optimisé (§26.8). Et le chiffre de 43 % était sous-estimé : la mesure
+> finale le donne à **75 %** du chemin critique pour 7,9 s par cycle.
+
 **EliteSports** (43 % du chemin critique).
 
 ⚠️ **Le plafond est volontairement bas.** Kambi limite le débit — c'est la
@@ -6920,6 +7018,12 @@ variante dangereuse pour confirmer que le test la fait tomber.
    lieu de ~767.
 2. **Le créneau de gels de 07 h** — 19 % du temps perdu, hors purge, inexpliqué.
 3. **`reste` = 5,0 s par sport (21 %)** — le seul poste non nommé du cycle.
+
+> ⛔ **PÉRIMÉ — EliteSports a été COUPÉ le 04/09** (§26.8), pas optimisé.
+> Il n'est plus interrogé et ne tient donc plus aucun chemin critique. Le
+> goulot du fetch est désormais **Ladbrokes**. Le point 4 ci-dessous n'a
+> plus d'objet.
+
 4. **EliteSports**, nouveau chemin critique du fetch (43 %).
 5. **`tools/line_speed.py` est cassé** depuis l'écriture parcimonieuse : il
    comptait les cotes identiques, or `quotes` n'enregistre plus que les
@@ -6938,3 +7042,291 @@ variante dangereuse pour confirmer que le test la fait tomber.
 Toujours **`refactor/prepare-live`**. 1 554 tests passent, plus les trois
 échecs ci-dessus. Deux modules ne se collectent pas dans un environnement sans
 `openpyxl` — sur la VM ils tournent.
+
+---
+
+## 26. Sessions des 04 et 08/09 — la panne d'alertes, le cycle divisé par cinq, et un book coupé sur mesure
+
+**Résumé en une phrase :** le cycle est passé de 147 s à 30 s, mais la vraie
+panne n'était pas la lenteur — c'était le **silence**, et elle durait depuis
+des jours sans qu'aucun capteur ne la voie.
+
+### 26.1 Ce qui s'est réellement passé
+
+Un nom d'équipe contenant une esperluette — « Brighton & Hove Albion FC » — a
+suffi à casser **toutes** les alertes Telegram du système.
+
+Les cinq formateurs d'alerte interpolaient des noms venus des flux (équipes,
+ligues, libellés d'issue, noms de books, scores) **directement dans du HTML**,
+avec `parse_mode=HTML`. Un seul `&` nu fait refuser le message ENTIER par
+Telegram : `400 Bad Request: can't parse entities`. Seul
+`format_live_observation` échappait ; les cinq autres, non.
+
+**Ce qui a rendu la panne permanente plutôt que passagère** — et c'est le
+mécanisme qu'il faut retenir :
+
+> `send_value_bet` ne marque un pari notifié QUE si l'envoi réussit. C'est une
+> protection contre la perte d'alerte, et elle se retourne ici : un pari dont
+> le nom casse le HTML est **réessayé à chaque cycle, indéfiniment**, en payant
+> sa pause de `min_send_interval_s` (3,2 s) à chaque fois. Les envois valides,
+> eux, se marquent et sortent de la file. Au bout de quelques cycles **la file
+> ne contient plus QUE des messages impossibles.**
+
+D'où la signature observée : 34 à 37 pauses par cycle de soccer — soit 109 à
+119 s — pour **zéro alerte reçue**, et un compte de pauses stable qui ne suivait
+plus le nombre de paris détectés.
+
+### 26.2 Le correctif
+
+`_ht()` échappe les **valeurs**, jamais le gabarit — les `<b>` voulus restent.
+`_nom_book()` fait de même pour les noms de books, repli `b.value` compris. Les
+dix sites d'interpolation des cinq formateurs y passent.
+
+`tests/test_html_telegram.py` injecte six noms hostiles dans chaque formateur et
+vérifie que la sortie est du HTML **que Telegram accepte** — pas la mise en
+forme, la validité. Neutraliser `_ht` fait tomber 31 tests.
+
+⚠️ `&amp;`, `&lt;` et `&#233;` sont des entités VALIDES et ne doivent PAS être
+échappées : le double échappement afficherait « &amp;amp; » à l'écran.
+
+`scripts/noms_hostiles.py` répond à l'autre question, celle que le correctif ne
+répond pas : **quel nom, et venu d'où ?** Sur la base réelle : **44 valeurs
+hostiles**, toutes dans `teams.display_name`, zéro dans `events`. Et
+`teams.record()` **écrase** — le dernier book qui voit une équipe gagne son nom
+d'affichage. Un book nouvellement allumé qui écrit « Brighton & Hove Albion FC »
+empoisonne donc silencieusement un match que tout le monde couvre.
+
+### 26.3 Cinq hypothèses fausses avant la bonne — et pourquoi
+
+| # | hypothèse | réfutée par |
+|---|---|---|
+| 1 | marchés en retard | `retards` = 0,0 s |
+| 2 | MeridianBet | cycle inchangé une fois coupé |
+| 3 | alertes CLV | `clv` = 0,2 s |
+| 4 | suivi des corrections | `suivi` = 55-422 ms sur 1 134 ouverts |
+| 5 | pauses Telegram (envois qui **réussissent**) | 0 alerte délivrée, 0 non-200 |
+| 6 | `LIKE` non indexé du dédoublonnage | `dedup` = **0,1 s** |
+
+**La leçon est instrumentale, pas analytique** : chaque réfutation est venue
+d'une phase NOMMÉE, jamais d'un raisonnement. Tant qu'un bloc de temps n'a pas
+de nom, toute hypothèse à son sujet est une conjecture.
+
+⚠️ Une coïncidence numérique n'est pas une mesure. 118,6 / 3,2 = 37,06 collait
+si bien que j'ai conclu trop vite ; la sonde m'a réfuté sur les données
+suivantes. Le test qui a fini par parler ne dépendait PAS de la livraison : la
+**quantification** (`dRest` tombe-t-il sur des multiples entiers de
+l'intervalle ?), parce qu'un envoi qui échoue dort exactement comme un envoi qui
+réussit.
+
+### 26.4 Le découpage du temps — huit sous-phases
+
+`detc_reste` (`dRest` dans le journal) était le dernier bloc opaque. Il est
+désormais découpé :
+
+| phase | ce qu'elle mesure | ce qui la fait grossir |
+|---|---|---|
+| `tgIni` | construction de l'alerter — 3 lectures en base | rien, une fois par appel |
+| `dedup` | **2 requêtes SQL par pari ET par canal** | paris × canaux |
+| `envoi` | la pause de `min_send_interval_s` + le POST | messages tentés |
+
+⚠️ **`nDedup` et `nEnvoi` sont des COMPTES, jamais des phases.** Dans
+`par_phase`, `ligne_phases` les afficherait comme des secondes et `reste` les
+soustrairait : 380 dédoublonnages deviendraient 380 secondes.
+
+⚠️ **Les trois sont soustraites de `detc_reste`**, comme les cinq sous-phases
+d'avant. Sans ça le même temps serait compté deux fois, `reste` deviendrait
+négatif — donc écrêté à zéro, donc muet — et c'est lui qui dit où chercher.
+
+⚠️ Le temps du dédoublonnage est compté dans un **`finally`**. `_doit_notifier`
+a trois sorties dont deux rendent `False`, et c'est le cas cher : un cycle
+entièrement dédoublonné n'envoie rien, n'affiche aucune alerte, et brûle quand
+même son temps.
+
+### 26.5 Un bug silencieux dans la sonde elle-même
+
+`book_latency` lisait les phases avec `([a-zéè]+) ([\d.]+)`. Les deux seules
+abréviations à majuscule du projet étaient donc **les deux seules illisibles** :
+
+- `dRest` était capturé comme « **est** » — une phase renommée en silence ;
+- `insVB` ne matchait **rien** — une phase purement disparue.
+
+Le test ne pouvait pas le voir : il **recopiait** la regex au lieu de
+l'importer. Corrigé en `([A-Za-zéè_]+)`, exposé en `RE_PAIRE`, importé par les
+deux sondes ET par le test (§17.7).
+
+⚠️ **Tout tableau de phases lu avant le 04/09 est faux sur ces deux lignes.**
+
+### 26.6 MeridianBet — débloqué, puis coupé
+
+Le blocage n'était **pas** TrafficGuard : l'API répondait `401 invalid_token`,
+un refus d'authentification. Le jeton invité se prend dans le
+`<script id="ng-state">` de n'importe quelle page, servie sans jeton à l'IP de
+la VM. `_prendre_jeton()`, rejeu unique sur 401, `Origin`/`Referer` sans `www.`.
+
+Ni navigateur, ni pont, ni déobfuscation. Le book est inscrit dans
+`fetch_all_parallel` et **éteint par `BOOKS_DISABLED`** — coupe-circuit posé
+pendant la chasse au cycle, jamais retiré depuis.
+
+### 26.7 `scripts/book_exclusif.py` — ce que couper un book coûterait
+
+**« Combien de paris viennent de ce book » est la MAUVAISE question.** Un pari
+que trois autres books proposent aussi ne disparaît pas quand on coupe
+celui-ci : il se rabat sur le meilleur des autres, souvent à quelques centièmes
+près. Compter tout son volume comme une perte fait renoncer à une coupure
+gratuite ; ignorer sa part exclusive fait couper un book irremplaçable.
+
+La sonde sépare les deux, et donne la CLV **selon que le book est seul ou
+accompagné**.
+
+⚠️ **« Le meilleur autre book » est un MAXIMUM sur plusieurs books**, donc
+supérieur à chacun d'eux par construction. Lu seul, il donne l'illusion que
+couper ferait *gagner* de la CLV — c'est faux : ces cotes sont déjà alertées
+aujourd'hui depuis l'autre book. La sonde imprime donc aussi le calcul contre la
+**médiane**, qui n'a pas ce biais, et tranche entre « réellement moins bien
+tarifé » et « effet de sélection ».
+
+⚠️ Deux détections du même jour comptent comme la même opportunité même à six
+heures d'écart. Cette erreur **flatte la coupure** — la sonde compte les cas
+concernés, pour que le chiffre se lise comme un **plancher** de la perte.
+
+### 26.8 EliteSports coupé, Circus gardé — la même sonde, deux verdicts opposés
+
+| | globale | t | part **SEULE** | verdict |
+|---|---:|---:|---:|---|
+| **EliteSports** | −2,75 % ± 0,85 | −3,2 | −0,39 % | **coupé le 04/09** |
+| **Circus** | +4,60 % ± 0,55 | +8,4 | **+2,20 %** | **gardé** |
+
+EliteSports : aucune cellule rentable. Ses 29 % d'opportunités exclusives — les
+seules qui disparaissent vraiment — valent statistiquement **zéro** ; les 71 %
+restantes étaient des doublons qu'un autre book proposait mieux tarifés 387 fois
+sur 438. Et il coûtait **7,9 s par cycle** en tenant le chemin critique du fetch
+**75 %** du temps.
+
+C'est exactement le profil documenté pour BetFirst — « là pour la donnée, pas
+pour être joué » — sauf que BetFirst se sert d'un cache de fond à 0,2 s.
+**C'est le coût, pas la CLV, qui sépare les deux décisions.**
+
+⚠️ **La facilité d'accès ne prédit rien sur la valeur.** EliteSports était le
+book le plus facile du portefeuille (API REST publique, aucune auth, IP
+datacenter acceptée) et le plus mauvais.
+
+⚠️ **EV +9,19 % pour une CLV de −2,75 % : douze points d'écart.** Ses prix sont
+mauvais OU ses cotes sont mal appariées (mauvaise ligne, mauvaise orientation).
+La coupure supprime le symptôme sans trancher, et si c'est un défaut
+d'appariement **il peut toucher d'autres books**. À reprendre avant de le
+rallumer.
+
+Circus, lui, est l'inverse : CLV positive à 8,4 sigma. Son intérêt est mince —
+15 % d'exclusivité à +2,20 % (t = 1,95, pas encore établi) — mais son coût
+marginal est nul (0 % du chemin critique) et le pont tourne déjà.
+
+### 26.9 Périodes exactes, semaines, liste nommée, et le rapport généré
+
+`clv_roi_matrix` gagne `--depuis` / `--jusqu-a` (bornes de date exactes,
+**inclusives des deux côtés**), `--axe semaine` (semaine de **détection**,
+étiquetée par la date ISO de son lundi — un numéro seul ne se trie pas d'une
+année sur l'autre) et `--lister` (chaque opportunité NOMMÉE).
+
+⚠️ `--jours` et `--depuis`/`--jusqu-a` **refusent** d'être combinés : l'un glisse
+avec l'heure, l'autre non ; leur intersection n'a pas de bornes énonçables.
+
+⚠️ Un pari non réglé porte **⏳** et un tiret, jamais `0,00 €`. On ne sait pas
+encore ; ce n'est pas zéro. Même règle pour une CLV sans clôture.
+
+`scripts/rapport_clv_roi.py` produit le document HTML complet depuis la base
+(ouvrir, imprimer, enregistrer en PDF). Il **ne recalcule rien** — il appelle
+`clv_roi_matrix.preparer()` et `_cellule()`, et un test compare les deux sorties
+sur la même base. Il **n'interprète rien** non plus : la section « Ce que les
+chiffres disent » ne contient que des énoncés **calculés**, parce qu'une prose
+générée ressemble à une analyse sans en être une.
+
+### 26.10 Mesures du 08/09 — le rendement réel
+
+Porte premium, books Kambi + Ladbrokes :
+
+| fenêtre | opp. | réglés | CLV | **ROI** | σ | P&L |
+|---|---:|---:|---:|---:|---:|---:|
+| 01/08 → 08/09 | 2 221 | 1 373 | +10,44 % | **+16,80 %** | 4,4 | +5 768 € |
+| 01/09 → 08/09 | 508 | 255 | +11,78 % | **+16,36 %** | 1,9 | +1 043 € |
+
+Huit jours reproduisent trente-huit jours à 0,44 point près. Le PDF du 03/09
+donnait +12,49 % : le rendement a progressé.
+
+⚠️ **LE POINT LE PLUS IMPORTANT DE CETTE SECTION.** Le tennis affiche
+**+47,49 % de ROI** — sur **102 paris réglés pour 520 opportunités**, soit
+**20 %**, contre 76 % au football. Sur la fenêtre courte : 11 sur 145, soit
+7,6 %. Ce chiffre ne décrit pas le tennis, il décrit **les matchs de tennis dont
+le résultat est remonté**. Tant qu'on n'a pas montré que cette remontée est un
+tirage neutre, c'est un sous-ensemble. **C'est le sujet le plus rentable à
+creuser.**
+
+⚠️ La bande de cotes **4,00-6,00** au football a la CLV la plus haute du tableau
+(+17,87 %, seule à franchir Bonferroni, t = +4,25) et le **ROI le plus faible**
+(+4,33 %, 31 gagnés / 104 perdus). Sur les grosses cotes, une petite erreur de
+clôture devient un gros pourcentage de CLV.
+
+### 26.11 Trois books sondés, trois refus
+
+| book | plateforme | verdict |
+|---|---|---|
+| **StanleyBet** | inconnue | Cloudflare **403 + captcha** depuis la VM, `robots.txt` compris. Jamais vu la vraie page. |
+| **BlitzBet** | **Gaming1** (HAR : `gaming1.com`, `Connector: fleck`, `wss://wss.blitz.be`, `RoomDomainName: BLITZ`) | abandonné — Gaming1 déjà couvert par Circus |
+| **bwin** | Entain probable (jamais évalué dans le projet) | à tester ; même plateforme que BetFirst, **le plus mal tarifé du portefeuille** |
+
+⚠️ **`tools/detect-platform.sh` a un trou.** Il connaît neuf plateformes, et
+**trois que le projet a lui-même intégrées n'y sont pas** : Gaming1 (Circus),
+Digitain (MagicBetting), FM Gaming (EliteSports). Un nouveau book Gaming1
+ressortirait « plateforme inconnue » et quelqu'un recommencerait toute la
+rétro-conception du §10. **Trois lignes à ajouter au bloc `SIGS`.**
+
+### 26.12 La VM est en Iowa
+
+```
+zone : us-central1-a   →   Council Bluffs, Iowa, États-Unis
+IP   : 34.59.193.111   →   AS396982 Google LLC
+```
+
+Tous les books sont belges. Mesuré depuis la VM, premier octet sur la page
+d'accueil :
+
+| hôte | DNS | TCP | TLS | **origine** | total |
+|---|---:|---:|---:|---:|---:|
+| Pinnacle | 27 | 24 | 68 | **36** | 155 ms |
+| Ladbrokes | 3 | 24 | 73 | **157** | 257 ms |
+| Circus | 20 | 24 | 68 | **160** | 272 ms |
+| GoldenPalace | 41 | 18 | 55 | **302** | 417 ms |
+| **Unibet** | 56 | **111** | 238 | **290** | **695 ms** |
+
+Quatre books sur cinq terminent leur TLS sur un nœud CDN à ~20 ms : **la
+distance n'est pas dans la poignée de main**, elle est dans le retour à
+l'origine. **Unibet est le seul entièrement transatlantique.**
+
+Arithmétique à vérifier : Unibet interroge jusqu'à 101 compétitions,
+parallélisées à 6 fils → 17 tours. `17 × 0,695 = 11,8 s` sans réutilisation de
+connexion, `17 × 0,290 = 4,9 s` avec keep-alive. Sa **médiane mesurée est
+11,7 s**. La borne haute colle trop bien pour valoir preuve, mais l'ordre de
+grandeur est établi.
+
+⚠️ **Déménager la VM ne débloquerait PAS Gaming1** : le §10 a mesuré qu'une IP
+Google Cloud **belge** (`europe-west1`) est refusée aussi — c'est l'ASN
+datacenter, pas la géolocalisation.
+
+**Reste à faire :** lancer la même mesure depuis une machine belge (le PC de
+l'utilisateur suffit) et comparer. Si Unibet tombe à 60-80 ms, c'est le plus
+gros levier restant sur le fetch.
+
+### 26.13 Ce qui reste ouvert
+
+1. **Le taux de règlement du tennis** (20 % contre 76 % au football). Le chiffre
+   le plus suspect du projet — voir §26.10.
+2. **L'écart EV/CLV d'EliteSports** (12 points) : prix mauvais ou appariement
+   cassé ? Si c'est l'appariement, d'autres books sont concernés.
+3. **La mesure de latence depuis la Belgique**, et la décision de déménager.
+4. **MeridianBet**, inscrit mais éteint par `BOOKS_DISABLED` : jamais mesuré par
+   `book_exclusif`.
+5. **Les trois signatures manquantes** de `detect-platform.sh`.
+6. **`ev_outliers --help`**, toujours cassé — `test_sondes_help` échoue dessus,
+   et c'est un échec connu depuis des semaines.
+7. **La limitation des comptes.** Les bandes à EV extrême sont celles qui
+   désignent un joueur sharp, et la mesure du §26.10 suggère qu'elles portent le
+   moins de rendement. `clv_roi_matrix --axe ev` tranchera.
