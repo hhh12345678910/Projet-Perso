@@ -13,3 +13,9 @@ pytest>=8.2
 requests>=2.32
 openpyxl>=3.1
 wasmtime>=20.0.0
+# src/analytics_api — l'API Analytics (lecture seule). Ni le daemon, ni les
+# scrapers, ni l'alerteur ne les importent : une installation qui ne sert pas
+# l'API peut s'en passer, et `tests/test_analytics_api.py` s'ignore alors
+# proprement au lieu de faire rougir la suite.
+fastapi>=0.110
+uvicorn>=0.29
