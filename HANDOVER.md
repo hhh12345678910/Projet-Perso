@@ -7473,10 +7473,12 @@ l'historique sans résultat.
 
 ### 26.17 Le clic « Jouer » : ce qu'il apporte vraiment (12/09)
 
-> ⚠️ **CONCLUSION AMENDÉE LE MÊME JOUR.** Une relecture adverse a attaqué cette
-> section et **deux objections ont survécu** à la double réfutation. Le sens
-> général tient, mais deux phrases étaient trop fortes. **Lire l'amendement
-> plus bas AVANT de se servir de ces chiffres.**
+> ⚠️ **CONCLUSION AMENDÉE LE MÊME JOUR, PUIS MESURÉE.** Une relecture adverse a
+> attaqué cette section ; deux objections ont survécu à la double réfutation, et
+> le test qu'elles appelaient a été fait. Deux de leurs trois mécanismes sont
+> **réfutés sur les données** ; le troisième tient et reste **sans cause
+> identifiée**. Le sens général de la section est confirmé. **Lire l'amendement
+> et son verdict AVANT de se servir de ces chiffres.**
 
 Question jamais posée : les paris cliqués valent-ils mieux que ceux seulement
 alertés ? `clv_roi_matrix --joues oui|non` partitionne la population et permet
@@ -7591,6 +7593,72 @@ valent rien.
 ⚠️ **Borne basse, jamais haute.** La production compare le coup d'envoi à `now`
 au moment de l'envoi ; on ne dispose en base que de `detected_at`, qui ne bouge
 jamais (§14.5). Le rejeu ne peut donc pas surestimer le nombre de fantômes.
+
+#### Le verdict du rejeu (12/09) — l'objection tombe sur ses propres chiffres
+
+Mesuré sur Kambi + Ladbrokes, porte premium, depuis le 01/07. La fenêtre morte
+lue en production vaut **5 minutes**, pas 15. **Contrôle : 0 pari cliqué
+écarté** sur 1 180 — le rejeu ne tue rien dont on sache qu'il est parti.
+
+| | opp | n CLV | CLV | réglés | ROI | capture |
+|---|---:|---:|---:|---:|---:|---:|
+| joué | 1 180 | 955 | +10,66 % | 782 | +22,97 % | **80,9 %** |
+| non joué, **gardé** | 2 490 | 1 672 | +10,10 % | 1 710 | +9,75 % | **67,1 %** |
+| non joué, **écarté** | 334 | 101 | +12,00 % | 262 | **+8,32 %** | **30,2 %** |
+
+Les deux dernières lignes se recomposent exactement en le lot d'avant le rejeu
+(2 824 opportunités, ROI +9,56 %) : les trois viennent du même instant, et
+l'écart mesuré n'est donc pas une dérive de base entre deux commandes.
+
+**1. Les fantômes existent, et en nombre : 334, soit 11,8 % du lot non joué.**
+L'objection avait raison sur ce point, et pile dans la bande qu'elle annonçait
+comme vivante. **Ils sont TOUS de la fenêtre morte** — zéro mi-temps : sur ce
+périmètre et cette période, `is_half_time` n'écarte rien du tout, l'effet entier
+tient aux cinq minutes avant le coup d'envoi.
+
+**2. Mais ils n'expliquent pas l'écart de ROI.** Les retirer déplace l'écart de
+**+13,41 pt à +13,22 pt** (t de la différence : +2,21 → +2,13). L'objection
+prédisait une strate à ROI mauvais qui tirerait le lot non joué vers le bas ;
+sa ROI est **+8,32 %**, à un point et demi du reste du lot. Ce n'est pas une
+strate à part, c'est le lot ordinaire.
+
+**3. Et le second mécanisme est réfuté là où il devait être le plus fort.**
+L'hypothèse était que sur une détection tardive, `closing_group` rend le
+snapshot de la détection elle-même et la CLV dégénère vers l'EV. Si c'était le
+cas, ces paris auraient une clôture capturée **presque toujours**. Ils l'ont
+dans **30,2 %** des cas — le taux le plus BAS des trois lots. Le mécanisme
+prédit l'inverse de ce qu'on observe.
+
+> **Ce qui survit de l'objection, et ce qui tombe.**
+>
+> ❌ « Les 13 points de ROI viennent des fantômes » — **réfuté**, ils en
+> expliquent 0,19.
+>
+> ❌ « La CLV dégénère vers l'EV sur les détections tardives » — **réfuté** sur
+> la strate où il devait dominer.
+>
+> ✅ « Les deux lots n'ont pas la même chance d'avoir une CLV » — **tient
+> toujours**. L'écart de capture passe de 18,1 pt à 13,8 pt, mais reste à
+> **z = +8,6**. La porte d'envoi en explique un quart. **Les trois autres quarts
+> n'ont PAS de cause identifiée**, et c'est maintenant une question ouverte et
+> non une question réglée.
+
+**La conclusion du §26.17 après tout ça.** « L'avantage vient du choix du book,
+pas du choix du pari » tient. « Un écart de ROI de 13 points coexiste avec une
+CLV identique, donc c'est de la chance » reste **partiellement suspendue** : la
+raison invoquée pour la suspendre — les fantômes — est tombée, mais les deux
+lots n'ont toujours pas la même couverture de clôture, et on ne sait pas
+pourquoi. Formulation juste, en attendant : *l'écart de ROI n'est pas expliqué
+par ce qu'on a su tester, et la CLV qui le contredit repose sur des populations
+dont la couverture diffère de 14 points.*
+
+**La question ouverte, et la sonde qui y répond.** Si les paris joués sont
+détectés plus TÔT que les autres, leur clôture a plus de temps pour être
+capturée, et l'écart de couverture n'est qu'un effet de composition par délai —
+le même défaut que l'objection n°1 a trouvé sur le sport. `--axe delai` avec
+`--joues oui|non` donne `opp` et `n_clv` par bande : si les taux de capture se
+rejoignent À L'INTÉRIEUR de chaque bande, la cause est là, et la comparaison de
+CLV doit être standardisée par délai avant de valoir quoi que ce soit.
 
 Là où l'écart se concentre — football en cotes 4,00-6,00, la bande où les books
 divergent le plus :
