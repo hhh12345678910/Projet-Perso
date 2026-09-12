@@ -466,3 +466,52 @@ def test_le_taux_n_est_annonce_que_sur_l_axe_heure(tmp_path, capsys,
     monkeypatch.setattr("sys.argv", ["m", "--db", str(p)])
     main()
     assert "Heure d'envoi retrouvée" not in capsys.readouterr().out
+
+
+def test_l_heure_d_alerte_est_agregee_sur_l_opportunite(tmp_path, capsys,
+                                                        monkeypatch):
+    """⚠️ MÊME PIÈGE QUE `--joues`, manqué la première fois.
+
+    L'alerte part sur UN book ; la dédup garde le book à la MEILLEURE COTE.
+    Ici l'alerte est partie sur Unibet (2,10) alors que Ladbrokes proposait
+    2,15 — c'est donc la ligne Ladbrokes qui représente l'opportunité, et elle
+    n'a aucune notification. Sans agrégation sur le groupe, l'opportunité tombe
+    en « non notifié » alors qu'elle a bien été alertée à 10 h."""
+    p = tmp_path / "v.db"
+    c = sqlite3.connect(str(p))
+    c.executescript("""
+        CREATE TABLE value_bets (id INTEGER PRIMARY KEY, event_key TEXT,
+            book TEXT, market TEXT, outcome_label TEXT, line REAL,
+            odd_taken REAL, fair_odd REAL, ev_pct REAL, detected_at TEXT);
+        CREATE TABLE clv_snapshots (id INTEGER PRIMARY KEY, value_bet_id INT,
+            closing INT, fair_odd REAL);
+        CREATE TABLE events (event_key TEXT PRIMARY KEY, sport TEXT,
+            league TEXT, home TEXT, away TEXT, start_time TEXT);
+        CREATE TABLE results (event_key TEXT PRIMARY KEY, winner TEXT,
+            home_score INT, away_score INT);
+        CREATE TABLE played_bets (dedup_key TEXT PRIMARY KEY, value_bet_id INT);
+        CREATE TABLE notified_value_bets (id INTEGER PRIMARY KEY,
+            event_key TEXT, book TEXT, market TEXT, outcome_label TEXT,
+            line REAL, ev_pct REAL, notified_at TEXT);
+    """)
+    ek = "202607151800::a__vs__b"
+    c.execute("INSERT INTO events VALUES (?,?,?,?,?,?)",
+              (ek, "soccer", "L1", "A", "B", "2026-07-15T18:00:00+00:00"))
+    for i, (book, cote) in enumerate(
+            [("unibet_be", 2.10), ("ladbrokes_be", 2.15)], start=1):
+        c.execute("INSERT INTO value_bets VALUES (?,?,?,?,?,?,?,?,?,?)",
+                  (i, ek, book, "h2h", "home", None, cote, 2.00, 5.0,
+                   "2026-07-15T07:00:00+00:00"))
+        c.execute("INSERT INTO clv_snapshots VALUES (?,?,?,?)", (i, i, 1, 2.00))
+    # L'alerte n'est partie QUE sur Unibet — le book qui n'a PAS la meilleure cote.
+    c.execute("INSERT INTO notified_value_bets VALUES (?,?,?,?,?,?,?,?)",
+              (1, ek, "unibet_be", "h2h", "home", None, 5.0,
+               "2026-07-15T08:00:00+00:00"))
+    c.commit()
+    c.close()
+
+    monkeypatch.setattr("sys.argv", ["m", "--db", str(p), "--axe", "heure"])
+    main()
+    out = capsys.readouterr().out
+    assert "10 h" in out, out          # 08 h UTC = 10 h locale en été
+    assert "retrouvée pour 1 opportunités sur 1 (100 %)" in out, out

@@ -675,15 +675,33 @@ def preparer(a):
         # contraire de la vérité.
         #
         # On agrège donc le drapeau sur TOUT le groupe avant de trancher.
+        #
+        # ⚠️ `notified_at` A EXACTEMENT LE MÊME PIÈGE, et il a d'abord été
+        # manqué. L'alerte part sur UN book ; la dédup garde le book à la
+        # meilleure cote. Quand ce n'est pas le même, la jointure du
+        # représentant ne trouve aucune notification et l'opportunité tombe en
+        # « non notifié » alors qu'elle a bien été alertée. Mesuré le 12/09 :
+        # 45 % de rapprochement seulement sur Kambi+Ladbrokes — et le biais
+        # n'est pas neutre, il retient les opportunités alertées sur le book
+        # qui se trouvait être le mieux tarifé.
         joue: dict = {}
+        notif: dict = {}
         for r in gardees:
             cle = ((r["home"] or "").lower(), (r["away"] or "").lower(),
                    (r["start_time"] or "")[:10], r["market"],
                    r["outcome_label"], r["line"])
             joue[cle] = joue.get(cle, False) or bool(r["played"])
+            q = r["notified_at"] if "notified_at" in r.keys() else None
+            if q and (notif.get(cle) is None or q < notif[cle]):
+                notif[cle] = q          # la PREMIÈRE alerte du groupe
             prev = best.get(cle)
             if prev is None or float(r["odd_taken"]) > float(prev["odd_taken"]):
                 best[cle] = r
+        # Le représentant porte désormais l'heure d'alerte du GROUPE. Passer en
+        # dict plutôt qu'en `sqlite3.Row` : tout le reste du fichier indexe par
+        # nom et appelle `.keys()`, les deux marchent à l'identique.
+        best = {k: {**dict(v), "notified_at": notif.get(k)}
+                for k, v in best.items()}
         voulu = getattr(a, "joues", "tous")
         if voulu == "oui":
             best = {k: v for k, v in best.items() if joue.get(k)}
