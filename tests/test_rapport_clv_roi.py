@@ -37,6 +37,9 @@ def _base(tmp_path, lignes):
         CREATE TABLE results (event_key TEXT PRIMARY KEY, winner TEXT,
             home_score INT, away_score INT);
         CREATE TABLE played_bets (dedup_key TEXT PRIMARY KEY, value_bet_id INT);
+        CREATE TABLE notified_value_bets (id INTEGER PRIMARY KEY,
+            event_key TEXT, book TEXT, market TEXT, outcome_label TEXT,
+            line REAL, ev_pct REAL, notified_at TEXT);
     """)
     for (i, sport, home, away, jour, cote, ev, clot, gagnant) in lignes:
         ek = f"{jour.replace('-', '')}1800::{home.lower()}__vs__{away.lower()}{i}"

@@ -817,6 +817,35 @@ toute cellule sous 30 paris réglés porte une icône et un `title`. Le document
 s'imprime, souvent en noir et blanc, et se lit par des gens qui ne distinguent
 pas le rouge du vert.
 
+### `--axe heure` — la CLV dépend-elle de l'heure d'envoi ?
+
+```bash
+.venv/bin/python -m scripts.clv_roi_matrix --premium --depuis 2026-07-01 --axe heure
+```
+
+Découpe par **heure LOCALE d'envoi de l'alerte Telegram** (`notified_at`), pas
+par heure de détection : c'est l'heure d'envoi qui décide de ce que vous pouvez
+faire. Les deux sont normalement séparées de quelques secondes — mais pas
+toujours, un envoi différé par la limitation de débit les écarte.
+
+⚠️ **HEURE LOCALE, PAS UTC.** `notified_at` est stocké en UTC. Afficher ces
+heures-là dirait « creux à 1 h du matin » pour un creux qui est à **3 h** chez
+vous — et c'est sur ce moment-là que vous agiriez. `zoneinfo` suit le passage à
+l'heure d'hiver, ce qu'un décalage fixe ne ferait pas sur une fenêtre qui
+traverse octobre. Réglable par `TZ_RAPPORT` (défaut `Europe/Brussels`).
+
+⚠️ **Le taux de rapprochement est annoncé, et il faut le lire.**
+`notified_value_bets` n'a pas de `value_bet_id` : le rapprochement se fait sur
+cinq colonnes dont `event_key`. Or le dédoublonnage de production compare les
+clés avec un `LIKE` tolérant à une révision d'horaire (§17.8, jusqu'à onze clés
+au tennis). Une alerte partie sous une clé révisée **ne se rapproche pas**. La
+bande « non notifié » mélange donc deux choses indiscernables : jamais alerté,
+et alerté sous une autre clé.
+
+⚠️ La bande **« non notifié » n'est pas un déchet** : ces paris ont une CLV
+parfaitement mesurable. Les jeter ferait lire l'axe sur la seule
+sous-population qu'on a réussi à rapprocher.
+
 ### `--joues` — votre clic ajoute-t-il de la valeur, ou en détruit-il ?
 
 ```bash

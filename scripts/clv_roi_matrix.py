@@ -48,6 +48,7 @@ from __future__ import annotations
 
 import argparse
 import csv
+import os
 import sqlite3
 import statistics as st
 import sys
@@ -178,6 +179,39 @@ def _bande_clv(row) -> str:
     return SANS_CLOTURE
 
 
+#: ⚠️ L'HEURE LOCALE, PAS UTC. `notified_at` est stocké en UTC ; afficher ces
+#: heures-là dirait « creux à 1 h du matin » pour un creux qui est à 3 h chez
+#: le lecteur. Un axe horaire dont on décale les libellés de deux heures est
+#: pire qu'absent : il désigne le mauvais moment de la journée, et c'est sur ce
+#: moment-là qu'on agirait. `zoneinfo` gère le passage à l'heure d'hiver, ce
+#: qu'un décalage fixe ne ferait pas sur une fenêtre qui traverse octobre.
+FUSEAU = os.getenv("TZ_RAPPORT", "Europe/Brussels")
+SANS_ENVOI = "non notifié"
+
+
+def _bande_heure(row) -> str:
+    """L'heure LOCALE d'envoi de l'alerte Telegram.
+
+    ⚠️ Sur `notified_at`, pas sur `detected_at`. Les deux sont normalement
+    séparés de quelques secondes — mais pas toujours : un envoi différé par la
+    limitation de débit, ou la file empoisonnée du 04/09 (§26.1), les écarte
+    d'autant. C'est l'heure d'ENVOI qui décide de ce que le lecteur peut faire.
+
+    ⚠️ « non notifié » n'est PAS un déchet. Un pari détecté et jamais alerté
+    (book en sourdine, mi-temps, canal saturé, ou jointure imparfaite — voir
+    l'en-tête de la commande) a une CLV parfaitement mesurable. Le jeter ferait
+    lire l'axe sur la seule sous-population qu'on a réussi à rapprocher."""
+    brut = row["notified_at"] if "notified_at" in row.keys() else None
+    t = _heures(brut)
+    if t is None:
+        return SANS_ENVOI
+    from zoneinfo import ZoneInfo
+    return f"{datetime.fromtimestamp(t, ZoneInfo(FUSEAU)).hour:02d} h"
+
+
+ORDRE_HEURE = [f"{h:02d} h" for h in range(24)] + [SANS_ENVOI]
+
+
 def _bande_semaine(row) -> str:
     """La semaine ISO de la DÉTECTION, étiquetée par son lundi.
 
@@ -200,6 +234,8 @@ def _bande_semaine(row) -> str:
 
 def _axe(nom: str):
     """(libellé de colonne, fonction de bande, ordre d'affichage)."""
+    if nom == "heure":
+        return "heure d'envoi", _bande_heure, ORDRE_HEURE
     if nom == "semaine":
         # Ordre canonique VIDE, et c'est voulu : les semaines présentes
         # dépendent des données. L'appelant complète l'ordre par un tri des
@@ -588,13 +624,22 @@ def preparer(a):
                e.home AS home, e.away AS away, e.start_time AS start_time,
                cs.fair_odd AS closing_fair_odd,
                r.winner, r.home_score, r.away_score,
-               (pb.value_bet_id IS NOT NULL) AS played
+               (pb.value_bet_id IS NOT NULL) AS played,
+               nv.notified_at AS notified_at
         FROM value_bets vb
         LEFT JOIN clv_snapshots cs
                ON cs.value_bet_id = vb.id AND cs.closing = 1
         LEFT JOIN events e   ON e.event_key = vb.event_key
         LEFT JOIN results r  ON r.event_key = vb.event_key
         LEFT JOIN played_bets pb ON pb.value_bet_id = vb.id
+        LEFT JOIN (
+            SELECT event_key, book, market, outcome_label, line,
+                   MIN(notified_at) AS notified_at
+            FROM notified_value_bets
+            GROUP BY event_key, book, market, outcome_label, line
+        ) nv ON nv.event_key = vb.event_key AND nv.book = vb.book
+            AND nv.market = vb.market AND nv.outcome_label = vb.outcome_label
+            AND (nv.line IS vb.line)
     """))
     if not rows:
         raise SystemExit("Aucune détection en base.")
@@ -680,7 +725,7 @@ def main() -> int:
     ap.add_argument("--out", default=None, metavar="CSV",
                     help="Écrire la table dans un CSV.")
     ap.add_argument("--axe",
-                    choices=("cote", "delai", "ev", "clv", "semaine"),
+                    choices=("cote", "delai", "ev", "clv", "semaine", "heure"),
                     default="cote",
                     help="Axe des lignes : tranche de COTE (défaut), DÉLAI "
                          "avant le coup d'envoi, EV détectée, CLV réalisée, "
@@ -865,6 +910,21 @@ def main() -> int:
     if fenetre:
         print(fenetre)
     print(f"{len(opp)} opportunités dédupliquées, sur {len(rows)} lignes\n")
+    if a.axe == "heure":
+        # ⚠️ LA JOINTURE EST IMPARFAITE, ET IL FAUT LE CHIFFRER.
+        # `notified_value_bets` n'a pas de `value_bet_id` : on rapproche sur
+        # cinq colonnes dont `event_key`. Or le dédoublonnage de production
+        # compare les clés avec un LIKE sur date+équipes, tolérant à une
+        # révision d'horaire (§17.8, jusqu'à onze clés au tennis). Une alerte
+        # partie sous une clé révisée ne se rapproche donc PAS ici. Taire ce
+        # taux ferait lire la bande « non notifié » comme « jamais alerté ».
+        n_ok = sum(1 for r in opp if r["notified_at"])
+        print(f"Heure d'envoi retrouvée pour {n_ok} opportunités sur "
+              f"{len(opp)} ({100 * n_ok / len(opp):.0f} %), fuseau {FUSEAU}.")
+        print("⚠️ Le reste tombe en « non notifié » : soit le pari n'a jamais "
+              "été alerté (book\n   en sourdine, mi-temps, canal saturé), soit "
+              "la clé d'événement a été révisée\n   entre la détection et "
+              "l'envoi. Les deux sont indiscernables ici.\n")
 
     col_axe, bande_de, ordre = _axe(a.axe)
 

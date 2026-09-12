@@ -172,6 +172,9 @@ def _base(tmp_path, lignes):
         CREATE TABLE results (event_key TEXT PRIMARY KEY, winner TEXT,
             home_score INT, away_score INT);
         CREATE TABLE played_bets (dedup_key TEXT PRIMARY KEY, value_bet_id INT);
+        CREATE TABLE notified_value_bets (id INTEGER PRIMARY KEY,
+            event_key TEXT, book TEXT, market TEXT, outcome_label TEXT,
+            line REAL, ev_pct REAL, notified_at TEXT);
     """)
     for (i, home, away, jour, cote, ev, clot, gagnant) in lignes:
         ek = f"{jour.replace('-', '')}1800::{home.lower()}__vs__{away.lower()}{i}"
@@ -263,6 +266,9 @@ def _base_jouee(tmp_path, lignes, joues=()):
         CREATE TABLE results (event_key TEXT PRIMARY KEY, winner TEXT,
             home_score INT, away_score INT);
         CREATE TABLE played_bets (dedup_key TEXT PRIMARY KEY, value_bet_id INT);
+        CREATE TABLE notified_value_bets (id INTEGER PRIMARY KEY,
+            event_key TEXT, book TEXT, market TEXT, outcome_label TEXT,
+            line REAL, ev_pct REAL, notified_at TEXT);
     """)
     for (i, book, home, away, jour, cote, ev, clot, gagnant) in lignes:
         ek = f"{jour.replace('-', '')}1800::{home.lower()}__vs__{away.lower()}"
@@ -345,3 +351,118 @@ def test_la_population_est_annoncee_dans_l_entete(tmp_path, capsys, monkeypatch)
     monkeypatch.setattr("sys.argv", ["m", "--db", str(p)])
     main()
     assert "Population :" not in capsys.readouterr().out
+
+
+# ── L'axe « heure d'envoi » ──────────────────────────────────────────
+
+class _R(dict):
+    """Une ligne qui répond à `keys()` comme un sqlite3.Row."""
+    def keys(self):
+        return dict.keys(self)
+
+
+def test_l_heure_est_locale_pas_utc():
+    """⚠️ LE PIÈGE DE CET AXE. `notified_at` est en UTC. Afficher ces heures-là
+    dirait « creux à 1 h du matin » pour un creux qui est à 3 h chez le
+    lecteur — et c'est sur ce moment-là qu'il agirait. Un axe horaire décalé de
+    deux heures est pire qu'absent."""
+    from scripts.clv_roi_matrix import _bande_heure
+    assert _bande_heure(_R(notified_at="2026-07-15T01:30:00+00:00")) == "03 h"
+
+
+def test_le_passage_a_l_heure_d_hiver_est_suivi():
+    """Un décalage fixe de +2 h se tromperait d'une heure de novembre à mars,
+    sur toute fenêtre qui traverse octobre."""
+    from scripts.clv_roi_matrix import _bande_heure
+    assert _bande_heure(_R(notified_at="2026-01-15T01:30:00+00:00")) == "02 h"
+
+
+def test_un_pari_jamais_alerte_a_sa_propre_bande():
+    """Il n'est PAS un déchet : sa CLV est parfaitement mesurable. Le jeter
+    ferait lire l'axe sur la seule sous-population rapprochée."""
+    from scripts.clv_roi_matrix import SANS_ENVOI, _bande_heure
+    assert _bande_heure(_R(notified_at=None)) == SANS_ENVOI
+    assert _bande_heure(_R()) == SANS_ENVOI
+
+
+def test_les_libelles_d_heure_se_trient_chronologiquement():
+    from scripts.clv_roi_matrix import ORDRE_HEURE
+    heures = [h for h in ORDRE_HEURE if h.endswith(" h")]
+    assert heures == sorted(heures), "le tri des libellés n'est pas horaire"
+    assert heures[0] == "00 h" and heures[-1] == "23 h" and len(heures) == 24
+
+
+def test_l_axe_heure_est_reconnu():
+    from scripts.clv_roi_matrix import _axe
+    titre, bande_de, ordre = _axe("heure")
+    assert titre == "heure d'envoi"
+    assert len(ordre) == 25          # 24 heures + « non notifié »
+
+
+def _base_heure(tmp_path, envois):
+    """`envois` : (id, notified_at ou None). Une opportunité par id."""
+    p = tmp_path / "v.db"
+    c = sqlite3.connect(str(p))
+    c.executescript("""
+        CREATE TABLE value_bets (id INTEGER PRIMARY KEY, event_key TEXT,
+            book TEXT, market TEXT, outcome_label TEXT, line REAL,
+            odd_taken REAL, fair_odd REAL, ev_pct REAL, detected_at TEXT);
+        CREATE TABLE clv_snapshots (id INTEGER PRIMARY KEY, value_bet_id INT,
+            closing INT, fair_odd REAL);
+        CREATE TABLE events (event_key TEXT PRIMARY KEY, sport TEXT,
+            league TEXT, home TEXT, away TEXT, start_time TEXT);
+        CREATE TABLE results (event_key TEXT PRIMARY KEY, winner TEXT,
+            home_score INT, away_score INT);
+        CREATE TABLE played_bets (dedup_key TEXT PRIMARY KEY, value_bet_id INT);
+        CREATE TABLE notified_value_bets (id INTEGER PRIMARY KEY,
+            event_key TEXT, book TEXT, market TEXT, outcome_label TEXT,
+            line REAL, ev_pct REAL, notified_at TEXT);
+    """)
+    for i, quand in envois:
+        ek = f"202607151800::a{i}__vs__b{i}"
+        c.execute("INSERT INTO events VALUES (?,?,?,?,?,?)",
+                  (ek, "soccer", "L1", f"A{i}", f"B{i}",
+                   "2026-07-15T18:00:00+00:00"))
+        c.execute("INSERT INTO value_bets VALUES (?,?,?,?,?,?,?,?,?,?)",
+                  (i, ek, "unibet_be", "h2h", "home", None, 2.50, 2.30, 8.7,
+                   "2026-07-15T10:00:00+00:00"))
+        c.execute("INSERT INTO clv_snapshots VALUES (?,?,?,?)", (i, i, 1, 2.30))
+        if quand:
+            c.execute("INSERT INTO notified_value_bets VALUES (?,?,?,?,?,?,?,?)",
+                      (i, ek, "unibet_be", "h2h", "home", None, 8.7, quand))
+    c.commit()
+    c.close()
+    return p
+
+
+def test_le_taux_de_rapprochement_est_annonce(tmp_path, capsys, monkeypatch):
+    """⚠️ `notified_value_bets` n'a pas de `value_bet_id` : le rapprochement se
+    fait sur cinq colonnes et reste imparfait. Taire ce taux ferait lire la
+    bande « non notifié » comme « jamais alerté »."""
+    envois = [(i, "2026-07-15T08:00:00+00:00") for i in range(1, 8)]
+    envois += [(i, None) for i in range(8, 11)]
+    p = _base_heure(tmp_path, envois)
+    monkeypatch.setattr("sys.argv", ["m", "--db", str(p), "--axe", "heure"])
+    main()
+    out = capsys.readouterr().out
+    assert "Heure d'envoi retrouvée pour 7 opportunités sur 10 (70 %)" in out
+    assert "Europe/Brussels" in out
+    assert "indiscernables" in out
+
+
+def test_les_paris_non_notifies_restent_dans_le_tableau(tmp_path, capsys,
+                                                        monkeypatch):
+    p = _base_heure(tmp_path, [(1, "2026-07-15T08:00:00+00:00"), (2, None)])
+    monkeypatch.setattr("sys.argv", ["m", "--db", str(p), "--axe", "heure"])
+    main()
+    out = capsys.readouterr().out
+    assert "10 h" in out            # 08 h UTC = 10 h locale en été
+    assert "non notifié" in out
+
+
+def test_le_taux_n_est_annonce_que_sur_l_axe_heure(tmp_path, capsys,
+                                                   monkeypatch):
+    p = _base_heure(tmp_path, [(1, "2026-07-15T08:00:00+00:00")])
+    monkeypatch.setattr("sys.argv", ["m", "--db", str(p)])
+    main()
+    assert "Heure d'envoi retrouvée" not in capsys.readouterr().out
