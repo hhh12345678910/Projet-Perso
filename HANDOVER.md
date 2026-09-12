@@ -7336,7 +7336,12 @@ gros levier restant sur le fetch.
 7. **Le seuil de Bonferroni de `clv_roi_matrix` est faux à petit effectif** :
    il compare un t de Welch à une loi normale, ce qui a décerné un ✔ à une
    bande de **4** observations (§26.15). Student, ou un effectif plancher.
-8. **La limitation des comptes.** Les bandes à EV extrême sont celles qui
+8. **Le périmètre d'analyse par défaut.** `--books kambi,ladbrokes_be`,
+   hérité du PDF du 03/09, écarte 34 % des clics (§26.17). Toute mesure
+   publiée avant le 12/09 porte sur deux tiers de l'activité.
+9. **`played_bets.book` mélange énumération et libellé d'affichage**
+   (§26.17). Bloque tout P&L par compte.
+10. **La limitation des comptes.** Les bandes à EV extrême sont celles qui
    désignent un joueur sharp, et la mesure du §26.10 suggère qu'elles portent le
    moins de rendement. `clv_roi_matrix --axe ev` tranchera.
 
@@ -7465,3 +7470,91 @@ sudo systemctl restart betano-ingest
 livetennisapi plafonne à 60 req/min et un rattrapage enchaîne un appel par jour.
 Le baisser fait échouer le rattrapage en plein milieu, laissant la moitié de
 l'historique sans résultat.
+
+### 26.17 Le clic « Jouer » : ce qu'il apporte vraiment (12/09)
+
+Question jamais posée : les paris cliqués valent-ils mieux que ceux seulement
+alertés ? `clv_roi_matrix --joues oui|non` partitionne la population et permet
+de comparer. **La réponse n'est dans aucune des deux mesures prises seule — elle
+est dans leur écart.**
+
+#### Mesure A — tous books, porte premium
+
+| | joué | non joué | écart | **t** |
+|---|---:|---:|---:|---:|
+| opportunités | 2 067 | 5 731 | | |
+| **CLV** | **+10,94 %** (n=1 641) | **+8,83 %** (n=4 083) | **+2,11 pt** | **+4,12** |
+| ROI | +16,51 % (n=1 376) | +6,74 % (n=3 829) | +9,77 pt | +2,12 |
+
+#### Mesure B — Kambi + Ladbrokes seuls : **le book est tenu constant**
+
+| | joué | non joué | écart | **t** |
+|---|---:|---:|---:|---:|
+| opportunités | 1 180 | 2 823 | | |
+| **CLV** | **+10,67 %** (n=951) | **+10,17 %** (n=1 770) | **+0,50 pt** | **+0,76** |
+| ROI | +22,97 % (n=782) | +9,56 % (n=1 972) | +13,41 pt | +2,21 |
+
+#### La conclusion, et elle se lit dans la différence
+
+> **L'avantage vient du choix du BOOK, pas du choix du PARI.**
+>
+> Sur tout le portefeuille, la sélection vaut **+2,11 points de CLV à t = 4,12** —
+> établi. Mais dès qu'on tient le book constant, il ne reste **+0,50 point à
+> t = 0,76** — rien.
+>
+> La mesure B est l'expérience contrôlée : à book identique, parmi des paris
+> qu'on aurait tous pu jouer, **le choix manuel n'apporte aucun avantage de prix
+> mesurable.**
+
+Ce que la mesure A capture réellement, c'est que le lot « non joué » y contient
+les alertes des books où il n'y a pas de compte — ou dont les prix sont mauvais.
+Ne pas cliquer dessus est une sélection, et une bonne : elle vaut deux points de
+CLV. Mais c'est une décision de **portefeuille de comptes**, prise une fois,
+pas un jugement renouvelé à chaque alerte.
+
+Là où l'écart se concentre — football en cotes 4,00-6,00, la bande où les books
+divergent le plus :
+
+| | CLV | ROI | réglés |
+|---|---:|---:|---:|
+| joué | **+20,98 %** | +26,19 % | 164 |
+| non joué | **+13,55 %** | +0,22 % | 377 |
+
+**7,43 points de CLV d'écart** sur cette seule bande.
+
+⚠️ **Les écarts de ROI ne prouvent rien ici.** +9,77 pt (t = 2,12) et +13,41 pt
+(t = 2,21) sont suggestifs, pas établis. Et dans la mesure B, un écart de ROI de
+13 points coexiste avec une CLV identique : c'est la définition de la chance. Le
+P&L est ~8 fois plus bruité par pari que la CLV — **quand les deux se
+contredisent, c'est la CLV qui a raison.**
+
+#### Ce que ça implique
+
+1. **Automatiser le choix à l'intérieur de Kambi + Ladbrokes ne coûterait rien
+   de mesurable** (mesure B : t = 0,76). C'est une réponse directe à « c'est
+   lourd à jouer » : le tri manuel qui fatigue n'ajoute pas de prix.
+2. **Ouvrir un compte sur un book à CLV faible détruirait l'avantage de la
+   mesure A.** Le portefeuille actuel vaut deux points ; l'élargir sans mesurer
+   le book d'abord (`book_exclusif`) les dépenserait.
+3. La bande 4,00-6,00 est celle où le choix du book paie le plus.
+
+#### Deux découvertes faites en route
+
+**Le périmètre d'analyse était faux depuis le PDF du 03/09.** Le filtre
+`--books kambi,ladbrokes_be`, hérité de ce document, décrivait « les books où je
+mise ». Ce n'est plus vrai : sur **2 699 clics**, **922 (34 %)** portent sur
+StarCasino (373), Napoleon (224), Betano (129), Golden Palace (72), Circus (61),
+BetFirst (25), MagicBetting (19) et EliteSports (19). **Un tiers de l'activité
+était hors de toute analyse.**
+
+**`played_bets.book` mélange deux formats.** La colonne contient des valeurs
+d'énumération (`unibet_be`, `starcasino_sport`) ET des libellés d'affichage
+(`StarCasino`, `Ladbrokes`, `Napoleon`) — dont
+`Unibet / 711 / Bingoal / Scooore`, la chaîne composite que `format_value_bet`
+fabrique pour les books jumeaux. `clv_roi_matrix` n'est pas touchée (elle joint
+sur `value_bet_id` et lit le book dans `value_bets`), mais **toute analyse
+groupée sur `played_bets.book` compterait StarCasino deux fois.** À corriger
+avant tout P&L par compte.
+
+En revanche, la crainte d'un défaut de rattachement est **levée** : 2 699 clics,
+2 699 rattachés, zéro orphelin. `backfill-played-bets` n'a rien à faire.
