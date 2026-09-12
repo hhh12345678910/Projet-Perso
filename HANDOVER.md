@@ -7473,6 +7473,11 @@ l'historique sans résultat.
 
 ### 26.17 Le clic « Jouer » : ce qu'il apporte vraiment (12/09)
 
+> ⚠️ **CONCLUSION AMENDÉE LE MÊME JOUR.** Une relecture adverse a attaqué cette
+> section et **deux objections ont survécu** à la double réfutation. Le sens
+> général tient, mais deux phrases étaient trop fortes. **Lire l'amendement
+> plus bas AVANT de se servir de ces chiffres.**
+
 Question jamais posée : les paris cliqués valent-ils mieux que ceux seulement
 alertés ? `clv_roi_matrix --joues oui|non` partitionne la population et permet
 de comparer. **La réponse n'est dans aucune des deux mesures prises seule — elle
@@ -7511,6 +7516,81 @@ les alertes des books où il n'y a pas de compte — ou dont les prix sont mauva
 Ne pas cliquer dessus est une sélection, et une bonne : elle vaut deux points de
 CLV. Mais c'est une décision de **portefeuille de comptes**, prise une fois,
 pas un jugement renouvelé à chaque alerte.
+
+#### Amendement — ce que la relecture adverse a cassé (12/09)
+
+Dix relecteurs indépendants ont attaqué la conclusion ci-dessus, chaque
+objection étant ensuite soumise à une contre-attaque. Huit sont tombées. **Deux
+ont tenu**, et elles portent toutes les deux sur la mesure B.
+
+**1. « +0,50 point, t = 0,76 » compare des lots de sports différents.** Le lot
+joué et le lot non joué n'ont pas la même composition par sport, et la CLV
+moyenne varie fortement d'un sport à l'autre. En standardisant — c'est-à-dire
+en pondérant chaque sport de la même façon dans les deux lots — l'écart passe
+de **+0,50 pt (t = 0,76)** à **+1,18 pt (t ≈ 1,8)**. Ça reste sous le seuil,
+donc « pas établi » tient ; mais **« aucun écart mesurable » était trop fort.**
+La formulation juste est : *à book constant, l'avantage de prix du choix manuel
+est au plus de l'ordre du point de CLV, et n'est pas établi.*
+
+**2. Les deux lots n'ont pas la même CHANCE d'avoir une CLV.** C'est
+l'objection sérieuse. La CLV exige une clôture capturée. Or :
+
+| | clôture capturée | |
+|---|---:|---:|
+| joué | **951 / 1 179** | **80,7 %** |
+| non joué | **1 770 / 2 823** | **62,7 %** |
+| | | **z = +11,1** |
+
+Dix-huit points d'écart, et il n'est pas dû au hasard. Deux mécanismes le
+produisent, et tous deux poussent dans le même sens :
+
+* **la porte d'ENVOI n'est pas la porte du canal.** `send_value_bet` écarte des
+  value bets **avant tout routage** : les marchés de mi-temps (§21.8) et les
+  détections prématch à moins de `min_minutes_to_kickoff` — 15 minutes par
+  défaut — du coup d'envoi. Ces paris existent dans `value_bets`, leur CLV est
+  mesurée, **et aucun message n'est jamais parti.** Ils ne peuvent donc pas
+  être cliqués : ils tombent **tous** dans le lot « non joué ». Le lot « non
+  joué » n'est pas « alerté et refusé », c'est « alerté et refusé » **plus**
+  « jamais alerté » ;
+* **sur une détection tardive, la CLV dégénère.** `Storage.closing_group` prend
+  `MAX(fetched_at) WHERE fetched_at < kickoff`, sans plancher de fraîcheur. Si
+  la détection a lieu quelques minutes avant le coup d'envoi, la « clôture »
+  peut être le snapshot de la détection elle-même : `clv_pct(odd_taken,
+  closing_fair)` tend alors vers `ev_pct`. Une strate à CLV mécaniquement haute
+  et à ROI réel mauvais — et elle est à 100 % du côté non joué.
+
+**Ce que ça change à la conclusion.** La phrase « un écart de ROI de 13 points
+coexiste avec une CLV identique, donc c'est de la chance » **n'est plus licite
+telle quelle** : la CLV ne regarde pas la même population que le ROI. Il faudrait
+que 11 à 18 % du lot non joué soit fantôme pour expliquer tout l'écart de ROI —
+c'est **plausible, pas établi**. Le relecteur a lui-même fourni les
+contre-arguments : la bande 4,00-6,00 ne tient qu'à t = 1,19, et la composition
+par sport prédit **−1,2 pt** pour le lot joué, pas +13,4.
+
+**Ce qui ne bouge pas.** La mesure A (+2,11 pt, t = 4,12) n'est pas touchée :
+son écart vient du périmètre de books, et les fantômes sont répartis dans les
+deux lots de la même façon. L'implication n°2 — ne pas ouvrir de compte sur un
+book à CLV faible — tient entièrement.
+
+**Le test qui tranche, et il est outillé.** `clv_roi_matrix --porte-envoi`
+rejoue les suppressions d'envoi : mi-temps, et fenêtre morte lue dans
+`TelegramConfig` (jamais recopiée, §17.7). Trois nombres décident :
+
+1. **combien chaque lot perd.** Sous 5 %, l'objection meurt ; entre 10 et 20 %,
+   elle tient debout ;
+2. **la CLV et le ROI de la strate écartée** — si elle a une CLV haute et un ROI
+   mauvais, le mécanisme est confirmé ;
+3. **le t du ROI après exclusion** — s'il s'effondre, l'écart de 13 points
+   venait bien des fantômes.
+
+Le rejeu imprime aussi **son propre taux d'erreur** : combien de paris **déjà
+cliqués** il écarte. Un pari cliqué vient du bouton d'un message, donc il est
+forcément parti — au-delà de 2 %, le rejeu est trop large et ses chiffres ne
+valent rien.
+
+⚠️ **Borne basse, jamais haute.** La production compare le coup d'envoi à `now`
+au moment de l'envoi ; on ne dispose en base que de `detected_at`, qui ne bouge
+jamais (§14.5). Le rejeu ne peut donc pas surestimer le nombre de fantômes.
 
 Là où l'écart se concentre — football en cotes 4,00-6,00, la bande où les books
 divergent le plus :
