@@ -62,6 +62,9 @@ def main() -> int:
     ap.add_argument("--port", type=int, default=PORT_DEFAUT)
     ap.add_argument("--db", default=None,
                     help=f"Chemin de la base (défaut : ${VAR_DB} ou {DB_DEFAUT}).")
+    ap.add_argument("--api-seule", action="store_true", dest="api_seule",
+                    help="Servir UNIQUEMENT l'API, sans l'interface web. "
+                         "Le comportement d'avant la Phase 3.")
     ap.add_argument("--public", action="store_true",
                     help="Autoriser une écoute HORS bouclage. À n'utiliser "
                          "que derrière un reverse proxy qui, lui, authentifie.")
@@ -92,6 +95,9 @@ def main() -> int:
 
     print(f"Valuebet Analytics — http://{a.host}:{a.port}")
     print(f"  base       : {chemin}  (LECTURE SEULE, mode=ro)")
+    print(f"  interface  : "
+          + ("DÉSACTIVÉE (--api-seule)" if a.api_seule
+             else f"http://{a.host}:{a.port}/"))
     print(f"  docs       : http://{a.host}:{a.port}/docs")
     if not _est_bouclage(a.host):
         print("  ⚠️ ÉCOUTE PUBLIQUE, SANS AUTHENTIFICATION — "
@@ -99,8 +105,16 @@ def main() -> int:
     if os.getenv(VAR_CORS):
         print(f"  CORS       : {os.environ[VAR_CORS]}")
 
+    # ⚠️ L'INTERFACE COMPOSE L'API, ELLE NE LA REMPLACE PAS.
+    # `src.analytics_ui.app` appelle `analytics_api.creer_app()` puis monte
+    # les fichiers statiques PAR-DESSUS : `/api/*` et `/docs` gardent la
+    # priorité, parce que Starlette résout les routes dans leur ordre
+    # d'enregistrement. `--api-seule` court-circuite l'interface pour
+    # retrouver exactement le service validé en Phase 2.
+    cible = ("src.analytics_api.app:app" if a.api_seule
+             else "src.analytics_ui.app:app")
     import uvicorn
-    uvicorn.run("src.analytics_api.app:app", host=a.host, port=a.port,
+    uvicorn.run(cible, host=a.host, port=a.port,
                 reload=a.reload, log_level="info")
     return 0
 

@@ -1,0 +1,192 @@
+<!doctype html>
+<html lang="fr" data-theme="light">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Valuebet Analytics</title>
+<!-- ⚠️ AUCUNE RESSOURCE EXTERNE. Pas de CDN, pas de police distante : la page
+     doit s'afficher derrière un tunnel SSH, sur une VM sans accès sortant. -->
+<!-- Favicon EN LIGNE : le navigateur réclame /favicon.ico de lui-même
+     et récoltait un 404 dans la console. Une donnée intégrée évite la
+     requête sans introduire la moindre ressource externe. -->
+<link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 16 16'%3E%3Crect width='16' height='16' rx='3' fill='%232a78d6'/%3E%3Cpath d='M4 10.5l2.5-3 2 2L12 5' stroke='white' stroke-width='1.8' fill='none' stroke-linecap='round' stroke-linejoin='round'/%3E%3C/svg%3E">
+<link rel="stylesheet" href="style.css">
+</head>
+<body>
+
+<header>
+  <h1>Valuebet Analytics</h1>
+  <span class="sous" id="perimetre">chargement…</span>
+  <span class="droite">
+    <button class="discret" id="theme" type="button" title="Clair / sombre">◐</button>
+  </span>
+</header>
+
+<main>
+
+  <section class="carte">
+    <h2>Filtres</h2>
+    <form class="filtres" id="form" autocomplete="off">
+
+      <div class="champ">
+        <label for="f-sports">Sport</label>
+        <select id="f-sports" multiple size="5"></select>
+        <span class="aide">Rien de sélectionné = tous</span>
+      </div>
+
+      <div class="champ">
+        <label for="f-books">Bookmakers</label>
+        <select id="f-books" multiple size="5"></select>
+        <span class="aide">Rien = tous</span>
+      </div>
+
+      <div class="champ">
+        <label for="f-markets">Marché</label>
+        <select id="f-markets" multiple size="5"></select>
+        <span class="aide">Rien = tous</span>
+      </div>
+
+      <div class="champ">
+        <label for="f-league">Compétition</label>
+        <input list="ligues" id="f-league" placeholder="toutes">
+        <datalist id="ligues"></datalist>
+        <span class="aide">Nom exact</span>
+      </div>
+
+      <div class="champ">
+        <label>Cote</label>
+        <div class="paire">
+          <input type="number" id="f-odds-min" step="0.05" min="1.01" placeholder="min">
+          <span>→</span>
+          <input type="number" id="f-odds-max" step="0.05" min="1.01" placeholder="max">
+        </div>
+      </div>
+
+      <div class="champ">
+        <label>EV (%)</label>
+        <div class="paire">
+          <input type="number" id="f-ev-min" step="0.5" placeholder="min">
+          <span>→</span>
+          <input type="number" id="f-ev-max" step="0.5" placeholder="max">
+        </div>
+      </div>
+
+      <div class="champ large">
+        <label>Période</label>
+        <div class="paire">
+          <input type="date" id="f-date-from">
+          <span>→</span>
+          <input type="date" id="f-date-to">
+        </div>
+      </div>
+
+      <div class="champ large">
+        <label>Délai avant coup d'envoi (h)</label>
+        <div class="paire">
+          <input type="number" id="f-delay-min" step="1" placeholder="min">
+          <span>→</span>
+          <input type="number" id="f-delay-max" step="1" placeholder="max">
+        </div>
+      </div>
+
+      <div class="champ">
+        <label for="f-population">Population analysée</label>
+        <select id="f-population"></select>
+        <span class="aide" id="aide-population"></span>
+      </div>
+
+      <div class="champ">
+        <label for="f-played">Joué</label>
+        <select id="f-played">
+          <option value="tous">Tous</option>
+          <option value="oui">Cliqués sur « Jouer »</option>
+          <option value="non">Alertés, non cliqués</option>
+        </select>
+      </div>
+
+      <div class="champ">
+        <label for="f-stake">Mise notionnelle (€)</label>
+        <input type="number" id="f-stake" step="5" min="1" value="25">
+        <span class="aide">Le ROI en dépend</span>
+      </div>
+
+      <div class="champ">
+        <label for="f-gran">Axe temporel</label>
+        <select id="f-gran">
+          <option value="semaine">Semaine</option>
+          <option value="jour">Jour</option>
+          <option value="mois">Mois</option>
+        </select>
+      </div>
+
+    </form>
+
+    <div class="actions">
+      <button class="primaire" id="analyser" type="button">ANALYSER</button>
+      <button class="discret" id="reinit" type="button">Réinitialiser</button>
+      <span class="aide" id="etat"></span>
+    </div>
+  </section>
+
+  <div id="avertissements"></div>
+
+  <section class="carte" id="bloc-kpi" hidden>
+    <h2>Résultats</h2>
+    <div class="kpis" id="kpis"></div>
+    <p class="aide" id="note-population" style="margin:12px 0 0"></p>
+  </section>
+
+  <section class="carte" id="bloc-temps" hidden>
+    <h2>Évolution dans le temps</h2>
+    <!-- ⚠️ DEUX GRAPHIQUES, JAMAIS UN DOUBLE AXE. La CLV vaut quelques points
+         et le ROI quelques dizaines : les superposer sur deux échelles ferait
+         lire un croisement qui n'existe pas. -->
+    <div class="grille-graphes">
+      <figure><figcaption>CLV moyenne
+        <span class="prec">en % — échelle propre</span></figcaption>
+        <div id="g-clv-temps"></div></figure>
+      <figure><figcaption>ROI
+        <span class="prec">en % — échelle propre, ne se compare pas à la CLV</span></figcaption>
+        <div id="g-roi-temps"></div></figure>
+    </div>
+  </section>
+
+  <section class="carte" id="bloc-decoupes" hidden>
+    <h2>Découpes</h2>
+    <div class="grille-graphes">
+      <figure><figcaption>CLV par tranche de cote</figcaption><div id="g-clv-cote"></div></figure>
+      <figure><figcaption>ROI par tranche de cote</figcaption><div id="g-roi-cote"></div></figure>
+      <figure><figcaption>CLV par tranche d'EV</figcaption><div id="g-clv-ev"></div></figure>
+      <figure><figcaption>ROI par tranche d'EV</figcaption><div id="g-roi-ev"></div></figure>
+      <figure><figcaption>CLV par bookmaker</figcaption><div id="g-clv-book"></div></figure>
+      <figure><figcaption>ROI par bookmaker</figcaption><div id="g-roi-book"></div></figure>
+      <figure><figcaption>CLV par sport</figcaption><div id="g-clv-sport"></div></figure>
+      <figure><figcaption>ROI par sport</figcaption><div id="g-roi-sport"></div></figure>
+    </div>
+  </section>
+
+  <section class="carte" id="bloc-matrice" hidden>
+    <h2>Matrice cote × EV</h2>
+    <div class="actions" style="margin:0 0 12px">
+      <select id="m-mesure" style="width:auto">
+        <option value="clv">CLV</option>
+        <option value="roi">ROI</option>
+      </select>
+      <span class="aide">Clique une cellule pour filtrer le détail dessous.</span>
+    </div>
+    <div class="enrob"><table class="matrice" id="matrice"></table></div>
+  </section>
+
+  <section class="carte" id="bloc-detail" hidden>
+    <h2>Détail des opportunités</h2>
+    <p class="aide" id="detail-filtre" style="margin:0 0 10px"></p>
+    <div class="enrob"><table class="detail" id="detail"></table></div>
+    <div class="pagination" id="pagination"></div>
+  </section>
+
+</main>
+
+<div id="bulle" role="tooltip" aria-hidden="true"></div>
+<script src="app.js"></script>
+</body>
+</html>

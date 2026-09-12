@@ -1,0 +1,271 @@
+/* Valuebet Analytics — jetons de couleur et mise en page.
+ *
+ * ⚠️ LA PALETTE EST VALIDÉE PAR SCRIPT, PAS À L'ŒIL. La paire divergente
+ * bleu ↔ rouge passe les cinq contrôles (bande de clarté, plancher de chroma,
+ * séparation daltonienne, plancher vision normale, contraste sur le fond) dans
+ * les DEUX modes. Les armes du dégradé sont construites à iso-clarté l'une de
+ * l'autre : sans ça, un écart négatif paraîtrait plus fort qu'un écart positif
+ * de même ampleur, et la carte de chaleur mentirait par sa seule couleur.
+ *
+ * ⚠️ LE MODE SOMBRE EST CHOISI, PAS INVERSÉ. Ses paliers viennent des mêmes
+ * rampes, re-validés contre le fond sombre. Une inversion automatique casse le
+ * contraste précisément là où il compte.
+ *
+ * ⚠️ AUCUNE RESSOURCE EXTERNE. Pas de CDN, pas de police distante. La page
+ * doit fonctionner derrière un tunnel SSH, sur une VM sans accès sortant.
+ */
+
+:root {
+  --fond-page:   #f9f9f7;
+  --fond-carte:  #fcfcfb;
+  --encre:       #0b0b0b;
+  --encre-2:     #52514e;
+  --encre-muet:  #898781;
+  --grille:      #e1e0d9;
+  --axe:         #c3c2b7;
+  --bordure:     rgba(11, 11, 11, .10);
+
+  /* Divergent : pôles validés. */
+  --pos:         #2a78d6;
+  --neg:         #e34948;
+  --neutre:      #f0efec;
+  /* Armes à iso-clarté (L OKLab ≈ .81 / .62 / .43 de chaque côté). */
+  --pos-1: #9ec5f4;  --pos-2: #3987e5;  --pos-3: #184f95;
+  --neg-1: #f6b9b8;  --neg-2: #e34948;  --neg-3: #98211f;
+
+  --bon:         #006300;
+  --alerte:      #b3541e;
+  --grave:       #c22a2a;
+
+  --r: 8px;
+  --ombre: 0 1px 2px rgba(11,11,11,.04), 0 1px 8px rgba(11,11,11,.04);
+}
+
+:root[data-theme="dark"], :root.sombre {
+  --fond-page:   #0d0d0d;
+  --fond-carte:  #1a1a19;
+  --encre:       #ffffff;
+  --encre-2:     #c3c2b7;
+  --encre-muet:  #898781;
+  --grille:      #2c2c2a;
+  --axe:         #383835;
+  --bordure:     rgba(255, 255, 255, .10);
+  --pos:         #3987e5;
+  --neg:         #e66767;
+  --neutre:      #383835;
+  --pos-1: #b7d3f6;  --pos-2: #3987e5;  --pos-3: #1c5cab;
+  --neg-1: #f4c4c4;  --neg-2: #e66767;  --neg-3: #a83230;
+  --bon:         #0ca30c;
+  --alerte:      #e08a4a;
+  --grave:       #ef6a6a;
+  --ombre: none;
+}
+
+* { box-sizing: border-box; }
+
+body {
+  margin: 0;
+  padding: 0 16px 48px;
+  background: var(--fond-page);
+  color: var(--encre);
+  font: 14px/1.5 "Inter", -apple-system, BlinkMacSystemFont, "Segoe UI",
+        Roboto, "Helvetica Neue", Arial, sans-serif;
+  /* Chiffres tabulaires : sans ça, une colonne de nombres ne s'aligne pas
+     et l'œil ne peut plus comparer deux lignes d'un coup. */
+  font-variant-numeric: tabular-nums;
+}
+
+header {
+  display: flex; align-items: baseline; gap: 16px; flex-wrap: wrap;
+  max-width: 1400px; margin: 0 auto; padding: 20px 0 12px;
+}
+h1 { font-size: 19px; margin: 0; letter-spacing: -.01em; }
+header .sous { color: var(--encre-muet); font-size: 12.5px; }
+header .droite { margin-left: auto; display: flex; gap: 8px; align-items: center; }
+
+main { max-width: 1400px; margin: 0 auto; }
+
+.carte {
+  background: var(--fond-carte);
+  border: 1px solid var(--bordure);
+  border-radius: var(--r);
+  box-shadow: var(--ombre);
+  padding: 16px;
+  margin-bottom: 16px;
+}
+.carte > h2 {
+  font-size: 12px; text-transform: uppercase; letter-spacing: .06em;
+  color: var(--encre-muet); margin: 0 0 12px; font-weight: 600;
+}
+
+/* ── Filtres ─────────────────────────────────────────────────────── */
+
+.filtres { display: grid; gap: 12px 16px;
+           grid-template-columns: repeat(auto-fit, minmax(168px, 1fr)); }
+.champ { display: flex; flex-direction: column; gap: 5px; min-width: 0; }
+.champ > label {
+  font-size: 11px; text-transform: uppercase; letter-spacing: .05em;
+  color: var(--encre-muet); font-weight: 600;
+}
+.paire { display: flex; gap: 6px; align-items: center; }
+/* ⚠️ UN CHAMP DE DATE NATIF A BESOIN DE SA LARGEUR — MAIS PAS AU PRIX D'UN
+   DÉBORDEMENT. Rogné, il affiche « 08/01/ » et l'année devient invisible ;
+   élargi de force, la paire dépassait la colonne de la grille et sortait de
+   l'écran (mesuré : 1 443 px pour une fenêtre de 1 440). La réponse n'est pas
+   une largeur minimale, c'est de donner DEUX colonnes à ce champ-là. */
+.champ.large { grid-column: span 2; }
+.paire input[type="date"] { min-width: 0; }
+.paire span { color: var(--encre-muet); font-size: 12px; }
+
+input, select, button {
+  font: inherit; font-size: 13px; color: var(--encre);
+  background: var(--fond-page);
+  border: 1px solid var(--axe); border-radius: 6px;
+  padding: 7px 9px; min-width: 0; width: 100%;
+}
+select[multiple] { padding: 4px; height: 108px; }
+select[multiple] option { padding: 3px 5px; border-radius: 3px; }
+input:focus, select:focus, button:focus-visible {
+  outline: 2px solid var(--pos); outline-offset: 1px; border-color: var(--pos);
+}
+.aide { font-size: 11px; color: var(--encre-muet); }
+
+.actions { display: flex; gap: 10px; align-items: center;
+           margin-top: 14px; flex-wrap: wrap; }
+button.primaire {
+  background: var(--pos); color: #fff; border-color: var(--pos);
+  font-weight: 600; letter-spacing: .03em; width: auto; padding: 9px 22px;
+  cursor: pointer;
+}
+button.primaire:hover:not(:disabled) { filter: brightness(1.08); }
+button.primaire:disabled { opacity: .55; cursor: progress; }
+button.discret { width: auto; padding: 7px 13px; cursor: pointer;
+                 background: transparent; }
+button.discret:hover { border-color: var(--encre-2); }
+
+/* ── Avertissements ──────────────────────────────────────────────── */
+
+.avert { display: flex; gap: 9px; align-items: flex-start;
+         padding: 9px 12px; border-radius: 6px; font-size: 12.5px;
+         line-height: 1.45; margin-bottom: 8px;
+         background: color-mix(in srgb, var(--alerte) 9%, var(--fond-carte));
+         border: 1px solid color-mix(in srgb, var(--alerte) 28%, transparent);
+         color: var(--encre); }
+.avert:last-child { margin-bottom: 0; }
+.avert.grave { background: color-mix(in srgb, var(--grave) 9%, var(--fond-carte));
+               border-color: color-mix(in srgb, var(--grave) 30%, transparent); }
+.avert b { font-weight: 650; }
+
+/* ── Tuiles de KPI ───────────────────────────────────────────────── */
+
+.kpis { display: grid; gap: 12px;
+        grid-template-columns: repeat(auto-fit, minmax(148px, 1fr)); }
+.kpi {
+  background: var(--fond-carte); border: 1px solid var(--bordure);
+  border-radius: var(--r); padding: 13px 15px; box-shadow: var(--ombre);
+}
+.kpi .titre { font-size: 10.5px; text-transform: uppercase;
+              letter-spacing: .06em; color: var(--encre-muet);
+              font-weight: 600; margin-bottom: 5px; }
+.kpi .valeur { font-size: 25px; line-height: 1.15; letter-spacing: -.02em;
+               font-weight: 620; }
+.kpi .note { font-size: 11.5px; color: var(--encre-muet); margin-top: 4px; }
+.kpi.vedette .valeur { font-size: 31px; }
+/* ⚠️ Le SIGNE porte le sens, pas seulement la couleur : « +7,67 % » se lit
+   même en noir et blanc, et reste juste pour un daltonien. */
+.pos { color: var(--bon); }
+.neg { color: var(--grave); }
+.kpi .fragile { color: var(--alerte); font-weight: 600; }
+
+/* ── Graphiques ──────────────────────────────────────────────────── */
+
+.grille-graphes { display: grid; gap: 16px;
+                  grid-template-columns: repeat(auto-fit, minmax(430px, 1fr)); }
+figure { margin: 0; }
+figcaption { font-size: 12.5px; font-weight: 600; margin-bottom: 2px; }
+figcaption .prec { font-weight: 400; color: var(--encre-muet);
+                   font-size: 11.5px; display: block; margin-top: 1px; }
+svg { display: block; width: 100%; height: auto; overflow: visible; }
+.axe-txt { fill: var(--encre-muet); font-size: 10.5px; }
+.grille-ligne { stroke: var(--grille); stroke-width: 1; }
+.ligne-zero { stroke: var(--axe); stroke-width: 1.5; }
+.serie { fill: none; stroke: var(--pos); stroke-width: 2;
+         stroke-linejoin: round; stroke-linecap: round; }
+.pt { fill: var(--pos); stroke: var(--fond-carte); stroke-width: 2; }
+
+/* Couverture insuffisante : hachure + contour. La couleur seule ne suffit
+   pas — c'est la règle d'accessibilité, et ici elle sert aussi la justesse. */
+.faible { stroke: var(--encre-muet); stroke-width: 1;
+          stroke-dasharray: 3 2; }
+
+.vide { color: var(--encre-muet); font-size: 12.5px; padding: 22px 0;
+        text-align: center; }
+
+/* ── Matrice ─────────────────────────────────────────────────────── */
+
+.matrice { width: 100%; border-collapse: separate; border-spacing: 2px;
+           font-size: 11.5px; }
+.matrice th { font-weight: 600; color: var(--encre-muet); font-size: 10.5px;
+              text-transform: uppercase; letter-spacing: .04em; padding: 3px; }
+.matrice th.lig { text-align: right; white-space: nowrap; padding-right: 7px; }
+.matrice td { border-radius: 5px; padding: 7px 5px; text-align: center;
+              cursor: pointer; line-height: 1.3; border: 1.5px solid transparent; }
+.matrice td.cliquable:hover { border-color: var(--encre); }
+.matrice td.zero { cursor: default; color: var(--encre-muet);
+                   background: var(--fond-page); }
+.matrice td .n { display: block; font-size: 10px; opacity: .8; }
+.matrice td .v { display: block; font-weight: 640; font-size: 12.5px; }
+
+/* ── Tableau de détail ───────────────────────────────────────────── */
+
+.enrob { overflow-x: auto; -webkit-overflow-scrolling: touch; }
+table.detail { width: 100%; border-collapse: collapse; font-size: 12px;
+               white-space: nowrap; }
+table.detail th {
+  text-align: left; font-size: 10.5px; text-transform: uppercase;
+  letter-spacing: .04em; color: var(--encre-muet); font-weight: 600;
+  padding: 7px 9px; border-bottom: 1px solid var(--axe);
+  position: sticky; top: 0; background: var(--fond-carte); cursor: pointer;
+  user-select: none;
+}
+table.detail th:hover { color: var(--encre); }
+table.detail th.actif { color: var(--pos); }
+table.detail td { padding: 6px 9px; border-bottom: 1px solid var(--grille); }
+table.detail tbody tr:hover td { background: var(--fond-page); }
+td.num { text-align: right; }
+.etiq { display: inline-block; padding: 1px 6px; border-radius: 9px;
+        font-size: 10.5px; font-weight: 600; }
+.etiq.won  { background: color-mix(in srgb, var(--bon) 15%, transparent);
+             color: var(--bon); }
+.etiq.lost { background: color-mix(in srgb, var(--grave) 15%, transparent);
+             color: var(--grave); }
+.etiq.void { background: color-mix(in srgb, var(--encre-muet) 18%, transparent);
+             color: var(--encre-2); }
+.etiq.unsettled { background: transparent; color: var(--encre-muet);
+                  border: 1px dashed var(--axe); }
+
+.pagination { display: flex; gap: 10px; align-items: center; margin-top: 12px;
+              flex-wrap: wrap; font-size: 12.5px; color: var(--encre-2); }
+
+/* ── Infobulle ───────────────────────────────────────────────────── */
+
+#bulle {
+  position: fixed; pointer-events: none; z-index: 50; max-width: 270px;
+  background: var(--fond-carte); color: var(--encre);
+  border: 1px solid var(--bordure); border-radius: 6px;
+  padding: 8px 10px; font-size: 12px; line-height: 1.45;
+  box-shadow: 0 3px 14px rgba(11,11,11,.16); opacity: 0;
+  transition: opacity .08s;
+}
+#bulle.on { opacity: 1; }
+#bulle .t { font-weight: 650; margin-bottom: 3px; }
+#bulle .l { display: flex; justify-content: space-between; gap: 14px; }
+#bulle .l span:last-child { font-variant-numeric: tabular-nums; }
+#bulle .w { color: var(--alerte); margin-top: 4px; font-size: 11.5px; }
+
+@media (max-width: 640px) {
+  body { padding: 0 12px 36px; }
+  .grille-graphes { grid-template-columns: 1fr; }
+  .kpi .valeur { font-size: 21px; }
+  .kpi.vedette .valeur { font-size: 25px; }
+}
