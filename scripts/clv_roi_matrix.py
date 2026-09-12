@@ -619,13 +619,31 @@ def preparer(a):
                    if (books is None or (r["book"] or "").lower() in books)
                    and (predicat is None or predicat(r))]
         best = {}
+        # ⚠️ « JOUÉ » EST UNE PROPRIÉTÉ DE L'OPPORTUNITÉ, PAS DE LA LIGNE.
+        #
+        # La déduplication garde la MEILLEURE COTE. Un pari cliqué chez Unibet à
+        # 2,10 dont Ladbrokes proposait 2,15 est donc représenté par la ligne
+        # Ladbrokes — qui, elle, n'est pas marquée jouée. Filtrer sur
+        # `r["played"]` APRÈS la dédup classerait cette opportunité dans « non
+        # jouée » alors qu'elle a été jouée : le lot « non joué » se remplirait
+        # exactement des paris les mieux tarifés, et la comparaison dirait le
+        # contraire de la vérité.
+        #
+        # On agrège donc le drapeau sur TOUT le groupe avant de trancher.
+        joue: dict = {}
         for r in gardees:
             cle = ((r["home"] or "").lower(), (r["away"] or "").lower(),
                    (r["start_time"] or "")[:10], r["market"],
                    r["outcome_label"], r["line"])
+            joue[cle] = joue.get(cle, False) or bool(r["played"])
             prev = best.get(cle)
             if prev is None or float(r["odd_taken"]) > float(prev["odd_taken"]):
                 best[cle] = r
+        voulu = getattr(a, "joues", "tous")
+        if voulu == "oui":
+            best = {k: v for k, v in best.items() if joue.get(k)}
+        elif voulu == "non":
+            best = {k: v for k, v in best.items() if not joue.get(k)}
         return best
 
     return porte, porte_desc, books, rows, fenetre, selectionner
@@ -668,6 +686,11 @@ def main() -> int:
                          "avant le coup d'envoi, EV détectée, CLV réalisée, "
                          "ou SEMAINE de détection. Le délai découpe au-delà "
                          "de 48 h, là où le §16.4 s'arrêtait.")
+    ap.add_argument("--joues", choices=("tous", "oui", "non"), default="tous",
+                    help="Restreindre aux opportunités CLIQUÉES sur « Jouer » "
+                         "(oui), à celles seulement alertées (non), ou tout "
+                         "(défaut). Le drapeau est agrégé sur l'opportunité "
+                         "ENTIÈRE, pas sur la ligne retenue par la dédup.")
     ap.add_argument("--lister", action="store_true",
                     help="Après les tableaux, lister chaque opportunité "
                          "NOMMÉE : match, marché, pari, book, cote, EV, CLV, "
@@ -807,29 +830,37 @@ def main() -> int:
         print("\nAnalyse seule — aucun réglage n'a été lu autrement ni modifié.")
         return 0
 
-    # Filtre de books AVANT la déduplication : on veut le meilleur prix parmi
-    # les books qu'on joue, pas le meilleur prix du marché.
-    retenues = []
-    for r in rows:
-        if books is not None and (r["book"] or "").lower() not in books:
-            continue
-        if porte is not None and not porte(r):
-            continue
-        retenues.append(r)
-
-    # Même clé que `pnl_detections` : équipes + jour + marché + pari (§17.8).
-    best: dict[tuple, sqlite3.Row] = {}
-    for r in retenues:
-        cle = ((r["home"] or "").lower(), (r["away"] or "").lower(),
-               (r["start_time"] or "")[:10], r["market"], r["outcome_label"],
-               r["line"])
-        prev = best.get(cle)
-        if prev is None or float(r["odd_taken"]) > float(prev["odd_taken"]):
-            best[cle] = r
-    opp = list(best.values())
+    # ⚠️ UNE SEULE DÉDUPLICATION DANS CE FICHIER, ET C'EST `selectionner`.
+    #
+    # Ce chemin en avait sa PROPRE copie — même filtre de books, même clé
+    # §17.8, même « meilleure cote gagne » — recopiée à côté de celle que
+    # `--comparer` utilise. Les deux ont divergé à la première évolution : le
+    # filtre `--joues`, ajouté dans `selectionner`, n'avait aucun effet ici, et
+    # la commande rendait le tableau complet en annonçant une population
+    # restreinte. C'est exactement le défaut contre lequel l'en-tête de ce
+    # fichier met en garde (§17.7), commis dans le fichier qui l'énonce.
+    opp = list(selectionner(porte).values())
+    # ⚠️ UNE POPULATION VIDE DOIT LE DIRE. Sans ce garde, la commande imprimait
+    # un tableau sans aucune ligne sous un en-tête parfaitement normal — et
+    # « aucun pari ne correspond » se lisait comme « aucun pari n'est rentable ».
+    if not opp:
+        criteres = [f"porte : {porte_desc}"]
+        if books:
+            criteres.append(f"books : {', '.join(sorted(books))}")
+        if a.joues != "tous":
+            criteres.append("cliqués sur « Jouer »" if a.joues == "oui"
+                            else "alertés et NON cliqués")
+        raise SystemExit(
+            "Aucune opportunité ne passe ces filtres — il n'y a rien à "
+            "mesurer.\n  " + "\n  ".join(criteres)
+            + f"\n  (sur {len(rows)} lignes dans la fenêtre)")
 
     print(f"\nCLV ET ROI — porte : {porte_desc}")
     print(f"Books : {', '.join(sorted(books)) if books else 'tous'}")
+    if a.joues != "tous":
+        print("Population : "
+              + ("UNIQUEMENT les paris cliqués sur « Jouer »" if a.joues == "oui"
+                 else "UNIQUEMENT les paris alertés et NON cliqués"))
     print(f"Mise notionnelle : {a.stake:g} €")
     if fenetre:
         print(fenetre)

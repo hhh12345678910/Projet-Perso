@@ -817,6 +817,34 @@ toute cellule sous 30 paris réglés porte une icône et un `title`. Le document
 s'imprime, souvent en noir et blanc, et se lit par des gens qui ne distinguent
 pas le rouge du vert.
 
+### `--joues` — votre clic ajoute-t-il de la valeur, ou en détruit-il ?
+
+```bash
+# Ce que vous avez VRAIMENT joué
+.venv/bin/python -m scripts.clv_roi_matrix --premium --books kambi,ladbrokes_be \
+    --depuis 2026-07-01 --joues oui
+
+# Ce que vous avez laissé passer
+.venv/bin/python -m scripts.clv_roi_matrix --premium --books kambi,ladbrokes_be \
+    --depuis 2026-07-01 --joues non
+```
+
+Les deux lots **partitionnent** le total : joués + non joués = tout.
+
+⚠️ **« Joué » est une propriété de l'OPPORTUNITÉ, pas de la ligne.** La dédup
+garde la meilleure cote : un pari cliqué chez Unibet à 2,10 dont Ladbrokes
+proposait 2,15 est représenté par la ligne Ladbrokes, qui n'est pas marquée
+jouée. Filtrer après la dédup remplirait le lot « non joué » exactement des
+paris les mieux tarifés, et la comparaison dirait **le contraire de la
+vérité**. Le drapeau est donc agrégé sur tout le groupe. Un test plante ce cas.
+
+⚠️ **Lisez la CLV avant le ROI.** Le lot joué est choisi APRÈS l'alerte, donc
+c'est un sous-échantillon sélectionné, et les raisons de ne pas jouer ne sont
+pas toutes des jugements (solde vide, sommeil, compte limité, trop tard). La
+CLV est ~8 fois moins bruitée par pari que le P&L : si les paris joués ont une
+CLV plus haute, la sélection prend réellement de meilleurs prix. Un écart de
+ROI seul, sur quelques centaines de paris, ne prouve rien.
+
 ### Périodes exactes, semaines, et la liste nommée
 
 ```bash

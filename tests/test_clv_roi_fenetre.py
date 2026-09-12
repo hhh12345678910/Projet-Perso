@@ -244,3 +244,104 @@ def test_la_liste_suit_l_axe_demande(tmp_path, capsys, monkeypatch):
     out = capsys.readouterr().out
     assert "── 2026-08-03" in out
     assert "── 2026-08-10" in out
+
+
+# ── « Joué » est une propriété de l'OPPORTUNITÉ, pas de la ligne ─────
+
+def _base_jouee(tmp_path, lignes, joues=()):
+    """`lignes` : (id, book, home, away, jour, cote, ev, clot, gagnant)."""
+    p = tmp_path / "v.db"
+    c = sqlite3.connect(str(p))
+    c.executescript("""
+        CREATE TABLE value_bets (id INTEGER PRIMARY KEY, event_key TEXT,
+            book TEXT, market TEXT, outcome_label TEXT, line REAL,
+            odd_taken REAL, fair_odd REAL, ev_pct REAL, detected_at TEXT);
+        CREATE TABLE clv_snapshots (id INTEGER PRIMARY KEY, value_bet_id INT,
+            closing INT, fair_odd REAL);
+        CREATE TABLE events (event_key TEXT PRIMARY KEY, sport TEXT,
+            league TEXT, home TEXT, away TEXT, start_time TEXT);
+        CREATE TABLE results (event_key TEXT PRIMARY KEY, winner TEXT,
+            home_score INT, away_score INT);
+        CREATE TABLE played_bets (dedup_key TEXT PRIMARY KEY, value_bet_id INT);
+    """)
+    for (i, book, home, away, jour, cote, ev, clot, gagnant) in lignes:
+        ek = f"{jour.replace('-', '')}1800::{home.lower()}__vs__{away.lower()}"
+        c.execute("INSERT OR IGNORE INTO events VALUES (?,?,?,?,?,?)",
+                  (ek, "soccer", "L1", home, away, f"{jour}T18:00:00+00:00"))
+        c.execute("INSERT INTO value_bets VALUES (?,?,?,?,?,?,?,?,?,?)",
+                  (i, ek, book, "h2h", "home", None, cote,
+                   cote / (1 + ev / 100), ev, f"{jour}T10:00:00+00:00"))
+        if clot is not None:
+            c.execute("INSERT INTO clv_snapshots VALUES (?,?,?,?)", (i, i, 1, clot))
+        if gagnant is not None:
+            c.execute("INSERT OR IGNORE INTO results VALUES (?,?,?,?)",
+                      (ek, gagnant, 1, 0))
+    for i in joues:
+        c.execute("INSERT INTO played_bets VALUES (?,?)", (f"k{i}", i))
+    c.commit()
+    c.close()
+    return p
+
+
+def _opportunites(sortie: str) -> int:
+    import re
+    m = re.search(r"(\d+) opportunités dédupliquées", sortie)
+    return int(m.group(1)) if m else -1
+
+
+def test_joue_est_agrege_sur_l_opportunite_entiere(tmp_path, capsys,
+                                                   monkeypatch):
+    """⚠️ LE PIÈGE. Le pari est cliqué chez Unibet à 2,10 ; Ladbrokes proposait
+    2,15, donc la dédup garde la ligne Ladbrokes — qui n'est PAS marquée jouée.
+
+    Filtrer sur la ligne retenue classerait cette opportunité dans « non
+    jouée ». Le lot « non joué » se remplirait alors exactement des paris les
+    mieux tarifés, et la comparaison dirait le contraire de la vérité."""
+    p = _base_jouee(
+        tmp_path,
+        [(1, "unibet_be", "Anderlecht", "Genk", "2026-09-01", 2.10, 5.0, 2.00, "home"),
+         (2, "ladbrokes_be", "Anderlecht", "Genk", "2026-09-01", 2.15, 7.5, 2.00, "home")],
+        joues=(1,))
+
+    monkeypatch.setattr("sys.argv", ["m", "--db", str(p), "--joues", "oui"])
+    main()
+    assert _opportunites(capsys.readouterr().out) == 1, "l'opportunité jouée a disparu"
+
+    monkeypatch.setattr("sys.argv", ["m", "--db", str(p), "--joues", "non"])
+    with pytest.raises(SystemExit):
+        main()          # plus rien : la seule opportunité a été jouée
+
+
+def test_les_deux_lots_partitionnent_le_total(tmp_path, capsys, monkeypatch):
+    """joués + non joués = tout. Un pari qui tombe dans les deux, ou dans
+    aucun, fausserait toute comparaison entre les deux lots."""
+    lignes = [(i, "unibet_be", f"A{i}", f"B{i}", "2026-09-01",
+               2.00 + i / 100, 5.0, 1.95, "home") for i in range(1, 11)]
+    p = _base_jouee(tmp_path, lignes, joues=(1, 2, 3, 4))
+
+    def n(mode):
+        monkeypatch.setattr("sys.argv", ["m", "--db", str(p), "--joues", mode])
+        main()
+        return _opportunites(capsys.readouterr().out)
+
+    tous, oui, non = n("tous"), n("oui"), n("non")
+    assert tous == 10
+    assert oui == 4 and non == 6
+    assert oui + non == tous
+
+
+def test_la_population_est_annoncee_dans_l_entete(tmp_path, capsys, monkeypatch):
+    """Deux sorties qui ne portent pas sur la même population doivent le dire,
+    sinon on les compare sans le savoir."""
+    p = _base_jouee(
+        tmp_path,
+        [(1, "unibet_be", "A", "B", "2026-09-01", 2.10, 5.0, 2.00, "home")],
+        joues=(1,))
+    monkeypatch.setattr("sys.argv", ["m", "--db", str(p), "--joues", "oui"])
+    main()
+    out = capsys.readouterr().out
+    assert "UNIQUEMENT les paris cliqués" in out
+
+    monkeypatch.setattr("sys.argv", ["m", "--db", str(p)])
+    main()
+    assert "Population :" not in capsys.readouterr().out
