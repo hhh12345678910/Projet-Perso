@@ -74,10 +74,24 @@ from src.clv import pnl as clv_pnl  # noqa: E402
 from src.clv import settle as clv_settle  # noqa: E402
 from src.config import load_env_file  # noqa: E402
 from src.alerter import TelegramConfig  # noqa: E402
-from src.models import MarketType, is_half_time  # noqa: E402
 from src.reference import KAMBI_BOOKS  # noqa: E402
 from scripts.pnl_detections import BANDES_COTE, porte_de_canal  # noqa: E402
 from src.main import _EV_BUCKET_ORDER, _ev_bucket  # noqa: E402
+
+# ⚠️ CES CINQ NOMS NE SONT PLUS DÉFINIS ICI — ILS SONT DÉFINIS UNE SEULE FOIS.
+#
+# `_cellule` est la seule définition du ROI du projet, `_alertable` la seule
+# reproduction des gardes d'envoi. La plateforme Analytics en avait besoin ;
+# les recopier aurait fait deux définitions qui divergent au premier
+# changement, et c'est exactement le §17.7 — commis trois fois déjà, chaque
+# fois en silence. Elles ont donc été DÉPLACÉES vers `src/analytics/`, sans
+# une virgule de changement, et sont réimportées ici sous leur nom d'origine :
+# tout ce qui les importait depuis ce module continue de marcher.
+from src.analytics.metriques import (_cellule, _gains,  # noqa: E402,F401
+                                     _vecteurs)
+from src.analytics.populations import (FENETRE_MORTE,  # noqa: E402,F401
+                                       MI_TEMPS, _alertable,
+                                       _raison_non_alertable)
 
 _ALIAS = {"kambi": tuple(b.value for b in KAMBI_BOOKS)}
 
@@ -157,59 +171,6 @@ def _fenetre_morte_defaut() -> "tuple[int, str]":
     champ = TelegramConfig.__dataclass_fields__["min_minutes_to_kickoff"]
     return champ.default, ("défaut du dataclass — AUCUN jeton Telegram en "
                            "environnement, la variable n'a PAS été lue")
-
-
-MI_TEMPS, FENETRE_MORTE = "mi-temps", "fenêtre morte"
-
-
-def _raison_non_alertable(row, minutes: float) -> "str | None":
-    """Pourquoi `send_value_bet` aurait tu CETTE ligne, ou `None`.
-
-    Les deux raisons ne disent PAS la même chose et ne doivent pas être
-    additionnées en silence. La mi-temps est un choix assumé et permanent
-    (§21.8) : ces marchés viennent d'être ouverts, leur CLV est inconnue, et
-    leur clôture est rarement capturée. La fenêtre morte, elle, écarte des
-    marchés parfaitement ordinaires sur le seul critère de l'heure. Un lot
-    écarté à 90 % de mi-temps et un lot écarté à 90 % de fenêtre morte
-    appellent des conclusions opposées — d'où la ventilation imprimée.
-    """
-    try:
-        marche = MarketType(row["market"])
-    except (ValueError, TypeError):
-        marche = None
-    if marche is not None and is_half_time(marche):
-        return MI_TEMPS
-    h = _delai_h(row)
-    if h is None:        # sans horaire de coup d'envoi : production n'écarte rien
-        return None
-    if h < 0:            # LIVE — le garde prématch ne s'y applique pas
-        return None
-    return None if h * 60.0 >= minutes else FENETRE_MORTE
-
-
-def _alertable(row, minutes: float) -> bool:
-    """Vrai si `send_value_bet` aurait laissé passer CETTE ligne.
-
-    Rejoue les deux suppressions qui tombent AVANT tout routage, et que la
-    porte du canal ne peut donc pas voir :
-
-    * la **mi-temps** — aucun canal, ni principal, ni premium, ni critique ;
-    * la **fenêtre morte** — un value bet PRÉMATCH dont le coup d'envoi est à
-      moins de `min_minutes_to_kickoff`. Une détection LIVE (coup d'envoi
-      déjà passé) n'est PAS concernée : le garde de production est explicite
-      là-dessus, et l'oublier écarterait des paris que la production envoie.
-
-    ⚠️ CE QUE CE REJEU NE PEUT PAS FAIRE. La production compare le coup
-    d'envoi à `now` AU MOMENT DE L'ENVOI ; on ne dispose ici que de
-    `detected_at`, l'heure de la PREMIÈRE détection, qui ne bouge jamais
-    (§14.5). Les deux coïncident quand l'alerte part au premier cycle qui
-    voit le pari — le cas normal, la dédup n'en laissant qu'un — mais un pari
-    détecté à 3 h du coup d'envoi et alerté seulement plus tard serait jugé
-    alertable ici alors que la production l'a peut-être tu. Le compte de
-    fantômes que ce filtre donne est donc une borne BASSE, jamais une borne
-    haute : il ne peut pas surestimer le ménage.
-    """
-    return _raison_non_alertable(row, minutes) is None
 
 
 def _bande(odd: float) -> str:
@@ -509,83 +470,6 @@ def _books_demandes(brut: str | None) -> set[str] | None:
             continue
         out.update(_ALIAS.get(morceau, (morceau,)))
     return out or None
-
-
-def _gains(rows: list, stake: float) -> list:
-    """Le P&L de chaque pari notable du lot, un par élément.
-
-    Extrait pour que le t de la différence entre deux lots disjoints puisse
-    être calculé : `_cellule` n'agrège que des moyennes, et la variance de
-    l'écart demande les gains individuels."""
-    out = []
-    for r in rows:
-        statut = clv_settle(r["market"], r["outcome_label"], r["line"],
-                            r["winner"], r["home_score"], r["away_score"])
-        p = clv_pnl(statut, float(r["odd_taken"]), stake)
-        if p is not None:
-            out.append(p)
-    return out
-
-
-def _cellule(rows: list, stake: float) -> dict:
-    """Les deux mesures d'un groupe, chacune avec SON effectif."""
-    matchs = {(r["home"], r["away"], (r["start_time"] or "")[:10]) for r in rows}
-
-    clvs = [clv_pct(float(r["odd_taken"]), float(r["closing_fair_odd"])) * 100.0
-            for r in rows
-            if r["closing_fair_odd"] and float(r["closing_fair_odd"]) > 0]
-
-    gains, gagnes, perdus, nuls = [], 0, 0, 0
-    for r in rows:
-        statut = clv_settle(r["market"], r["outcome_label"], r["line"],
-                            r["winner"], r["home_score"], r["away_score"])
-        p = clv_pnl(statut, float(r["odd_taken"]), stake)
-        if p is None:
-            continue
-        gains.append(p)
-        if statut == "won":
-            gagnes += 1
-        elif statut == "lost":
-            perdus += 1
-        else:
-            nuls += 1
-
-    mise = stake * len(gains)
-    ecart = st.stdev(gains) if len(gains) > 1 else 0.0
-    # La CLV avait son effectif mais PAS sa precision. C'est pourtant elle qui
-    # decide : elle est ~8 fois moins bruitee par pari que le P&L, donc c'est
-    # le seul des deux instruments qui separe deux bandes a cet effectif.
-    ecart_clv = st.stdev(clvs) if len(clvs) > 1 else 0.0
-    return {
-        "n_opportunites": len(rows),
-        "n_matchs": len(matchs),
-        "n_joues": sum(1 for r in rows if r["played"]),
-        "n_clv": len(clvs),
-        "clv_moy_pct": round(st.mean(clvs), 2) if clvs else None,
-        "clv_positives_pct": (round(100.0 * sum(1 for x in clvs if x > 0) / len(clvs), 1)
-                              if clvs else None),
-        "n_regles": len(gains),
-        "gagnes": gagnes,
-        "perdus": perdus,
-        "annules": nuls,
-        "roi_pct": round(100.0 * sum(gains) / mise, 2) if mise else None,
-        "pnl_eur": round(sum(gains), 2) if gains else None,
-        "sigma_roi": (round(sum(gains) / (ecart * len(gains) ** 0.5), 1)
-                      if ecart > 0 and gains else None),
-        "sigma_clv": (round(st.mean(clvs) * len(clvs) ** 0.5 / ecart_clv, 1)
-                      if ecart_clv > 0 and clvs else None),
-    }
-
-
-def _vecteurs(rows: list, stake: float):
-    """(les CLV en %, les P&L en €) du lot — chacune avec SON effectif.
-
-    Les moyennes de `_cellule` ne suffisent pas pour tester deux lots l'un
-    contre l'autre : il faut les observations."""
-    clvs = [clv_pct(float(r["odd_taken"]), float(r["closing_fair_odd"])) * 100.0
-            for r in rows
-            if r["closing_fair_odd"] and float(r["closing_fair_odd"]) > 0]
-    return clvs, _gains(rows, stake)
 
 
 def _welch(a: list, b: list):
