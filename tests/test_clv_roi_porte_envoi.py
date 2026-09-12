@@ -322,3 +322,51 @@ def test_une_population_vidée_par_le_rejeu_le_dit(tmp_path, capsys, monkeypatch
     with pytest.raises(SystemExit) as e:
         main()
     assert "porte d'envoi rejouée" in str(e.value)
+
+
+# ── La strate écartée doit se MESURER, pas se déduire ────────────────
+
+def test_la_strate_ecartee_est_mesuree_dans_la_meme_invocation(
+        tmp_path, capsys, monkeypatch):
+    """⚠️ POURQUOI ELLE S'IMPRIME. La question à laquelle ce rejeu sert à
+    répondre est « ces paris-là avaient-ils une CLV haute et un ROI mauvais ? ».
+    On pourrait croire la déduire en soustrayant un run avec drapeau d'un run
+    sans — c'est faux : entre deux invocations la base gagne des clôtures et
+    des résultats, et la soustraction met cette dérive sur le dos du filtre.
+    Mesuré le 12/09 : le lot JOUÉ, dont le rejeu ne retire rien, passait de
+    951 à 955 clôtures d'un run à l'autre."""
+    p = _base(tmp_path, [(1, "unibet_be", "A", "B", "h2h", LOIN, 2.10),
+                         (2, "unibet_be", "C", "D", "h2h", PRES, 2.20),
+                         (3, "unibet_be", "E", "F", "h2h_h1", LOIN, 2.30)])
+    sortie = _lancer(monkeypatch, capsys, "--db", str(p), "--porte-envoi")
+    assert "LA STRATE ÉCARTÉE" in sortie
+    assert "TOTAL écarté" in sortie
+    # Les deux raisons sont ventilées SÉPARÉMENT : un lot écarté à 90 % de
+    # mi-temps et un lot écarté à 90 % de fenêtre morte appellent des
+    # conclusions opposées.
+    assert "mi-temps" in sortie
+    assert "fenêtre morte" in sortie
+
+
+def test_la_capture_de_cloture_des_deux_lots_est_comparee(tmp_path, capsys,
+                                                          monkeypatch):
+    """C'est ce qui distingue les deux mécanismes soupçonnés : une strate SANS
+    clôture ne peut pas avoir fait dégénérer la CLV — elle n'en a pas."""
+    p = _base(tmp_path, [(1, "unibet_be", "A", "B", "h2h", LOIN, 2.10),
+                         (2, "unibet_be", "C", "D", "h2h", PRES, 2.20)])
+    sortie = _lancer(monkeypatch, capsys, "--db", str(p), "--porte-envoi")
+    assert "dans le lot GARDÉ" in sortie
+
+
+def test_une_raison_par_groupe_meme_quand_les_lignes_different(
+        tmp_path, capsys, monkeypatch):
+    """Un groupe dont toutes les lignes sont tues peut l'être pour DEUX
+    raisons. L'étiquette combinée existe pour que le cas se voie au lieu
+    d'être attribué arbitrairement à l'une des deux."""
+    from scripts.clv_roi_matrix import _raison_non_alertable
+    assert _raison_non_alertable(_ligne(LOIN, J, "h2h_h1"), 15) == "mi-temps"
+    assert _raison_non_alertable(_ligne(PRES, J, "h2h"), 15) == "fenêtre morte"
+    assert _raison_non_alertable(_ligne(LOIN, J, "h2h"), 15) is None
+    # La mi-temps l'emporte quand les deux s'appliquent : c'est l'ordre du
+    # code de production, où le garde mi-temps est testé en premier.
+    assert _raison_non_alertable(_ligne(PRES, J, "h2h_h1"), 15) == "mi-temps"

@@ -159,6 +159,34 @@ def _fenetre_morte_defaut() -> "tuple[int, str]":
                            "environnement, la variable n'a PAS été lue")
 
 
+MI_TEMPS, FENETRE_MORTE = "mi-temps", "fenêtre morte"
+
+
+def _raison_non_alertable(row, minutes: float) -> "str | None":
+    """Pourquoi `send_value_bet` aurait tu CETTE ligne, ou `None`.
+
+    Les deux raisons ne disent PAS la même chose et ne doivent pas être
+    additionnées en silence. La mi-temps est un choix assumé et permanent
+    (§21.8) : ces marchés viennent d'être ouverts, leur CLV est inconnue, et
+    leur clôture est rarement capturée. La fenêtre morte, elle, écarte des
+    marchés parfaitement ordinaires sur le seul critère de l'heure. Un lot
+    écarté à 90 % de mi-temps et un lot écarté à 90 % de fenêtre morte
+    appellent des conclusions opposées — d'où la ventilation imprimée.
+    """
+    try:
+        marche = MarketType(row["market"])
+    except (ValueError, TypeError):
+        marche = None
+    if marche is not None and is_half_time(marche):
+        return MI_TEMPS
+    h = _delai_h(row)
+    if h is None:        # sans horaire de coup d'envoi : production n'écarte rien
+        return None
+    if h < 0:            # LIVE — le garde prématch ne s'y applique pas
+        return None
+    return None if h * 60.0 >= minutes else FENETRE_MORTE
+
+
 def _alertable(row, minutes: float) -> bool:
     """Vrai si `send_value_bet` aurait laissé passer CETTE ligne.
 
@@ -181,18 +209,7 @@ def _alertable(row, minutes: float) -> bool:
     fantômes que ce filtre donne est donc une borne BASSE, jamais une borne
     haute : il ne peut pas surestimer le ménage.
     """
-    try:
-        marche = MarketType(row["market"])
-    except (ValueError, TypeError):
-        marche = None
-    if marche is not None and is_half_time(marche):
-        return False
-    h = _delai_h(row)
-    if h is None:        # sans horaire de coup d'envoi : production n'écarte rien
-        return True
-    if h < 0:            # LIVE — le garde prématch ne s'y applique pas
-        return True
-    return h * 60.0 >= minutes
+    return _raison_non_alertable(row, minutes) is None
 
 
 def _bande(odd: float) -> str:
@@ -780,14 +797,18 @@ def preparer(a):
         joue: dict = {}
         notif: dict = {}
         alertable: dict = {}
+        raisons: dict = {}
         for r in gardees:
             cle = ((r["home"] or "").lower(), (r["away"] or "").lower(),
                    (r["start_time"] or "")[:10], r["market"],
                    r["outcome_label"], r["line"])
             joue[cle] = joue.get(cle, False) or bool(r["played"])
             if minutes is not None:
-                alertable[cle] = (alertable.get(cle, False)
-                                  or _alertable(r, minutes))
+                pourquoi = _raison_non_alertable(r, minutes)
+                alertable[cle] = alertable.get(cle, False) or pourquoi is None
+                # La raison du GROUPE n'a de sens que si aucune ligne n'est
+                # passée. On accumule, on tranchera après la boucle.
+                raisons.setdefault(cle, set()).add(pourquoi)
             q = r["notified_at"] if "notified_at" in r.keys() else None
             if q and (notif.get(cle) is None or q < notif[cle]):
                 notif[cle] = q          # la PREMIÈRE alerte du groupe
@@ -808,11 +829,29 @@ def preparer(a):
         # taux d'erreur. On le compte AVANT de filtrer, et `main` l'imprime.
         if minutes is not None:
             morts = [k for k in best if not alertable.get(k)]
+            par_raison: dict = {}
+            for k in morts:
+                # Un groupe dont toutes les lignes sont tues peut l'être pour
+                # DEUX raisons à la fois (mi-temps ici, fenêtre morte là).
+                # L'étiquette combinée existe pour que ces cas se voient au
+                # lieu d'être attribués arbitrairement à l'une des deux.
+                lib = " + ".join(sorted(r for r in raisons.get(k, ()) if r))
+                par_raison.setdefault(lib or "?", []).append(k)
             selectionner.rejets = {
                 "minutes": minutes, "source": minutes_src,
                 "n_avant": len(best), "n_ecartes": len(morts),
                 "n_ecartes_joues": sum(1 for k in morts if joue.get(k)),
                 "n_joues_avant": sum(1 for k in best if joue.get(k)),
+                # ⚠️ LA STRATE ÉCARTÉE ELLE-MÊME, et pas seulement son compte.
+                # C'est le chiffre qui tranche : si ces paris ont une CLV haute
+                # et un ROI mauvais, le mécanisme soupçonné est confirmé ; s'ils
+                # ressemblent au reste, l'écart vient d'ailleurs. La déduire en
+                # soustrayant deux invocations ne marche PAS — la base bouge
+                # entre deux runs (clôtures capturées, résultats arrivés), et
+                # la soustraction attribuerait la dérive au filtre.
+                "ecartes": [best[k] for k in morts],
+                "par_raison": {lib: [best[k] for k in ks]
+                               for lib, ks in par_raison.items()},
             }
             best = {k: v for k, v in best.items() if alertable.get(k)}
         else:
@@ -1087,6 +1126,37 @@ def main() -> int:
                   f"{rej['n_joues_avant']} joués) : un pari cliqué a forcément "
                   f"été alerté,\n  donc ce nombre est le taux d'erreur du "
                   f"rejeu, et non un résultat.{marque}")
+        if rej["ecartes"]:
+            # ⚠️ CE QU'ON VIENT DE JETER, MESURÉ DANS LA MÊME INVOCATION.
+            #
+            # Un filtre qui ne dit pas ce qu'il retire demande qu'on le croie
+            # sur parole. Et le déduire en soustrayant deux commandes ne
+            # marche pas : entre deux runs la base gagne des clôtures et des
+            # résultats, et la soustraction met cette dérive sur le dos du
+            # filtre. Ici les deux lots sortent du même instant.
+            print("\n  LA STRATE ÉCARTÉE — ce que le rejeu vient de retirer :")
+            entete = f"    {'raison':24}{'opp':>6}{'n CLV':>7}{'CLV':>9}" \
+                     f"{'réglés':>8}{'ROI':>9}{'P&L':>9}"
+            print(entete)
+            print("    " + "-" * (len(entete) - 4))
+            blocs = sorted(rej["par_raison"].items(),
+                           key=lambda kv: -len(kv[1]))
+            for lib, sous in blocs + [("TOTAL écarté", rej["ecartes"])]:
+                c = _cellule(sous, a.stake)
+                clv = "—" if c["clv_moy_pct"] is None else f"{c['clv_moy_pct']:+.2f}%"
+                roi = "—" if c["roi_pct"] is None else f"{c['roi_pct']:+.2f}%"
+                pnl = "—" if c["pnl_eur"] is None else f"{c['pnl_eur']:+.0f}€"
+                print(f"    {lib:24}{c['n_opportunites']:>6}{c['n_clv']:>7}"
+                      f"{clv:>9}{c['n_regles']:>8}{roi:>9}{pnl:>9}")
+            # La capture de clôture de la strate est ce qui distingue les deux
+            # mécanismes soupçonnés. Une strate SANS clôture n'a pas pu faire
+            # dégénérer la CLV : elle n'en a pas.
+            n_ec = len(rej["ecartes"])
+            n_cl = sum(1 for r in rej["ecartes"] if r["closing_fair_odd"])
+            n_g = sum(1 for r in opp if r["closing_fair_odd"])
+            print(f"    Clôture capturée pour {n_cl} de ces {n_ec} "
+                  f"({100 * n_cl / n_ec:.1f} %), contre {n_g} sur {len(opp)} "
+                  f"({100 * n_g / len(opp):.1f} %) dans le lot GARDÉ.")
     if fenetre:
         print(fenetre)
     print(f"{len(opp)} opportunités dédupliquées, sur {len(rows)} lignes\n")
