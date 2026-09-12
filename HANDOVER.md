@@ -7260,6 +7260,11 @@ le résultat est remonté**. Tant qu'on n'a pas montré que cette remontée est 
 tirage neutre, c'est un sous-ensemble. **C'est le sujet le plus rentable à
 creuser.**
 
+> ✅ **TRANCHÉ LE 12/09 — et c'était bien un artefact.** Après rattrapage
+> des résultats, le taux de règlement du tennis passe de 20 % à 57 % et son
+> ROI **s'effondre de +47,49 % à +14,87 %**, convergeant vers celui du
+> football. Voir §26.15.
+
 ⚠️ La bande de cotes **4,00-6,00** au football a la CLV la plus haute du tableau
 (+17,87 %, seule à franchir Bonferroni, t = +4,25) et le **ROI le plus faible**
 (+4,33 %, 31 gagnés / 104 perdus). Sur les grosses cotes, une petite erreur de
@@ -7317,8 +7322,9 @@ gros levier restant sur le fetch.
 
 ### 26.13 Ce qui reste ouvert
 
-1. **Le taux de règlement du tennis** (20 % contre 76 % au football). Le chiffre
-   le plus suspect du projet — voir §26.10.
+1. ~~**Le taux de règlement du tennis**~~ — **réglé le 12/09** (§26.15). Il
+   reste à 57 % contre 76 % au football : le biais est réduit, pas annulé,
+   et le ROI tennis peut encore bouger.
 2. **L'écart EV/CLV d'EliteSports** (12 points) : prix mauvais ou appariement
    cassé ? Si c'est l'appariement, d'autres books sont concernés.
 3. **La mesure de latence depuis la Belgique**, et la décision de déménager.
@@ -7327,6 +7333,135 @@ gros levier restant sur le fetch.
 5. **Les trois signatures manquantes** de `detect-platform.sh`.
 6. **`ev_outliers --help`**, toujours cassé — `test_sondes_help` échoue dessus,
    et c'est un échec connu depuis des semaines.
-7. **La limitation des comptes.** Les bandes à EV extrême sont celles qui
+7. **Le seuil de Bonferroni de `clv_roi_matrix` est faux à petit effectif** :
+   il compare un t de Welch à une loi normale, ce qui a décerné un ✔ à une
+   bande de **4** observations (§26.15). Student, ou un effectif plancher.
+8. **La limitation des comptes.** Les bandes à EV extrême sont celles qui
    désignent un joueur sharp, et la mesure du §26.10 suggère qu'elles portent le
    moins de rendement. `clv_roi_matrix --axe ev` tranchera.
+
+### 26.14 P&L et ROI mesurés, après rattrapage des résultats (12/09)
+
+**L'argent réel**, sur les paris effectivement joués (`track-update`, toute
+l'histoire) :
+
+| | |
+|---|---|
+| paris joués | **2 758** |
+| résultats connus | **1 841** (67 %) |
+| misé | **46 025 €** |
+| **P&L** | **+6 841,86 €** |
+| **ROI réel** | **+14,87 %** |
+| CLV réelle | +9,18 % sur 2 151, dont **76,8 % positives** |
+
+⚠️ Ce ROI-là porte sur les **mises réelles** et sur les paris **effectivement
+joués**. Les tableaux ci-dessous portent sur les **détections premium** à mise
+notionnelle de 25 €. Deux populations, deux chiffres : **ne jamais les
+confondre**, même quand ils se ressemblent.
+
+#### Le flux premium, du 01/08 au 12/09
+
+Porte premium, books Kambi + Ladbrokes, mise notionnelle 25 € :
+
+| sport | opp. | réglés | CLV | **ROI** | σ | P&L |
+|---|---:|---:|---:|---:|---:|---:|
+| Football | 1 842 | 1 337 | +9,38 % | **+14,70 %** | 3,8 | +4 913 € |
+| Tennis | 575 | 189 | +14,24 % | **+34,24 %** | 3,4 | +1 618 € |
+| **Tous** | **2 436** | **1 526** | **+10,58 %** | **+17,12 %** | **4,7** | **+6 531 €** |
+
+#### Le flux premium depuis le 01/07 — la fenêtre qui fait autorité
+
+| sport | opp. | réglés | taux | CLV | **ROI** | σ | P&L |
+|---|---:|---:|---:|---:|---:|---:|---:|
+| Football | 2 826 | 2 136 | 76 % | +9,13 % | **+12,93 %** | 4,2 | +6 907 € |
+| Tennis | 1 092 | 618 | 57 % | +13,90 % | **+14,87 %** | 2,9 | +2 298 € |
+| **Tous** | **4 001** | **2 754** | 69 % | **+10,35 %** | **+13,37 %** | **5,0** | **+9 205 €** |
+
+### 26.15 ⚠️ LE TENNIS N'A JAMAIS RENDU +47 % — c'était un artefact de mesure
+
+Le §26.10 avertissait que le ROI tennis de **+47,49 %** reposait sur 102 paris
+réglés pour 520 opportunités — **20 %** — et qu'il décrivait peut-être un
+sous-ensemble plutôt que le sport. Le rattrapage des résultats l'a tranché :
+
+| fenêtre | opp. | réglés | taux | ROI tennis |
+|---|---:|---:|---:|---:|
+| 01/08 → 08/09 | 520 | 102 | **20 %** | **+47,49 %** |
+| 01/08 → 12/09 | 575 | 189 | **33 %** | **+34,24 %** |
+| 01/07 → 12/09 | 1 092 | 618 | **57 %** | **+14,87 %** |
+
+**Le chiffre s'effondre à mesure que l'échantillon se remplit**, et il converge
+vers celui du football (+12,93 %). Le tennis n'est pas trois fois meilleur : il
+était trois fois moins bien mesuré.
+
+> **La leçon, et elle vaut pour tout le reste du document :** un taux de
+> règlement bas ne bruite pas un chiffre au hasard, il le **biaise**. Les matchs
+> dont le résultat remonte le plus vite ne sont pas un tirage neutre de tous les
+> matchs. Tant que le taux n'est pas proche de celui du football, **tout ROI par
+> sport est à lire comme provisoire**, et un écart spectaculaire entre deux
+> sports est d'abord un soupçon sur la mesure, pas une découverte.
+
+À surveiller : le tennis plafonne encore à **57 %** de règlement contre 76 % au
+football. Il reste donc un biais, plus faible — et le chiffre peut encore
+bouger.
+
+#### Ce que le rattrapage a aussi révélé
+
+- **Tennis en cotes 2,30-3,00 : −5,45 %** sur 60 paris réglés. Première bande
+  tennis franchement négative avec un effectif lisible.
+- **Football en cotes 4,00-6,00** confirme son profil : CLV la plus haute du
+  tableau (+18,43 %, t = +4,75, seule avec 1,0-1,8 à franchir Bonferroni) et
+  **ROI le plus faible (+4,54 %)** sur 32 gagnés / 108 perdus. Sur les grosses
+  cotes, une petite erreur de clôture devient un gros pourcentage de CLV.
+- **Une seule semaine négative en football depuis le 01/07** : S29 (13/07),
+  −3,84 %.
+- **S34 et S35 au tennis n'ont que 7 et 3 paris réglés.** Le rattrapage ne les a
+  pas couvertes ; leurs ROI (+35,43 % et −15,00 %) ne veulent rien dire.
+
+⚠️ **Limite méthodologique repérée ici.** La semaine S29 « franchit Bonferroni »
+sur la CLV (Δ −18,80 pt, t = −4,33) avec un effectif de **4**. Le test de Welch
+de `clv_roi_matrix` compare son t à un seuil normal (`inv_cdf`), approximation
+qui ne vaut qu'à grand effectif. **À n = 4, ce ✔ n'a aucune valeur.** Le seuil
+devrait être tiré d'une loi de Student à degrés de liberté de Welch, ou la bande
+écartée du test sous un effectif minimum. Non corrigé à ce jour.
+
+### 26.16 La marche à suivre pour rattraper les résultats
+
+Chaîne réelle, à ne pas confondre :
+
+| sport | source | transport | réglage |
+|---|---|---|---|
+| Football | `ApiFootballScores` **ou** `BridgedFootballScores` | API directe **ou pont navigateur** | `SCORES_FOOTBALL_KEY` / `SCORES_FOOTBALL_BRIDGE=1` |
+| Tennis | `LiveTennisScores` | **API directe seule — aucun pont** | `SCORES_TENNIS_KEY` |
+
+⚠️ **Le tennis ne passe PAS par le pont navigateur.** Si `SCORES_TENNIS_KEY` est
+vide, aucun résultat de tennis n'arrive jamais.
+
+⚠️ **Au tennis, le vainqueur ne se déduit pas du score** (`scores.py:108`,
+`winner_from_scores` rend `None`). Il doit venir de la source ; un score de
+tennis sans vainqueur ne règle rien.
+
+```bash
+# 0. MESURER d'abord, sur une journée RÉVOLUE (--day, jamais --days)
+.venv/bin/python -m src.main results-update --dry-run --day <hier> --sport soccer
+.venv/bin/python -m src.main results-update --dry-run --day <hier> --sport tennis
+
+# 1. Football : élargir la fenêtre du pont (défaut 2 journées seulement)
+sed -i 's|^SCORES_BRIDGE_DAYS=.*|SCORES_BRIDGE_DAYS=14|' .env
+rm -f data/scores/soccer/*.refused     # ⚠️ sinon les jours refusés ne reviennent JAMAIS
+sudo systemctl restart betano-ingest
+#    ouvrir l'onglet du pont, attendre {"fetch": []} sur /scores-plan
+
+# 2. Écrire en base
+.venv/bin/python -m src.main results-update --days 14 --sport soccer
+.venv/bin/python -m src.main results-update --days 14 --sport tennis
+
+# 3. Remettre les suivis à jour, puis mesurer
+.venv/bin/python -m src.main track-update
+.venv/bin/python -m scripts.clv_roi_matrix --premium --books kambi,ladbrokes_be \
+    --depuis 2026-07-01 --axe semaine
+```
+
+⚠️ `SCORES_TENNIS_MIN_INTERVAL_SEC=1,1` espace les appels : le palier Basic de
+livetennisapi plafonne à 60 req/min et un rattrapage enchaîne un appel par jour.
+Le baisser fait échouer le rattrapage en plein milieu, laissant la moitié de
+l'historique sans résultat.
