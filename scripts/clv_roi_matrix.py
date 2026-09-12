@@ -28,6 +28,18 @@ Unibet + 711 + Bingoal + Scooore — le groupe est lu dans `reference.KAMBI_BOOK
 jamais recopié. Le filtre s'applique AVANT la déduplication : « le meilleur
 prix parmi les books que je joue vraiment », et non le meilleur prix du marché.
 
+PORTE D'ENVOI (`--porte-envoi`)
+-------------------------------
+`--premium` rejoue la porte du CANAL. Elle n'est pas la seule : `send_value_bet`
+écarte des value bets AVANT tout routage — les marchés de mi-temps, et les
+détections prématch à moins de `min_minutes_to_kickoff` du coup d'envoi. Ces
+paris existent dans `value_bets`, leur clôture est capturée et leur CLV
+mesurée, mais AUCUN message n'est jamais parti. Ils gonflent donc le lot
+« alerté et non joué » de paris fantômes. `--porte-envoi` les retire, en
+lisant le seuil dans la configuration de production plutôt qu'en le
+recopiant (§17.7), et imprime combien de paris DÉJÀ CLIQUÉS le rejeu tue —
+son propre taux d'erreur.
+
 AXE DES LIGNES
 --------------
 `--axe cote` (défaut) découpe par tranche de cote prise. `--axe delai` découpe
@@ -61,6 +73,8 @@ from src.clv import clv_pct  # noqa: E402
 from src.clv import pnl as clv_pnl  # noqa: E402
 from src.clv import settle as clv_settle  # noqa: E402
 from src.config import load_env_file  # noqa: E402
+from src.alerter import TelegramConfig  # noqa: E402
+from src.models import MarketType, is_half_time  # noqa: E402
 from src.reference import KAMBI_BOOKS  # noqa: E402
 from scripts.pnl_detections import BANDES_COTE, porte_de_canal  # noqa: E402
 from src.main import _EV_BUCKET_ORDER, _ev_bucket  # noqa: E402
@@ -127,6 +141,58 @@ def _delai_h(row) -> "float | None":
     leur presence eventuelle SE VOIE au lieu d'etre repartie en silence."""
     a, b = _heures(row["detected_at"]), _heures(row["start_time"])
     return None if (a is None or b is None) else (b - a) / 3600.0
+
+
+def _fenetre_morte_defaut() -> "tuple[int, str]":
+    """Les minutes de fenêtre morte, LUES DANS LA PRODUCTION.
+
+    Rend (minutes, provenance). La provenance est imprimée : une valeur par
+    défaut prise parce que l'environnement n'a pas de jeton doit SE VOIR
+    (§11), sans quoi le rejeu prétendrait reproduire un réglage qu'il n'a
+    jamais lu.
+    """
+    cfg = TelegramConfig.from_env()
+    if cfg is not None:
+        return cfg.min_minutes_to_kickoff, "lu dans TelegramConfig.from_env()"
+    champ = TelegramConfig.__dataclass_fields__["min_minutes_to_kickoff"]
+    return champ.default, ("défaut du dataclass — AUCUN jeton Telegram en "
+                           "environnement, la variable n'a PAS été lue")
+
+
+def _alertable(row, minutes: float) -> bool:
+    """Vrai si `send_value_bet` aurait laissé passer CETTE ligne.
+
+    Rejoue les deux suppressions qui tombent AVANT tout routage, et que la
+    porte du canal ne peut donc pas voir :
+
+    * la **mi-temps** — aucun canal, ni principal, ni premium, ni critique ;
+    * la **fenêtre morte** — un value bet PRÉMATCH dont le coup d'envoi est à
+      moins de `min_minutes_to_kickoff`. Une détection LIVE (coup d'envoi
+      déjà passé) n'est PAS concernée : le garde de production est explicite
+      là-dessus, et l'oublier écarterait des paris que la production envoie.
+
+    ⚠️ CE QUE CE REJEU NE PEUT PAS FAIRE. La production compare le coup
+    d'envoi à `now` AU MOMENT DE L'ENVOI ; on ne dispose ici que de
+    `detected_at`, l'heure de la PREMIÈRE détection, qui ne bouge jamais
+    (§14.5). Les deux coïncident quand l'alerte part au premier cycle qui
+    voit le pari — le cas normal, la dédup n'en laissant qu'un — mais un pari
+    détecté à 3 h du coup d'envoi et alerté seulement plus tard serait jugé
+    alertable ici alors que la production l'a peut-être tu. Le compte de
+    fantômes que ce filtre donne est donc une borne BASSE, jamais une borne
+    haute : il ne peut pas surestimer le ménage.
+    """
+    try:
+        marche = MarketType(row["market"])
+    except (ValueError, TypeError):
+        marche = None
+    if marche is not None and is_half_time(marche):
+        return False
+    h = _delai_h(row)
+    if h is None:        # sans horaire de coup d'envoi : production n'écarte rien
+        return True
+    if h < 0:            # LIVE — le garde prématch ne s'y applique pas
+        return True
+    return h * 60.0 >= minutes
 
 
 def _bande(odd: float) -> str:
@@ -603,6 +669,11 @@ def preparer(a):
     ce projet.
 
     Rend (porte, porte_desc, books, rows, fenetre, selectionner).
+
+    `selectionner.rejets` porte, après chaque appel, ce que le rejeu de la
+    porte d'envoi a écarté (ou `None` s'il n'a pas été demandé). C'est un
+    attribut de fonction plutôt qu'un septième élément du tuple pour ne pas
+    casser `rapport_clv_roi`, qui dépaquette ce retour.
     """
     porte = None
     porte_desc = "aucune — toutes les détections"
@@ -654,6 +725,18 @@ def preparer(a):
     # fenêtre de sept jours. La fenêtre découpe QUAND LE PRIX EST APPARU.
     rows, fenetre = _appliquer_fenetre(rows, a)
 
+    # Rejeu facultatif des suppressions d'ENVOI. `None` = pas de rejeu ; le
+    # comportement par défaut reste celui de toutes les mesures précédentes,
+    # pour qu'activer l'option soit un acte visible et non un changement
+    # silencieux de population sous les mêmes chiffres.
+    demande = getattr(a, "porte_envoi", None)
+    if demande is None:
+        minutes, minutes_src = None, None
+    elif demande == "auto":
+        minutes, minutes_src = _fenetre_morte_defaut()
+    else:
+        minutes, minutes_src = float(demande), "imposé en ligne de commande"
+
     def selectionner(predicat):
         """Les opportunités dédupliquées que cette porte laisserait passer.
 
@@ -684,13 +767,27 @@ def preparer(a):
         # 45 % de rapprochement seulement sur Kambi+Ladbrokes — et le biais
         # n'est pas neutre, il retient les opportunités alertées sur le book
         # qui se trouvait être le mieux tarifé.
+        #
+        # ⚠️ « ALERTABLE » EST LE TROISIÈME PIÈGE DE LA MÊME FAMILLE, et il
+        # fallait s'y attendre après les deux précédents. La fenêtre morte se
+        # juge sur `detected_at`, qui diffère d'une LIGNE à l'autre : Unibet
+        # peut voir le pari à 6 h du coup d'envoi et Ladbrokes à 4 minutes.
+        # L'opportunité est partie en alerte dès qu'UNE ligne a échappé au
+        # garde — donc le drapeau s'agrège en OU sur le groupe, exactement
+        # comme « joué ». Le juger sur le seul représentant écarterait des
+        # paris réellement alertés, et l'écart mesuré serait celui du hasard
+        # des horaires de détection.
         joue: dict = {}
         notif: dict = {}
+        alertable: dict = {}
         for r in gardees:
             cle = ((r["home"] or "").lower(), (r["away"] or "").lower(),
                    (r["start_time"] or "")[:10], r["market"],
                    r["outcome_label"], r["line"])
             joue[cle] = joue.get(cle, False) or bool(r["played"])
+            if minutes is not None:
+                alertable[cle] = (alertable.get(cle, False)
+                                  or _alertable(r, minutes))
             q = r["notified_at"] if "notified_at" in r.keys() else None
             if q and (notif.get(cle) is None or q < notif[cle]):
                 notif[cle] = q          # la PREMIÈRE alerte du groupe
@@ -702,6 +799,24 @@ def preparer(a):
         # nom et appelle `.keys()`, les deux marchent à l'identique.
         best = {k: {**dict(v), "notified_at": notif.get(k)}
                 for k, v in best.items()}
+        # ⚠️ LE REJEU SE FALSIFIE LUI-MÊME, ET C'EST TOUT L'INTÉRÊT.
+        #
+        # Une opportunité CLIQUÉE sur « Jouer » a nécessairement été alertée :
+        # le clic vient du bouton d'un message Telegram. Si le filtre en
+        # écarte, ce n'est pas la production qu'il reproduit, c'est autre
+        # chose — et le nombre de paris joués qu'il tue mesure exactement son
+        # taux d'erreur. On le compte AVANT de filtrer, et `main` l'imprime.
+        if minutes is not None:
+            morts = [k for k in best if not alertable.get(k)]
+            selectionner.rejets = {
+                "minutes": minutes, "source": minutes_src,
+                "n_avant": len(best), "n_ecartes": len(morts),
+                "n_ecartes_joues": sum(1 for k in morts if joue.get(k)),
+                "n_joues_avant": sum(1 for k in best if joue.get(k)),
+            }
+            best = {k: v for k, v in best.items() if alertable.get(k)}
+        else:
+            selectionner.rejets = None
         voulu = getattr(a, "joues", "tous")
         if voulu == "oui":
             best = {k: v for k, v in best.items() if joue.get(k)}
@@ -754,6 +869,16 @@ def main() -> int:
                          "(oui), à celles seulement alertées (non), ou tout "
                          "(défaut). Le drapeau est agrégé sur l'opportunité "
                          "ENTIÈRE, pas sur la ligne retenue par la dédup.")
+    ap.add_argument("--porte-envoi", nargs="?", const="auto", default=None,
+                    metavar="MINUTES", dest="porte_envoi",
+                    help="Rejouer les suppressions que `send_value_bet` "
+                         "applique AVANT tout routage — mi-temps, et fenêtre "
+                         "morte avant le coup d'envoi — que la porte du canal "
+                         "ne peut pas voir. Sans valeur, le seuil est LU dans "
+                         "la configuration de production ; avec une valeur, "
+                         "ce nombre de minutes. Sert à savoir ce que le lot "
+                         "« non joué » contient de paris qui ne sont JAMAIS "
+                         "partis en alerte.")
     ap.add_argument("--lister", action="store_true",
                     help="Après les tableaux, lister chaque opportunité "
                          "NOMMÉE : match, marché, pari, book, cote, EV, CLV, "
@@ -769,6 +894,13 @@ def main() -> int:
                          "recouvrement. Implique --premium.")
     a = ap.parse_args()
     # Un drapeau ignoré en silence est exactement le mode de panne du projet.
+    if a.porte_envoi not in (None, "auto"):
+        try:
+            if float(a.porte_envoi) < 0:
+                raise ValueError
+        except ValueError:
+            ap.error("--porte-envoi attend un nombre de minutes positif, ou "
+                     f"rien du tout pour lire la production : {a.porte_envoi!r}")
     if a.comparer and a.axe != "cote":
         ap.error("--axe n'a pas de sens avec --comparer : la comparaison "
                  "n'affiche que des totaux, sans découpage en bandes.")
@@ -913,6 +1045,10 @@ def main() -> int:
         if a.joues != "tous":
             criteres.append("cliqués sur « Jouer »" if a.joues == "oui"
                             else "alertés et NON cliqués")
+        if getattr(selectionner, "rejets", None):
+            criteres.append(
+                f"porte d'envoi rejouée : {selectionner.rejets['n_ecartes']} "
+                f"opportunités écartées (mi-temps / fenêtre morte)")
         raise SystemExit(
             "Aucune opportunité ne passe ces filtres — il n'y a rien à "
             "mesurer.\n  " + "\n  ".join(criteres)
@@ -925,6 +1061,32 @@ def main() -> int:
               + ("UNIQUEMENT les paris cliqués sur « Jouer »" if a.joues == "oui"
                  else "UNIQUEMENT les paris alertés et NON cliqués"))
     print(f"Mise notionnelle : {a.stake:g} €")
+    rej = getattr(selectionner, "rejets", None)
+    if rej:
+        print(f"Porte d'ENVOI rejouée : mi-temps écartée, et fenêtre morte de "
+              f"{rej['minutes']:g} min\n  ({rej['source']})")
+        # ⚠️ Ces deux nombres portent sur la population AVANT le partage
+        # joué / non joué : le rejeu s'applique aux deux lots, et donner son
+        # compte après le partage laisserait croire qu'il ne touche que celui
+        # qu'on regarde.
+        print(f"  {rej['n_ecartes']} opportunités écartées sur "
+              f"{rej['n_avant']} "
+              f"({100 * rej['n_ecartes'] / rej['n_avant']:.1f} %) — elles "
+              f"n'auraient jamais atteint Telegram.\n"
+              f"  (comptées AVANT le partage joué / non joué)")
+        # Le contrôle qui décide si ce rejeu vaut quelque chose. Un pari
+        # cliqué est venu d'un message : le filtre ne devrait pas pouvoir en
+        # tuer. Ce qu'il en tue est son taux d'erreur, imprimé qu'il soit nul
+        # ou non — un contrôle qu'on ne montre que quand il passe n'est pas
+        # un contrôle.
+        if rej["n_joues_avant"]:
+            part = 100 * rej["n_ecartes_joues"] / rej["n_joues_avant"]
+            marque = "  ⚠️ le rejeu est trop large" if part > 2 else ""
+            print(f"  CONTRÔLE — dont {rej['n_ecartes_joues']} déjà CLIQUÉS "
+                  f"sur « Jouer » ({part:.1f} % des "
+                  f"{rej['n_joues_avant']} joués) : un pari cliqué a forcément "
+                  f"été alerté,\n  donc ce nombre est le taux d'erreur du "
+                  f"rejeu, et non un résultat.{marque}")
     if fenetre:
         print(fenetre)
     print(f"{len(opp)} opportunités dédupliquées, sur {len(rows)} lignes\n")
