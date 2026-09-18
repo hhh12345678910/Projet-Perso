@@ -33,6 +33,7 @@ from ..clv import aggregate as clv_aggregate
 from ..clv import clv_pct
 from ..clv import pnl as clv_pnl
 from ..clv import settle as clv_settle
+from .perimetre import taille_echantillon
 
 
 def _gains(rows: list, stake: float) -> list:
@@ -190,11 +191,22 @@ def resume(rows: list, stake: float) -> dict:
                          if r["closing_fair_odd"] and float(r["closing_fair_odd"]) > 0])
     n = len(rows)
     non_regles = n - c["n_regles"]
+    # ⚠️ « Non réglé » recouvre DEUX situations qu'il ne faut pas additionner
+    # en silence. Le résultat peut manquer — le match est joué mais aucune
+    # source ne l'a rendu — ou le résultat peut être CONNU sans que le moteur
+    # sache en tirer un verdict : un `totals` dont les scores sont nuls en
+    # base rend `None` alors que le vainqueur est là. Le premier cas se
+    # rattrape avec `results-update`, le second jamais. Les confondre ferait
+    # promettre un rattrapage impossible.
+    resultat_connu_non_reglable = sum(
+        1 for r in rows if r["winner"] and statut_de(r) is None)
     return {
         "opportunities": n,
         "matches": c["n_matchs"],
         "settled": c["n_regles"],
         "unsettled": non_regles,
+        "unsettled_no_result": non_regles - resultat_connu_non_reglable,
+        "unsettled_result_known": resultat_connu_non_reglable,
         "settlement_rate": round(100.0 * c["n_regles"] / n, 2) if n else None,
         "clv_n": c["n_clv"],
         "clv_coverage": round(100.0 * c["n_clv"] / n, 2) if n else None,
@@ -212,6 +224,15 @@ def resume(rows: list, stake: float) -> dict:
         "played": c["n_joues"],
         "sigma_roi": c["sigma_roi"],
         "sigma_clv": c["sigma_clv"],
+        # ⚠️ INDICATEURS DE VOLUME, PAS DE SIGNIFICATIVITÉ. Deux, et non un :
+        # le CLV se mesure sur les paris dont la clôture est capturée, le ROI
+        # uniquement sur les paris RÉGLÉS. Un lot de 5 000 opportunités dont
+        # 40 sont réglées porte un « très bon » échantillon de CLV et un
+        # « petit » échantillon de ROI — un seul chiffre cacherait l'un des
+        # deux, et ce serait toujours le plus fragile.
+        "sample": taille_echantillon(n),
+        "sample_settled": taille_echantillon(c["n_regles"]),
+        "sample_clv": taille_echantillon(c["n_clv"]),
     }
 
 
@@ -247,6 +268,32 @@ def avertissements(bloc: dict, date_from: "str | None" = None,
             f"Seulement {bloc['settled']} paris réglés : à cet effectif "
             f"l'intervalle de confiance du ROI dépasse tout écart qu'on "
             f"chercherait à y lire. Indice, pas résultat.")
+
+    # ⚠️ AUCUNE CLÔTURE DU TOUT : la CLV n'est pas « nulle », elle n'existe
+    # pas. Le distinguer d'une CLV de 0 % est indispensable — l'un veut dire
+    # « aucun edge mesuré », l'autre « rien n'a été mesuré ».
+    if bloc["clv_n"] == 0:
+        out.append(
+            "Aucune ligne de clôture déviguée sur ce lot : la CLV est "
+            "INDISPONIBLE, pas nulle. Aucun jugement sur la qualité du prix "
+            "n'est possible ici.")
+
+    # Le volume, énoncé comme un volume.
+    ech = bloc.get("sample_settled") or {}
+    if bloc["settled"] and ech.get("niveau") in ("petit", "moyen"):
+        out.append(
+            f"{ech['libelle']} pour le ROI : {bloc['settled']} paris réglés. "
+            f"C'est une indication de VOLUME, pas une significativité "
+            f"statistique — un effectif suffisant ne rend pas un écart réel.")
+
+    # Résultat connu mais verdict impossible : ça ne se rattrape pas.
+    inutilisables = bloc.get("unsettled_result_known") or 0
+    if inutilisables:
+        out.append(
+            f"{inutilisables} opportunité(s) ont un résultat en base que "
+            f"`clv.settle` ne sait pas trancher (scores manquants sur un "
+            f"`totals`, par exemple). Elles resteront NON RÉGLÉES : relancer "
+            f"l'ingestion des résultats n'y changera rien.")
 
     # ⚠️ Le trou de devig. Il ne se répare pas et il doit donc se DIRE.
     if date_from is None or str(date_from) < DEVIG_COMPLET_DEPUIS:

@@ -37,6 +37,10 @@ from pathlib import Path
 from .filtres import Filtres
 from .metriques import (avertissements, clv_de, resume, statut_de,
                         _cellule, _gains)
+from .perimetre import (BANDES_DELAI, BORNES_EV, MARCHES_ANALYTICS,
+                        SPORTS_ANALYTICS, bande_delai, libelle_book,
+                        libelle_marche, libelle_sport, ordre_delai,
+                        taille_echantillon)
 from .populations import Population, alias_de, EXPLICATION, LIMITES
 from .requete import construire
 
@@ -156,29 +160,113 @@ def _charger(db_path, filtres) -> "tuple[list, dict]":
 
 # ── L'API publique du module ─────────────────────────────────────────
 
+def _recensement_exclus(con) -> dict:
+    """Combien de détections le périmètre écarte, et pour quelle raison.
+
+    Trois comptes sur `value_bets` — pas sur les opportunités dédupliquées :
+    on compte ce qui n'entre PAS, et la déduplication ne s'applique qu'à ce
+    qui entre. Le total brut est rendu avec, pour que l'écart se vérifie à la
+    soustraction plutôt que sur parole."""
+    ms = ", ".join("?" * len(SPORTS_ANALYTICS))
+    mm = ", ".join("?" * len(MARCHES_ANALYTICS))
+    def compte(sql, params=()):
+        return con.execute(sql, params).fetchone()[0]
+    return {
+        "total_detections": compte("SELECT COUNT(*) FROM value_bets"),
+        "sans_evenement": compte(
+            "SELECT COUNT(*) FROM value_bets vb "
+            "WHERE NOT EXISTS (SELECT 1 FROM events e "
+            "                   WHERE e.event_key = vb.event_key)"),
+        "sport_hors_perimetre": compte(
+            f"SELECT COUNT(*) FROM value_bets vb "
+            f"JOIN events e ON e.event_key = vb.event_key "
+            f"WHERE lower(e.sport) NOT IN ({ms})", SPORTS_ANALYTICS),
+        "marche_hors_perimetre": compte(
+            f"SELECT COUNT(*) FROM value_bets WHERE market NOT IN ({mm})",
+            MARCHES_ANALYTICS),
+    }
+
+
 def valeurs_disponibles(db_path=DB_DEFAUT) -> dict:
     """De quoi peupler les listes déroulantes — LU DANS LA BASE.
 
     ⚠️ Les books viennent de `value_bets`, jamais de `played_bets` dont
     76,6 % des lignes portent un libellé d'affichage. Proposer « StarCasino »
     et « starcasino_sport » comme deux choix distincts serait un piège."""
+    marqueurs_s = ", ".join("?" * len(SPORTS_ANALYTICS))
+    marqueurs_m = ", ".join("?" * len(MARCHES_ANALYTICS))
     with _connexion(db_path) as con:
-        def col(sql):
-            return [r[0] for r in con.execute(sql) if r[0] not in (None, "")]
+        def col(sql, params=()):
+            return [r[0] for r in con.execute(sql, params)
+                    if r[0] not in (None, "")]
         bornes = con.execute(
             "SELECT MIN(substr(detected_at,1,10)), MAX(substr(detected_at,1,10)) "
             "FROM value_bets").fetchone()
+        # ⚠️ TOUT EST BORNÉ AU PÉRIMÈTRE, Y COMPRIS LES LISTES DE CHOIX.
+        # Proposer « basketball » dans un menu qui le refusera ensuite serait
+        # un piège ; ne proposer que ce qui est analysable est la seule
+        # présentation honnête. Les books et les compétitions sont eux aussi
+        # restreints aux sports du périmètre : un bookmaker qui n'apparaît
+        # que sur du hockey n'a rien à faire dans la liste.
+        sports = sorted(col(
+            f"SELECT DISTINCT lower(sport) FROM events "
+            f"WHERE lower(sport) IN ({marqueurs_s})", SPORTS_ANALYTICS))
+        books = sorted(col(
+            f"SELECT DISTINCT vb.book FROM value_bets vb "
+            f"JOIN events e ON e.event_key = vb.event_key "
+            f"WHERE lower(e.sport) IN ({marqueurs_s}) "
+            f"  AND vb.market IN ({marqueurs_m})",
+            tuple(SPORTS_ANALYTICS) + tuple(MARCHES_ANALYTICS)))
+        marches = sorted(col(
+            f"SELECT DISTINCT market FROM value_bets "
+            f"WHERE market IN ({marqueurs_m})", MARCHES_ANALYTICS))
+        ligues = sorted(col(
+            f"SELECT DISTINCT league FROM events "
+            f"WHERE league IS NOT NULL AND lower(sport) IN ({marqueurs_s})",
+            SPORTS_ANALYTICS))
         return {
-            "sports": sorted(col(
-                "SELECT DISTINCT lower(sport) FROM events WHERE sport IS NOT NULL")),
-            "bookmakers": sorted(col("SELECT DISTINCT book FROM value_bets")),
-            "markets": sorted(col("SELECT DISTINCT market FROM value_bets")),
-            "leagues": sorted(col(
-                "SELECT DISTINCT league FROM events WHERE league IS NOT NULL")),
+            "sports": sports,
+            "sports_labels": {s: libelle_sport(s) for s in sports},
+            "bookmakers": books,
+            "bookmakers_labels": {b: libelle_book(b) for b in books},
+            "markets": marches,
+            "markets_labels": {m: libelle_marche(m) for m in marches},
+            "leagues": ligues,
+            # Les bandes que l'interface propose en cases à cocher. Elles
+            # viennent d'ici et non d'une liste recopiée dans le JavaScript :
+            # une bande ajoutée au moteur doit apparaître dans l'interface
+            # sans qu'on touche au frontend.
+            "ev_bands": list(_ordre_ev()),
+            "odds_bands": [{"key": lab, "min": lo,
+                            "max": None if hi >= 1e9 else hi}
+                           for lab, lo, hi in _bandes_cote()],
+            "delay_bands": [{"key": lab, "min": lo, "max": hi}
+                            for lab, lo, hi in BANDES_DELAI],
             "populations": [
                 {"value": p.value, "explication": EXPLICATION[p],
                  "limites": list(LIMITES[p])} for p in Population],
             "date_min": bornes[0], "date_max": bornes[1],
+            # ⚠️ Le périmètre est ANNONCÉ, pas subi en silence : l'utilisateur
+            # doit savoir que son total ne couvre pas tout ce qu'il a détecté.
+            "perimetre": {
+                "sports": list(SPORTS_ANALYTICS),
+                "markets": list(MARCHES_ANALYTICS),
+                # ⚠️ CE QUE LE PÉRIMÈTRE ÉCARTE EST COMPTÉ, PAS SUPPOSÉ.
+                # Un total de 27 000 opportunités là où le daemon en a détecté
+                # 44 000 se lit comme un bug tant que l'écart n'est pas
+                # chiffré. Ces trois nombres le rendent vérifiable, et la
+                # ligne `sans_evenement` nomme le cas le moins évident : une
+                # détection dont l'événement manque n'a pas de sport, donc
+                # ne peut pas être déclarée dans la portée.
+                "exclus": _recensement_exclus(con),
+                "pourquoi": (
+                    "L'Analytics se limite au football et au tennis, marchés "
+                    "H2H et Totals. Les autres sports n'ont aucune source de "
+                    "résultats (0 résultat sur 501 matchs de basket, 95 de "
+                    "volley, 21 de hockey) et les autres marchés ne sont "
+                    "jamais réglés par `clv.settle`. Les données restent en "
+                    "base ; seule l'analyse les écarte."),
+            },
         }
 
 
@@ -204,23 +292,65 @@ def analyser(db_path=DB_DEFAUT, filtres=None, granularite="semaine") -> dict:
         },
         "summary": bloc,
         "warnings": avertissements(bloc, filtres.date_from, filtres.date_to),
-        "by_time": _decouper(lignes, filtres.stake,
-                             lambda r: _bande_temps(r, granularite),
-                             ordre=None, tri=True),
-        "by_book": _decouper(lignes, filtres.stake, lambda r: r["book"] or "?"),
+        "by_time": _cumuler(_decouper(lignes, filtres.stake,
+                                      lambda r: _bande_temps(r, granularite),
+                                      ordre=None, tri=True)),
+        "by_book": _decouper(lignes, filtres.stake, lambda r: r["book"] or "?",
+                             libelle=libelle_book),
         "by_sport": _decouper(lignes, filtres.stake,
-                              lambda r: r["sport"] or "?"),
+                              lambda r: r["sport"] or "?",
+                              ordre=list(SPORTS_ANALYTICS),
+                              libelle=libelle_sport),
+        "by_market": _decouper(lignes, filtres.stake,
+                               lambda r: r["market"] or "?",
+                               ordre=list(MARCHES_ANALYTICS),
+                               libelle=libelle_marche),
         "by_odds": _decouper(lignes, filtres.stake,
                              lambda r: _bande_cote(float(r["odd_taken"])),
                              ordre=[l for l, _, _ in _bandes_cote()]),
         "by_ev": _decouper(lignes, filtres.stake,
                            lambda r: _bande_ev(float(r["ev_pct"] or 0.0)),
                            ordre=_ordre_ev()),
+        "by_delay": _decouper(lignes, filtres.stake,
+                              lambda r: bande_delai(r["delai_h"]),
+                              ordre=ordre_delai()),
         "matrix": _matrice(lignes, filtres.stake),
+        # La règle d'EV RÉELLEMENT appliquée, sport par sport — relisible.
+        "ev_rules": {
+            "global": list(filtres.ev_bandes),
+            "by_sport": {s: list(b) for s, b in filtres.ev_par_sport},
+            "sports_analyses": list(filtres.sports_effectifs()),
+        },
     }
 
 
-def _decouper(lignes, stake, cle, ordre=None, tri=False) -> list:
+def _cumuler(tranches: list) -> list:
+    """Ajoute le P&L cumulé et la CLV cumulée à une série temporelle.
+
+    ⚠️ LA CLV CUMULÉE EST UNE MOYENNE PONDÉRÉE PAR L'EFFECTIF, jamais une
+    moyenne de moyennes. Une semaine à +20 % sur 3 paris et une semaine à
+    +2 % sur 3 000 ne se moyennent pas à +11 % : ce serait donner au bruit le
+    même poids qu'au signal. On cumule donc les sommes et les effectifs.
+
+    Les périodes sans mesure ne cassent pas la courbe : le cumul REPORTE la
+    dernière valeur connue au lieu de rendre `None`, sinon une semaine creuse
+    trouerait un P&L cumulé qui, lui, n'a pas bougé."""
+    pnl, somme_clv, n_clv = 0.0, 0.0, 0
+    out = []
+    for t in tranches:
+        if t["pnl"] is not None:
+            pnl += t["pnl"]
+        if t["clv"] is not None and t["clv_n"]:
+            somme_clv += t["clv"] * t["clv_n"]
+            n_clv += t["clv_n"]
+        out.append({**t,
+                    "pnl_cumul": round(pnl, 2),
+                    "clv_cumul": round(somme_clv / n_clv, 2) if n_clv else None,
+                    "clv_n_cumul": n_clv})
+    return out
+
+
+def _decouper(lignes, stake, cle, ordre=None, tri=False, libelle=None) -> list:
     """Un découpage par une clé, chaque tranche portant SES effectifs.
 
     ⚠️ Une tranche dont le libellé n'est pas dans l'ordre canonique s'ajoute
@@ -235,7 +365,12 @@ def _decouper(lignes, stake, cle, ordre=None, tri=False) -> list:
     libelles = [l for l in libelles if l in groupes] + reste
     if tri:
         libelles = sorted(groupes)
-    return [{"key": lib, **resume(groupes[lib], stake)} for lib in libelles]
+    # `label` est de PRÉSENTATION et `key` reste canonique : le frontend
+    # affiche le premier et renvoie le second dans ses filtres. Les confondre
+    # ferait repartir « Unibet BE » vers l'API, qui ne connaît que
+    # `unibet_be` — et rendrait zéro ligne sous un en-tête normal.
+    return [{"key": lib, "label": libelle(lib) if libelle else lib,
+             **resume(groupes[lib], stake)} for lib in libelles]
 
 
 def _matrice(lignes, stake) -> dict:
@@ -254,6 +389,35 @@ def _matrice(lignes, stake) -> dict:
         "rows": lig, "cols": col,
         "cells": [{"odds": a, "ev": b, **resume(cases.get((a, b), []), stake)}
                   for a in lig for b in col],
+    }
+
+
+def meilleurs_segments(db_path=DB_DEFAUT, filtres=None, *, min_n=None,
+                       trier_par="clv", limite=25, profondeur=3) -> dict:
+    """Les combinaisons qui ressortent du lot filtré — avec leurs garde-fous.
+
+    ⚠️ LE LOT EST CELUI DES FILTRES COURANTS, pas la base entière. Chercher
+    des segments sur un lot déjà restreint puis les présenter comme des
+    propriétés générales serait une double sélection ; l'appelant reçoit donc
+    les filtres appliqués avec le résultat, pour que les deux ne se lisent
+    jamais séparément."""
+    from .perimetre import MIN_SEGMENT
+    from .segments import chercher
+
+    filtres = (filtres or Filtres()).valider()
+    lignes, info = _charger(db_path, filtres)
+    resultat = chercher(
+        lignes, filtres.stake, _bande_cote, _bande_ev,
+        min_n=MIN_SEGMENT if min_n is None else min_n,
+        trier_par=trier_par, limite=limite, profondeur=profondeur)
+    return {
+        "filters": filtres.en_dict(),
+        "population": {"value": alias_de(filtres.population).value, **info},
+        # Le total du lot est rendu AVEC les segments : un segment à +12 % de
+        # CLV ne veut pas dire la même chose selon que le lot entier est à
+        # +2 % ou à +11 %. Sans le repère, le podium se lit comme un exploit.
+        "overall": resume(lignes, filtres.stake),
+        **resultat,
     }
 
 

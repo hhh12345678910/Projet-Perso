@@ -190,12 +190,32 @@ def test_une_opportunite_dont_un_exemplaire_est_dans_la_bande_survit(tmp_path):
     assert len(items) == 1 and items[0]["odds"] == 2.10
 
 
-def test_un_evenement_sans_equipes_ne_fusionne_pas_avec_un_autre(tmp_path):
-    """Sans repli sur `event_key`, toutes les lignes sans équipes tomberaient
-    dans un même groupe et se fondraient en une seule opportunité."""
+def test_une_detection_SANS_EVENEMENT_sort_du_perimetre(tmp_path):
+    """PHASE 4 — ce test affirme maintenant un fait DIFFÉRENT, et il faut le
+    dire franchement plutôt que de bricoler l'ancien.
+
+    L'intention d'origine était de vérifier le repli de la clé de dédup sur
+    `event_key` quand les équipes manquent. Or `events.home` est NOT NULL dans
+    le schéma de production : une ligne sans équipes ne peut provenir que
+    d'une jointure à VIDE, c'est-à-dire d'un `events` absent — et un événement
+    absent n'a pas de sport non plus.
+
+    Le périmètre Analytics écarte donc ces détections AVANT que la clé de
+    déduplication entre en jeu : on ne peut pas affirmer qu'une détection de
+    sport inconnu est du football ou du tennis. Le repli de `EXPR_CLE` reste
+    dans le SQL comme garde défensive — il n'est simplement plus atteignable
+    par cette voie, et prétendre le tester ici serait un test qui ne teste
+    rien.
+
+    ⚠️ La contrepartie est réelle et se mesure : ces détections orphelines
+    disparaissent des totaux. C'est pourquoi `/api/filters` en rend le compte
+    sous `perimetre.exclus` — un écart qu'on ne peut pas voir est exactement
+    le mode de panne que ce projet combat."""
     import sqlite3
     p = monter(tmp_path, [Opp(1, home="A", away="B"), Opp(2, home="C", away="D")])
+    assert _n(p) == 2
     con = sqlite3.connect(str(p))
-    con.execute("DELETE FROM events")       # les deux perdent leurs équipes
+    con.execute("DELETE FROM events")
     con.commit(); con.close()
-    assert _n(p) == 2, "deux matchs sans équipes se sont confondus"
+    assert _n(p) == 0, ("une détection sans événement doit sortir du périmètre, "
+                        "pas entrer dans un total « football + tennis »")

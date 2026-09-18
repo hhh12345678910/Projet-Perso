@@ -269,3 +269,192 @@ td.num { text-align: right; }
   .kpi .valeur { font-size: 21px; }
   .kpi.vedette .valeur { font-size: 25px; }
 }
+
+/* ═══════════════════════════════════════════════════════════════════
+   PHASE 4 — cases à cocher, badges d'échantillon, segments.
+
+   ⚠️ LE CTRL+CLIC EST MORT, ET C'EST LE POINT.
+   Un `<select multiple>` demande de savoir qu'il faut maintenir Ctrl, ne
+   montre pas la sélection quand la liste dépasse sa hauteur, et perd tout au
+   moindre clic simple. Une case cochée est visible, cliquable au doigt, et
+   ne se perd pas. Le surcoût est de quelques règles de style — il n'y a
+   aucune raison de faire payer l'ergonomie à l'utilisateur.
+   ═══════════════════════════════════════════════════════════════════ */
+
+.cases {
+  border: 1px solid var(--bordure);
+  border-radius: var(--r);
+  background: var(--fond-page);
+  overflow: hidden;
+}
+
+.cases-barre {
+  display: flex;
+  gap: 6px;
+  align-items: center;
+  padding: 6px;
+  border-bottom: 1px solid var(--bordure);
+  flex-wrap: wrap;
+}
+.cases-barre input[type="search"] {
+  flex: 1 1 90px;
+  min-width: 0;
+  font-size: 12px;
+  padding: 4px 7px;
+}
+.cases-barre button {
+  font-size: 11px;
+  padding: 3px 8px;
+  white-space: nowrap;
+}
+
+/* Le défilement est sur la LISTE, jamais sur la page : une longue liste de
+   bookmakers ne doit pas allonger le formulaire au point de repousser le
+   bouton ANALYSER hors de l'écran. */
+.cases-liste {
+  max-height: 168px;
+  overflow-y: auto;
+  padding: 4px;
+}
+.cases-liste.courte { max-height: none; overflow: visible; }
+
+.case {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 5px 7px;
+  border-radius: 6px;
+  cursor: pointer;
+  font-size: 13px;
+  line-height: 1.25;
+  user-select: none;
+}
+.case:hover { background: var(--neutre); }
+.case input { margin: 0; flex: 0 0 auto; width: 15px; height: 15px; cursor: pointer; }
+.case span { flex: 1 1 auto; min-width: 0; overflow-wrap: anywhere; }
+.case.masquee { display: none; }
+/* Une case cochée doit se voir SANS lire la case : le fond porte le signal,
+   pour que l'état de la sélection se lise d'un coup d'œil sur la liste. */
+.case:has(input:checked) { background: var(--pos-1); color: #0b0b0b; }
+
+.cases-vide {
+  padding: 10px 8px;
+  font-size: 12px;
+  color: var(--encre-muet);
+}
+
+/* ── EV par sport ────────────────────────────────────────────────── */
+
+.ev-sport {
+  border: 1px solid var(--bordure);
+  border-left: 3px solid var(--pos);
+  border-radius: var(--r);
+  padding: 8px 10px 10px;
+  margin-top: 8px;
+  background: var(--fond-page);
+}
+.ev-sport > h4 {
+  margin: 0 0 6px;
+  font-size: 12px;
+  letter-spacing: .04em;
+  text-transform: uppercase;
+  color: var(--encre-2);
+}
+.ev-sport .cases-liste { max-height: none; overflow: visible; }
+
+/* ── Badges de taille d'échantillon ──────────────────────────────── */
+
+/* ⚠️ Ces badges disent un VOLUME. Jamais « significatif » — le mot n'apparaît
+   nulle part dans l'interface, parce qu'un effectif ne le décide pas. */
+.ech {
+  display: inline-block;
+  font-size: 10.5px;
+  font-weight: 600;
+  letter-spacing: .03em;
+  padding: 2px 6px;
+  border-radius: 999px;
+  white-space: nowrap;
+  border: 1px solid transparent;
+}
+.ech.tres_bon { background: var(--pos-1); color: #0b0b0b; }
+.ech.bon      { background: var(--neutre); color: var(--encre); border-color: var(--pos); }
+.ech.moyen    { background: var(--neutre); color: var(--encre-2); border-color: var(--axe); }
+.ech.petit    { background: var(--neg-1); color: #0b0b0b; }
+
+/* ── Meilleurs segments ──────────────────────────────────────────── */
+
+table.segments { width: 100%; border-collapse: collapse; font-size: 13px; }
+table.segments th, table.segments td {
+  padding: 7px 9px;
+  border-bottom: 1px solid var(--bordure);
+  text-align: left;
+  vertical-align: middle;
+}
+table.segments th { font-size: 11px; text-transform: uppercase; color: var(--encre-2); }
+table.segments td.num { text-align: right; font-variant-numeric: tabular-nums; }
+table.segments tbody tr:hover { background: var(--neutre); }
+
+.crit {
+  display: inline-block;
+  font-size: 11.5px;
+  padding: 2px 7px;
+  margin: 1px 3px 1px 0;
+  border-radius: 5px;
+  background: var(--neutre);
+  border: 1px solid var(--bordure);
+  white-space: nowrap;
+}
+.crit b { font-weight: 600; }
+
+/* Le bandeau de mise en garde du data mining. Il est AU-DESSUS du tableau et
+   dans le flux, jamais en note de bas de page : un classement se lit avant
+   qu'on arrive en bas. */
+.mise-en-garde {
+  border: 1px solid var(--alerte);
+  border-left-width: 4px;
+  border-radius: var(--r);
+  padding: 10px 12px;
+  margin: 0 0 12px;
+  font-size: 12.5px;
+  line-height: 1.45;
+  color: var(--encre);
+  background: var(--fond-page);
+}
+.mise-en-garde b { color: var(--alerte); }
+.mise-en-garde p { margin: 0 0 6px; }
+.mise-en-garde p:last-child { margin-bottom: 0; }
+
+/* ── Bandes de délai en boutons rapides ──────────────────────────── */
+
+.rapides { display: flex; flex-wrap: wrap; gap: 5px; margin-top: 6px; }
+.rapides button {
+  font-size: 11.5px;
+  padding: 3px 9px;
+  border-radius: 999px;
+}
+.rapides button.actif {
+  /* ⚠️ `--pos` sur du blanc donne 3,64:1 — assez pour du gros texte, pas pour
+     une étiquette de 11,5 px. Le palier 3 de la même arme monte à 8:1 sans
+     changer de teinte : la couleur reste celle du positif, la lisibilité
+     cesse d'être un pari. */
+  background: var(--pos-3);
+  border-color: var(--pos-3);
+  color: #fff;
+}
+
+/* ── Téléphone ───────────────────────────────────────────────────── */
+
+@media (max-width: 720px) {
+  /* Les groupes de cases deviennent des sections repliables : à 400 px, six
+     listes déroulantes ouvertes font défiler la page sur trois écrans avant
+     d'atteindre le bouton ANALYSER. */
+  .champ.pliable > .cases { display: none; }
+  .champ.pliable.ouvert > .cases { display: block; }
+  .champ.pliable > label { cursor: pointer; }
+  .champ.pliable > label::after {
+    content: ' ▸';
+    color: var(--encre-muet);
+  }
+  .champ.pliable.ouvert > label::after { content: ' ▾'; }
+  .cases-liste { max-height: 200px; }
+}

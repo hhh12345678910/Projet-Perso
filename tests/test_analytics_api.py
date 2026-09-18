@@ -370,13 +370,20 @@ def test_un_book_hostile_est_refuse_et_la_base_est_intacte(client, base, mechant
 
 
 @pytest.mark.parametrize("mechant", HOSTILES)
-def test_un_sport_hostile_ne_rapproche_rien_et_ne_casse_rien(client, base, mechant):
-    """Les sports sont un ensemble ouvert : la valeur part en PARAMÈTRE, ne
-    rapproche rien, et n'est jamais interprétée."""
+def test_un_sport_hostile_est_refuse_en_400_et_la_base_est_intacte(client, base, mechant):
+    """PHASE 4 — 400 au lieu de 200/n=0, et c'est plus sûr, pas moins.
+
+    La valeur n'atteint toujours aucune chaîne SQL ; elle est simplement
+    rejetée plus tôt, par le périmètre. La différence pour l'utilisateur est
+    qu'un refus explicite remplace un zéro muet — deux causes, un chiffre,
+    exactement ce que le projet cherche à éviter partout ailleurs.
+
+    L'invariant de sûreté, lui, est identique et toujours vérifié : la base
+    est octet pour octet la même après la requête."""
     avant = hashlib.sha256(base.read_bytes()).hexdigest()
     r = client.get("/api/analyse", params={"sports": mechant})
-    assert r.status_code == 200
-    assert r.json()["summary"]["opportunities"] == 0
+    assert r.status_code == 400
+    assert "périmètre" in r.json()["detail"]
     assert hashlib.sha256(base.read_bytes()).hexdigest() == avant
 
 
@@ -565,3 +572,208 @@ def test_les_identifiants_sont_bien_decoupes_par_virgules(client):
         cle = {"sports": "sports", "bookmakers": "bookmakers",
                "markets": "markets"}[champ]
         assert len(d["filters"][cle]) == attendu, champ
+
+
+# ══════════════════════════════════════════════════════════════════════
+# PHASE 4 — les nouveaux paramètres, réellement appliqués côté serveur.
+#
+# ⚠️ CHAQUE TEST VÉRIFIE LE CONTENU DU LOT, JAMAIS LA PRÉSENCE DU PARAMÈTRE.
+# Un paramètre accepté puis ignoré rendrait exactement la même réponse qu'un
+# filtre appliqué — à ceci près que les chiffres seraient faux. C'est le mode
+# de panne que l'énoncé interdit explicitement (« NE PAS implémenter un faux
+# filtrage frontend »).
+# ══════════════════════════════════════════════════════════════════════
+
+
+def test_ev_bands_filtre_REELLEMENT_le_lot(client):
+    tout = client.get("/api/analyse").json()["summary"]["opportunities"]
+    band = client.get("/api/analyse",
+                      params={"ev_bands": "5-8%"}).json()["summary"]
+    assert 0 < band["opportunities"] < tout
+    d = client.get("/api/detail",
+                   params={"ev_bands": "5-8%", "per_page": 500}).json()
+    assert d["items"], "aucune ligne : le filtre a tout mangé"
+    for it in d["items"]:
+        assert 5.0 <= it["ev_pct"] < 8.0
+
+
+def test_ev_bands_repetable_fait_une_UNION(client):
+    a = client.get("/api/analyse", params={"ev_bands": "5-8%"}).json()
+    b = client.get("/api/analyse", params={"ev_bands": "8-15%"}).json()
+    u = client.get("/api/analyse?ev_bands=5-8%25&ev_bands=8-15%25").json()
+    assert (u["summary"]["opportunities"]
+            == a["summary"]["opportunities"] + b["summary"]["opportunities"])
+
+
+def test_ev_bands_accepte_aussi_les_virgules(client):
+    a = client.get("/api/analyse?ev_bands=5-8%25&ev_bands=8-15%25").json()
+    b = client.get("/api/analyse?ev_bands=5-8%25,8-15%25").json()
+    assert a["summary"]["opportunities"] == b["summary"]["opportunities"]
+
+
+def test_ev_par_sport_est_applique_au_LOT_et_sans_fuite(client):
+    """⚠️ LE TEST CENTRAL DE LA PHASE 4 CÔTÉ API."""
+    d = client.get("/api/detail",
+                   params={"ev_bands_soccer": "5-8%",
+                           "ev_bands_tennis": "35%+",
+                           "per_page": 500}).json()
+    assert d["items"], "le filtre par sport a vidé le lot"
+    vus = set()
+    for it in d["items"]:
+        vus.add(it["sport"])
+        if it["sport"] == "soccer":
+            assert 5.0 <= it["ev_pct"] < 8.0, "règle tennis appliquée au foot"
+        else:
+            assert it["ev_pct"] >= 35.0, "règle foot appliquée au tennis"
+    assert vus <= {"soccer", "tennis"}
+
+
+def test_ev_par_sport_est_RELISIBLE_dans_la_reponse(client):
+    r = client.get("/api/analyse", params={"ev_bands_tennis": "35%+"}).json()
+    assert r["ev_rules"]["by_sport"] == {"tennis": ["35%+"]}
+    assert r["filters"]["ev_bands_by_sport"] == {"tennis": ["35%+"]}
+
+
+def test_un_sport_sans_regle_suit_la_regle_GLOBALE(client):
+    r = client.get("/api/analyse",
+                   params={"ev_bands": "8-15%",
+                           "ev_bands_tennis": "35%+"}).json()
+    assert r["ev_rules"]["global"] == ["8-15%"]
+    d = client.get("/api/detail",
+                   params={"ev_bands": "8-15%", "ev_bands_tennis": "35%+",
+                           "per_page": 500}).json()
+    for it in d["items"]:
+        if it["sport"] == "soccer":
+            assert 8.0 <= it["ev_pct"] < 15.0
+
+
+@pytest.mark.parametrize("param,valeur", [
+    ("ev_bands", "inventee"),
+    ("ev_bands", "12-13%"),
+    ("ev_bands_hockey", "5-8%"),
+    ("ev_bands_basketball", "5-8%"),
+])
+def test_une_bande_ou_un_sport_invalide_est_refuse(client, base, param, valeur):
+    avant = hashlib.sha256(base.read_bytes()).hexdigest()
+    r = client.get("/api/analyse", params={param: valeur})
+    assert r.status_code == 400
+    assert hashlib.sha256(base.read_bytes()).hexdigest() == avant
+
+
+@pytest.mark.parametrize("m", ["h2h_h1", "totals_h1", "handicap", "btts"])
+def test_un_marche_hors_perimetre_est_refuse(client, m):
+    r = client.get("/api/analyse", params={"markets": m})
+    assert r.status_code == 400
+    assert "périmètre" in r.json()["detail"]
+
+
+def test_le_perimetre_est_ANNONCE_par_api_filters(client):
+    p = client.get("/api/filters").json()["perimetre"]
+    assert p["sports"] == ["soccer", "tennis"]
+    assert p["markets"] == ["h2h", "totals"]
+    assert p["pourquoi"]
+    assert p["exclus"]["total_detections"] >= 0
+
+
+def test_api_filters_rend_les_LIBELLES(client):
+    f = client.get("/api/filters").json()
+    assert f["sports_labels"]["soccer"] == "Soccer"
+    assert f["bookmakers_labels"].get("unibet_be") == "Unibet BE"
+    assert f["markets_labels"]["h2h"] == "H2H"
+    # ⚠️ Les valeurs canoniques restent canoniques : c'est elles qui repartent
+    # en filtre. Un libellé dans `sports` casserait toutes les requêtes.
+    assert all(s == s.lower() for s in f["sports"])
+
+
+def test_les_decoupes_portent_leur_libelle(client):
+    r = client.get("/api/analyse").json()
+    for axe in ("by_book", "by_sport", "by_market"):
+        for t in r[axe]:
+            assert "label" in t and "key" in t
+
+
+def test_les_nouvelles_decoupes_existent_et_SOMMENT(client):
+    r = client.get("/api/analyse").json()
+    n = r["summary"]["opportunities"]
+    for axe in ("by_market", "by_delay"):
+        assert axe in r
+        assert sum(t["opportunities"] for t in r[axe]) == n, axe
+
+
+def test_le_resume_porte_les_indicateurs_de_VOLUME(client):
+    s = client.get("/api/analyse").json()["summary"]
+    for cle in ("sample", "sample_settled", "sample_clv"):
+        assert cle in s and "niveau" in s[cle] and "libelle" in s[cle]
+        assert "significat" not in s[cle]["libelle"].lower()
+
+
+def test_les_cumuls_temporels_sont_rendus(client):
+    for t in client.get("/api/analyse").json()["by_time"]:
+        assert "pnl_cumul" in t and "clv_cumul" in t
+
+
+# ── /api/segments ────────────────────────────────────────────────────
+
+def test_segments_repond_et_porte_sa_mise_en_garde(client):
+    r = client.get("/api/segments", params={"min_n": 1})
+    assert r.status_code == 200
+    d = r.json()
+    assert d["combinaisons_testees"] > 0
+    assert any("DATA MINING" in w for w in d["warnings"])
+    assert d["trier_par"] == "clv"
+    assert "overall" in d
+
+
+def test_segments_refuse_un_tri_inconnu(client):
+    assert client.get("/api/segments", params={"sort": "pnl"}).status_code == 400
+
+
+def test_segments_respecte_les_filtres_recus(client):
+    d = client.get("/api/segments",
+                   params={"min_n": 1, "sports": "tennis"}).json()
+    for s in d["segments"]:
+        for c in s["criteres"]:
+            if c["dimension"] == "sport":
+                assert c["value"] == "tennis"
+
+
+def test_segments_ne_touche_pas_la_base(client, base):
+    avant = hashlib.sha256(base.read_bytes()).hexdigest()
+    client.get("/api/segments", params={"min_n": 1})
+    assert hashlib.sha256(base.read_bytes()).hexdigest() == avant
+
+
+def test_segments_ignore_un_chemin_de_base_passe_en_parametre(client):
+    """La propriété de la Phase 2 doit tenir sur le nouvel endpoint aussi."""
+    ref = client.get("/api/segments", params={"min_n": 1}).json()
+    piege = client.get("/api/segments",
+                       params={"min_n": 1, "db": "/tmp/piege.db"}).json()
+    assert piege["overall"]["opportunities"] == ref["overall"]["opportunities"]
+
+
+@pytest.mark.parametrize("mechant", HOSTILES)
+def test_segments_resiste_aux_injections(client, base, mechant):
+    avant = hashlib.sha256(base.read_bytes()).hexdigest()
+    r = client.get("/api/segments", params={"bookmakers": mechant, "min_n": 1})
+    assert r.status_code == 400
+    assert hashlib.sha256(base.read_bytes()).hexdigest() == avant
+
+
+# ── OpenAPI ──────────────────────────────────────────────────────────
+
+@pytest.mark.parametrize("chemin", ["/api/analyse", "/api/detail",
+                                    "/api/segments"])
+def test_les_nouveaux_parametres_sont_DOCUMENTES(client, chemin):
+    """Un paramètre non documenté est un paramètre que personne ne trouvera."""
+    spec = client.get("/openapi.json").json()
+    noms = {p["name"] for p in spec["paths"][chemin]["get"]["parameters"]}
+    assert "ev_bands" in noms
+    assert "ev_bands_soccer" in noms and "ev_bands_tennis" in noms
+
+
+def test_la_documentation_des_bandes_liste_les_valeurs_REELLES(client):
+    spec = client.get("/openapi.json").json()
+    p = next(x for x in spec["paths"]["/api/analyse"]["get"]["parameters"]
+             if x["name"] == "ev_bands")
+    for bande in ("5-8%", "8-15%", "15-35%", "35%+"):
+        assert bande in p["description"]

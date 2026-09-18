@@ -25,6 +25,7 @@ from datetime import datetime, timedelta
 
 from ..models import Book, MarketType
 from ..reference import KAMBI_BOOKS
+from .perimetre import BORNES_EV, MARCHES_ANALYTICS, SPORTS_ANALYTICS
 from .populations import Population
 
 #: Les books que la base peut contenir. Fermé : il vient de l'énumération du
@@ -33,6 +34,13 @@ BOOKS_CONNUS = frozenset(b.value for b in Book)
 
 #: Les marchés que le moteur produit. Fermé, même raison.
 MARCHES_CONNUS = frozenset(m.value for m in MarketType)
+
+#: ⚠️ Le PÉRIMÈTRE de l'Analytics, plus étroit que ce que la base contient.
+#: Demander un sport ou un marché hors périmètre est REFUSÉ, jamais ignoré en
+#: silence : recevoir zéro ligne sous un en-tête normal est le mode de panne
+#: que tout ce module existe pour empêcher.
+SPORTS_AUTORISES = frozenset(SPORTS_ANALYTICS)
+MARCHES_AUTORISES = frozenset(MARCHES_ANALYTICS)
 
 #: Alias de commodité. `kambi` se déplie en Unibet + 711 + Bingoal + Scooore —
 #: le groupe est LU dans `reference.KAMBI_BOOKS`, jamais recopié : ces books
@@ -94,6 +102,71 @@ def _liste(valeur) -> tuple:
     return tuple(m.strip() for m in (str(x) for x in morceaux) if m.strip())
 
 
+def _bandes_ev(valeur, ou: str) -> tuple:
+    """Valide une sélection de bandes d'EV et la rend dans l'ordre canonique.
+
+    ⚠️ L'ORDRE EST NORMALISÉ pour que deux sélections équivalentes produisent
+    le même `Filtres`, donc la même clé si l'analyse est un jour enregistrée
+    ou mise en cache. « 15-35 %, 5-8 % » et « 5-8 %, 15-35 % » sont la même
+    demande et doivent se sérialiser pareil."""
+    from .perimetre import ordre_ev
+    choisies = _liste(valeur)
+    if not choisies:
+        return ()
+    connues = list(BORNES_EV)
+    for b in choisies:
+        if b not in BORNES_EV:
+            raise FiltreInvalide(
+                f"Bande d'EV inconnue dans {ou} : {b!r}. "
+                f"Connues : {', '.join(connues)}.")
+    vues = set(choisies)
+    canonique = [b for b in ordre_ev() if b in vues]
+    # Une bande connue de `BORNES_EV` mais absente de l'ordre du moteur
+    # s'ajoute en queue plutôt que de disparaître — même règle que les
+    # découpes du service : rien ne sort d'un total sans le dire.
+    return tuple(canonique + [b for b in connues if b in vues
+                              and b not in canonique])
+
+
+#: Préfixe des paramètres d'EV par sport dans une query string :
+#: `?ev_bands_soccer=5-8%&ev_bands_soccer=8-15%&ev_bands_tennis=15-35%`.
+PREFIXE_EV_SPORT = "ev_bands_"
+
+
+def _par_sport_depuis(d: dict) -> tuple:
+    """Lit l'EV par sport sous ses DEUX écritures, sans en privilégier une.
+
+    * `ev_bands_by_sport` : un dict — ce que rend `en_dict`, donc ce qu'un
+      aller-retour JSON doit savoir relire.
+    * `ev_bands_<sport>` : des paramètres plats — la seule forme qu'une query
+      string sache porter sans encoder du JSON dans une URL.
+
+    Les deux se cumulent, la forme plate l'emportant sur le dict pour un même
+    sport : elle est la plus explicite des deux dans une requête écrite à la
+    main."""
+    out: dict = {}
+    table = d.get("ev_bands_by_sport") or d.get("ev_par_sport") or {}
+    if isinstance(table, dict):
+        for sport, bandes in table.items():
+            out[str(sport).strip().lower()] = _liste(bandes)
+    else:
+        for paire in table:
+            try:
+                sport, bandes = paire
+            except (TypeError, ValueError):
+                raise FiltreInvalide(
+                    f"ev_bands_by_sport attend des paires (sport, bandes) — "
+                    f"reçu : {paire!r}") from None
+            out[str(sport).strip().lower()] = _liste(bandes)
+    for cle, valeur in d.items():
+        nom = str(cle)
+        if nom.startswith(PREFIXE_EV_SPORT) and nom != "ev_bands_by_sport":
+            sport = nom[len(PREFIXE_EV_SPORT):].strip().lower()
+            if sport:
+                out[sport] = _liste(valeur)
+    return tuple(sorted((s, b) for s, b in out.items()))
+
+
 @dataclass(frozen=True)
 class Filtres:
     """Les critères d'une analyse. Immuable : deux découpes d'une même analyse
@@ -107,6 +180,17 @@ class Filtres:
     cote_max: "float | None" = None
     ev_min: "float | None" = None
     ev_max: "float | None" = None
+    #: Bandes d'EV cochées, en UNION (OR). Vide = aucune contrainte de bande.
+    #: Se COMBINE avec `ev_min`/`ev_max`, qui restent des bornes globales : les
+    #: deux se cumulent en ET, ce qui permet « les bandes 8-15 et 15-35, mais
+    #: pas en dessous de 10 % » sans inventer une troisième syntaxe.
+    ev_bandes: tuple = ()
+    #: EV PAR SPORT — le cœur de la Phase 4. Tuple de paires
+    #: `(sport, (bandes…))`, et non un dict : un `Filtres` est gelé, et un
+    #: dict muté après validation contournerait silencieusement la
+    #: vérification. Un sport absent de cette table retombe sur la sélection
+    #: globale ci-dessus.
+    ev_par_sport: tuple = ()
     date_from: "str | None" = None
     date_to: "str | None" = None
     delai_min_h: "float | None" = None
@@ -154,15 +238,68 @@ class Filtres:
                 raise FiltreInvalide(
                     f"Marché inconnu : {m!r}. Connus : "
                     + ", ".join(sorted(MARCHES_CONNUS)) + ".")
+            if cle not in MARCHES_AUTORISES:
+                # ⚠️ REFUSÉ, pas ignoré. `clv.settle` ne sait régler ni les
+                # handicaps, ni le BTTS, ni la mi-temps : ces marchés sortent
+                # toujours NON RÉGLÉS. Les accepter rendrait un lot dont le
+                # ROI serait structurellement vide, sous un en-tête normal.
+                raise FiltreInvalide(
+                    f"Marché hors périmètre Analytics : {m!r}. L'Analytics ne "
+                    f"traite que {', '.join(sorted(MARCHES_AUTORISES))} — les "
+                    f"autres marchés ne sont jamais réglés par `clv.settle`, "
+                    f"donc aucun ROI ne peut en sortir. Les données restent "
+                    f"en base, seule l'analyse les écarte.")
             marches.append(cle)
         marches = tuple(dict.fromkeys(marches))
 
-        # Les sports et les ligues sont un ensemble OUVERT : ils viennent des
-        # données, pas d'une énumération. On normalise sans juger — mais une
-        # chaîne vide est refusée, parce qu'elle ne rapprocherait rien tout en
-        # ayant l'air d'un filtre.
+        # Les ligues sont un ensemble OUVERT : elles viennent des données, pas
+        # d'une énumération. On normalise sans juger — mais une chaîne vide est
+        # refusée, parce qu'elle ne rapprocherait rien tout en ayant l'air d'un
+        # filtre. Les SPORTS, eux, sont bornés par le périmètre Analytics.
         sports = tuple(dict.fromkeys(s.strip().lower() for s in self.sports))
+        for s in sports:
+            if s not in SPORTS_AUTORISES:
+                raise FiltreInvalide(
+                    f"Sport hors périmètre Analytics : {s!r}. L'Analytics ne "
+                    f"traite que {', '.join(sorted(SPORTS_AUTORISES))} — "
+                    f"aucune source de résultats n'existe pour les autres "
+                    f"(mesuré : 0 résultat sur 501 matchs de basket, 95 de "
+                    f"volley, 21 de hockey). Les données restent en base.")
         leagues = tuple(dict.fromkeys(g.strip() for g in self.leagues))
+
+        bandes = _bandes_ev(self.ev_bandes, "ev_bandes")
+
+        # EV par sport : chaque entrée est validée comme une sélection à part
+        # entière, et son sport doit lui aussi être dans le périmètre.
+        par_sport = []
+        vus = set()
+        brut = (self.ev_par_sport.items()
+                if isinstance(self.ev_par_sport, dict) else self.ev_par_sport)
+        for paire in brut or ():
+            try:
+                sport, valeurs = paire
+            except (TypeError, ValueError):
+                raise FiltreInvalide(
+                    f"ev_par_sport attend des paires (sport, bandes) — "
+                    f"reçu : {paire!r}") from None
+            cle = str(sport).strip().lower()
+            if cle not in SPORTS_AUTORISES:
+                raise FiltreInvalide(
+                    f"ev_par_sport : sport hors périmètre {cle!r}. Autorisés : "
+                    f"{', '.join(sorted(SPORTS_AUTORISES))}.")
+            if cle in vus:
+                raise FiltreInvalide(
+                    f"ev_par_sport : le sport {cle!r} apparaît deux fois. Une "
+                    f"seule règle par sport, sinon laquelle s'applique ?")
+            vus.add(cle)
+            choisies = _bandes_ev(valeurs, f"ev_par_sport[{cle}]")
+            # Une entrée VIDE est retirée plutôt que conservée : « aucune
+            # bande cochée pour le tennis » veut dire « pas de règle propre au
+            # tennis », et non « aucune opportunité de tennis ». Conserver un
+            # tuple vide ferait rendre zéro ligne de tennis en silence.
+            if choisies:
+                par_sport.append((cle, choisies))
+        par_sport = tuple(sorted(par_sport))
 
         depuis = _jour(self.date_from, "date_from")
         jusqu = _jour(self.date_to, "date_to")
@@ -217,8 +354,32 @@ class Filtres:
             self, sports=sports, books=books, markets=marches, leagues=leagues,
             date_from=depuis, date_to=jusqu, cote_min=cote_min,
             cote_max=cote_max, ev_min=ev_min, ev_max=ev_max,
+            ev_bandes=bandes, ev_par_sport=par_sport,
             delai_min_h=d_min, delai_max_h=d_max, population=population,
             stake=stake, fenetre_morte_min=fm)
+
+    # ── Les règles d'EV, résolues ────────────────────────────────────
+
+    def ev_effectif(self) -> dict:
+        """Ce que l'EV filtre RÉELLEMENT, sport par sport.
+
+        Rend `{sport: (bandes…)}` pour les sports qui ont une règle propre, et
+        la clé `None` pour la règle globale qui s'applique à tous les autres.
+        C'est cette table que le SQL traduit, et c'est elle qu'on affiche à
+        l'utilisateur : une règle par sport qu'on ne peut pas RELIRE serait
+        exactement le genre de filtre qu'on croit appliqué et qui ne l'est
+        pas."""
+        table = {None: self.ev_bandes}
+        table.update(dict(self.ev_par_sport))
+        return table
+
+    def sports_effectifs(self) -> tuple:
+        """Les sports réellement analysés : la sélection, ou tout le périmètre.
+
+        ⚠️ Rien de coché ne veut PAS dire « tous les sports de la base » : le
+        périmètre Analytics s'applique quand même. C'est la seule lecture qui
+        rende le total du tableau égal à la somme de ses tranches."""
+        return self.sports or tuple(SPORTS_ANALYTICS)
 
     # ── Bornes dérivées ──────────────────────────────────────────────
 
@@ -243,6 +404,8 @@ class Filtres:
             "markets": list(self.markets), "leagues": list(self.leagues),
             "odds_min": self.cote_min, "odds_max": self.cote_max,
             "ev_min": self.ev_min, "ev_max": self.ev_max,
+            "ev_bands": list(self.ev_bandes),
+            "ev_bands_by_sport": {s: list(b) for s, b in self.ev_par_sport},
             "date_from": self.date_from, "date_to": self.date_to,
             "delay_min": self.delai_min_h, "delay_max": self.delai_max_h,
             "population": self.population.value, "played": self.joue,
@@ -271,6 +434,8 @@ class Filtres:
             cote_min=d.get("odds_min", d.get("cote_min")),
             cote_max=d.get("odds_max", d.get("cote_max")),
             ev_min=d.get("ev_min"), ev_max=d.get("ev_max"),
+            ev_bandes=multi("ev_band", "ev_bands", "ev_bands[]", "ev_bandes"),
+            ev_par_sport=_par_sport_depuis(d),
             date_from=d.get("date_from"), date_to=d.get("date_to"),
             delai_min_h=d.get("delay_min", d.get("delai_min_h")),
             delai_max_h=d.get("delay_max", d.get("delai_max_h")),

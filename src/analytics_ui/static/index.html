@@ -28,29 +28,33 @@
     <h2>Filtres</h2>
     <form class="filtres" id="form" autocomplete="off">
 
-      <div class="champ">
-        <label for="f-sports">Sport</label>
-        <select id="f-sports" multiple size="5"></select>
-        <span class="aide">Rien de sélectionné = tous</span>
+      <!-- ⚠️ DES CASES À COCHER, PAS DES `select multiple`. Le Ctrl+clic est
+           invisible pour qui ne le connaît pas, perd toute la sélection au
+           moindre clic simple, et masque ce qui est coché dès que la liste
+           dépasse sa hauteur. Rien de tout ça n'arrive à une case. -->
+      <div class="champ pliable ouvert" id="champ-sports">
+        <label>Sport</label>
+        <div class="cases" id="f-sports"></div>
+        <span class="aide">Rien de coché = les deux</span>
       </div>
 
-      <div class="champ">
-        <label for="f-books">Bookmakers</label>
-        <select id="f-books" multiple size="5"></select>
-        <span class="aide">Rien = tous</span>
+      <div class="champ pliable ouvert" id="champ-books">
+        <label>Bookmakers</label>
+        <div class="cases" id="f-books"></div>
+        <span class="aide">Rien de coché = tous</span>
       </div>
 
-      <div class="champ">
-        <label for="f-markets">Marché</label>
-        <select id="f-markets" multiple size="5"></select>
-        <span class="aide">Rien = tous</span>
+      <div class="champ pliable ouvert" id="champ-markets">
+        <label>Marché</label>
+        <div class="cases" id="f-markets"></div>
+        <span class="aide">Rien de coché = tous</span>
       </div>
 
       <div class="champ">
         <label for="f-league">Compétition</label>
-        <input list="ligues" id="f-league" placeholder="toutes">
+        <input list="ligues" id="f-league" placeholder="toutes — tape pour chercher">
         <datalist id="ligues"></datalist>
-        <span class="aide">Nom exact</span>
+        <span class="aide" id="aide-ligue">Nom exact</span>
       </div>
 
       <div class="champ">
@@ -62,13 +66,25 @@
         </div>
       </div>
 
+      <div class="champ large pliable ouvert" id="champ-ev">
+        <label>EV — tranches</label>
+        <div class="cases" id="f-ev-bands"></div>
+        <label class="case" style="margin-top:8px;border:1px solid var(--bordure)">
+          <input type="checkbox" id="ev-split">
+          <span>EV <b>différent par sport</b></span>
+        </label>
+        <div id="ev-par-sport"></div>
+        <span class="aide">Plusieurs tranches = union (OU). Rien de coché = toutes.</span>
+      </div>
+
       <div class="champ">
-        <label>EV (%)</label>
+        <label>EV — bornes libres (%)</label>
         <div class="paire">
           <input type="number" id="f-ev-min" step="0.5" placeholder="min">
           <span>→</span>
           <input type="number" id="f-ev-max" step="0.5" placeholder="max">
         </div>
+        <span class="aide">Se cumule (ET) avec les tranches ci-dessus</span>
       </div>
 
       <div class="champ large">
@@ -87,6 +103,7 @@
           <span>→</span>
           <input type="number" id="f-delay-max" step="1" placeholder="max">
         </div>
+        <div class="rapides" id="delay-rapides"></div>
       </div>
 
       <div class="champ">
@@ -133,7 +150,8 @@
   <section class="carte" id="bloc-kpi" hidden>
     <h2>Résultats</h2>
     <div class="kpis" id="kpis"></div>
-    <p class="aide" id="note-population" style="margin:12px 0 0"></p>
+    <p class="aide" id="note-ev" style="margin:12px 0 0"></p>
+    <p class="aide" id="note-population" style="margin:6px 0 0"></p>
   </section>
 
   <section class="carte" id="bloc-temps" hidden>
@@ -148,6 +166,16 @@
       <figure><figcaption>ROI
         <span class="prec">en % — échelle propre, ne se compare pas à la CLV</span></figcaption>
         <div id="g-roi-temps"></div></figure>
+      <figure><figcaption>P&amp;L cumulé
+        <span class="prec">en € — somme des périodes réglées</span></figcaption>
+        <div id="g-pnl-cumul"></div></figure>
+      <figure><figcaption>CLV cumulée
+        <span class="prec">moyenne pondérée par l'effectif, pas moyenne de moyennes</span></figcaption>
+        <div id="g-clv-cumul"></div></figure>
+      <figure><figcaption>Opportunités par période</figcaption>
+        <div id="g-vol-temps"></div></figure>
+      <figure><figcaption>Réglées par période</figcaption>
+        <div id="g-reg-temps"></div></figure>
     </div>
   </section>
 
@@ -162,7 +190,33 @@
       <figure><figcaption>ROI par bookmaker</figcaption><div id="g-roi-book"></div></figure>
       <figure><figcaption>CLV par sport</figcaption><div id="g-clv-sport"></div></figure>
       <figure><figcaption>ROI par sport</figcaption><div id="g-roi-sport"></div></figure>
+      <figure><figcaption>CLV par marché</figcaption><div id="g-clv-market"></div></figure>
+      <figure><figcaption>ROI par marché</figcaption><div id="g-roi-market"></div></figure>
+      <figure><figcaption>CLV par délai avant coup d'envoi</figcaption><div id="g-clv-delay"></div></figure>
+      <figure><figcaption>ROI par délai avant coup d'envoi</figcaption><div id="g-roi-delay"></div></figure>
     </div>
+  </section>
+
+  <section class="carte" id="bloc-segments" hidden>
+    <h2>Meilleurs segments</h2>
+    <div class="actions" style="margin:0 0 12px">
+      <select id="s-tri" style="width:auto">
+        <option value="clv">Classer par CLV (recommandé)</option>
+        <option value="roi">Classer par ROI</option>
+      </select>
+      <label class="aide">plancher
+        <input type="number" id="s-min" value="100" min="1" step="10" style="width:84px">
+        opportunités</label>
+      <select id="s-prof" style="width:auto">
+        <option value="1">1 dimension</option>
+        <option value="2">2 dimensions croisées</option>
+        <option value="3" selected>3 dimensions croisées</option>
+      </select>
+      <button class="discret" id="s-lancer" type="button">Chercher</button>
+      <span class="aide" id="s-etat"></span>
+    </div>
+    <div id="s-garde"></div>
+    <div class="enrob"><table class="segments" id="segments"></table></div>
   </section>
 
   <section class="carte" id="bloc-matrice" hidden>

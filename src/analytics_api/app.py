@@ -31,14 +31,17 @@ l'environnement.
 from __future__ import annotations
 
 import os
-from typing import Optional
+from typing import List, Optional
 
 from fastapi import Depends, FastAPI, HTTPException, Query, Request
 from fastapi.responses import JSONResponse
 
 from ..analytics import Filtres, analyser, detail
-from ..analytics.filtres import FiltreInvalide
-from ..analytics.service import DB_DEFAUT, GRANULARITES, valeurs_disponibles
+from ..analytics.filtres import PREFIXE_EV_SPORT, FiltreInvalide
+from ..analytics.perimetre import (BORNES_EV, MARCHES_ANALYTICS, MIN_SEGMENT,
+                                   SPORTS_ANALYTICS)
+from ..analytics.service import (DB_DEFAUT, GRANULARITES, meilleurs_segments,
+                                 valeurs_disponibles)
 
 #: Le chemin de la base, LU DANS L'ENVIRONNEMENT et jamais dans la requête.
 VAR_DB = "ANALYTICS_DB"
@@ -55,6 +58,45 @@ PAR_PAGE_MAX = 500
 
 TRIS = ("detected_at", "odd_taken", "ev_pct", "clv", "pnl", "sport", "book",
         "start_time")
+
+#: Le texte d'aide des bandes d'EV, construit DEPUIS les bandes réelles. Une
+#: liste recopiée dans une chaîne de documentation finirait par mentir le jour
+#: où le moteur en ajoute une.
+AIDE_EV = ("Bandes d'EV en UNION (OR). Répétable, ou séparé par des virgules. "
+           "Valeurs : " + ", ".join(BORNES_EV) + ".")
+
+#: ⚠️ DÉCLARÉS UN PAR UN, ET PAS EN GÉNÉRIQUE. Le périmètre Analytics ne
+#: contient que deux sports ; les déclarer explicitement les fait apparaître
+#: dans OpenAPI avec leur type et leur aide, au lieu d'être des paramètres
+#: fantômes que seule la documentation mentionne. Le balayage générique de
+#: `_ev_par_sport` reste là pour qu'un troisième sport ne soit jamais IGNORÉ
+#: en silence s'il entrait dans le périmètre avant cette liste.
+PARAMS_EV_SPORT = tuple(PREFIXE_EV_SPORT + s for s in SPORTS_ANALYTICS)
+
+
+def _openapi_ev_sport() -> dict:
+    """Décrit les paramètres `ev_bands_<sport>` pour OpenAPI.
+
+    Passe par `openapi_extra` plutôt que par des arguments de fonction
+    inutilisés : un paramètre déclaré et jamais lu finit toujours par diverger
+    du code qui le lit vraiment. Ici la documentation est fabriquée depuis
+    `SPORTS_ANALYTICS`, la même constante que le périmètre."""
+    return {
+        "parameters": [
+            {
+                "name": nom, "in": "query", "required": False,
+                "schema": {"type": "array", "items": {"type": "string",
+                                                      "enum": list(BORNES_EV)}},
+                "style": "form", "explode": True,
+                "description": (
+                    f"Bandes d'EV appliquées UNIQUEMENT au sport "
+                    f"« {nom[len(PREFIXE_EV_SPORT):]} », en union. Prime sur "
+                    f"`ev_bands` pour ce sport ; les autres sports gardent la "
+                    f"règle globale. Appliqué DANS LE SQL, pas côté client."),
+            }
+            for nom in PARAMS_EV_SPORT
+        ],
+    }
 
 
 async def exiger_acces(request: Request) -> None:
@@ -98,6 +140,24 @@ def _liste_multi(request: Request, *noms: str, decouper: bool = True) -> list:
                 out.extend(m.strip() for m in brut.split(",") if m.strip())
             elif brut.strip():
                 out.append(brut.strip())
+    return out
+
+
+def _ev_par_sport(request: Request) -> dict:
+    """Toutes les règles d'EV par sport présentes dans la query string.
+
+    Balaye les clés plutôt que de lire une liste figée : un paramètre
+    `ev_bands_<sport>` pour un sport qui entrerait demain dans le périmètre
+    doit être APPLIQUÉ, ou refusé par la validation — jamais ignoré sans un
+    mot. Un filtre qu'on croit posé et qui ne l'est pas est exactement le mode
+    de panne que toute cette couche existe pour empêcher."""
+    out: dict = {}
+    for cle in request.query_params.keys():
+        if not cle.startswith(PREFIXE_EV_SPORT) or cle == "ev_bands_by_sport":
+            continue
+        sport = cle[len(PREFIXE_EV_SPORT):].strip().lower()
+        if sport:
+            out[sport] = _liste_multi(request, cle)
     return out
 
 
@@ -168,6 +228,11 @@ def creer_app(db_path: Optional[str] = None) -> FastAPI:
                                         "markets[]") or None)
         brut["leagues"] = (_liste_multi(request, "league", "leagues",
                                         "leagues[]", decouper=False) or None)
+        brut["ev_bands"] = _liste_multi(request, "ev_band", "ev_bands",
+                                        "ev_bands[]") or None
+        regles = _ev_par_sport(request)
+        if regles:
+            brut["ev_bands_by_sport"] = regles
         return Filtres.depuis_dict(brut).valider()
 
     # ── Les routes ───────────────────────────────────────────────────
@@ -187,9 +252,11 @@ def creer_app(db_path: Optional[str] = None) -> FastAPI:
         """De quoi peupler les listes déroulantes, LU dans la base."""
         return valeurs_disponibles(base())
 
-    @app.get("/api/analyse", dependencies=[Depends(exiger_acces)])
+    @app.get("/api/analyse", dependencies=[Depends(exiger_acces)],
+             openapi_extra=_openapi_ev_sport())
     def analyse(
         request: Request,
+        ev_bands: Optional[List[str]] = Query(None, description=AIDE_EV),
         odds_min: Optional[float] = Query(None, description="Cote minimum (> 1)."),
         odds_max: Optional[float] = Query(None, description="Cote maximum."),
         ev_min: Optional[float] = Query(None, description="EV minimum en %."),
@@ -205,7 +272,19 @@ def creer_app(db_path: Optional[str] = None) -> FastAPI:
         stake: float = Query(25.0, description="Mise notionnelle par pari."),
         granularite: str = Query("semaine", description="jour | semaine | mois"),
     ):
-        """L'analyse complète : résumé, avertissements, découpes, matrice."""
+        """L'analyse complète : résumé, avertissements, découpes, matrice.
+
+        PÉRIMÈTRE — restreint aux sports et marchés que `GET /api/filters`
+        rend sous la clé `perimetre`, avec la raison. Les autres restent en
+        base mais ne sont jamais analysés : aucune source de résultats pour
+        les sports écartés, aucun règlement possible pour les marchés écartés.
+
+        EV — trois mécanismes qui se CUMULENT en ET :
+        `ev_min`/`ev_max` (bornes libres), `ev_bands` (union de bandes), et
+        `ev_bands_<sport>` (union de bandes propre à un sport, qui remplace
+        `ev_bands` pour CE sport seulement). Les trois sont appliqués dans le
+        SQL — rien n'est filtré après coup.
+        """
         if granularite not in GRANULARITES:
             raise FiltreInvalide(
                 f"granularite doit valoir {' | '.join(GRANULARITES)} — "
@@ -218,9 +297,11 @@ def creer_app(db_path: Optional[str] = None) -> FastAPI:
             stake=stake)
         return analyser(base(), f, granularite=granularite)
 
-    @app.get("/api/detail", dependencies=[Depends(exiger_acces)])
+    @app.get("/api/detail", dependencies=[Depends(exiger_acces)],
+             openapi_extra=_openapi_ev_sport())
     def detail_route(
         request: Request,
+        ev_bands: Optional[List[str]] = Query(None, description=AIDE_EV),
         odds_min: Optional[float] = Query(None),
         odds_max: Optional[float] = Query(None),
         ev_min: Optional[float] = Query(None),
@@ -263,6 +344,57 @@ def creer_app(db_path: Optional[str] = None) -> FastAPI:
             stake=stake)
         return detail(base(), f, page=page, par_page=per_page,
                       tri=sort, ordre=order)
+
+    @app.get("/api/segments", dependencies=[Depends(exiger_acces)],
+             openapi_extra=_openapi_ev_sport())
+    def segments_route(
+        request: Request,
+        ev_bands: Optional[List[str]] = Query(None, description=AIDE_EV),
+        odds_min: Optional[float] = Query(None),
+        odds_max: Optional[float] = Query(None),
+        ev_min: Optional[float] = Query(None),
+        ev_max: Optional[float] = Query(None),
+        date_from: Optional[str] = Query(None),
+        date_to: Optional[str] = Query(None),
+        delay_min: Optional[float] = Query(None),
+        delay_max: Optional[float] = Query(None),
+        population: str = Query("detected"),
+        played: str = Query("tous"),
+        canal: Optional[str] = Query(None),
+        dead_window_min: Optional[float] = Query(None),
+        stake: float = Query(25.0),
+        min_n: int = Query(MIN_SEGMENT, ge=1,
+                           description="Plancher d'opportunités par segment."),
+        sort: str = Query("clv", description="clv (recommandé) | roi"),
+        depth: int = Query(3, ge=1, le=3,
+                           description="Nombre de dimensions croisées."),
+        limit: int = Query(25, ge=1, le=100),
+    ):
+        """Les combinaisons qui ressortent — et de quoi s'en méfier.
+
+        ⚠️ ENDPOINT SÉPARÉ, ET C'EST DÉLIBÉRÉ. Le croisement de trois
+        dimensions coûte nettement plus cher qu'une analyse ; l'agréger à
+        `/api/analyse` ralentirait chaque affichage de la page pour une
+        section que l'utilisateur ne consulte pas à chaque fois.
+
+        La réponse porte TOUJOURS `combinaisons_testees` et ses
+        avertissements. Un classement de segments lu sans le nombre de tests
+        qui l'a produit n'est pas une information, c'est une illusion
+        d'optique — et le premier du classement est la combinaison la plus
+        chanceuse autant que la meilleure.
+        """
+        if sort not in ("clv", "roi"):
+            raise FiltreInvalide(
+                f"sort doit valoir clv ou roi pour les segments — "
+                f"reçu : {sort!r}")
+        f = _filtres(
+            request, odds_min=odds_min, odds_max=odds_max, ev_min=ev_min,
+            ev_max=ev_max, date_from=date_from, date_to=date_to,
+            delay_min=delay_min, delay_max=delay_max, population=population,
+            played=played, canal=canal, dead_window_min=dead_window_min,
+            stake=stake)
+        return meilleurs_segments(base(), f, min_n=min_n, trier_par=sort,
+                                  limite=limit, profondeur=depth)
 
     return app
 

@@ -38,6 +38,7 @@ d'autre.
 """
 from __future__ import annotations
 
+from .perimetre import BORNES_EV, MARCHES_ANALYTICS, SPORTS_ANALYTICS
 from .populations import Population, alias_de
 
 #: Les colonnes rendues. Nommées explicitement plutôt qu'en `SELECT *` : le
@@ -151,6 +152,75 @@ WHERE rang = 1
 """
 
 
+def _sql_bande_ev(label: str) -> "tuple[str, list]":
+    """Une bande d'EV en SQL. Bornes basses INCLUSES, hautes EXCLUES.
+
+    C'est la convention de `main._ev_bucket` (`if ev < 5: return "<5%"`), et
+    un test la verrouille en balayant l'EV au centième : une borne haute
+    incluse ferait compter deux fois un pari exactement à 8 %."""
+    lo, hi = BORNES_EV[label]
+    bouts, params = [], []
+    if lo is not None:
+        bouts.append("vb.ev_pct >= ?")
+        params.append(lo)
+    if hi is not None:
+        bouts.append("vb.ev_pct < ?")
+        params.append(hi)
+    # Une bande sans aucune borne n'existe pas dans `BORNES_EV`, mais si elle
+    # y entrait un jour elle doit rendre « vrai » et non une chaîne vide, qui
+    # produirait un SQL invalide plutôt qu'un filtre neutre.
+    return ("(" + " AND ".join(bouts) + ")" if bouts else "1 = 1"), params
+
+
+def _sql_union_ev(bandes) -> "tuple[str, list]":
+    """L'UNION (OR) d'une sélection de bandes. Vide = aucune contrainte."""
+    if not bandes:
+        return "1 = 1", []
+    bouts, params = [], []
+    for b in bandes:
+        sql, p = _sql_bande_ev(b)
+        bouts.append(sql)
+        params.extend(p)
+    return "(" + " OR ".join(bouts) + ")", params
+
+
+def clause_ev(filtres) -> "tuple[str, list]":
+    """La contrainte d'EV complète, règles PAR SPORT comprises.
+
+    ⚠️ C'EST ICI QUE SE JOUE « L'EV PAR SPORT », ET C'EST DU VRAI SQL. Une
+    règle par sport appliquée côté navigateur serait un mensonge : les KPI,
+    les découpes et la matrice viennent tous du même lot, et filtrer après
+    coup n'en corrigerait aucun. La forme produite est une disjonction de
+    conjonctions :
+
+        (   (sport = 'soccer' AND (EV dans les bandes du foot))
+         OR (sport = 'tennis' AND (EV dans les bandes du tennis))
+         OR (sport NOT IN (…sports réglés…) AND (bandes globales))  )
+
+    La dernière branche est ce qui empêche une fuite : un sport SANS règle
+    propre retombe sur la sélection globale, il ne disparaît pas et n'hérite
+    pas de la règle d'un autre sport.
+    """
+    globales, params_g = _sql_union_ev(filtres.ev_bandes)
+    par_sport = [(s, b) for s, b in filtres.ev_par_sport if b]
+    if not par_sport:
+        return globales, params_g
+
+    branches, params = [], []
+    for sport, bandes in par_sport:
+        union, p = _sql_union_ev(bandes)
+        branches.append(f"(lower(e.sport) = ? AND {union})")
+        params.append(sport)
+        params.extend(p)
+
+    marqueurs = ", ".join("?" * len(par_sport))
+    branches.append(
+        f"(COALESCE(lower(e.sport), '') NOT IN ({marqueurs}) AND {globales})")
+    params.extend(s for s, _ in par_sport)
+    params.extend(params_g)
+    return "(" + " OR ".join(branches) + ")", params
+
+
 def construire(filtres) -> "tuple[str, list]":
     """Rend (sql, parametres). `filtres` doit avoir été validé.
 
@@ -190,10 +260,26 @@ def construire(filtres) -> "tuple[str, list]":
     # SELECT n'est pas garanti visible dans le WHERE du même niveau.
     borne(EXPR_DELAI, filtres.delai_min_h, ">=")
     borne(EXPR_DELAI, filtres.delai_max_h, "<=")
-    dans("lower(e.sport)", [s.lower() for s in filtres.sports])
+
+    # ⚠️ LE PÉRIMÈTRE EST APPLIQUÉ DANS LE SQL, TOUJOURS, MÊME SANS SÉLECTION.
+    # « Aucun sport coché » veut dire « tout le périmètre Analytics », jamais
+    # « tout ce que la base contient ». Sans cette clause, un total affiché
+    # comprendrait 501 matchs de basket qui n'ont aucun résultat, donc aucun
+    # ROI possible : le taux de règlement baisserait sans qu'aucun pari n'ait
+    # échoué. Une détection sans événement rattaché (`e.sport` NULL) sort du
+    # périmètre par construction — son sport est inconnu, on ne peut pas
+    # affirmer qu'elle est dans la portée.
+    dans("lower(e.sport)",
+         [s.lower() for s in (filtres.sports or SPORTS_ANALYTICS)])
+    dans("vb.market", list(filtres.markets or MARCHES_ANALYTICS))
+
     dans("vb.book", list(filtres.books))
-    dans("vb.market", list(filtres.markets))
     dans("e.league", list(filtres.leagues))
+
+    sql_ev, params_ev = clause_ev(filtres)
+    if sql_ev != "1 = 1":
+        clauses.append(f"      AND {sql_ev}")
+        params.extend(params_ev)
 
     apres: list = []
     if filtres.joue == "oui":

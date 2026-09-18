@@ -394,11 +394,21 @@ def test_une_valeur_hostile_ne_peut_pas_atteindre_le_sql(tmp_path, mechant):
     con.close()
 
 
-def test_un_sport_hostile_ne_casse_rien(tmp_path):
-    """Les sports sont un ensemble ouvert : la valeur passe en PARAMÈTRE et ne
-    rapproche simplement rien."""
+def test_un_sport_hostile_est_REFUSE_et_la_base_reste_intacte(tmp_path):
+    """PHASE 4 — la propriété de sûreté est RENFORCÉE, pas affaiblie.
+
+    Avant, une chaîne hostile partait en paramètre et ne rapprochait rien : la
+    base était déjà protégée, mais l'utilisateur recevait « 0 opportunité »,
+    indiscernable d'une absence de données. Le périmètre la refuse désormais
+    en amont, avec un message qui nomme les sports analysables.
+
+    Ce qui compte n'a pas bougé et reste vérifié ici : la valeur n'est JAMAIS
+    interprétée comme du SQL, et la base est intacte après coup."""
+    from src.analytics.filtres import FiltreInvalide
     p = _jeu(tmp_path)
-    assert _n(p, sports=("'; DROP TABLE value_bets; --",)) == 0
+    for mechant in ("'; DROP TABLE value_bets; --", "x' OR '1'='1"):
+        with pytest.raises(FiltreInvalide):
+            _n(p, sports=(mechant,))
     con = sqlite3.connect(str(p))
     assert con.execute("SELECT COUNT(*) FROM value_bets").fetchone()[0] == 10
     con.close()

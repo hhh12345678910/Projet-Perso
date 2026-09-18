@@ -140,16 +140,41 @@ def test_un_marche_inconnu_est_refuse():
     assert "Marché inconnu" in str(e.value)
 
 
-@pytest.mark.parametrize("m", ["h2h", "totals", "handicap", "btts",
-                               "h2h_h1", "totals_h1"])
-def test_tous_les_marches_du_moteur_sont_acceptes(m):
+@pytest.mark.parametrize("m", ["h2h", "totals"])
+def test_les_marches_du_perimetre_sont_acceptes(m):
     assert Filtres(markets=(m,)).valider().markets == (m,)
 
 
-def test_les_sports_sont_un_ensemble_OUVERT():
-    """Les sports viennent des données, pas d'une énumération : en refuser un
-    inconnu empêcherait d'analyser un sport que le moteur vient d'ajouter."""
-    assert Filtres(sports=("padel",)).valider().sports == ("padel",)
+@pytest.mark.parametrize("m", ["handicap", "btts", "h2h_h1", "totals_h1"])
+def test_un_marche_hors_perimetre_est_REFUSE_et_non_ignore(m):
+    """PHASE 4 — le contrat a changé, et le refus est le point.
+
+    Ces marchés existent bien dans le moteur, et `Filtres` les connaît : ce
+    n'est pas une faute de frappe qu'on rejette. C'est que `clv.settle` ne
+    sait régler ni un handicap, ni un BTTS, ni une mi-temps — ils ressortent
+    NON RÉGLÉS quel que soit le score. Les accepter en silence rendrait un lot
+    dont le ROI est structurellement vide sous un en-tête normal.
+
+    Le message doit nommer le périmètre, sinon l'utilisateur ne sait pas quoi
+    corriger."""
+    with pytest.raises(FiltreInvalide) as e:
+        Filtres(markets=(m,)).valider()
+    assert "périmètre" in str(e.value)
+    assert "h2h" in str(e.value) and "totals" in str(e.value)
+
+
+def test_les_sports_sont_un_ensemble_FERME_par_le_perimetre():
+    """PHASE 4 — les sports ne sont plus un ensemble ouvert.
+
+    Avant, un sport inconnu passait en paramètre et ne rapprochait rien. Le
+    périmètre Analytics le REFUSE désormais : aucune source de résultats
+    n'existe hors football et tennis, donc aucun ROI ne peut en sortir.
+    Rendre zéro ligne aurait laissé croire à une absence de données ; le refus
+    dit la vraie raison."""
+    for sport in ("padel", "basketball", "hockey", "volleyball", "unknown"):
+        with pytest.raises(FiltreInvalide) as e:
+            Filtres(sports=(sport,)).valider()
+        assert "périmètre" in str(e.value)
 
 
 def test_les_sports_sont_normalises_en_minuscules():

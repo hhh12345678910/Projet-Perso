@@ -196,11 +196,24 @@ def test_une_couverture_clv_faible_declenche_un_avertissement(tmp_path):
     assert _sommaire(p, date_from="2026-08-01")["clv_coverage"] < SEUIL_COUVERTURE_CLV
 
 
-def test_une_couverture_clv_complete_ne_declenche_RIEN(tmp_path):
+def test_une_couverture_clv_complete_ne_declenche_AUCUNE_alerte_de_couverture(tmp_path):
+    """L'intention d'origine tient : couverture pleine → aucun mot sur la
+    couverture, le settlement ou la clôture.
+
+    PHASE 4 — l'assertion ne peut plus être « aucun message du tout » : un
+    barème de VOLUME a été ajouté, et quarante paris réglés restent un petit
+    échantillon. Les deux constats sont vrais en même temps et ne se
+    remplacent pas — une couverture parfaite sur quarante paris est exactement
+    ça : parfaitement mesurée, et peu nombreuse."""
     lignes = [Opp(i, home=f"A{i}", away=f"B{i}", cloture=1.9, gagnant="home",
                   outcome="home") for i in range(1, 41)]
     p = monter(tmp_path, lignes)
-    assert _messages(p, date_from="2026-08-01") == []
+    msgs = " ".join(_messages(p, date_from="2026-08-01"))
+    assert "CLV disponible sur" not in msgs
+    assert "Résultats provisoires" not in msgs
+    assert "INDISPONIBLE" not in msgs
+    # Et le barème de volume ne prétend JAMAIS à la significativité.
+    assert "significatif" not in msgs.lower() or "pas une significativité" in msgs
 
 
 def test_un_settlement_faible_dit_RESULTATS_PROVISOIRES(tmp_path):

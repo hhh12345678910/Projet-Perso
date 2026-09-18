@@ -52,6 +52,7 @@ const $ = (id) => document.getElementById(id);
 const API_FILTERS = '/api/filters';
 const API_ANALYSE = '/api/analyse';
 const API_DETAIL = '/api/detail';
+const API_SEGMENTS = '/api/segments';
 
 async function appel(chemin, params) {
   const url = params ? chemin + '?' + params.toString() : chemin;
@@ -72,11 +73,92 @@ let ANALYSE = null;   // dernière /api/analyse
 let PAGE = 1, PAR_PAGE = 25, TRI = 'detected_at', ORDRE = 'desc';
 let CELLULE = null;   // cellule de matrice sélectionnée {odds, ev}
 
+/* ── Groupes de cases à cocher ──────────────────────────────────────
+ *
+ * ⚠️ REMPLACE LES `select multiple`, ET CE N'EST PAS COSMÉTIQUE.
+ * Un `select multiple` exige de savoir qu'il faut maintenir Ctrl — ce que
+ * rien n'indique —, efface toute la sélection au premier clic simple, et
+ * cache ce qui est coché dès que la liste dépasse sa hauteur visible. Les
+ * trois sont des pertes SILENCIEUSES : on croit avoir filtré sur quatre
+ * bookmakers et on en a un seul, sous un tableau parfaitement normal.
+ *
+ * La valeur rendue est TOUJOURS la valeur canonique (`unibet_be`), jamais le
+ * libellé affiché (« Unibet BE ») : c'est la première qui repart vers l'API.
+ */
+
+function groupeCases(hote, valeurs, options) {
+  const o = options || {};
+  hote.innerHTML = '';
+  hote.dataset.groupe = '1';
+  if (!valeurs.length) {
+    hote.appendChild(el('div', 'cases-vide', o.vide || 'Aucune valeur.'));
+    return;
+  }
+
+  const liste = el('div', 'cases-liste' + (o.courte ? ' courte' : ''));
+
+  // La barre n'apparaît que si elle sert : deux cases n'ont pas besoin d'un
+  // « tout sélectionner », et une barre inutile vole de la place à l'écran.
+  if (valeurs.length > 3) {
+    const barre = el('div', 'cases-barre');
+    const tout = el('button', 'discret', 'Tout');
+    const aucun = el('button', 'discret', 'Aucun');
+    tout.type = aucun.type = 'button';
+    const basculer = (etat) => () => {
+      liste.querySelectorAll('input:not(.masquee)').forEach((c) => {
+        if (!c.closest('.case').classList.contains('masquee')) c.checked = etat;
+      });
+      if (o.onChange) o.onChange();
+    };
+    tout.addEventListener('click', basculer(true));
+    aucun.addEventListener('click', basculer(false));
+    barre.appendChild(tout);
+    barre.appendChild(aucun);
+
+    if (valeurs.length > 8) {
+      const rech = el('input');
+      rech.type = 'search';
+      rech.placeholder = 'chercher…';
+      // La recherche MASQUE, elle ne décoche pas : filtrer une liste ne doit
+      // jamais modifier la sélection qu'on a déjà faite.
+      rech.addEventListener('input', () => {
+        const q = rech.value.trim().toLowerCase();
+        liste.querySelectorAll('.case').forEach((c) => {
+          c.classList.toggle('masquee',
+            q !== '' && !c.textContent.toLowerCase().includes(q));
+        });
+      });
+      barre.appendChild(rech);
+    }
+    hote.appendChild(barre);
+  }
+
+  valeurs.forEach((v) => {
+    const cle = typeof v === 'string' ? v : v.key;
+    const texte = typeof v === 'string' ? (o.labels && o.labels[v]) || v : v.label;
+    const l = el('label', 'case');
+    const c = el('input');
+    c.type = 'checkbox';
+    c.value = cle;
+    if (o.coches && o.coches.includes(cle)) c.checked = true;
+    if (o.onChange) c.addEventListener('change', o.onChange);
+    l.appendChild(c);
+    l.appendChild(el('span', null, texte));
+    liste.appendChild(l);
+  });
+  hote.appendChild(liste);
+}
+
+/** Les valeurs canoniques cochées d'un groupe. */
+function coches(id) {
+  const h = $(id);
+  if (!h) return [];
+  return Array.from(h.querySelectorAll('input[type="checkbox"]:checked'))
+    .map((c) => c.value);
+}
+
 /* ── Construction des paramètres ───────────────────────────────────── */
 
-function multi(id) {
-  return Array.from($(id).selectedOptions).map((o) => o.value);
-}
 function valOuNull(id) {
   const v = $(id).value.trim();
   return v === '' ? null : v;
@@ -84,9 +166,23 @@ function valOuNull(id) {
 
 function parametres(extra) {
   const p = new URLSearchParams();
-  multi('f-sports').forEach((v) => p.append('sports', v));
-  multi('f-books').forEach((v) => p.append('bookmakers', v));
-  multi('f-markets').forEach((v) => p.append('markets', v));
+  const sports = coches('f-sports');
+  sports.forEach((v) => p.append('sports', v));
+  coches('f-books').forEach((v) => p.append('bookmakers', v));
+  coches('f-markets').forEach((v) => p.append('markets', v));
+
+  /* ⚠️ L'EV PAR SPORT PART VERS LE SERVEUR, IL N'EST PAS APPLIQUÉ ICI.
+   * C'est la seule façon que les KPI, les découpes, la matrice ET le détail
+   * décrivent le même lot : ils viennent tous de la même requête. Filtrer
+   * après coup dans le navigateur ne corrigerait aucun des quatre. */
+  if ($('ev-split').checked) {
+    (sports.length ? sports : (REFS ? REFS.sports : [])).forEach((s) => {
+      coches('ev-bands-' + s).forEach((b) => p.append('ev_bands_' + s, b));
+    });
+  } else {
+    coches('f-ev-bands').forEach((b) => p.append('ev_bands', b));
+  }
+
   const lig = valOuNull('f-league');
   if (lig) p.append('leagues', lig);
   [['odds_min', 'f-odds-min'], ['odds_max', 'f-odds-max'],
@@ -138,13 +234,29 @@ function accrocher(n, titre, lignes, alerte) {
   n.addEventListener('mouseleave', cacher);
 }
 
+/* Le libellé d'affichage d'une tranche. L'API rend `label` à côté de `key` ;
+ * `key` reste la valeur canonique qui repart en filtre. */
+const lib = (t) => t.label || t.key;
+
+/* ⚠️ BADGE DE VOLUME — ET LE MOT « SIGNIFICATIF » N'APPARAÎT NULLE PART.
+ * Un effectif ne décide pas de la significativité : il faudrait la variance,
+ * la taille de l'effet cherché et le nombre de comparaisons faites. Le badge
+ * qualifie la TAILLE de l'échantillon, et rien d'autre. */
+function badge(ech) {
+  if (!ech) return null;
+  const b = el('span', 'ech ' + ech.niveau, ech.libelle);
+  b.title = `${ent(ech.n)} — indication de VOLUME, pas de significativité `
+    + 'statistique.';
+  return b;
+}
+
 /* Les lignes d'infobulle communes à toute tranche rendue par l'API. */
 function lignesTranche(t) {
   return [
-    ['opportunités', ent(t.opportunities)],
+    ['opportunités', `${ent(t.opportunities)} · ${(t.sample || {}).libelle || ''}`],
     ['réglées', `${ent(t.settled)} (${pctNu(t.settlement_rate)})`],
     ['CLV', `${pct(t.clv)} sur ${ent(t.clv_n)} (${pctNu(t.clv_coverage, 0)})`],
-    ['ROI', pct(t.roi)],
+    ['ROI', `${pct(t.roi)} · ${(t.sample_settled || {}).libelle || ''}`],
     ['P&L', eur(t.pnl, 0)],
   ];
 }
@@ -187,7 +299,11 @@ function bornes(valeurs) {
 
 /* ── Courbe temporelle ─────────────────────────────────────────────── */
 
-function courbe(hote, tranches, champ, libelle) {
+function courbe(hote, tranches, champ, libelle, fmt) {
+  // `fmt` formate l'AXE et les étiquettes. Par défaut un pourcentage ;
+  // le P&L cumulé passe `eur`, sans quoi un axe en « % » décrirait des
+  // euros — une erreur d'unité qu'aucun relecteur ne rattrape ensuite.
+  const F = fmt || ((v) => pct(v, 1));
   hote.innerHTML = '';
   const pts = tranches.filter((t) => t[champ] !== null);
   if (pts.length < 1) { vide(hote, 'Aucune valeur mesurable sur cette période.'); return; }
@@ -208,7 +324,7 @@ function courbe(hote, tranches, champ, libelle) {
       x1: mG, x2: W - mD, y1: y(v), y2: y(v) }));
     const t = svgEl('text', { class: 'axe-txt', x: mG - 7, y: y(v) + 3.5,
       'text-anchor': 'end' });
-    t.textContent = pct(v, 1);
+    t.textContent = F(v);
     svg.appendChild(t);
   }
   if (b[0] < 0 && b[1] > 0) {
@@ -239,7 +355,7 @@ function courbe(hote, tranches, champ, libelle) {
     const faible = t.clv_coverage !== null && t.clv_coverage < SEUIL_COUVERTURE;
     const c = svgEl('circle', { cx: x(i), cy: y(t[champ]), r: 4.5,
       class: 'pt' + (faible && champ === 'clv' ? ' faible' : '') });
-    accrocher(c, t.key, lignesTranche(t), alerteTranche(t));
+    accrocher(c, lib(t), lignesTranche(t), alerteTranche(t));
     svg.appendChild(c);
     if (aEtiqueter.has(i)) {
       const lab = svgEl('text', { class: 'axe-txt', x: x(i), y: H - mB + 16,
@@ -247,6 +363,47 @@ function courbe(hote, tranches, champ, libelle) {
       lab.textContent = String(t.key).slice(0, 10);
       svg.appendChild(lab);
     }
+  });
+  hote.appendChild(svg);
+}
+
+/* ── Colonnes de volume ────────────────────────────────────────────
+ *
+ * ⚠️ UN VOLUME N'EST PAS UNE MESURE SIGNÉE. Les opportunités par période se
+ * lisent sur un axe qui part de zéro et ne descend jamais en dessous ; leur
+ * donner la palette divergente du CLV ferait croire à un signe. Fond neutre,
+ * une seule teinte, aucune arme positive/négative. */
+
+function colonnes(hote, tranches, champ, libelle) {
+  hote.innerHTML = '';
+  if (!tranches.length) { vide(hote, 'Aucune période.'); return; }
+  const vals = tranches.map((t) => t[champ] || 0);
+  const hi = Math.max(1, ...vals);
+
+  const W = 560, H = 190, mG = 46, mD = 12, mH = 12, mB = 46;
+  const iw = W - mG - mD, ih = H - mH - mB;
+  const larg = Math.max(2, Math.min(28, iw / tranches.length - 3));
+  const x = (i) => mG + (i + 0.5) * (iw / tranches.length);
+  const y = (v) => mH + ih - (v / hi) * ih;
+
+  const svg = svgEl('svg', { viewBox: `0 0 ${W} ${H}`, role: 'img',
+    'aria-label': libelle });
+  for (let k = 0; k <= 4; k++) {
+    const v = (k / 4) * hi;
+    svg.appendChild(svgEl('line', { class: 'grille-ligne',
+      x1: mG, x2: W - mD, y1: y(v), y2: y(v) }));
+    const t = svgEl('text', { class: 'axe-txt', x: mG - 7, y: y(v) + 3.5,
+      'text-anchor': 'end' });
+    t.textContent = ent(Math.round(v));
+    svg.appendChild(t);
+  }
+  tranches.forEach((t, i) => {
+    const v = t[champ] || 0;
+    const r = svgEl('rect', {
+      x: x(i) - larg / 2, y: y(v), width: larg,
+      height: Math.max(0, mH + ih - y(v)), rx: 3, fill: 'var(--pos-2)' });
+    accrocher(r, lib(t), lignesTranche(t), alerteTranche(t));
+    svg.appendChild(r);
   });
   hote.appendChild(svg);
 }
@@ -273,7 +430,7 @@ function barres(hote, tranches, champ, libelle) {
     const cy = mH + i * hL + hL / 2;
     const lab = svgEl('text', { class: 'axe-txt', x: mG - 9, y: cy + 3.5,
       'text-anchor': 'end' });
-    lab.textContent = String(t.key).slice(0, 17);
+    lab.textContent = String(lib(t)).slice(0, 18);
     svg.appendChild(lab);
 
     const v = t[champ];
@@ -281,7 +438,7 @@ function barres(hote, tranches, champ, libelle) {
       const nd = svgEl('text', { class: 'axe-txt', x: x0 + 7, y: cy + 3.5 });
       nd.textContent = '— non mesurable';
       svg.appendChild(nd);
-      accrocher(nd, t.key, lignesTranche(t), alerteTranche(t));
+      accrocher(nd, lib(t), lignesTranche(t), alerteTranche(t));
       return;
     }
     const xv = x(v);
@@ -294,7 +451,7 @@ function barres(hote, tranches, champ, libelle) {
       class: faible ? 'faible' : '',
       'fill-opacity': faible ? 0.45 : 1,
     });
-    accrocher(r, t.key, lignesTranche(t), alerteTranche(t));
+    accrocher(r, lib(t), lignesTranche(t), alerteTranche(t));
     svg.appendChild(r);
 
     // ⚠️ L'ÉTIQUETTE NE DOIT JAMAIS ENTRER DANS LA GOUTTIÈRE DES LIBELLÉS.
@@ -416,22 +573,35 @@ function kpis(s) {
   const couvFaible = s.clv_coverage !== null && s.clv_coverage < SEUIL_COUVERTURE;
   const peuRegles = s.settled > 0 && s.settled < SEUIL_REGLES;
 
-  h.appendChild(tuile('Opportunités', ent(s.opportunities),
-    `${ent(s.matches)} matchs distincts`, '', true));
+  const kOpp = tuile('Opportunités', ent(s.opportunities),
+    `${ent(s.matches)} matchs distincts`, '', true);
+  const bo = badge(s.sample);
+  if (bo) kOpp.appendChild(bo);
+  h.appendChild(kOpp);
   h.appendChild(tuile('Réglées', ent(s.settled),
-    `${pctNu(s.settlement_rate)} de settlement` +
-    (s.unsettled ? ` · ${ent(s.unsettled)} en attente` : '')));
+    `${pctNu(s.settlement_rate)} de settlement`
+    + (s.unsettled ? ` · ${ent(s.unsettled)} non réglées` : '')
+    + (s.unsettled_result_known
+      ? ` (dont ${ent(s.unsettled_result_known)} au résultat connu mais `
+        + 'non tranchable)' : '')));
   // ⚠️ La CLV ne sort JAMAIS sans sa couverture. C'est la règle du projet :
   // +10,4 % sur 95 % du lot et sur 30 % ne sont pas la même phrase.
   const kc = tuile('CLV moyenne', pct(s.clv),
     `sur ${ent(s.clv_n)} paris · couverture ${pctNu(s.clv_coverage, 0)}`,
     signe(s.clv), true);
   if (couvFaible) kc.querySelector('.note').classList.add('fragile');
+  const bc = badge(s.sample_clv);
+  if (bc) kc.appendChild(bc);
   h.appendChild(kc);
   const kr = tuile('ROI', pct(s.roi),
     peuRegles ? `${ent(s.settled)} réglés — indice, pas résultat`
       : `sur ${ent(s.settled)} paris réglés`, signe(s.roi), true);
   if (peuRegles) kr.querySelector('.note').classList.add('fragile');
+  // ⚠️ Le badge du ROI porte l'effectif des RÉGLÉS, pas des opportunités :
+  // c'est le dénominateur réel du ROI. Afficher celui des opportunités ferait
+  // passer pour solide un ROI calculé sur quarante paris.
+  const br = badge(s.sample_settled);
+  if (br) kr.appendChild(br);
   h.appendChild(kr);
   h.appendChild(tuile('P&L notionnel', eur(s.pnl, 0),
     `mise totale ${eur(s.stake_total, 0).replace('+', '')}`, signe(s.pnl)));
@@ -440,6 +610,33 @@ function kpis(s) {
   h.appendChild(tuile('EV moyen', pct(s.ev_mean), 'à la détection'));
   h.appendChild(tuile('Cote moyenne', cote(s.odds_mean),
     `${ent(s.won)} G · ${ent(s.lost)} P · ${ent(s.void)} A`));
+}
+
+
+/* ⚠️ LA RÈGLE D'EV EST RELUE DEPUIS LA RÉPONSE DU SERVEUR, jamais depuis les
+ * cases cochées. Afficher ce qu'on a coché prouverait seulement qu'on sait
+ * lire son propre formulaire ; afficher ce que le serveur dit avoir appliqué
+ * est la seule vérification qui vaille. Si les deux divergeaient un jour,
+ * c'est ici que ça se verrait. */
+function noteEv(regles) {
+  const h = $('note-ev');
+  if (!h) return;
+  h.innerHTML = '';
+  if (!regles) return;
+  const parts = [];
+  const bySport = regles.by_sport || {};
+  Object.keys(bySport).forEach((sp) => {
+    const nom = (REFS && REFS.sports_labels && REFS.sports_labels[sp]) || sp;
+    parts.push(`${nom} : ${bySport[sp].join(' ou ') || 'toutes tranches'}`);
+  });
+  const restants = (regles.sports_analyses || []).filter((sp) => !bySport[sp]);
+  if (restants.length) {
+    const noms = restants.map(
+      (sp) => (REFS && REFS.sports_labels && REFS.sports_labels[sp]) || sp);
+    parts.push(`${noms.join(', ')} : `
+      + ((regles.global || []).join(' ou ') || 'toutes tranches'));
+  }
+  h.textContent = 'Règle d\'EV appliquée par le serveur — ' + parts.join(' · ');
 }
 
 /* ── Avertissements ────────────────────────────────────────────────── */
@@ -545,8 +742,23 @@ async function chargerDetail() {
   // l'utilisateur doit retrouver exactement le sous-ensemble qu'il a cliqué.
   if (CELLULE) {
     const [a, b] = CELLULE.odds.replace('> ', '').split('-').map(parseFloat);
-    if (!Number.isNaN(a)) extra.odds_min = a;
-    if (!Number.isNaN(b)) extra.odds_max = b;
+    // ⚠️ LA PREMIÈRE BANDE S'APPELLE « 1.0-1.8 », ET 1,00 N'EST PAS UNE COTE.
+    // `Filtres.valider` refuse toute cote_min ≤ 1 — une cote décimale vaut
+    // toujours plus que 1 — donc envoyer la borne basse telle quelle faisait
+    // répondre 400 à l'API et vidait le tableau de détail sur les CINQ
+    // cellules de cette ligne. Mesuré : 25 cellules sur 30 fonctionnaient.
+    // Ne pas envoyer la borne ne change pas le lot : aucune opportunité ne
+    // porte une cote inférieure ou égale à 1, la borne haute suffit donc à
+    // décrire la bande.
+    if (!Number.isNaN(a) && a > 1) extra.odds_min = a;
+    // ⚠️ `Number.isNaN(undefined)` VAUT FALSE — c'est la subtilité qui manquait.
+    // La dernière bande s'appelle « > 6.0 » : elle n'a pas de borne haute, donc
+    // `split('-')` ne rend qu'un morceau et `b` est `undefined`. Contrairement
+    // au `isNaN` global, `Number.isNaN` ne l'écarte pas : la borne partait dans
+    // l'URL sous la forme de la CHAÎNE « undefined », et l'API répondait 422
+    // sur les CINQ cellules de cette ligne. `odds_min` reste envoyé — c'est
+    // lui, et lui seul, qui décrit une bande ouverte vers le haut.
+    if (b !== undefined && !Number.isNaN(b)) extra.odds_max = b;
     const ev = CELLULE.ev.replace(/%/g, '');
     const m = ev.match(/^(\d+)-(\d+)$/);
     if (m) { extra.ev_min = m[1]; extra.ev_max = m[2]; }
@@ -569,6 +781,144 @@ async function chargerDetail() {
   }
 }
 
+
+/* ── EV par sport ──────────────────────────────────────────────────
+ *
+ * ⚠️ UN PANNEAU PAR SPORT COCHÉ, ET LA SÉLECTION SURVIT AU REDESSIN.
+ * Cocher « Tennis » après avoir réglé l'EV du football ne doit pas effacer ce
+ * qui était réglé : le panneau est reconstruit, mais les cases déjà cochées
+ * sont relues et réappliquées. Sans ça, l'utilisateur perd son réglage en
+ * touchant un filtre voisin, et ne le voit pas forcément.
+ */
+
+function panneauxEvParSport() {
+  const hote = $('ev-par-sport');
+  const actif = $('ev-split').checked;
+  const memoire = {};
+  hote.querySelectorAll('[data-sport]').forEach((n) => {
+    memoire[n.dataset.sport] = coches(n.id);
+  });
+  hote.innerHTML = '';
+  $('f-ev-bands').style.display = actif ? 'none' : '';
+  if (!actif || !REFS) return;
+
+  const sports = coches('f-sports');
+  (sports.length ? sports : REFS.sports).forEach((sp) => {
+    const bloc = el('div', 'ev-sport');
+    bloc.appendChild(el('h4', null,
+      (REFS.sports_labels && REFS.sports_labels[sp]) || sp));
+    const boite = el('div', 'cases');
+    boite.id = 'ev-bands-' + sp;
+    boite.dataset.sport = sp;
+    bloc.appendChild(boite);
+    hote.appendChild(bloc);
+    groupeCases(boite, REFS.ev_bands, { courte: true, coches: memoire[sp] || [] });
+  });
+  if (!hote.children.length) {
+    hote.appendChild(el('p', 'aide', 'Coche au moins un sport ci-dessus.'));
+  }
+}
+
+/* ── Meilleurs segments ────────────────────────────────────────────
+ *
+ * ⚠️ LA MISE EN GARDE EST RENDUE AVANT LE TABLEAU, TOUJOURS.
+ * Un classement de segments lu sans le nombre de combinaisons testées n'est
+ * pas une information : c'est une illusion d'optique. Le bandeau n'est donc
+ * pas une note de bas de page qu'on peut ne pas atteindre — il est au-dessus,
+ * dans le flux, et il porte le compte réel.
+ */
+
+function tableauSegments(d) {
+  const garde = $('s-garde');
+  garde.innerHTML = '';
+  const g = el('div', 'mise-en-garde');
+  (d.warnings || []).forEach((w, i) => {
+    const pp = el('p');
+    if (i === 0) pp.appendChild(el('b', null, '⚠️ '));
+    pp.appendChild(el('span', null, w));
+    g.appendChild(pp);
+  });
+  const compte = el('p');
+  compte.appendChild(el('b', null, `${ent(d.combinaisons_testees)} combinaisons testées`));
+  compte.appendChild(el('span', null,
+    ` · ${ent(d.retenus)} au-dessus du plancher de ${ent(d.min_n)}`
+    + ` · ${ent(d.ecartes_effectif)} écartées pour effectif`
+    + (d.redondants_fusionnes
+      ? ` · ${ent(d.redondants_fusionnes)} descriptions redondantes fusionnées` : '')
+    + (d.tronque ? ` · ${ent(d.tronque)} non affichées` : '')));
+  g.appendChild(compte);
+  garde.appendChild(g);
+
+  const t = $('segments');
+  t.innerHTML = '';
+  const cols = [['Segment', ''], ['n', 'num'], ['Échantillon', ''],
+    ['Réglés', 'num'], ['CLV', 'num'], ['Couv.', 'num'], ['ROI', 'num'],
+    ['P&L', 'num']];
+  const thead = el('thead'), tr = el('tr');
+  cols.forEach(([titre, cls]) => tr.appendChild(el('th', cls, titre)));
+  thead.appendChild(tr);
+  t.appendChild(thead);
+
+  const tb = el('tbody');
+  if (!d.segments.length) {
+    const r = el('tr'), td = el('td');
+    td.colSpan = cols.length;
+    td.textContent = 'Aucun segment ne passe le plancher d\'effectif. '
+      + 'Baisse le plancher ou élargis les filtres — ce n\'est pas un résultat '
+      + 'nul, c\'est une absence de mesure.';
+    r.appendChild(td);
+    tb.appendChild(r);
+  }
+  d.segments.forEach((sg) => {
+    const r = el('tr');
+    const td0 = el('td');
+    sg.criteres.forEach((c) => {
+      const chip = el('span', 'crit');
+      chip.appendChild(el('b', null, c.label + ' '));
+      chip.appendChild(el('span', null, c.display));
+      td0.appendChild(chip);
+    });
+    r.appendChild(td0);
+    r.appendChild(el('td', 'num', ent(sg.opportunities)));
+    const tdE = el('td');
+    const b = badge(sg.sample);
+    if (b) tdE.appendChild(b);
+    r.appendChild(tdE);
+    r.appendChild(el('td', 'num', ent(sg.settled)));
+    const tdC = el('td', 'num ' + signe(sg.clv), pct(sg.clv, 1));
+    r.appendChild(tdC);
+    r.appendChild(el('td', 'num', pctNu(sg.clv_coverage, 0)));
+    r.appendChild(el('td', 'num ' + signe(sg.roi), pct(sg.roi, 1)));
+    r.appendChild(el('td', 'num ' + signe(sg.pnl), eur(sg.pnl, 0)));
+    accrocher(r, sg.criteres.map((c) => c.display).join(' × '),
+      lignesTranche(sg).concat([['vs lot entier',
+        `CLV ${pct((d.overall || {}).clv, 1)} sur ${ent((d.overall || {}).opportunities)}`]]),
+      alerteTranche(sg));
+    tb.appendChild(r);
+  });
+  t.appendChild(tb);
+}
+
+async function chercherSegments() {
+  const b = $('s-lancer');
+  b.disabled = true;
+  $('s-etat').textContent = 'recherche en cours…';
+  try {
+    tableauSegments(await appel(API_SEGMENTS, parametres({
+      min_n: $('s-min').value || 100,
+      sort: $('s-tri').value,
+      depth: $('s-prof').value,
+      limit: 25,
+    })));
+    $('s-etat').textContent = '';
+  } catch (e) {
+    $('segments').innerHTML = '';
+    $('s-etat').textContent = 'Segments indisponibles : ' + e.message;
+  } finally {
+    b.disabled = false;
+  }
+}
+
 /* ── Analyse ───────────────────────────────────────────────────────── */
 
 async function analyser() {
@@ -584,13 +934,22 @@ async function analyser() {
 
     avertissements(d.warnings);
     kpis(d.summary);
-    ['bloc-kpi', 'bloc-temps', 'bloc-decoupes', 'bloc-matrice', 'bloc-detail']
+    ['bloc-kpi', 'bloc-temps', 'bloc-decoupes', 'bloc-matrice',
+     'bloc-segments', 'bloc-detail']
       .forEach((id) => { $(id).hidden = false; });
+    // La recherche de segments n'est PAS lancée d'office : trois dimensions
+    // croisées coûtent nettement plus qu'une analyse, et la section n'est pas
+    // consultée à chaque affichage. Le tableau précédent est vidé pour qu'il
+    // ne décrive jamais d'autres filtres que ceux affichés au-dessus.
+    $('segments').innerHTML = '';
+    $('s-garde').innerHTML = '';
+    $('s-etat').textContent = 'Clique « Chercher » pour explorer les combinaisons.';
 
     $('note-population').textContent =
       `Population : ${d.population.explication}` +
       (d.population.limites.length
         ? ' — Limite : ' + d.population.limites.join(' ') : '');
+    noteEv(d.ev_rules);
 
     courbe($('g-clv-temps'), d.by_time, 'clv', 'CLV dans le temps');
     courbe($('g-roi-temps'), d.by_time, 'roi', 'ROI dans le temps');
@@ -602,6 +961,16 @@ async function analyser() {
     barres($('g-roi-book'), d.by_book, 'roi', 'ROI par book');
     barres($('g-clv-sport'), d.by_sport, 'clv', 'CLV par sport');
     barres($('g-roi-sport'), d.by_sport, 'roi', 'ROI par sport');
+    barres($('g-clv-market'), d.by_market, 'clv', 'CLV par marché');
+    barres($('g-roi-market'), d.by_market, 'roi', 'ROI par marché');
+    barres($('g-clv-delay'), d.by_delay, 'clv', 'CLV par délai');
+    barres($('g-roi-delay'), d.by_delay, 'roi', 'ROI par délai');
+    // ⚠️ Le P&L cumulé est en EUROS : il passe son propre formateur d'axe.
+    courbe($('g-pnl-cumul'), d.by_time, 'pnl_cumul', 'P&L cumulé',
+      (v) => eur(v, 0));
+    courbe($('g-clv-cumul'), d.by_time, 'clv_cumul', 'CLV cumulée');
+    colonnes($('g-vol-temps'), d.by_time, 'opportunities', 'Opportunités');
+    colonnes($('g-reg-temps'), d.by_time, 'settled', 'Réglées');
     matrice();
     await chargerDetail();
     $('etat').textContent = '';
@@ -618,13 +987,41 @@ async function analyser() {
 
 /* ── Amorçage ──────────────────────────────────────────────────────── */
 
-function remplir(select, valeurs) {
-  select.innerHTML = '';
-  valeurs.forEach((v) => {
-    const o = el('option', null, v);
-    o.value = v;
-    select.appendChild(o);
+/* Les bandes de délai en boutons : elles POSENT les bornes en heures, elles
+ * n'ajoutent pas un filtre parallèle. Un second mécanisme de délai à côté du
+ * premier finirait par en contredire l'autre sans que rien ne le signale. */
+function boutonsDelai() {
+  const h = $('delay-rapides');
+  h.innerHTML = '';
+  (REFS.delay_bands || []).forEach((b) => {
+    const bt = el('button', 'discret', b.key);
+    bt.type = 'button';
+    bt.addEventListener('click', () => {
+      const deja = bt.classList.contains('actif');
+      h.querySelectorAll('button').forEach((x) => x.classList.remove('actif'));
+      $('f-delay-min').value = deja || b.min === null ? '' : b.min;
+      $('f-delay-max').value = deja || b.max === null ? '' : b.max;
+      if (!deja) bt.classList.add('actif');
+    });
+    h.appendChild(bt);
   });
+}
+
+/* ⚠️ LE REPLI SUR TÉLÉPHONE EST POSÉ EN JS, PAS SEULEMENT EN CSS.
+ * Le CSS cache les groupes sous 720 px ; sans un gestionnaire, le libellé
+ * serait alors un piège : on cliquerait dessus et rien ne s'ouvrirait. */
+function pliage() {
+  document.querySelectorAll('.champ.pliable > label').forEach((l) => {
+    l.addEventListener('click', () => {
+      if (matchMedia('(max-width: 720px)').matches) {
+        l.parentElement.classList.toggle('ouvert');
+      }
+    });
+  });
+  if (matchMedia('(max-width: 720px)').matches) {
+    document.querySelectorAll('.champ.pliable')
+      .forEach((c) => c.classList.remove('ouvert'));
+  }
 }
 
 async function demarrer() {
@@ -634,15 +1031,28 @@ async function demarrer() {
     avertissements(['Impossible de lire les filtres : ' + e.message]);
     return;
   }
-  remplir($('f-sports'), REFS.sports);
-  remplir($('f-books'), REFS.bookmakers);
-  remplir($('f-markets'), REFS.markets);
+
+  groupeCases($('f-sports'), REFS.sports,
+    { labels: REFS.sports_labels, courte: true,
+      onChange: panneauxEvParSport });
+  groupeCases($('f-books'), REFS.bookmakers, { labels: REFS.bookmakers_labels });
+  groupeCases($('f-markets'), REFS.markets,
+    { labels: REFS.markets_labels, courte: true });
+  groupeCases($('f-ev-bands'), REFS.ev_bands, { courte: true });
+  $('ev-split').addEventListener('change', panneauxEvParSport);
+  panneauxEvParSport();
+  boutonsDelai();
+  pliage();
+
   const dl = $('ligues');
   REFS.leagues.forEach((l) => {
     const o = el('option');
     o.value = l;
     dl.appendChild(o);
   });
+  $('aide-ligue').textContent =
+    `${ent(REFS.leagues.length)} compétitions — tape pour chercher, nom exact`;
+
   const sp = $('f-population');
   REFS.populations.forEach((p) => {
     const o = el('option', null, p.value.replace(/_/g, ' '));
@@ -656,16 +1066,33 @@ async function demarrer() {
   sp.addEventListener('change', majAide);
   majAide();
 
+  // ⚠️ LE PÉRIMÈTRE EST ANNONCÉ DANS L'EN-TÊTE. Un total qui ne couvre pas
+  // tout ce que le moteur détecte doit le DIRE : sans ça, « 27 053
+  // opportunités » se lit comme « tout ce que j'ai détecté », et l'écart avec
+  // les chiffres du daemon passerait pour un bug.
+  const per = REFS.perimetre || { sports: REFS.sports, markets: REFS.markets };
+  const nomsSports = (per.sports || [])
+    .map((x) => (REFS.sports_labels && REFS.sports_labels[x]) || x).join(' + ');
+  const nomsMarches = (per.markets || [])
+    .map((x) => (REFS.markets_labels && REFS.markets_labels[x]) || x).join(' + ');
   $('perimetre').textContent =
-    `${REFS.sports.length} sports · ${REFS.bookmakers.length} books · ` +
-    `${ent(REFS.leagues.length)} compétitions · ${REFS.date_min} → ${REFS.date_max}`;
+    `${nomsSports} · ${nomsMarches} · ${REFS.bookmakers.length} books · `
+    + `${ent(REFS.leagues.length)} compétitions · ${REFS.date_min} → ${REFS.date_max}`;
+  if (per.pourquoi) $('perimetre').title = per.pourquoi;
+
   if (REFS.date_min) $('f-date-from').value = REFS.date_min;
   if (REFS.date_max) $('f-date-to').value = REFS.date_max;
 
   $('analyser').addEventListener('click', analyser);
   $('m-mesure').addEventListener('change', matrice);
+  $('s-lancer').addEventListener('click', chercherSegments);
   $('reinit').addEventListener('click', () => {
     $('form').reset();
+    document.querySelectorAll('.cases input[type="checkbox"]')
+      .forEach((c) => { c.checked = false; });
+    $('delay-rapides').querySelectorAll('button')
+      .forEach((b) => b.classList.remove('actif'));
+    panneauxEvParSport();
     if (REFS.date_min) $('f-date-from').value = REFS.date_min;
     if (REFS.date_max) $('f-date-to').value = REFS.date_max;
     majAide();

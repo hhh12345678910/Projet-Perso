@@ -134,7 +134,10 @@ def _urls_appelees(js: str) -> set:
 
 
 def test_le_js_ne_connait_que_les_trois_endpoints():
-    assert _urls_appelees(JS) == {"/api/filters", "/api/analyse", "/api/detail"}
+    # PHASE 4 — `/api/segments` rejoint la liste. La propriété testée est
+    # inchangée : le JS n'appelle QUE des endpoints connus de l'API Analytics.
+    assert _urls_appelees(JS) == {"/api/filters", "/api/analyse",
+                                  "/api/detail", "/api/segments"}
 
 
 def test_le_js_n_appelle_fetch_que_par_ces_constantes():
@@ -307,3 +310,363 @@ def test_le_lanceur_sait_servir_l_api_seule():
     assert "--api-seule" in source
     assert "src.analytics_api.app:app" in source
     assert "src.analytics_ui.app:app" in source
+
+
+# ══════════════════════════════════════════════════════════════════════
+# PHASE 4 — cases à cocher, EV par sport, segments.
+#
+# ⚠️ CE QUI EST TESTÉ ICI EST UNE PROPRIÉTÉ D'ERGONOMIE, ET ELLE COMPTE.
+# Un `select multiple` perd sa sélection au premier clic simple et cache ce
+# qui est coché dès que la liste dépasse sa hauteur. Les deux sont des pertes
+# SILENCIEUSES : on croit avoir filtré sur quatre bookmakers, on en a un, et
+# le tableau au-dessous a l'air parfaitement normal.
+# ══════════════════════════════════════════════════════════════════════
+
+
+def test_AUCUN_select_multiple_ne_subsiste():
+    """Le Ctrl+clic est mort. S'il revenait, ce test le dirait."""
+    # ⚠️ On cherche l'ATTRIBUT sur une balise, pas le mot : le commentaire qui
+    # explique pourquoi les `select multiple` ont disparu contient le mot, et
+    # une assertion qui tombe sur sa propre documentation ne teste rien.
+    assert not re.search(r"<select[^>]*\bmultiple\b", HTML), (
+        "un <select multiple> est réapparu dans le formulaire")
+    assert "selectedOptions" not in JS, (
+        "le JS relit encore une sélection de <select multiple>")
+
+
+@pytest.mark.parametrize("groupe", ["f-sports", "f-books", "f-markets",
+                                    "f-ev-bands"])
+def test_chaque_filtre_multiple_est_un_groupe_de_cases(groupe):
+    """Les quatre filtres à valeurs multiples exigés par l'énoncé."""
+    assert re.search(rf'<div class="cases" id="{groupe}"', HTML), groupe
+
+
+def test_le_groupe_de_cases_fabrique_bien_des_checkbox():
+    assert "type = 'checkbox'" in JS or "c.type = 'checkbox'" in JS
+    assert "input[type=\"checkbox\"]:checked" in JS, (
+        "la lecture d'un groupe ne cible pas des cases cochées")
+
+
+def test_tout_selectionner_et_tout_deselectionner_existent():
+    assert "'Tout'" in JS and "'Aucun'" in JS
+
+
+def test_une_longue_liste_offre_une_RECHERCHE():
+    """Quinze bookmakers dans une liste sans recherche, c'est une liste qu'on
+    parcourt à l'œil à chaque fois."""
+    assert "type = 'search'" in JS
+    assert "masquee" in JS and "masquee" in CSS, (
+        "la recherche doit MASQUER, pas décocher")
+
+
+def test_la_recherche_ne_DECOCHE_jamais():
+    """Filtrer une liste ne doit pas modifier la sélection déjà faite : le
+    gestionnaire de recherche ne touche qu'à une classe CSS."""
+    bloc = JS[JS.index("rech.addEventListener"):]
+    bloc = bloc[:bloc.index("barre.appendChild(rech)")]
+    assert ".checked" not in bloc, "la recherche modifie des cases cochées"
+
+
+def test_une_case_cochee_se_VOIT_sans_lire_la_case():
+    assert ":has(input:checked)" in CSS
+
+
+# ── EV par sport ─────────────────────────────────────────────────────
+
+def test_lev_par_sport_a_son_interrupteur_et_son_conteneur():
+    assert 'id="ev-split"' in HTML
+    assert 'id="ev-par-sport"' in HTML
+
+
+def test_lev_par_sport_part_vers_le_SERVEUR_et_nest_pas_filtre_ici():
+    """⚠️ LA PROPRIÉTÉ CENTRALE DE LA PHASE 4 CÔTÉ FRONTEND.
+
+    Le JS doit ENVOYER `ev_bands_<sport>` et ne jamais comparer une EV
+    lui-même. Un filtrage local laisserait les KPI, les découpes et la matrice
+    décrire un autre lot que le détail, sans qu'aucun n'ait l'air faux."""
+    assert "'ev_bands_' + s" in JS, "les règles par sport ne partent pas en requête"
+    # Aucune comparaison d'EV dans le JS : ce serait un filtrage local.
+    assert not re.search(r"ev_pct\s*[<>]=?", JS), (
+        "le JS compare une EV — c'est un filtrage frontend")
+
+
+def test_la_regle_dEV_affichee_vient_de_la_REPONSE_du_serveur():
+    """Afficher ce qu'on a coché prouve qu'on sait lire son formulaire ;
+    afficher ce que le serveur dit avoir appliqué est la seule vérification
+    qui vaille."""
+    assert "function noteEv(regles)" in JS
+    assert "regles.by_sport" in JS
+    assert 'id="note-ev"' in HTML
+
+
+def test_la_selection_par_sport_SURVIT_au_redessin():
+    """Cocher un sport ne doit pas effacer l'EV réglée pour un autre."""
+    bloc = JS[JS.index("function panneauxEvParSport"):]
+    bloc = bloc[:bloc.index("/* ── Meilleurs segments")]
+    assert "memoire" in bloc and "coches: memoire[sp]" in bloc
+
+
+# ── Badges de volume ─────────────────────────────────────────────────
+
+def test_les_badges_disent_un_VOLUME_jamais_une_SIGNIFICATIVITE():
+    """⚠️ Le mot est interdit dans l'interface : un effectif ne décide pas de
+    la significativité statistique."""
+    assert "function badge(ech)" in JS
+    assert "pas de significativité" in JS
+    for source, nom in ((JS, "app.js"), (HTML, "index.html")):
+        for phrase in ("statistiquement significatif", "significativité "
+                       "statistique atteinte"):
+            assert phrase not in source, f"{nom} promet une significativité"
+
+
+def test_le_badge_du_ROI_porte_leffectif_des_REGLES():
+    """Afficher l'effectif des opportunités ferait passer pour solide un ROI
+    calculé sur quarante paris."""
+    assert "badge(s.sample_settled)" in JS
+
+
+@pytest.mark.parametrize("niveau", ["tres_bon", "bon", "moyen", "petit"])
+def test_chaque_palier_a_son_style(niveau):
+    assert f".ech.{niveau}" in CSS
+
+
+# ── Segments ─────────────────────────────────────────────────────────
+
+def test_le_bloc_segments_existe_avec_ses_reglages():
+    for ident in ("bloc-segments", "segments", "s-tri", "s-min", "s-prof",
+                  "s-lancer", "s-garde"):
+        assert f'id="{ident}"' in HTML, ident
+
+
+def test_la_mise_en_garde_est_rendue_AVANT_le_tableau():
+    """Un classement se lit du haut vers le bas : une mise en garde en bas de
+    page est une mise en garde qu'on n'atteint pas."""
+    assert HTML.index('id="s-garde"') < HTML.index('id="segments"')
+    bloc = JS[JS.index("function tableauSegments"):]
+    assert bloc.index("mise-en-garde") < bloc.index("$('segments')")
+
+
+def test_le_nombre_de_combinaisons_testees_est_AFFICHE():
+    assert "combinaisons testées" in JS
+    assert "combinaisons_testees" in JS
+
+
+def test_le_tri_par_CLV_est_le_defaut_propose():
+    m = re.search(r'<select id="s-tri".*?</select>', HTML, re.S)
+    assert m, "le sélecteur de tri des segments est absent"
+    assert m.group(0).index('value="clv"') < m.group(0).index('value="roi"')
+    assert "recommandé" in m.group(0)
+
+
+def test_les_segments_ne_sont_pas_calcules_d_office():
+    """Trois dimensions croisées coûtent nettement plus qu'une analyse."""
+    bloc = JS[JS.index("async function analyser()"):]
+    bloc = bloc[:bloc.index("/* ── Amorçage")]
+    assert "chercherSegments()" not in bloc
+
+
+# ── Nouvelles découpes ───────────────────────────────────────────────
+
+@pytest.mark.parametrize("bloc", [
+    "g-clv-market", "g-roi-market", "g-clv-delay", "g-roi-delay",
+    "g-pnl-cumul", "g-clv-cumul", "g-vol-temps", "g-reg-temps"])
+def test_les_nouvelles_decoupes_ont_leur_conteneur(bloc):
+    assert f'id="{bloc}"' in HTML, bloc
+
+
+def test_le_pnl_cumule_est_etiquete_en_EUROS():
+    """Un axe en « % » qui décrit des euros est une erreur d'unité que
+    personne ne rattrape en relisant."""
+    assert "'pnl_cumul', 'P&L cumulé',\n      (v) => eur(v, 0)" in JS
+
+
+def test_les_bandes_de_delai_POSENT_les_bornes_en_heures():
+    """Un second mécanisme de délai à côté du premier finirait par le
+    contredire sans que rien ne le signale."""
+    bloc = JS[JS.index("function boutonsDelai"):]
+    bloc = bloc[:bloc.index("function pliage")]
+    assert "$('f-delay-min').value" in bloc and "$('f-delay-max').value" in bloc
+    # `REFS.delay_bands` est la LISTE de référence rendue par l'API : elle est
+    # légitime. Ce qu'on interdit, c'est qu'une bande parte comme PARAMÈTRE de
+    # requête à côté de delay_min/delay_max — deux mécanismes de délai
+    # finiraient par se contredire sans que rien ne le signale.
+    assert not re.search(r"""(append|set)\(\s*['"]delay_band""", JS), (
+        "une bande de délai part en filtre parallèle")
+
+
+# ── Téléphone ────────────────────────────────────────────────────────
+
+def test_les_groupes_se_replient_sur_telephone():
+    assert "@media (max-width: 720px)" in CSS
+    assert ".champ.pliable" in CSS
+    assert "function pliage()" in JS
+
+
+def test_la_liste_defile_sans_allonger_la_page():
+    """Une longue liste de bookmakers ne doit pas repousser le bouton
+    ANALYSER hors de l'écran."""
+    assert ".cases-liste" in CSS and "overflow-y: auto" in CSS
+
+
+# ══════════════════════════════════════════════════════════════════════
+# LE CLIC SUR UNE CELLULE DE MATRICE — les 30, pas seulement 25.
+#
+# ⚠️ CE BLOC EXISTE PARCE QUE LA REVUE A TROUVÉ LE DÉFAUT, PAS L'INVERSE.
+# La première bande de cote s'appelle « 1.0-1.8 » ; le clic envoyait donc
+# `odds_min=1.0`, que `Filtres.valider` refuse — une cote décimale vaut
+# toujours plus que 1. Résultat : les CINQ cellules de la première ligne
+# répondaient 400 et vidaient le tableau de détail, sous un message d'erreur
+# que rien d'autre ne signalait. Vingt-cinq cellules sur trente marchaient, et
+# c'est exactement le genre de panne partielle qui survit à une relecture.
+#
+# Le défaut datait de la Phase 3 : ni la logique du clic ni la règle de
+# validation n'avaient bougé. Il a survécu à la validation Phase 3 parce que
+# la VM n'avait aucun navigateur pilotable.
+# ══════════════════════════════════════════════════════════════════════
+
+
+#: Sentinelle pour le `undefined` de JavaScript. Une valeur absente n'est PAS
+#: `None` côté JS, et la différence est exactement ce qui a produit le défaut
+#: n° 2 : `Number.isNaN(undefined)` vaut **false**, donc une borne absente est
+#: affectée quand même, puis sérialisée en la chaîne « undefined ».
+INDEFINI = object()
+
+
+def _number_isNaN(v) -> bool:
+    """`Number.isNaN` de JavaScript, à la lettre.
+
+    Il ne rend `true` QUE pour la valeur NaN elle-même — pas pour `undefined`,
+    contrairement au `isNaN` global. C'est cette subtilité que le code de
+    `chargerDetail` n'anticipe pas."""
+    return isinstance(v, float) and v != v
+
+
+def _params_du_clic(bande_cote: str, bande_ev: str) -> dict:
+    """Reproduit `chargerDetail` À LA LETTRE, `undefined` compris.
+
+    ⚠️ LA PREMIÈRE VERSION DE CE MIROIR ÉTAIT INFIDÈLE, ET ELLE A MENTI.
+    Elle traitait une borne absente comme une absence de clé, là où le JS
+    affecte `undefined`. Résultat : le test annonçait « les 30 cellules sont
+    cliquables » pendant que cinq d'entre elles répondaient 422 dans un vrai
+    navigateur. Un miroir approximatif est pire qu'aucun miroir — il donne la
+    tranquillité sans la vérification.
+
+    D'où la fidélité littérale ci-dessous, et le test
+    `test_le_js_correspond_bien_a_ce_miroir` qui relit le JS pour que la
+    dérive se voie."""
+    extra = {}
+    morceaux = bande_cote.replace("> ", "").split("-")
+
+    def flottant(i):
+        # `map(parseFloat)` sur un tableau plus court rend `undefined`.
+        if i >= len(morceaux):
+            return INDEFINI
+        try:
+            return float(morceaux[i])
+        except ValueError:
+            return float("nan")
+
+    a, b = flottant(0), flottant(1)
+    if not _number_isNaN(a) and a is not INDEFINI and a > 1:
+        extra["odds_min"] = a
+    if b is not INDEFINI and not _number_isNaN(b):
+        # Le JS teste maintenant `b !== undefined && !Number.isNaN(b)` :
+        # une bande ouverte vers le haut n'envoie plus de borne haute du tout.
+        extra["odds_max"] = b
+
+    ev = bande_ev.replace("%", "")
+    m = re.match(r"^(\d+)-(\d+)$", ev)
+    if m:
+        extra["ev_min"], extra["ev_max"] = m.group(1), m.group(2)
+    elif ev.startswith("<"):
+        extra["ev_max"] = float(ev[1:])
+    elif ev.endswith("+"):
+        extra["ev_min"] = float(ev[:-1])
+    return extra
+
+
+def _cellules():
+    from src.analytics.perimetre import bandes_cote, ordre_ev
+    return [(c, e) for c, _, _ in bandes_cote() for e in ordre_ev()]
+
+
+@pytest.mark.parametrize("cote,ev", _cellules())
+def test_chaque_cellule_de_la_matrice_est_cliquable(client, cote, ev):
+    """Les 30 cellules, une par une, pour que l'échec nomme la cellule.
+
+    Deux défauts sont passés par ici, tous deux antérieurs à la Phase 4 et
+    tous deux sur la même ligne de code :
+
+    * la bande « 1.0-1.8 » envoyait `odds_min=1.0`, refusé en 400 ;
+    * la bande « > 6.0 » envoyait `odds_max=undefined`, refusé en 422.
+
+    Les deux sont corrigés. Ce test les couvre désormais sans exception."""
+    r = client.get("/api/detail", params=_params_du_clic(cote, ev))
+    assert r.status_code == 200, (
+        f"cote {cote} × EV {ev} → {r.status_code} "
+        f"{str(r.json().get('detail', ''))[:90]}")
+
+
+def test_la_premiere_bande_n_envoie_PAS_de_borne_basse(client):
+    """Le défaut n° 1, corrigé, isolé pour que l'échec soit lisible."""
+    p = _params_du_clic("1.0-1.8", "5-8%")
+    assert "odds_min" not in p, "la borne basse 1.0 repart vers l'API"
+    assert p["odds_max"] == 1.8, "la borne haute doit être conservée"
+    assert client.get("/api/detail", params=p).status_code == 200
+
+
+@pytest.mark.parametrize("bande,attendu", [
+    ("1.8-2.3", 1.8), ("2.3-3.0", 2.3), ("3.0-4.0", 3.0), ("4.0-6.0", 4.0)])
+def test_les_AUTRES_bandes_gardent_leur_borne_basse(bande, attendu):
+    """La correction ne doit toucher QUE la première bande : élargir le lot
+    des autres ferait remonter des paris hors de la cellule cliquée."""
+    assert _params_du_clic(bande, "8-15%")["odds_min"] == attendu
+
+
+def test_la_bande_ouverte_garde_sa_borne_basse():
+    """« > 6.0 » garde bien `odds_min` — son défaut est sur l'autre borne."""
+    assert _params_du_clic("> 6.0", "8-15%")["odds_min"] == 6.0
+
+
+def test_le_js_garde_la_borne_basse_de_la_premiere_bande():
+    """La garde est vérifiée sur le FICHIER, pas sur son miroir Python."""
+    bloc = JS[JS.index("async function chargerDetail"):]
+    bloc = bloc[:bloc.index("$('detail-filtre')")]
+    assert re.search(r"if\s*\(!Number\.isNaN\(a\)\s*&&\s*a\s*>\s*1\)", bloc), (
+        "app.js n'écarte plus la borne basse ≤ 1 : la première ligne de la "
+        "matrice va de nouveau répondre 400")
+    assert "extra.odds_max = b" in bloc, "la borne haute a disparu"
+
+
+def test_le_js_correspond_bien_a_ce_miroir():
+    """⚠️ CE GARDE EST EXACT, ET LA VERSION PRÉCÉDENTE NE L'ÉTAIT PAS.
+
+    Elle se contentait de chercher la sous-chaîne « !Number.isNaN(b) » —
+    toujours présente APRÈS la correction du défaut n° 2. Elle n'aurait donc
+    jamais signalé la dérive : un garde qui ne peut pas échouer ne garde rien.
+    Et de fait, la correction du JS a été faite sans que cette suite bouge
+    d'un test.
+
+    On exige donc les DEUX conditions dans leur forme littérale. Toute
+    modification de cette ligne casse ce test, ce qui est précisément le but :
+    le miroir Python ci-dessus doit être remis à jour en même temps."""
+    bloc = JS[JS.index("async function chargerDetail"):]
+    bloc = bloc[:bloc.index("$('detail-filtre')")]
+    assert re.search(r"if\s*\(!Number\.isNaN\(a\)\s*&&\s*a\s*>\s*1\)\s*"
+                     r"extra\.odds_min\s*=\s*a;", bloc), (
+        "la garde de la borne BASSE a changé — mets à jour `_params_du_clic`")
+    assert re.search(r"if\s*\(b\s*!==\s*undefined\s*&&\s*!Number\.isNaN\(b\)\)\s*"
+                     r"extra\.odds_max\s*=\s*b;", bloc), (
+        "la garde de la borne HAUTE a changé — mets à jour `_params_du_clic`. "
+        "Si `b !== undefined` disparaît, la bande « > 6.0 » renverra "
+        "`odds_max=undefined` et l'API répondra 422 sur cinq cellules.")
+
+
+def test_le_clic_restreint_toujours_sans_remplacer(client):
+    """La correction ne doit pas transformer la restriction en remplacement :
+    le lot d'une cellule reste un sous-ensemble du lot complet."""
+    tout = client.get("/api/detail", params={"per_page": 500}).json()["total"]
+    cellule = client.get("/api/detail",
+                         params={**_params_du_clic("1.0-1.8", "5-8%"),
+                                 "per_page": 500}).json()["total"]
+    assert cellule <= tout
