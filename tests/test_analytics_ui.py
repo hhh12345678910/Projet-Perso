@@ -91,6 +91,59 @@ def test_un_fichier_inexistant_rend_404(client):
     assert client.get("/inexistant.js").status_code == 404
 
 
+# ── ⚠️ LE CACHE DU NAVIGATEUR : l'interface à moitié ancienne ───────
+#
+# Panne réelle du 18/09. Le déploiement Phase 4 était parfait côté serveur —
+# bon commit, bon service, bons octets sur le fil — et l'interface affichée
+# était fausse : `index.html` en Phase 4, `app.js` et `style.css` en Phase 3,
+# servis par le cache du navigateur. L'ancien script injecte des `<option>`
+# dans ce qui est devenu un `<div class="cases">`, ce qui affiche les filtres
+# en texte brut, sans case à cocher.
+#
+# Rien de tout cela n'apparaît dans un journal, et aucun test de rendu ne peut
+# l'attraper : l'incohérence n'existe pas dans le dépôt, elle existe dans le
+# navigateur. La SEULE chose vérifiable ici est l'en-tête qui l'empêche.
+
+
+def test_chaque_fichier_statique_impose_la_REVALIDATION(client):
+    """⚠️ SANS CET EN-TÊTE, UN DÉPLOIEMENT PEUT SERVIR DEUX VERSIONS.
+
+    Starlette ne pose aucun `Cache-Control` : le navigateur applique alors sa
+    fraîcheur heuristique (~10 % de l'âge du fichier) et ne redemande RIEN
+    pendant des jours. Un `app.js` de trois semaines reste donc en place après
+    la mise en production de son successeur."""
+    for chemin in ("/", "/index.html", "/app.js", "/style.css"):
+        r = client.get(chemin)
+        assert r.status_code == 200, chemin
+        assert r.headers.get("cache-control") == "no-cache", (
+            f"{chemin} est servi sans revalidation imposée : le navigateur "
+            f"peut le garder en cache après un déploiement")
+
+
+def test_la_revalidation_repond_304_et_garde_len_tete(client):
+    """`no-cache` n'interdit pas le cache, il impose l'aller-retour.
+
+    Ce test mesure le COÛT du correctif : un fichier inchangé ne repart pas
+    sur le réseau, Starlette répond 304 sans corps. Si cette réponse perdait
+    l'en-tête, le navigateur retomberait à l'heuristique au coup suivant."""
+    premier = client.get("/app.js")
+    etag = premier.headers.get("etag")
+    assert etag, "pas d'ETag : la revalidation coûterait le fichier entier"
+    second = client.get("/app.js", headers={"If-None-Match": etag})
+    assert second.status_code == 304
+    assert not second.content
+    assert second.headers.get("cache-control") == "no-cache"
+
+
+def test_lAPI_nest_PAS_touchee_par_la_regle_de_cache(client):
+    """Le correctif vise des FICHIERS. Une décision de cache prise pour eux
+    n'a aucune raison de s'appliquer aux réponses de l'API — c'est pourquoi
+    il est posé sur le montage statique et non dans un middleware."""
+    r = client.get("/api/filters")
+    assert r.status_code == 200
+    assert "cache-control" not in {k.lower() for k in r.headers}
+
+
 # ── ⚠️ LE RISQUE PRINCIPAL : l'API masquée ──────────────────────────
 
 @pytest.mark.parametrize("route", ["/api/health", "/api/filters",
