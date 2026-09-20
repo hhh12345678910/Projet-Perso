@@ -199,6 +199,39 @@ def _flip(res: MatchResult) -> MatchResult:
     )
 
 
+#: Sports dont la SOURCE de résultats porte, elle aussi, la classe (féminin,
+#: jeunes) sur ses noms. Le marquage de nos noms n'est correct QUE là.
+#:
+#: ⚠️ CETTE LISTE EXISTE PARCE QUE LE MARQUAGE EST À SENS UNIQUE AILLEURS.
+#:
+#: `bind_results` recopie la classe de la ligue sur NOS noms pour que la
+#: barrière de classe de `team_similarity` ne sépare pas ce qui doit être
+#: rapproché. Le report symétrique sur les noms de la SOURCE n'existe que dans
+#: `parse_apifootball_results` (src/score_sources.py:130) : le parseur tennis
+#: `parse_livetennis_results` rend les noms de joueurs bruts et n'appelle
+#: jamais `with_class_marker`.
+#:
+#: Sans ce garde, au tennis le marqueur n'atterrit donc que d'un côté, et la
+#: barrière renvoie un 0.0 DUR : deux noms pourtant identiques ne s'apparient
+#: plus. Mesuré le 18/09 sur dix jours — 196 événements marqués, 196 échecs,
+#: soit 85 % du trou tennis. Toutes les épreuves « ITF Women », « ITF Ladies »
+#: et « ITF Juniors » étaient inappariables À 100 %, quelle que soit la
+#: qualité des noms, et le compteur `classe_posee` annonçait un succès sur
+#: exactement les événements qu'il condamnait.
+#:
+#: Pourquoi restreindre plutôt que marquer aussi la source : au tennis les
+#: joueurs sont des INDIVIDUS. La collision que la barrière protège —
+#: « Barcelona » contre « Barcelona Femení », deux équipes distinctes portant
+#: le même nom — n'a pas d'équivalent ici : une joueuse et un joueur ne
+#: partagent pas un nom, et l'horaire sépare déjà les deux épreuves d'un même
+#: joueur dans la journée. La barrière n'y protège de rien et coûte tout.
+#:
+#: Le jour où une source tennis portera la classe, il suffira d'ajouter
+#: « tennis » ici — et le test `test_le_tennis_feminin_sapparie_quand_meme`
+#: devra alors être revu en même temps.
+SPORTS_A_CLASSE_SYMETRIQUE = ("soccer",)
+
+
 def bind_results(
     events: Iterable[OurEvent],
     results: Iterable[MatchResult],
@@ -225,6 +258,11 @@ def bind_results(
         "resultat_inutilisable": 0,  # apparié, mais ni vainqueur ni scores
         "orientation_corrigee": 0,   # apparié à l'envers, vainqueur remis d'aplomb
         "classe_posee": 0,           # féminin/jeunes : classe reprise de la ligue
+        # Événements dont la ligue porte une classe que la source de CE sport
+        # ne sait pas porter. Compté plutôt que tu : sans ce chiffre, « la
+        # barrière ne s'applique pas ici » est une décision invisible, et on ne
+        # saurait pas combien d'événements en dépendent (§13.12).
+        "classe_non_portable": 0,
     }
     tol = tolerance_for_scores(sport)
     bindings: list[tuple[str, MatchResult]] = []
@@ -236,7 +274,13 @@ def bind_results(
         # W ») — et `team_similarity` renvoie 0.0 dès que les classes diffèrent.
         # Sans cette ligne, le féminin et les jeunes sont perdus EN ENTIER, sans
         # qu'aucune erreur ne soit levée.
+        # ⚠️ ET SEULEMENT SI LA SOURCE DE CE SPORT PORTE LA CLASSE, ELLE AUSSI.
+        # Marquer un seul côté ne relâche pas la barrière : il la DÉCLENCHE.
+        # Voir `SPORTS_A_CLASSE_SYMETRIQUE` pour la mesure et la raison.
         marque = class_marker_from_league(ev.league)
+        if marque and sport not in SPORTS_A_CLASSE_SYMETRIQUE:
+            counters["classe_non_portable"] += 1
+            marque = ""
         if marque:
             ev = replace(ev, home=with_class_marker(ev.home, marque),
                          away=with_class_marker(ev.away, marque))

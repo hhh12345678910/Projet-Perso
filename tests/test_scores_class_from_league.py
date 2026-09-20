@@ -190,3 +190,100 @@ def test_deux_matchs_le_meme_soir_vont_au_bon_endroit():
     par_cle = {k: (r.home, r.away) for k, r in liens}
     assert par_cle["masc"] == ("Rosenborg", "Lyn")
     assert par_cle["fem"] == ("Rosenborg W", "Lyn W")
+
+
+# ══ LE TENNIS : LA MÊME LIGNE, L'EFFET EXACTEMENT INVERSE ══════════
+#
+# Tout ce qui précède décrit un correctif qui SAUVE le football féminin. Au
+# tennis, la même ligne le DÉTRUIT — parce que le report symétrique sur les
+# noms de la source n'existe que dans `parse_apifootball_results`. Le parseur
+# tennis rend les noms bruts, le marqueur n'atterrit que d'un côté, et la
+# barrière se déclenche au lieu de s'effacer.
+#
+# Mesuré le 18/09 sur dix jours : 196 événements marqués, 196 échecs — 85 % du
+# trou tennis. Et `classe_posee` annonçait un succès sur exactement ces 196.
+#
+# ⚠️ Le test qui compte dans les deux sens : `test_le_football_garde_sa
+# _barriere_intacte` ci-dessous. Desserrer le tennis ne doit rien relâcher
+# ailleurs.
+
+def _leur_tennis(home, away, quand=None):
+    return MatchResult(sport="tennis", home=home, away=away,
+                       start_time=quand or T, winner="home",
+                       home_score=2, away_score=0, source="livetennis")
+
+
+def test_le_tennis_feminin_sapparie_quand_meme():
+    """⚠️ LA RÉGRESSION QUE CE CORRECTIF FERME.
+
+    Avant, ces deux noms — RIGOUREUSEMENT IDENTIQUES des deux côtés —
+    obtenaient une similarité de 0.0, parce que « ITF Women » collait un « W »
+    sur le nôtre et sur le nôtre seulement."""
+    nous = [OurEvent("t", "Hanyu Guo", "Lulu Sun", T,
+                     league="ITF Women Kyoto - R1")]
+    liens, c = bind_results(nous, [_leur_tennis("Hanyu Guo", "Lulu Sun")],
+                            sport="tennis")
+    assert len(liens) == 1, (
+        "le tennis féminin reste inappariable : le marqueur de classe est "
+        "reposé sur un seul des deux côtés")
+    assert c["classe_posee"] == 0
+    assert c["classe_non_portable"] == 1
+
+
+def test_les_juniors_du_tennis_aussi():
+    """Le bug ne visait pas le féminin : il visait tout mot de classe dans le
+    nom de ligue. « ITF Juniors » rend « U19 » et échouait à l'identique."""
+    nous = [OurEvent("j", "Mirra Andreeva", "Erika Andreeva", T,
+                     league="ITF Juniors Roehampton")]
+    liens, c = bind_results(
+        nous, [_leur_tennis("Mirra Andreeva", "Erika Andreeva")],
+        sport="tennis")
+    assert len(liens) == 1
+    assert c["classe_non_portable"] == 1
+
+
+def test_les_epreuves_tennis_SANS_mot_de_classe_ne_changent_pas():
+    """« WTA », « ATP », « ITF Men » et « ITF W15 » ne produisent aucun
+    marqueur : elles s'appariaient déjà, et le correctif ne les touche pas.
+    C'est ce qui explique que l'ITF Men résolvait quand l'ITF Women non."""
+    for ligue in ("WTA Sao Paulo - R1", "ATP Chengdu - R16",
+                  "ITF Men Belem - R1", "ITF W15 Monastir"):
+        assert class_marker_from_league(ligue) == ""
+        nous = [OurEvent("k", "A Player", "B Player", T, league=ligue)]
+        liens, c = bind_results(nous, [_leur_tennis("A Player", "B Player")],
+                                sport="tennis")
+        assert len(liens) == 1, ligue
+        assert c["classe_non_portable"] == 0, ligue
+
+
+def test_desserrer_la_barriere_ne_fabrique_PAS_de_faux_appariement():
+    """⚠️ LA CONTREPARTIE À VÉRIFIER.
+
+    Retirer la barrière au tennis ne doit pas rapprocher n'importe qui. C'est
+    le NOM qui juge, et il juge toujours : deux joueuses différentes restent
+    séparées."""
+    nous = [OurEvent("t", "Hanyu Guo", "Lulu Sun", T,
+                     league="ITF Women Kyoto - R1")]
+    liens, c = bind_results(
+        nous, [_leur_tennis("Jessica Pegula", "Iga Swiatek")], sport="tennis")
+    assert liens == []
+    assert c["sans_candidat"] == 1
+
+
+def test_le_football_garde_sa_barriere_intacte():
+    """⚠️ LE TEST QUI PROTÈGE LE CORRECTIF D'AOÛT.
+
+    Le football n'est pas concerné par ce desserrage : sa source porte la
+    classe, le marquage reste posé, et le masculin ne prend toujours pas le
+    résultat du féminin."""
+    nous = [OurEvent("f", "Houston Dash", "Chicago Red Stars", T,
+                     league="USA - NWSL Women")]
+    liens, c = bind_results(nous, [_leur("Houston Dash W", "Chicago Red Stars W")],
+                            sport="soccer")
+    assert len(liens) == 1
+    assert c["classe_posee"] == 1
+    assert c["classe_non_portable"] == 0
+
+    masc = [OurEvent("m", "Rosenborg", "Lyn", T)]
+    liens, _ = bind_results(masc, [_leur("Rosenborg W", "Lyn W")], sport="soccer")
+    assert liens == [], "la barrière de classe du football a été relâchée"
