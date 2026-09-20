@@ -59,6 +59,17 @@ if [ "$MODE" = check ]; then
         rm -f "$tmp"; exit 1
     fi
     rm -f "$tmp"
+    echo "==> Journal"
+    if [ -d /var/log/caddy ]; then
+        etranger="$(find /var/log/caddy ! -user caddy -print -quit)"
+        if [ -n "$etranger" ]; then
+            echo "   ⚠ $etranger n'appartient pas à caddy — le service ne pourra pas y écrire"
+        else
+            echo "   ✓ /var/log/caddy appartient bien à caddy"
+        fi
+    else
+        echo "   ⚠ /var/log/caddy absent"
+    fi
     echo "==> État du service"
     systemctl is-enabled caddy 2>/dev/null || true
     systemctl is-active  caddy 2>/dev/null || true
@@ -70,16 +81,40 @@ fi
 echo "Mot de passe pour « $UTILISATEUR » (rien ne s'affiche) :"
 HASH="$(caddy hash-password)"
 
-mkdir -p /var/log/caddy && chown caddy:caddy /var/log/caddy 2>/dev/null || true
-[ -f "$CIBLE" ] && cp -a "$CIBLE" "$CIBLE.avant-$(date +%Y%m%d%H%M%S)"
+# Le service tourne sous cet utilisateur-là. S'il n'existe pas, tout ce qui
+# suit produirait une configuration que personne ne peut lire — autant le
+# dire maintenant, et fort.
+id caddy >/dev/null 2>&1 || {
+    echo "L'utilisateur « caddy » n'existe pas : Caddy n'a pas été posé par son paquet." >&2
+    exit 4
+}
+
+mkdir -p /var/log/caddy
+if [ -f "$CIBLE" ]; then cp -a "$CIBLE" "$CIBLE.avant-$(date +%Y%m%d%H%M%S)"; fi
 rendre "$HASH" > "$CIBLE"
-chown root:caddy "$CIBLE" 2>/dev/null || true
+# ⚠️ AUCUN `|| true` ICI. Un chown qui échoue en silence laisse un fichier
+# illisible par le service et un diagnostic impossible : on l'a vécu.
+chown root:caddy "$CIBLE"
 chmod 640 "$CIBLE"
 
 echo "==> Validation"
 caddy validate --config "$CIBLE" --adapter caddyfile
+
+# ⚠️ NE REMONTE PAS CETTE LIGNE AU-DESSUS DE LA VALIDATION. `caddy validate`
+# ne se contente pas de lire le fichier : il PROVISIONNE les modules, donc il
+# crée /var/log/caddy/analytics.log — appartenant à root, puisque ce script
+# tourne sous sudo. Le service, lui, tourne sous `caddy` : il meurt alors sur
+# « open /var/log/caddy/analytics.log: permission denied » avec une
+# configuration pourtant déclarée valide deux lignes plus haut.
+chown -R caddy:caddy /var/log/caddy
+
 echo "==> Rechargement"
-systemctl reload caddy || systemctl restart caddy
+if ! systemctl reload caddy && ! systemctl restart caddy; then
+    echo "   ✗ Caddy refuse de démarrer avec cette configuration :" >&2
+    journalctl -u caddy -n 15 --no-pager >&2
+    echo "   La configuration précédente est dans $CIBLE.avant-*" >&2
+    exit 5
+fi
 sleep 2
 systemctl is-active caddy
 echo "✓ https://$DOMAINE — le certificat peut prendre une minute à arriver."

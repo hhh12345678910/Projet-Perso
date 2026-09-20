@@ -819,3 +819,37 @@ def test_le_gabarit_caddy_ne_relaie_que_la_BOUCLE_LOCALE():
     assert "reverse_proxy 127.0.0.1:8899" in g
     assert "0.0.0.0" not in g
     assert "basic_auth" in g, "aucun mot de passe devant l'API"
+
+
+def test_installateur_caddy_reprend_le_journal_APRES_la_validation():
+    """⚠️ RÉGRESSION VÉCUE, 20/09. `caddy validate` ne lit pas la
+    configuration : il PROVISIONNE ses modules, donc il crée
+    /var/log/caddy/analytics.log sous root quand le script tourne en sudo.
+    Le service tourne sous `caddy` et meurt sur « permission denied » avec
+    une configuration validée à la ligne précédente. Le chown doit venir
+    APRÈS la validation, sinon il ne sert à rien."""
+    s = (pathlib.Path(__file__).parent.parent
+         / "scripts" / "setup-caddy.sh").read_text(encoding="utf-8")
+    validation = s.index("caddy validate --config")
+    reprise = s.index("chown -R caddy:caddy /var/log/caddy")
+    assert reprise > validation, "le chown du journal précède la validation"
+
+
+def test_installateur_caddy_ne_masque_AUCUN_echec_de_chown():
+    """Un `|| true` sur un chown transforme une panne nette en service mort
+    sans cause lisible — c'est ce qui a rendu le premier diagnostic faux."""
+    s = (pathlib.Path(__file__).parent.parent
+         / "scripts" / "setup-caddy.sh").read_text(encoding="utf-8")
+    for ligne in s.splitlines():
+        if ligne.strip().startswith("chown"):
+            assert "|| true" not in ligne, ligne
+            assert "2>/dev/null" not in ligne, ligne
+
+
+def test_installateur_caddy_explique_un_demarrage_refuse():
+    """Sans le journal sous les yeux, « Job for caddy.service failed » envoie
+    chercher la cause ailleurs que là où elle est."""
+    s = (pathlib.Path(__file__).parent.parent
+         / "scripts" / "setup-caddy.sh").read_text(encoding="utf-8")
+    assert "journalctl -u caddy" in s
+    assert "$CIBLE.avant-" in s, "aucun retour en arrière indiqué"
