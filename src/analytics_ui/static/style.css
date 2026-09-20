@@ -458,3 +458,62 @@ table.segments tbody tr:hover { background: var(--neutre); }
   .champ.pliable.ouvert > label::after { content: ' ▾'; }
   .cases-liste { max-height: 200px; }
 }
+
+/* ══ IMPRESSION / EXPORT PDF ═══════════════════════════════════════
+ *
+ * ⚠️ AUCUNE BIBLIOTHÈQUE PDF. L'impression du navigateur rend déjà les
+ * polices, les tableaux et les graphiques tels qu'ils s'affichent, hors
+ * ligne. Un générateur embarqué coûterait des centaines de kilo-octets, une
+ * SECONDE mise en page à maintenir — qui divergerait — et un téléchargement
+ * de dépendance que cette machine s'interdit.
+ *
+ * Ce que la feuille doit garantir : que le papier porte les chiffres ET les
+ * filtres qui les ont produits. Un export muet sur ses critères se relit
+ * trois semaines plus tard comme un résultat global.
+ */
+
+.impression-seule { display: none; }
+
+@media print {
+  /* Le papier est blanc : imposer l'encre sombre, quel que soit le thème
+     choisi à l'écran. Un export en mode sombre est illisible et ruineux. */
+  :root, :root[data-theme="dark"] {
+    --fond: #fff; --carte: #fff; --texte: #111; --texte-doux: #444;
+    --bordure: #bbb; --neutre: #f4f4f4;
+  }
+  body { background: #fff; color: #111; font-size: 10.5pt; }
+
+  /* Ce qui ne sert qu'à PILOTER disparaît : filtres, boutons, bascules. */
+  #bloc-filtres, #theme, #pdf, #reinit, #analyser,
+  .actions, .rapides, #s-lancer, .pagination { display: none !important; }
+
+  .impression-seule { display: block; }
+
+  /* Une carte coupée en deux pages perd son titre ou sa légende. */
+  .carte {
+    break-inside: avoid; page-break-inside: avoid;
+    border: 1px solid var(--bordure); box-shadow: none; margin: 0 0 10pt;
+  }
+  #entete-pdf { break-after: avoid; page-break-after: avoid; }
+
+  /* L'en-tête d'export : deux colonnes serrées, critère puis valeur. */
+  .export-filtres {
+    display: grid; grid-template-columns: max-content 1fr;
+    gap: 2pt 10pt; margin: 6pt 0 0;
+  }
+  .export-filtres dt { font-weight: 700; color: var(--texte-doux); }
+  .export-filtres dd { margin: 0; }
+  .export-limites {
+    margin: 8pt 0 0; padding-left: 14pt; color: var(--texte-doux);
+    font-size: 9pt;
+  }
+
+  /* Un tableau dont l'en-tête ne se répète pas devient illisible page 2. */
+  thead { display: table-header-group; }
+  tr, img, canvas, svg { break-inside: avoid; page-break-inside: avoid; }
+  canvas, svg { max-width: 100% !important; height: auto !important; }
+
+  a[href]::after { content: ""; }   /* pas d'URL entre parenthèses */
+}
+
+@page { size: A4 portrait; margin: 12mm 10mm; }

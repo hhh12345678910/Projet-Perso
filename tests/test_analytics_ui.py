@@ -723,3 +723,76 @@ def test_le_clic_restreint_toujours_sans_remplacer(client):
                          params={**_params_du_clic("1.0-1.8", "5-8%"),
                                  "per_page": 500}).json()["total"]
     assert cellule <= tout
+
+
+# ══ LES CINQ AJOUTS DE L'INTERFACE ═════════════════════════════════
+
+def test_les_tranches_de_cote_ont_leur_bloc_et_leur_panneau_par_sport():
+    for marqueur in ('id="f-odds-bands"', 'id="cote-split"',
+                     'id="cote-par-sport"'):
+        assert marqueur in HTML, marqueur
+    assert "panneauxCoteParSport" in JS
+    assert "odds_bands_" in JS, "les bandes par sport ne partent pas au serveur"
+
+
+def test_le_delai_porte_une_UNITE_et_convertit_avant_denvoyer():
+    """⚠️ LE SERVEUR ATTEND DES HEURES, TOUJOURS.
+
+    Envoyer des minutes sous le nom `delay_min` ferait lire « 15 heures » à
+    une requête qui voulait dire quinze minutes — sans aucune erreur."""
+    assert 'id="f-delay-unite"' in HTML
+    assert "1 / 60" in JS, "aucune conversion minutes → heures"
+    assert "majAideDelai" in JS, "rien ne dit à l'utilisateur ce qui part"
+
+
+def test_les_bornes_dEV_par_sport_existent_dans_le_panneau():
+    assert "ev-min-" in JS and "ev-max-" in JS
+    assert "ev_min_" in JS and "ev_max_" in JS
+
+
+def test_les_populations_saffichent_par_leur_LIBELLE_pas_leur_cle():
+    """Le libellé s'affiche, la valeur canonique repart en filtre. Les
+    confondre enverrait « Toutes les détections » à une API qui ne connaît
+    que « detected »."""
+    assert "p.libelle" in JS
+    assert "o.value = p.value" in JS
+
+
+def test_lexport_PDF_nembarque_AUCUNE_bibliotheque():
+    """Un générateur PDF embarqué, ce serait des centaines de kilo-octets, une
+    seconde mise en page à maintenir, et un téléchargement de dépendance que
+    cette machine s'interdit. L'impression du navigateur suffit."""
+    assert 'id="pdf"' in HTML
+    assert "window.print()" in JS
+    assert "@media print" in CSS
+    # ⚠️ CHERCHER L'USAGE, PAS LE MOT. Une première version de ce test
+    # refusait la chaîne « cdn » et tombait sur le commentaire de
+    # `index.html` qui dit précisément qu'il n'y en a aucun — un garde qui
+    # se déclenche sur sa propre mise en garde ne protège rien.
+    import re
+    for nom in ("jspdf", "html2canvas", "pdfmake", "jsPDF"):
+        assert not re.search(rf"\b{nom}\b", JS, re.I), nom
+    assert not re.search(r'<script[^>]+src=["\']https?:', HTML, re.I), (
+        "un script distant est chargé")
+    assert not re.search(r'<link[^>]+href=["\']https?:', HTML, re.I), (
+        "une feuille de style distante est chargée")
+
+
+def test_le_PDF_emporte_les_FILTRES_qui_ont_produit_les_chiffres():
+    """⚠️ SANS ÇA L'EXPORT EST UN PIÈGE. Relu trois semaines plus tard,
+    « ROI +16 % » se lit comme le ROI du système entier alors qu'il portait
+    sur une tranche d'EV et un seul sport. L'écran montre les filtres
+    au-dessus ; le papier ne les emporte pas tout seul."""
+    assert 'id="entete-pdf"' in HTML
+    assert "enteteExport" in JS
+    assert "#bloc-filtres" in CSS, "les filtres ne sont pas masqués à l'impression"
+    # L'en-tête doit citer les règles PAR SPORT, pas seulement les globales.
+    for cle in ("ev_bands_by_sport", "odds_bands_by_sport", "ev_free_by_sport"):
+        assert cle in JS, cle
+
+
+def test_limpression_force_lencre_sombre_sur_fond_blanc():
+    """Un export en mode sombre est illisible et ruineux en encre."""
+    bloc = CSS[CSS.index("@media print"):]
+    assert 'data-theme="dark"' in bloc
+    assert "#fff" in bloc

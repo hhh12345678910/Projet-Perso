@@ -183,12 +183,47 @@ function parametres(extra) {
     coches('f-ev-bands').forEach((b) => p.append('ev_bands', b));
   }
 
+  /* ⚠️ LES TRANCHES DE COTE PARTENT VERS LE SERVEUR, PAS FILTRÉES ICI.
+   * Même raison que pour l'EV : les KPI, les découpes, la matrice et le
+   * détail viennent tous de la même requête. Trier côté navigateur n'en
+   * corrigerait aucun des quatre. */
+  if ($('cote-split').checked) {
+    (sports.length ? sports : (REFS ? REFS.sports : [])).forEach((s) => {
+      coches('odds-bands-' + s).forEach((b) => p.append('odds_bands_' + s, b));
+    });
+  } else {
+    coches('f-odds-bands').forEach((b) => p.append('odds_bands', b));
+  }
+
+  /* Bornes LIBRES d'EV par sport, lisibles seulement quand le panneau par
+   * sport est ouvert — sinon ce sont `ev_min`/`ev_max` globaux qui valent. */
+  if ($('ev-split').checked) {
+    (sports.length ? sports : (REFS ? REFS.sports : [])).forEach((s) => {
+      [['ev_min_', 'ev-min-'], ['ev_max_', 'ev-max-']].forEach(([par, id]) => {
+        const n = $(id + s);
+        const v = n && n.value.trim();
+        if (v) p.set(par + s, v);
+      });
+    });
+  }
+
   const lig = valOuNull('f-league');
   if (lig) p.append('leagues', lig);
+
+  /* ⚠️ LE SERVEUR ATTEND DES HEURES, TOUJOURS. L'unité est un confort de
+   * saisie : `0.25 h` et `15 min` désignent la même chose, et c'est l'heure
+   * décimale qui part. Envoyer des minutes sous le nom `delay_min` ferait
+   * lire « 15 heures » à une requête qui voulait dire quinze minutes. */
+  const facteur = $('f-delay-unite').value === 'min' ? 1 / 60 : 1;
+  [['delay_min', 'f-delay-min'], ['delay_max', 'f-delay-max']]
+    .forEach(([nom, id]) => {
+      const v = valOuNull(id);
+      if (v !== null) p.set(nom, String(Number(v) * facteur));
+    });
+
   [['odds_min', 'f-odds-min'], ['odds_max', 'f-odds-max'],
    ['ev_min', 'f-ev-min'], ['ev_max', 'f-ev-max'],
    ['date_from', 'f-date-from'], ['date_to', 'f-date-to'],
-   ['delay_min', 'f-delay-min'], ['delay_max', 'f-delay-max'],
    ['stake', 'f-stake']].forEach(([nom, id]) => {
     const v = valOuNull(id);
     if (v !== null) p.set(nom, v);
@@ -567,6 +602,69 @@ function tuile(titre, valeur, note, cls, vedette) {
   return k;
 }
 
+/* Ce que le PDF doit emporter avec ses chiffres : la période, le périmètre
+ * et TOUTES les règles réellement appliquées — telles que le serveur les a
+ * renvoyées, jamais telles que l'interface croit les avoir envoyées. La
+ * différence entre les deux est précisément ce qu'un export doit révéler. */
+function enteteExport(d) {
+  const f = d.filters || {};
+  const hote = $('entete-pdf');
+  hote.innerHTML = '';
+  hote.hidden = false;
+  hote.appendChild(el('h2', null, 'Valuebet Analytics — export'));
+
+  const lignes = [];
+  const joint = (v) => (v && v.length ? v.join(', ') : 'tous');
+  const table = (t) => Object.entries(t || {})
+    .map(([k, v]) => `${k} : ${Array.isArray(v) ? v.join(', ') : v}`).join(' · ');
+
+  lignes.push(['Période', `${f.date_from || REFS.date_min || '—'} → ${f.date_to || REFS.date_max || '—'}`]);
+  lignes.push(['Sports', joint(f.sports)]);
+  lignes.push(['Bookmakers', joint(f.bookmakers)]);
+  lignes.push(['Marchés', joint(f.markets)]);
+  if (f.leagues && f.leagues.length) lignes.push(['Compétition', joint(f.leagues)]);
+
+  const ev = [];
+  if (f.ev_bands && f.ev_bands.length) ev.push(`tranches ${f.ev_bands.join(', ')}`);
+  if (f.ev_min != null || f.ev_max != null) ev.push(`bornes ${f.ev_min ?? '—'} → ${f.ev_max ?? '—'}`);
+  const evs = table(f.ev_bands_by_sport);
+  const evl = table(f.ev_free_by_sport);
+  if (evs) ev.push(`par sport : ${evs}`);
+  if (evl) ev.push(`bornes par sport : ${evl}`);
+  lignes.push(['EV', ev.length ? ev.join(' · ') : 'aucune contrainte']);
+
+  const co = [];
+  if (f.odds_bands && f.odds_bands.length) co.push(`tranches ${f.odds_bands.join(', ')}`);
+  if (f.odds_min != null || f.odds_max != null) co.push(`bornes ${f.odds_min ?? '—'} → ${f.odds_max ?? '—'}`);
+  const cos = table(f.odds_bands_by_sport);
+  if (cos) co.push(`par sport : ${cos}`);
+  lignes.push(['Cote', co.length ? co.join(' · ') : 'aucune contrainte']);
+
+  if (f.delay_min != null || f.delay_max != null) {
+    lignes.push(['Délai', `${f.delay_min ?? '—'} h → ${f.delay_max ?? '—'} h`]);
+  }
+  const pop = (REFS.populations || []).find((x) => x.value === f.population);
+  lignes.push(['Population', pop ? pop.libelle : (f.population || '—')]);
+  lignes.push(['Joué', f.played || 'tous']);
+  lignes.push(['Mise notionnelle', `${f.stake} €`]);
+  lignes.push(['Exporté le', new Date().toLocaleString('fr-BE')]);
+
+  const dl = el('dl', 'export-filtres');
+  lignes.forEach(([k, v]) => {
+    dl.appendChild(el('dt', null, k));
+    dl.appendChild(el('dd', null, String(v)));
+  });
+  hote.appendChild(dl);
+
+  // La limite de la population va sur le papier AUSSI : c'est elle qui dit
+  // ce que le chiffre ne couvre pas.
+  if (pop && pop.limites && pop.limites.length) {
+    const ul = el('ul', 'export-limites');
+    pop.limites.forEach((l) => ul.appendChild(el('li', null, l)));
+    hote.appendChild(ul);
+  }
+}
+
 function kpis(s) {
   const h = $('kpis');
   h.innerHTML = '';
@@ -791,11 +889,44 @@ async function chargerDetail() {
  * touchant un filtre voisin, et ne le voit pas forcément.
  */
 
+/* Deux champs « min → max » pour un sport donné, réutilisés par l'EV et par
+ * la cote. Les identifiants suivent la convention `<quoi>-min-<sport>`, celle
+ * que `parametres()` relit pour construire `ev_min_<sport>`. */
+function bornesSport(quoi, sport, valeurs, unite) {
+  const ligne = el('div', 'paire bornes-sport');
+  ['min', 'max'].forEach((bout, i) => {
+    const n = el('input');
+    n.type = 'number';
+    n.id = `${quoi}-${bout}-${sport}`;
+    n.dataset.sport = sport;
+    n.placeholder = bout + (unite ? ' ' + unite : '');
+    n.step = quoi === 'ev' ? '0.5' : '0.05';
+    n.value = valeurs[i] || '';
+    if (i) ligne.appendChild(el('span', null, '→'));
+    ligne.appendChild(n);
+  });
+  return ligne;
+}
+
+/* La valeur courante des bornes d'un panneau, pour la restituer après un
+ * redessin : perdre une saisie parce qu'on a coché un sport de plus serait
+ * une petite trahison répétée à chaque clic. */
+function bornesCourantes(hote, quoi) {
+  const out = {};
+  hote.querySelectorAll('input[type="number"][data-sport]').forEach((n) => {
+    const sp = n.dataset.sport;
+    out[sp] = out[sp] || ['', ''];
+    out[sp][n.id.startsWith(quoi + '-min-') ? 0 : 1] = n.value;
+  });
+  return out;
+}
+
 function panneauxEvParSport() {
   const hote = $('ev-par-sport');
   const actif = $('ev-split').checked;
   const memoire = {};
-  hote.querySelectorAll('[data-sport]').forEach((n) => {
+  const bornes = bornesCourantes(hote, 'ev');
+  hote.querySelectorAll('[data-sport].cases').forEach((n) => {
     memoire[n.dataset.sport] = coches(n.id);
   });
   hote.innerHTML = '';
@@ -811,12 +942,52 @@ function panneauxEvParSport() {
     boite.id = 'ev-bands-' + sp;
     boite.dataset.sport = sp;
     bloc.appendChild(boite);
+    // Bornes LIBRES propres au sport. Elles se cumulent en ET avec les
+    // tranches juste au-dessus, exactement comme `ev_min`/`ev_max` se
+    // cumulent avec les tranches globales.
+    bloc.appendChild(bornesSport('ev', sp, bornes[sp] || ['', ''], '%'));
     hote.appendChild(bloc);
     groupeCases(boite, REFS.ev_bands, { courte: true, coches: memoire[sp] || [] });
   });
   if (!hote.children.length) {
     hote.appendChild(el('p', 'aide', 'Coche au moins un sport ci-dessus.'));
   }
+}
+
+/* Jumeau exact de `panneauxEvParSport`, pour les tranches de cote. */
+function panneauxCoteParSport() {
+  const hote = $('cote-par-sport');
+  const actif = $('cote-split').checked;
+  const memoire = {};
+  hote.querySelectorAll('[data-sport].cases').forEach((n) => {
+    memoire[n.dataset.sport] = coches(n.id);
+  });
+  hote.innerHTML = '';
+  $('f-odds-bands').style.display = actif ? 'none' : '';
+  if (!actif || !REFS) return;
+
+  const sports = coches('f-sports');
+  (sports.length ? sports : REFS.sports).forEach((sp) => {
+    const bloc = el('div', 'ev-sport');
+    bloc.appendChild(el('h4', null,
+      (REFS.sports_labels && REFS.sports_labels[sp]) || sp));
+    const boite = el('div', 'cases');
+    boite.id = 'odds-bands-' + sp;
+    boite.dataset.sport = sp;
+    bloc.appendChild(boite);
+    hote.appendChild(bloc);
+    groupeCases(boite, bandesCote(), { courte: true, coches: memoire[sp] || [] });
+  });
+  if (!hote.children.length) {
+    hote.appendChild(el('p', 'aide', 'Coche au moins un sport ci-dessus.'));
+  }
+}
+
+/* `REFS.odds_bands` porte des objets `{key, min, max}` ; `groupeCases` veut
+ * `{key, label}`. La clé RESTE canonique — c'est elle qui repart en filtre. */
+function bandesCote() {
+  return (REFS && REFS.odds_bands ? REFS.odds_bands : [])
+    .map((b) => ({ key: b.key, label: b.key }));
 }
 
 /* ── Meilleurs segments ────────────────────────────────────────────
@@ -933,6 +1104,7 @@ async function analyser() {
     PAGE = 1;
 
     avertissements(d.warnings);
+    enteteExport(d);
     kpis(d.summary);
     ['bloc-kpi', 'bloc-temps', 'bloc-decoupes', 'bloc-matrice',
      'bloc-segments', 'bloc-detail']
@@ -990,6 +1162,22 @@ async function analyser() {
 /* Les bandes de délai en boutons : elles POSENT les bornes en heures, elles
  * n'ajoutent pas un filtre parallèle. Un second mécanisme de délai à côté du
  * premier finirait par en contredire l'autre sans que rien ne le signale. */
+/* ⚠️ DIRE CE QUI PART, PAS CE QUI EST TAPÉ. Le serveur reçoit des heures
+ * décimales ; quelqu'un qui saisit « 90 » en minutes doit pouvoir vérifier
+ * d'un coup d'œil que c'est bien 1,5 h qui partira. Une conversion muette
+ * est une conversion qu'on finit par soupçonner d'être fausse. */
+function majAideDelai() {
+  const unite = $('f-delay-unite').value;
+  const f = unite === 'min' ? 1 / 60 : 1;
+  const bout = (id) => {
+    const v = valOuNull(id);
+    return v === null ? '—' : `${(Number(v) * f).toFixed(2)} h`;
+  };
+  $('aide-delai').textContent = unite === 'min'
+    ? `Envoyé au serveur : ${bout('f-delay-min')} → ${bout('f-delay-max')}`
+    : 'Le serveur raisonne en heures décimales (0,25 = 15 min)';
+}
+
 function boutonsDelai() {
   const h = $('delay-rapides');
   h.innerHTML = '';
@@ -999,9 +1187,13 @@ function boutonsDelai() {
     bt.addEventListener('click', () => {
       const deja = bt.classList.contains('actif');
       h.querySelectorAll('button').forEach((x) => x.classList.remove('actif'));
+      // Ces bornes viennent du serveur, donc en HEURES. Laisser l'unité sur
+      // « minutes » ferait lire « 1 min » là où la bande dit « 1 h ».
+      $('f-delay-unite').value = 'h';
       $('f-delay-min').value = deja || b.min === null ? '' : b.min;
       $('f-delay-max').value = deja || b.max === null ? '' : b.max;
       if (!deja) bt.classList.add('actif');
+      majAideDelai();
     });
     h.appendChild(bt);
   });
@@ -1034,13 +1226,20 @@ async function demarrer() {
 
   groupeCases($('f-sports'), REFS.sports,
     { labels: REFS.sports_labels, courte: true,
-      onChange: panneauxEvParSport });
+      onChange: () => { panneauxEvParSport(); panneauxCoteParSport(); } });
   groupeCases($('f-books'), REFS.bookmakers, { labels: REFS.bookmakers_labels });
   groupeCases($('f-markets'), REFS.markets,
     { labels: REFS.markets_labels, courte: true });
   groupeCases($('f-ev-bands'), REFS.ev_bands, { courte: true });
   $('ev-split').addEventListener('change', panneauxEvParSport);
   panneauxEvParSport();
+  groupeCases($('f-odds-bands'), bandesCote(), { courte: true });
+  $('cote-split').addEventListener('change', panneauxCoteParSport);
+  panneauxCoteParSport();
+  $('f-delay-unite').addEventListener('change', majAideDelai);
+  ['f-delay-min', 'f-delay-max'].forEach(
+    (id) => $(id).addEventListener('input', majAideDelai));
+  majAideDelai();
   boutonsDelai();
   pliage();
 
@@ -1055,7 +1254,10 @@ async function demarrer() {
 
   const sp = $('f-population');
   REFS.populations.forEach((p) => {
-    const o = el('option', null, p.value.replace(/_/g, ' '));
+    // Le LIBELLÉ vient du serveur ; `value` reste la valeur canonique, celle
+    // qui repart en filtre. Les confondre enverrait « Toutes les détections »
+    // à une API qui ne connaît que « detected ».
+    const o = el('option', null, p.libelle || p.value.replace(/_/g, ' '));
     o.value = p.value;
     sp.appendChild(o);
   });
@@ -1086,6 +1288,14 @@ async function demarrer() {
   $('analyser').addEventListener('click', analyser);
   $('m-mesure').addEventListener('change', matrice);
   $('s-lancer').addEventListener('click', chercherSegments);
+  /* ⚠️ AUCUNE BIBLIOTHÈQUE. L'impression du navigateur produit déjà un PDF
+   * fidèle, hors ligne, avec les polices et les graphiques rendus tels qu'ils
+   * s'affichent. Embarquer un générateur PDF ajouterait des centaines de
+   * kilo-octets, une seconde mise en page à maintenir, et un téléchargement
+   * de dépendance — ce que cette VM s'interdit. La mise en page papier vit
+   * dans `@media print`, à côté du reste du style. */
+  $('pdf').addEventListener('click', () => window.print());
+
   $('reinit').addEventListener('click', () => {
     $('form').reset();
     document.querySelectorAll('.cases input[type="checkbox"]')
@@ -1093,6 +1303,8 @@ async function demarrer() {
     $('delay-rapides').querySelectorAll('button')
       .forEach((b) => b.classList.remove('actif'));
     panneauxEvParSport();
+    panneauxCoteParSport();
+    majAideDelai();
     if (REFS.date_min) $('f-date-from').value = REFS.date_min;
     if (REFS.date_max) $('f-date-to').value = REFS.date_max;
     majAide();

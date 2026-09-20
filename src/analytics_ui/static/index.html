@@ -24,7 +24,7 @@
 
 <main>
 
-  <section class="carte">
+  <section class="carte" id="bloc-filtres">
     <h2>Filtres</h2>
     <form class="filtres" id="form" autocomplete="off">
 
@@ -57,13 +57,30 @@
         <span class="aide" id="aide-ligue">Nom exact</span>
       </div>
 
+      <!-- ⚠️ JUMEAU DU BLOC EV, VOLONTAIREMENT. Les tranches de cote
+           obéissent aux mêmes règles : union des cases cochées, règle propre
+           à un sport qui prime, et bornes libres qui se cumulent en ET. Une
+           seconde grammaire pour la même idée se paierait en erreurs de
+           lecture. -->
+      <div class="champ large pliable ouvert" id="champ-cote">
+        <label>Cote — tranches</label>
+        <div class="cases" id="f-odds-bands"></div>
+        <label class="case" style="margin-top:8px;border:1px solid var(--bordure)">
+          <input type="checkbox" id="cote-split">
+          <span>Cote <b>différente par sport</b></span>
+        </label>
+        <div id="cote-par-sport"></div>
+        <span class="aide">Plusieurs tranches = union (OU). Rien de coché = toutes.</span>
+      </div>
+
       <div class="champ">
-        <label>Cote</label>
+        <label>Cote — bornes libres</label>
         <div class="paire">
           <input type="number" id="f-odds-min" step="0.05" min="1.01" placeholder="min">
           <span>→</span>
           <input type="number" id="f-odds-max" step="0.05" min="1.01" placeholder="max">
         </div>
+        <span class="aide">Se cumule (ET) avec les tranches ci-dessus</span>
       </div>
 
       <div class="champ large pliable ouvert" id="champ-ev">
@@ -96,14 +113,24 @@
         </div>
       </div>
 
+      <!-- ⚠️ L'UNITÉ EST UN CHOIX D'AFFICHAGE, PAS UN FORMAT D'API.
+           Le serveur attend et attendra toujours des HEURES, en décimal —
+           `delay_min=0.25` vaut déjà quinze minutes. Ce sélecteur ne fait que
+           convertir avant l'envoi : aucune route, aucun filtre, aucune URL
+           enregistrée ne change de sens. -->
       <div class="champ large">
-        <label>Délai avant coup d'envoi (h)</label>
+        <label for="f-delay-min">Délai avant coup d'envoi</label>
         <div class="paire">
-          <input type="number" id="f-delay-min" step="1" placeholder="min">
+          <input type="number" id="f-delay-min" step="1" min="0" placeholder="min">
           <span>→</span>
-          <input type="number" id="f-delay-max" step="1" placeholder="max">
+          <input type="number" id="f-delay-max" step="1" min="0" placeholder="max">
+          <select id="f-delay-unite" title="Unité des deux champs">
+            <option value="h" selected>heures</option>
+            <option value="min">minutes</option>
+          </select>
         </div>
         <div class="rapides" id="delay-rapides"></div>
+        <span class="aide" id="aide-delai"></span>
       </div>
 
       <div class="champ">
@@ -141,11 +168,22 @@
     <div class="actions">
       <button class="primaire" id="analyser" type="button">ANALYSER</button>
       <button class="discret" id="reinit" type="button">Réinitialiser</button>
+      <button class="discret" id="pdf" type="button"
+              title="Ouvre l'impression du navigateur — choisis « Enregistrer au format PDF »">
+        Exporter en PDF</button>
       <span class="aide" id="etat"></span>
     </div>
   </section>
 
   <div id="avertissements"></div>
+
+  <!-- ⚠️ CE BLOC N'EXISTE QUE SUR PAPIER, ET IL EST INDISPENSABLE.
+       Un PDF de résultats qui ne dit pas quels filtres l'ont produit est un
+       piège : relu trois semaines plus tard, « ROI +16 % » se lit comme le
+       ROI du système entier alors qu'il portait sur une tranche d'EV et un
+       seul sport. L'écran, lui, montre les filtres juste au-dessus ; le
+       papier ne les emporte pas. -->
+  <section class="carte impression-seule" id="entete-pdf" hidden></section>
 
   <section class="carte" id="bloc-kpi" hidden>
     <h2>Résultats</h2>
