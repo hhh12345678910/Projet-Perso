@@ -100,11 +100,39 @@ def test_filters_ne_propose_que_des_enums_de_book(client):
         assert b == b.lower() and " " not in b and "/" not in b
 
 
-def test_filters_porte_les_six_populations_et_leurs_limites(client):
+def test_filters_porte_les_CINQ_populations_proposees(client):
+    """⚠️ CINQ, ET PLUS SIX — ce décompte a changé le 20/09.
+
+    `BET` n'était pas un choix : `alias_de` la renvoie sur `CLICKED`, donc
+    les deux entrées rendaient rigoureusement le même lot. En proposer deux
+    laissait croire à une distinction — « cliquées » contre « réellement
+    misées » — que le système ne sait pas faire, faute de confirmation de
+    mise. Elle reste ACCEPTÉE par l'API : aucune URL enregistrée ne casse."""
     pops = client.get("/api/filters").json()["populations"]
-    assert len(pops) == 6
+    assert len(pops) == 5
+    assert "bet" not in {p["value"] for p in pops}
     assert all(p["explication"] for p in pops)
     assert any(p["limites"] for p in pops)
+
+
+def test_chaque_population_porte_un_LIBELLE_en_francais(client):
+    """Un identifiant technique dans une liste déroulante n'apprend rien, et
+    une population choisie sans être comprise produit un chiffre qu'on croit
+    sans savoir sur quoi il porte."""
+    pops = client.get("/api/filters").json()["populations"]
+    par_valeur = {p["value"]: p["libelle"] for p in pops}
+    assert par_valeur["detected"] == "Toutes les détections"
+    assert par_valeur["clicked"] == "Cliquées sur « Jouer »"
+    assert all(p["libelle"] for p in pops)
+
+
+def test_la_population_bet_reste_ACCEPTEE_meme_si_elle_nest_plus_proposee(client):
+    """Retirer une option de l'interface ne doit casser aucune URL existante.
+    `bet` et `clicked` doivent rendre le même résultat, comme avant."""
+    a = client.get("/api/analyse", params={"population": "bet"})
+    b = client.get("/api/analyse", params={"population": "clicked"})
+    assert a.status_code == 200 and b.status_code == 200
+    assert a.json()["summary"] == b.json()["summary"]
 
 
 # ── /api/analyse ─────────────────────────────────────────────────────
@@ -785,3 +813,36 @@ def test_la_documentation_des_bandes_liste_les_valeurs_REELLES(client):
              if x["name"] == "ev_bands")
     for bande in ("5-8%", "8-15%", "15-35%", "35%+"):
         assert bande in p["description"]
+
+
+# ══ Les tranches de COTE, jusque dans la query string ══════════════
+
+def test_odds_bands_est_accepte_et_applique(client):
+    tout = client.get("/api/analyse").json()["summary"]["opportunities"]
+    filtre = client.get("/api/analyse",
+                        params={"odds_bands": "1.8-2.3"}).json()
+    assert filtre["summary"]["opportunities"] <= tout
+    assert filtre["filters"]["odds_bands"] == ["1.8-2.3"]
+
+
+def test_odds_bands_par_sport_est_accepte_et_RENDU(client):
+    """Le filtre appliqué doit repartir dans la réponse : un critère qu'on
+    croit posé et qui ne l'est pas est le mode de panne que toute cette
+    couche existe pour empêcher."""
+    d = client.get("/api/analyse",
+                   params={"odds_bands_tennis": "> 6.0"}).json()
+    assert d["filters"]["odds_bands_by_sport"] == {"tennis": ["> 6.0"]}
+
+
+def test_une_bande_de_cote_inconnue_rend_400_pas_un_lot_ampute(client):
+    r = client.get("/api/analyse", params={"odds_bands": "2.0-2.5"})
+    assert r.status_code == 400
+    assert "Bande de cote inconnue" in r.json()["detail"]
+
+
+def test_openapi_declare_les_bandes_de_cote_par_sport(client):
+    noms = {p["name"] for p in client.get("/openapi.json").json()
+            ["paths"]["/api/analyse"]["get"]["parameters"]}
+    assert "odds_bands_soccer" in noms and "odds_bands_tennis" in noms
+    # Et l'EV n'a pas disparu au passage.
+    assert "ev_bands_soccer" in noms

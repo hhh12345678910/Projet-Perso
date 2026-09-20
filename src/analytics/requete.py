@@ -184,6 +184,83 @@ def _sql_union_ev(bandes) -> "tuple[str, list]":
     return "(" + " OR ".join(bouts) + ")", params
 
 
+def _sql_bande_cote(label: str) -> "tuple[str, list]":
+    """Une bande de COTE en SQL. Bornes basses INCLUSES, hautes EXCLUES.
+
+    Même convention que `_bande_cote` du service, qui construit les lignes de
+    la matrice : une borne haute incluse ferait compter deux fois une cote
+    exactement à 2,30 — une fois dans « 1.8-2.3 », une fois dans « 2.3-3.0 »."""
+    from .perimetre import bornes_cote
+    lo, hi = bornes_cote()[label]
+    bouts, params = [], []
+    if lo is not None:
+        bouts.append("vb.odd_taken >= ?")
+        params.append(lo)
+    if hi is not None:
+        bouts.append("vb.odd_taken < ?")
+        params.append(hi)
+    return ("(" + " AND ".join(bouts) + ")" if bouts else "1 = 1"), params
+
+
+def _sql_union_cote(bandes) -> "tuple[str, list]":
+    """L'UNION (OR) d'une sélection de bandes de cote. Vide = aucune contrainte."""
+    if not bandes:
+        return "1 = 1", []
+    bouts, params = [], []
+    for b in bandes:
+        sql, p = _sql_bande_cote(b)
+        bouts.append(sql)
+        params.extend(p)
+    return "(" + " OR ".join(bouts) + ")", params
+
+
+def _clause_par_sport(bandes_globales, par_sport, union) -> "tuple[str, list]":
+    """La disjonction « une règle par sport, repli global pour les autres ».
+
+    ⚠️ FACTORISÉE ENTRE L'EV ET LA COTE. La forme produite est :
+
+        (   (sport = 'soccer' AND (règle du foot))
+         OR (sport = 'tennis' AND (règle du tennis))
+         OR (sport NOT IN (…sports réglés…) AND (règle globale))  )
+
+    La dernière branche est ce qui empêche une fuite : un sport SANS règle
+    propre retombe sur la sélection globale, il ne disparaît pas et n'hérite
+    pas de la règle d'un autre sport. L'oublier serait une perte SILENCIEUSE,
+    et c'est exactement pour ça que les deux filtres partagent ce corps."""
+    globales, params_g = union(bandes_globales)
+    regles = [(s, b) for s, b in par_sport if b]
+    if not regles:
+        return globales, params_g
+
+    branches, params = [], []
+    for sport, bandes in regles:
+        sql, p = union(bandes)
+        branches.append(f"(lower(e.sport) = ? AND {sql})")
+        params.append(sport)
+        params.extend(p)
+
+    marqueurs = ", ".join("?" * len(regles))
+    branches.append(
+        f"(COALESCE(lower(e.sport), '') NOT IN ({marqueurs}) AND {globales})")
+    params.extend(s for s, _ in regles)
+    params.extend(params_g)
+    return "(" + " OR ".join(branches) + ")", params
+
+
+def clause_cote(filtres) -> "tuple[str, list]":
+    """La contrainte de COTE par bandes, règles PAR SPORT comprises.
+
+    Jumelle de `clause_ev`, et du vrai SQL pour la même raison : les KPI, les
+    découpes et la matrice viennent tous du même lot. Une règle appliquée
+    côté navigateur n'en corrigerait aucun.
+
+    Se cumule en ET avec `cote_min`/`cote_max`, appliqués séparément dans
+    `construire` — les bandes disent « dans quelles tranches », les bornes
+    libres disent « et pas au-delà de »."""
+    return _clause_par_sport(filtres.cote_bandes, filtres.cote_par_sport,
+                             _sql_union_cote)
+
+
 def clause_ev(filtres) -> "tuple[str, list]":
     """La contrainte d'EV complète, règles PAR SPORT comprises.
 
@@ -201,24 +278,8 @@ def clause_ev(filtres) -> "tuple[str, list]":
     propre retombe sur la sélection globale, il ne disparaît pas et n'hérite
     pas de la règle d'un autre sport.
     """
-    globales, params_g = _sql_union_ev(filtres.ev_bandes)
-    par_sport = [(s, b) for s, b in filtres.ev_par_sport if b]
-    if not par_sport:
-        return globales, params_g
-
-    branches, params = [], []
-    for sport, bandes in par_sport:
-        union, p = _sql_union_ev(bandes)
-        branches.append(f"(lower(e.sport) = ? AND {union})")
-        params.append(sport)
-        params.extend(p)
-
-    marqueurs = ", ".join("?" * len(par_sport))
-    branches.append(
-        f"(COALESCE(lower(e.sport), '') NOT IN ({marqueurs}) AND {globales})")
-    params.extend(s for s, _ in par_sport)
-    params.extend(params_g)
-    return "(" + " OR ".join(branches) + ")", params
+    return _clause_par_sport(filtres.ev_bandes, filtres.ev_par_sport,
+                             _sql_union_ev)
 
 
 def construire(filtres) -> "tuple[str, list]":
@@ -280,6 +341,12 @@ def construire(filtres) -> "tuple[str, list]":
     if sql_ev != "1 = 1":
         clauses.append(f"      AND {sql_ev}")
         params.extend(params_ev)
+
+    # Les bandes de cote s'ajoutent en ET aux bornes libres posées plus haut.
+    sql_cote, params_cote = clause_cote(filtres)
+    if sql_cote != "1 = 1":
+        clauses.append(f"      AND {sql_cote}")
+        params.extend(params_cote)
 
     apres: list = []
     if filtres.joue == "oui":

@@ -41,7 +41,8 @@ from .perimetre import (BANDES_DELAI, BORNES_EV, MARCHES_ANALYTICS,
                         SPORTS_ANALYTICS, bande_delai, canoniser_book,
                         libelle_book, libelle_groupe_book, libelle_marche,
                         libelle_sport, ordre_delai, taille_echantillon)
-from .populations import Population, alias_de, EXPLICATION, LIMITES
+from .populations import (Population, alias_de, EXPLICATION, EXPOSEES,
+                          LIBELLE, LIMITES)
 from .requete import construire
 
 DB_DEFAUT = "data/valuebet.db"
@@ -245,9 +246,12 @@ def valeurs_disponibles(db_path=DB_DEFAUT) -> dict:
                            for lab, lo, hi in _bandes_cote()],
             "delay_bands": [{"key": lab, "min": lo, "max": hi}
                             for lab, lo, hi in BANDES_DELAI],
+            # Cinq populations, pas six : `BET` est un alias de `CLICKED`.
+            # Voir `populations.EXPOSEES` — elle reste acceptée par l'API.
             "populations": [
-                {"value": p.value, "explication": EXPLICATION[p],
-                 "limites": list(LIMITES[p])} for p in Population],
+                {"value": p.value, "libelle": LIBELLE[p],
+                 "explication": EXPLICATION[p],
+                 "limites": list(LIMITES[p])} for p in EXPOSEES],
             "date_min": bornes[0], "date_max": bornes[1],
             # ⚠️ Le périmètre est ANNONCÉ, pas subi en silence : l'utilisateur
             # doit savoir que son total ne couvre pas tout ce qu'il a détecté.

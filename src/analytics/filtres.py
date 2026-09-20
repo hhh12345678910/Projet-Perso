@@ -133,9 +133,108 @@ def _bandes_ev(valeur, ou: str) -> tuple:
                               and b not in canonique])
 
 
+def _bandes_cote(valeur, ou: str) -> tuple:
+    """Valide une sélection de bandes de COTE et la rend dans l'ordre canonique.
+
+    Jumelle de `_bandes_ev`, sur la table de `perimetre.bornes_cote()` — celle
+    qui construit déjà les lignes de la matrice cote × EV."""
+    from .perimetre import bornes_cote, ordre_cote
+    table = bornes_cote()
+    choisies = _liste(valeur)
+    if not choisies:
+        return ()
+    connues = list(table)
+    for b in choisies:
+        if b not in table:
+            raise FiltreInvalide(
+                f"Bande de cote inconnue dans {ou} : {b!r}. "
+                f"Connues : {', '.join(connues)}.")
+    vues = set(choisies)
+    canonique = [b for b in ordre_cote() if b in vues]
+    return tuple(canonique + [b for b in connues if b in vues
+                              and b not in canonique])
+
+
+def _par_sport_valide(brut, nom: str, valideur) -> list:
+    """Valide une table « sport -> sélection de bandes », quelle qu'elle soit.
+
+    ⚠️ FACTORISÉ ENTRE L'EV ET LA COTE, ET PAS PAR GOÛT DE LA CONCISION.
+    Deux boucles jumelles finissent toujours par diverger — sur un message,
+    sur le traitement d'une entrée vide, sur le refus d'un doublon — et cet
+    écart ne se voit pas : les deux filtres marchent, simplement pas pareil.
+    `nom` porte le libellé attendu par l'appelant pour que les messages
+    restent ceux que ses tests verrouillent.
+    """
+    out, vus = [], set()
+    brut = brut.items() if isinstance(brut, dict) else brut
+    for paire in brut or ():
+        try:
+            sport, valeurs = paire
+        except (TypeError, ValueError):
+            raise FiltreInvalide(
+                f"{nom} attend des paires (sport, bandes) — "
+                f"reçu : {paire!r}") from None
+        cle = str(sport).strip().lower()
+        if cle not in SPORTS_AUTORISES:
+            raise FiltreInvalide(
+                f"{nom} : sport hors périmètre {cle!r}. Autorisés : "
+                f"{', '.join(sorted(SPORTS_AUTORISES))}.")
+        if cle in vus:
+            raise FiltreInvalide(
+                f"{nom} : le sport {cle!r} apparaît deux fois. Une "
+                f"seule règle par sport, sinon laquelle s'applique ?")
+        vus.add(cle)
+        choisies = valideur(valeurs, f"{nom}[{cle}]")
+        # Une entrée VIDE est retirée plutôt que conservée : « aucune bande
+        # cochée pour le tennis » veut dire « pas de règle propre au tennis »,
+        # et non « aucune opportunité de tennis ». Conserver un tuple vide
+        # ferait rendre zéro ligne de tennis en silence.
+        if choisies:
+            out.append((cle, choisies))
+    return out
+
+
 #: Préfixe des paramètres d'EV par sport dans une query string :
 #: `?ev_bands_soccer=5-8%&ev_bands_soccer=8-15%&ev_bands_tennis=15-35%`.
 PREFIXE_EV_SPORT = "ev_bands_"
+
+#: Idem pour les bandes de COTE : `?odds_bands_soccer=1.8-2.3`.
+PREFIXE_COTE_SPORT = "odds_bands_"
+
+
+def _par_sport_depuis_generique(d: dict, prefixe: str, cle_dict: str,
+                                cle_alt: str) -> tuple:
+    """Lit une table « sport -> bandes » sous ses DEUX écritures.
+
+    Voir `_par_sport_depuis` pour le contrat ; ce corps est partagé entre
+    l'EV et la cote, pour la même raison que `_par_sport_valide`."""
+    out: dict = {}
+    table = d.get(cle_dict) or d.get(cle_alt) or {}
+    if isinstance(table, dict):
+        for sport, bandes in table.items():
+            out[str(sport).strip().lower()] = _liste(bandes)
+    else:
+        for paire in table:
+            try:
+                sport, bandes = paire
+            except (TypeError, ValueError):
+                raise FiltreInvalide(
+                    f"{cle_dict} attend des paires (sport, bandes) — "
+                    f"reçu : {paire!r}") from None
+            out[str(sport).strip().lower()] = _liste(bandes)
+    for cle, valeur in d.items():
+        nom = str(cle)
+        if nom.startswith(prefixe) and nom != cle_dict:
+            sport = nom[len(prefixe):].strip().lower()
+            if sport:
+                out[sport] = _liste(valeur)
+    return tuple(sorted((s, b) for s, b in out.items()))
+
+
+def _cote_par_sport_depuis(d: dict) -> tuple:
+    """Les bandes de COTE par sport, mêmes écritures que pour l'EV."""
+    return _par_sport_depuis_generique(
+        d, PREFIXE_COTE_SPORT, "odds_bands_by_sport", "cote_par_sport")
 
 
 def _par_sport_depuis(d: dict) -> tuple:
@@ -149,27 +248,8 @@ def _par_sport_depuis(d: dict) -> tuple:
     Les deux se cumulent, la forme plate l'emportant sur le dict pour un même
     sport : elle est la plus explicite des deux dans une requête écrite à la
     main."""
-    out: dict = {}
-    table = d.get("ev_bands_by_sport") or d.get("ev_par_sport") or {}
-    if isinstance(table, dict):
-        for sport, bandes in table.items():
-            out[str(sport).strip().lower()] = _liste(bandes)
-    else:
-        for paire in table:
-            try:
-                sport, bandes = paire
-            except (TypeError, ValueError):
-                raise FiltreInvalide(
-                    f"ev_bands_by_sport attend des paires (sport, bandes) — "
-                    f"reçu : {paire!r}") from None
-            out[str(sport).strip().lower()] = _liste(bandes)
-    for cle, valeur in d.items():
-        nom = str(cle)
-        if nom.startswith(PREFIXE_EV_SPORT) and nom != "ev_bands_by_sport":
-            sport = nom[len(PREFIXE_EV_SPORT):].strip().lower()
-            if sport:
-                out[sport] = _liste(valeur)
-    return tuple(sorted((s, b) for s, b in out.items()))
+    return _par_sport_depuis_generique(
+        d, PREFIXE_EV_SPORT, "ev_bands_by_sport", "ev_par_sport")
 
 
 @dataclass(frozen=True)
@@ -196,6 +276,15 @@ class Filtres:
     #: vérification. Un sport absent de cette table retombe sur la sélection
     #: globale ci-dessus.
     ev_par_sport: tuple = ()
+    #: Bandes de COTE cochées, en UNION (OR). Même contrat que `ev_bandes` :
+    #: elles se cumulent en ET avec `cote_min`/`cote_max`, qui restent des
+    #: bornes libres. « Les bandes 1.8-2.3 et 2.3-3.0, mais pas sous 2.00 »
+    #: s'exprime donc sans inventer une troisième syntaxe.
+    cote_bandes: tuple = ()
+    #: Bandes de cote PAR SPORT, forme et règles identiques à `ev_par_sport` :
+    #: tuple de paires `(sport, (bandes…))`, et un sport absent retombe sur la
+    #: sélection globale plutôt que de disparaître.
+    cote_par_sport: tuple = ()
     date_from: "str | None" = None
     date_to: "str | None" = None
     delai_min_h: "float | None" = None
@@ -279,38 +368,15 @@ class Filtres:
         leagues = tuple(dict.fromkeys(g.strip() for g in self.leagues))
 
         bandes = _bandes_ev(self.ev_bandes, "ev_bandes")
-
         # EV par sport : chaque entrée est validée comme une sélection à part
         # entière, et son sport doit lui aussi être dans le périmètre.
-        par_sport = []
-        vus = set()
-        brut = (self.ev_par_sport.items()
-                if isinstance(self.ev_par_sport, dict) else self.ev_par_sport)
-        for paire in brut or ():
-            try:
-                sport, valeurs = paire
-            except (TypeError, ValueError):
-                raise FiltreInvalide(
-                    f"ev_par_sport attend des paires (sport, bandes) — "
-                    f"reçu : {paire!r}") from None
-            cle = str(sport).strip().lower()
-            if cle not in SPORTS_AUTORISES:
-                raise FiltreInvalide(
-                    f"ev_par_sport : sport hors périmètre {cle!r}. Autorisés : "
-                    f"{', '.join(sorted(SPORTS_AUTORISES))}.")
-            if cle in vus:
-                raise FiltreInvalide(
-                    f"ev_par_sport : le sport {cle!r} apparaît deux fois. Une "
-                    f"seule règle par sport, sinon laquelle s'applique ?")
-            vus.add(cle)
-            choisies = _bandes_ev(valeurs, f"ev_par_sport[{cle}]")
-            # Une entrée VIDE est retirée plutôt que conservée : « aucune
-            # bande cochée pour le tennis » veut dire « pas de règle propre au
-            # tennis », et non « aucune opportunité de tennis ». Conserver un
-            # tuple vide ferait rendre zéro ligne de tennis en silence.
-            if choisies:
-                par_sport.append((cle, choisies))
-        par_sport = tuple(sorted(par_sport))
+        par_sport = tuple(sorted(_par_sport_valide(
+            self.ev_par_sport, "ev_par_sport", _bandes_ev)))
+
+        # Bandes de COTE : mêmes règles, même aide, donc mêmes refus.
+        bandes_cote = _bandes_cote(self.cote_bandes, "cote_bandes")
+        cote_par_sport = tuple(sorted(_par_sport_valide(
+            self.cote_par_sport, "cote_par_sport", _bandes_cote)))
 
         depuis = _jour(self.date_from, "date_from")
         jusqu = _jour(self.date_to, "date_to")
@@ -366,6 +432,7 @@ class Filtres:
             date_from=depuis, date_to=jusqu, cote_min=cote_min,
             cote_max=cote_max, ev_min=ev_min, ev_max=ev_max,
             ev_bandes=bandes, ev_par_sport=par_sport,
+            cote_bandes=bandes_cote, cote_par_sport=cote_par_sport,
             delai_min_h=d_min, delai_max_h=d_max, population=population,
             stake=stake, fenetre_morte_min=fm)
 
@@ -382,6 +449,15 @@ class Filtres:
         pas."""
         table = {None: self.ev_bandes}
         table.update(dict(self.ev_par_sport))
+        return table
+
+    def cote_effectif(self) -> dict:
+        """Ce que la COTE filtre réellement, sport par sport.
+
+        Même contrat que `ev_effectif` : la clé `None` porte la règle
+        globale, celle qui s'applique à tout sport sans règle propre."""
+        table = {None: self.cote_bandes}
+        table.update(dict(self.cote_par_sport))
         return table
 
     def sports_effectifs(self) -> tuple:
@@ -417,6 +493,9 @@ class Filtres:
             "ev_min": self.ev_min, "ev_max": self.ev_max,
             "ev_bands": list(self.ev_bandes),
             "ev_bands_by_sport": {s: list(b) for s, b in self.ev_par_sport},
+            "odds_bands": list(self.cote_bandes),
+            "odds_bands_by_sport": {s: list(b)
+                                    for s, b in self.cote_par_sport},
             "date_from": self.date_from, "date_to": self.date_to,
             "delay_min": self.delai_min_h, "delay_max": self.delai_max_h,
             "population": self.population.value, "played": self.joue,
@@ -447,6 +526,9 @@ class Filtres:
             ev_min=d.get("ev_min"), ev_max=d.get("ev_max"),
             ev_bandes=multi("ev_band", "ev_bands", "ev_bands[]", "ev_bandes"),
             ev_par_sport=_par_sport_depuis(d),
+            cote_bandes=multi("odds_band", "odds_bands", "odds_bands[]",
+                              "cote_bandes"),
+            cote_par_sport=_cote_par_sport_depuis(d),
             date_from=d.get("date_from"), date_to=d.get("date_to"),
             delai_min_h=d.get("delay_min", d.get("delai_min_h")),
             delai_max_h=d.get("delay_max", d.get("delai_max_h")),

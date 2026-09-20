@@ -495,3 +495,84 @@ def test_le_DETAIL_nomme_le_vrai_book_pas_le_groupe(tmp_path):
     d = detail(_jumeaux(tmp_path), Filtres(), page=1, par_page=50)
     books = {r["bookmaker"] for r in d["items"]}
     assert len(books) == 4, f"le détail a perdu le book réel : {books}"
+
+
+# ══ LES TRANCHES DE COTE, GLOBALES ET PAR SPORT ════════════════════
+#
+# L'EV avait ses bandes, la cote n'avait que des bornes libres. Or la matrice
+# cote × EV raisonne déjà par tranches : on pouvait LIRE une tranche sans
+# pouvoir FILTRER dessus, et reconstruire « 1.8-2.3 » à la main en bornes
+# libres ne dit rien de la convention (basse incluse, haute exclue).
+
+def _cotes(tmp_path):
+    """Quatre cotes par sport, une dans chaque tranche utile."""
+    return monter(tmp_path, [
+        Opp(id=i, home=f"H{i}", away=f"A{i}", sport=s, book="unibet_be",
+            market="h2h", outcome="home", odd=o, ev=10.0, jour="2026-08-10",
+            cloture=1.9, gagnant="home")
+        for i, (s, o) in enumerate(
+            [("soccer", 1.5), ("soccer", 2.0), ("soccer", 2.6), ("soccer", 7.0),
+             ("tennis", 1.5), ("tennis", 2.0), ("tennis", 2.6), ("tennis", 7.0)],
+            start=1)])
+
+
+def test_une_bande_de_cote_filtre_vraiment(tmp_path):
+    p = _cotes(tmp_path)
+    r = analyser(p, Filtres(cote_bandes=("1.8-2.3",)))
+    assert r["summary"]["opportunities"] == 2      # la cote 2.00 des deux sports
+
+
+def test_plusieurs_bandes_sont_une_UNION(tmp_path):
+    p = _cotes(tmp_path)
+    r = analyser(p, Filtres(cote_bandes=("1.8-2.3", "> 6.0")))
+    assert r["summary"]["opportunities"] == 4
+
+
+def test_les_bandes_de_cote_PAR_SPORT(tmp_path):
+    """⚠️ LA DEMANDE : des tranches de cote propres à chaque sport."""
+    p = _cotes(tmp_path)
+    r = analyser(p, Filtres(cote_par_sport=(("soccer", ("1.0-1.8",)),
+                                            ("tennis", ("> 6.0",)))))
+    par = {t["key"]: t["opportunities"] for t in r["by_sport"]}
+    assert par == {"soccer": 1, "tennis": 1}
+
+
+def test_un_sport_SANS_regle_propre_garde_la_regle_globale(tmp_path):
+    """⚠️ LA BRANCHE QUI EMPÊCHE UNE FUITE SILENCIEUSE.
+
+    Une règle posée sur le foot ne doit ni faire disparaître le tennis, ni lui
+    imposer la règle du foot : il retombe sur la sélection globale."""
+    p = _cotes(tmp_path)
+    r = analyser(p, Filtres(cote_bandes=("> 6.0",),
+                            cote_par_sport=(("soccer", ("1.0-1.8",)),)))
+    par = {t["key"]: t["opportunities"] for t in r["by_sport"]}
+    assert par == {"soccer": 1, "tennis": 1}       # foot 1.5, tennis 7.0
+
+
+def test_bandes_et_bornes_libres_se_CUMULENT(tmp_path):
+    """Même convention que l'EV : les bandes disent « dans quelles tranches »,
+    les bornes libres « et pas au-delà de ». Les deux en ET."""
+    p = _cotes(tmp_path)
+    r = analyser(p, Filtres(cote_bandes=("1.8-2.3", "2.3-3.0"), cote_min=2.2))
+    assert r["summary"]["opportunities"] == 2      # seule la cote 2.60 survit
+
+
+def test_la_borne_basse_est_INCLUSE_et_la_haute_EXCLUE(tmp_path):
+    """Une cote exactement à 2.30 appartient à « 2.3-3.0 », jamais aux deux —
+    sinon elle compterait deux fois dans une somme de tranches."""
+    p = monter(tmp_path, [
+        Opp(id=1, home="A", away="B", sport="soccer", book="unibet_be",
+            odd=2.30, ev=10.0, jour="2026-08-10", cloture=1.9, gagnant="home")])
+    assert analyser(p, Filtres(cote_bandes=("1.8-2.3",)))["summary"]["opportunities"] == 0
+    assert analyser(p, Filtres(cote_bandes=("2.3-3.0",)))["summary"]["opportunities"] == 1
+
+
+def test_les_bandes_viennent_de_la_MEME_table_que_la_matrice(tmp_path):
+    """Une seconde table ferait qu'une tranche lisible dans la matrice
+    n'existerait pas comme filtre — ou l'inverse."""
+    from src.analytics.perimetre import bornes_cote, ordre_cote
+    from scripts.pnl_detections import BANDES_COTE
+    assert ordre_cote() == tuple(lab for lab, _, _ in BANDES_COTE)
+    assert set(bornes_cote()) == {lab for lab, _, _ in BANDES_COTE}
+    v = valeurs_disponibles(_cotes(tmp_path))
+    assert [b["key"] for b in v["odds_bands"]] == list(ordre_cote())

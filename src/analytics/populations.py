@@ -35,6 +35,32 @@ class Population(str, Enum):
     SETTLED = "settled"
 
 
+#: Le nom AFFICHÉ de chaque population. En français, et pas par coquetterie :
+#: « eligible_for_alert » dans une liste déroulante n'apprend rien à qui n'a
+#: pas lu ce module, et une population qu'on choisit sans la comprendre produit
+#: un chiffre qu'on croit sans savoir sur quoi il porte.
+LIBELLE = {
+    Population.DETECTED: "Toutes les détections",
+    Population.ELIGIBLE_FOR_ALERT: "Alertables — reconstitué",
+    Population.SENT: "Alertes envoyées",
+    Population.CLICKED: "Cliquées sur « Jouer »",
+    Population.BET: "Pariées",
+    Population.SETTLED: "Résultat connu et réglable",
+}
+
+#: Les populations PROPOSÉES à l'utilisateur — cinq, pas six.
+#:
+#: ⚠️ `BET` EN EST RETIRÉE PARCE QU'ELLE N'EST PAS UN CHOIX. `alias_de` la
+#: renvoie sur `CLICKED` : les deux entrées rendaient rigoureusement le même
+#: lot. Proposer deux options qui donnent le même résultat laisse croire à une
+#: distinction — « cliquées » contre « réellement misées » — que le système ne
+#: sait pas faire, faute de confirmation de mise. Le jour où cette
+#: confirmation existera, `alias_de` cessera de les confondre et `BET`
+#: reviendra ici ; d'ici là elle reste ACCEPTÉE par l'API, pour qu'aucune URL
+#: ni aucun filtre enregistré ne casse.
+EXPOSEES = tuple(p for p in Population if p is not Population.BET)
+
+
 #: Ce que chaque population mesure, en une phrase destinée à l'utilisateur.
 EXPLICATION = {
     Population.DETECTED:

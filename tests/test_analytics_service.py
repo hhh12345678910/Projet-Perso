@@ -422,7 +422,9 @@ def test_valeurs_disponibles_peuple_les_listes(tmp_path):
     assert set(v["sports"]) == {"soccer", "tennis"}
     assert set(v["bookmakers"]) == {"unibet_be", "ladbrokes_be", "betano_be"}
     assert v["date_min"] == "2026-08-05" and v["date_max"] == "2026-09-07"
-    assert len(v["populations"]) == 6
+    # Cinq, pas six : `BET` est un alias de `CLICKED` et ne se propose plus.
+    assert len(v["populations"]) == 5
+    assert "bet" not in {b["value"] for b in v["populations"]}
 
 
 def test_chaque_population_proposee_porte_son_explication(tmp_path):

@@ -112,6 +112,34 @@ LIBELLE_MARCHE = {
 }
 
 
+def bornes_cote() -> dict:
+    """Les bandes de COTE, `label -> (min inclus, max exclu)`.
+
+    ⚠️ LUES dans `scripts.pnl_detections.BANDES_COTE`, jamais recopiées :
+    c'est déjà la liste qui construit les lignes de la matrice cote × EV.
+    Une seconde table ferait qu'une bande ajoutée à la matrice n'existerait
+    pas comme filtre, ou l'inverse — et personne ne s'en apercevrait avant
+    de comparer deux chiffres qui devraient être égaux.
+
+    L'import est DIFFÉRÉ : `scripts` importe `src`, et un import au niveau
+    du module créerait un cycle. Même dette assumée que `populations._delai_h`,
+    et pour la même raison — une dépendance visible plutôt qu'un doublon
+    invisible (§17.7).
+
+    La borne haute « infinie » de la dernière bande (1e9) est rendue `None`,
+    comme `BORNES_EV` le fait pour « 35 %+ » : les deux tables se lisent alors
+    de la même façon.
+    """
+    from scripts.pnl_detections import BANDES_COTE
+    return {lab: (lo, None if hi >= 1e9 else hi) for lab, lo, hi in BANDES_COTE}
+
+
+def ordre_cote() -> tuple:
+    """L'ordre canonique des bandes de cote, celui de la matrice."""
+    from scripts.pnl_detections import BANDES_COTE
+    return tuple(lab for lab, _, _ in BANDES_COTE)
+
+
 def _libelle(table: dict, valeur) -> str:
     """Le libellé d'une valeur canonique, ou la valeur elle-même.
 

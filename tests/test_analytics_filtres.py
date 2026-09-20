@@ -343,3 +343,53 @@ def test_les_filtres_sont_immuables():
     f = Filtres().valider()
     with pytest.raises(dataclasses.FrozenInstanceError):
         f.cote_min = 2.0
+
+
+# ── Bandes de cote : validation ──────────────────────────────────────
+
+def test_une_bande_de_cote_inconnue_est_refusee():
+    with pytest.raises(FiltreInvalide) as e:
+        Filtres(cote_bandes=("2.0-2.5",)).valider()
+    assert "Bande de cote inconnue" in str(e.value)
+
+
+def test_les_bandes_de_cote_sont_remises_dans_lordre_canonique():
+    """Deux sélections équivalentes doivent produire le même `Filtres`, donc
+    la même clé si l'analyse est un jour mise en cache."""
+    f = Filtres(cote_bandes=("> 6.0", "1.0-1.8")).valider()
+    assert f.cote_bandes == ("1.0-1.8", "> 6.0")
+
+
+def test_un_sport_hors_perimetre_est_refuse_sur_la_cote():
+    with pytest.raises(FiltreInvalide) as e:
+        Filtres(cote_par_sport=(("basketball", ("1.8-2.3",)),)).valider()
+    assert "hors périmètre" in str(e.value)
+
+
+def test_un_sport_en_double_est_refuse_sur_la_cote():
+    with pytest.raises(FiltreInvalide) as e:
+        Filtres(cote_par_sport=(("soccer", ("1.8-2.3",)),
+                                ("soccer", ("> 6.0",)))).valider()
+    assert "apparaît deux fois" in str(e.value)
+
+
+def test_une_regle_de_cote_VIDE_est_retiree_pas_conservee():
+    """« Aucune bande cochée pour le tennis » veut dire « pas de règle propre
+    au tennis », et non « aucune opportunité de tennis »."""
+    f = Filtres(cote_par_sport=(("tennis", ()),)).valider()
+    assert f.cote_par_sport == ()
+
+
+def test_les_bandes_de_cote_font_laller_retour_JSON():
+    f = Filtres(cote_bandes=("1.8-2.3",),
+                cote_par_sport=(("tennis", ("> 6.0",)),)).valider()
+    r = Filtres.depuis_dict(f.en_dict()).valider()
+    assert r.cote_bandes == f.cote_bandes
+    assert r.cote_par_sport == f.cote_par_sport
+
+
+def test_la_query_string_porte_les_bandes_de_cote_par_sport():
+    f = Filtres.depuis_dict({"odds_bands": "1.8-2.3",
+                             "odds_bands_tennis": ["> 6.0"]}).valider()
+    assert f.cote_bandes == ("1.8-2.3",)
+    assert f.cote_par_sport == (("tennis", ("> 6.0",)),)

@@ -37,7 +37,7 @@ from fastapi import Depends, FastAPI, HTTPException, Query, Request
 from fastapi.responses import JSONResponse
 
 from ..analytics import Filtres, analyser, detail
-from ..analytics.filtres import PREFIXE_EV_SPORT, FiltreInvalide
+from ..analytics.filtres import PREFIXE_EV_SPORT, FiltreInvalide, PREFIXE_COTE_SPORT
 from ..analytics.perimetre import (BORNES_EV, MARCHES_ANALYTICS, MIN_SEGMENT,
                                    SPORTS_ANALYTICS)
 from ..analytics.service import (DB_DEFAUT, GRANULARITES, meilleurs_segments,
@@ -72,6 +72,45 @@ AIDE_EV = ("Bandes d'EV en UNION (OR). Répétable, ou séparé par des virgules
 #: `_ev_par_sport` reste là pour qu'un troisième sport ne soit jamais IGNORÉ
 #: en silence s'il entrait dans le périmètre avant cette liste.
 PARAMS_EV_SPORT = tuple(PREFIXE_EV_SPORT + s for s in SPORTS_ANALYTICS)
+
+
+#: Idem pour les bandes de COTE.
+PARAMS_COTE_SPORT = tuple(PREFIXE_COTE_SPORT + s for s in SPORTS_ANALYTICS)
+
+
+def _openapi_par_sport(params, prefixe: str, valeurs, quoi: str) -> dict:
+    """Décrit une famille de paramètres `<quoi>_<sport>` pour OpenAPI.
+
+    Factorisé entre l'EV et la cote : deux générateurs jumeaux finiraient par
+    documenter deux contrats différents pour un même comportement."""
+    return {
+        "parameters": [
+            {
+                "name": nom, "in": "query", "required": False,
+                "schema": {"type": "array", "items": {"type": "string",
+                                                      "enum": list(valeurs)}},
+                "style": "form", "explode": True,
+                "description": (
+                    f"Bandes de {quoi} appliquées UNIQUEMENT au sport "
+                    f"« {nom[len(prefixe):]} », en union. Prime sur la règle "
+                    f"globale pour ce sport ; les autres sports la gardent. "
+                    f"Appliqué DANS LE SQL, pas côté client."),
+            }
+            for nom in params
+        ],
+    }
+
+
+def _openapi_cote_sport() -> dict:
+    from ..analytics.perimetre import bornes_cote
+    return _openapi_par_sport(PARAMS_COTE_SPORT, PREFIXE_COTE_SPORT,
+                              bornes_cote(), "COTE")
+
+
+def _openapi_filtres_sport() -> dict:
+    """Les deux familles réunies : c'est ce que les routes déclarent."""
+    return {"parameters": (_openapi_ev_sport()["parameters"]
+                           + _openapi_cote_sport()["parameters"])}
 
 
 def _openapi_ev_sport() -> dict:
@@ -143,6 +182,29 @@ def _liste_multi(request: Request, *noms: str, decouper: bool = True) -> list:
     return out
 
 
+def _bandes_par_sport(request: Request, prefixe: str, exclue: str) -> dict:
+    """Toutes les règles par sport d'une famille, lues dans la query string.
+
+    Balaye les clés plutôt que de lire une liste figée : un paramètre pour un
+    sport qui entrerait demain dans le périmètre doit être APPLIQUÉ, ou refusé
+    par la validation — jamais ignoré sans un mot. Un filtre qu'on croit posé
+    et qui ne l'est pas est exactement le mode de panne que toute cette couche
+    existe pour empêcher."""
+    out: dict = {}
+    for cle in request.query_params.keys():
+        if not cle.startswith(prefixe) or cle == exclue:
+            continue
+        sport = cle[len(prefixe):].strip().lower()
+        if sport:
+            out[sport] = _liste_multi(request, cle)
+    return out
+
+
+def _cote_par_sport(request: Request) -> dict:
+    """Les bandes de COTE par sport présentes dans la query string."""
+    return _bandes_par_sport(request, PREFIXE_COTE_SPORT, "odds_bands_by_sport")
+
+
 def _ev_par_sport(request: Request) -> dict:
     """Toutes les règles d'EV par sport présentes dans la query string.
 
@@ -151,14 +213,7 @@ def _ev_par_sport(request: Request) -> dict:
     doit être APPLIQUÉ, ou refusé par la validation — jamais ignoré sans un
     mot. Un filtre qu'on croit posé et qui ne l'est pas est exactement le mode
     de panne que toute cette couche existe pour empêcher."""
-    out: dict = {}
-    for cle in request.query_params.keys():
-        if not cle.startswith(PREFIXE_EV_SPORT) or cle == "ev_bands_by_sport":
-            continue
-        sport = cle[len(PREFIXE_EV_SPORT):].strip().lower()
-        if sport:
-            out[sport] = _liste_multi(request, cle)
-    return out
+    return _bandes_par_sport(request, PREFIXE_EV_SPORT, "ev_bands_by_sport")
 
 
 def creer_app(db_path: Optional[str] = None) -> FastAPI:
@@ -233,6 +288,11 @@ def creer_app(db_path: Optional[str] = None) -> FastAPI:
         regles = _ev_par_sport(request)
         if regles:
             brut["ev_bands_by_sport"] = regles
+        brut["odds_bands"] = _liste_multi(request, "odds_band", "odds_bands",
+                                          "odds_bands[]") or None
+        regles_cote = _cote_par_sport(request)
+        if regles_cote:
+            brut["odds_bands_by_sport"] = regles_cote
         return Filtres.depuis_dict(brut).valider()
 
     # ── Les routes ───────────────────────────────────────────────────
@@ -253,7 +313,7 @@ def creer_app(db_path: Optional[str] = None) -> FastAPI:
         return valeurs_disponibles(base())
 
     @app.get("/api/analyse", dependencies=[Depends(exiger_acces)],
-             openapi_extra=_openapi_ev_sport())
+             openapi_extra=_openapi_filtres_sport())
     def analyse(
         request: Request,
         ev_bands: Optional[List[str]] = Query(None, description=AIDE_EV),
@@ -298,7 +358,7 @@ def creer_app(db_path: Optional[str] = None) -> FastAPI:
         return analyser(base(), f, granularite=granularite)
 
     @app.get("/api/detail", dependencies=[Depends(exiger_acces)],
-             openapi_extra=_openapi_ev_sport())
+             openapi_extra=_openapi_filtres_sport())
     def detail_route(
         request: Request,
         ev_bands: Optional[List[str]] = Query(None, description=AIDE_EV),
@@ -346,7 +406,7 @@ def creer_app(db_path: Optional[str] = None) -> FastAPI:
                       tri=sort, ordre=order)
 
     @app.get("/api/segments", dependencies=[Depends(exiger_acces)],
-             openapi_extra=_openapi_ev_sport())
+             openapi_extra=_openapi_filtres_sport())
     def segments_route(
         request: Request,
         ev_bands: Optional[List[str]] = Query(None, description=AIDE_EV),
