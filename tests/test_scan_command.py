@@ -747,3 +747,108 @@ def test_book_lists_the_books_with_their_state(tmp_path, monkeypatch):
     by = {b["callback_data"]: b["text"] for row in kb for b in row}
     assert by["bookalert:unibet_be"].startswith("✅")
     assert by["bookalert:napoleon_be"].startswith("☐")
+
+
+# ══ LE FILTRE PAR BOOK : /book doit valoir pour /scan AUSSI ════════
+#
+# L'alerter écarte les books mis en sourdine (src/alerter.py:955). /scan ne le
+# faisait pas : on coupait un bookmaker et il reparaissait au scan suivant. Le
+# réglage n'agissait donc que sur la moitié du système, sans que rien ne le
+# dise.
+
+def test_un_book_coupe_disparait_du_scan():
+    rows = [_row(book="unibet_be"), _row(book="betano_be", home="Gand",
+                                         away="Genk")]
+    out = select_playable(rows, set(), _cfg(), NOW, books_off={"betano_be"})
+    assert [b["book"] for b in out] == ["unibet_be"]
+
+
+def test_sans_book_coupe_le_scan_ne_change_pas():
+    """Le paramètre est optionnel : les appels existants gardent leur
+    comportement, et un oubli ne rend personne muet."""
+    rows = [_row(book="unibet_be"), _row(book="betano_be", home="Gand",
+                                         away="Genk")]
+    assert len(select_playable(rows, set(), _cfg(), NOW)) == 2
+    assert len(select_playable(rows, set(), _cfg(), NOW, books_off=set())) == 2
+
+
+def test_une_selection_survit_au_MEILLEUR_PRIX_ACTIF():
+    """⚠️ LA DÉCISION DE CONCEPTION DE CE FILTRE.
+
+    La même sélection est souvent offerte par plusieurs books. Si le meilleur
+    prix vient d'un book coupé, l'opportunité ne doit PAS disparaître : un
+    book actif te la propose peut-être un peu moins cher, et elle reste
+    jouable. Le filtre agit donc AVANT l'élection du meilleur prix."""
+    rows = [_row(book="betano_be", odd=2.60),      # coupé, meilleur prix
+            _row(book="unibet_be", odd=2.45)]      # actif, prix inférieur
+    out = select_playable(rows, set(), _cfg(), NOW, books_off={"betano_be"})
+    assert len(out) == 1
+    assert out[0]["book"] == "unibet_be"
+    assert out[0]["odd"] == 2.45
+
+
+def test_tous_les_books_coupes_rend_un_scan_vide_pas_une_erreur():
+    rows = [_row(book="unibet_be"), _row(book="betano_be", home="Gand",
+                                         away="Genk")]
+    assert select_playable(rows, set(), _cfg(), NOW,
+                           books_off={"unibet_be", "betano_be"}) == []
+
+
+def test_le_scan_lit_la_MEME_source_que_lalerter():
+    """Deux listes de « books actifs » finiraient par diverger sans que rien
+    ne le signale. `fetch_playable` doit donc passer par
+    `_load_books_alert_off`, celle que l'alerter utilise déjà."""
+    import inspect
+
+    import bot_listener
+    src = inspect.getsource(bot_listener.fetch_playable)
+    assert "_load_books_alert_off" in src
+    assert "books_off=" in src
+
+
+# ══ « ✅ 0 joué » : une coche verte sur un échec ═══════════════════
+#
+# Défaut signalé le 20/09. Le message ne distinguait pas « tout était déjà
+# joué » — le cas NORMAL d'un reclic — de « rien n'a pu être enregistré », qui
+# est un incident. Mesuré sur les trois derniers scans réels : 9/9, 6/6 et
+# 11/11 jetons déjà dans le classeur, aucun absent de `pending_plays`. Aucune
+# donnée perdue : seul l'affichage mentait.
+
+def test_un_reclic_ne_dit_plus_zero_joue_avec_une_coche_verte():
+    """⚠️ LA RÉGRESSION QUE CE CORRECTIF FERME."""
+    from bot_listener import libelle_scan_play
+    lib = libelle_scan_play(0, 9, 0, 0)
+    assert "✅" not in lib, "une coche verte sur zéro pari enregistré"
+    assert "0 joué" not in lib
+    assert "déjà joué" in lib and "9" in lib
+
+
+def test_un_vrai_echec_ne_se_lit_pas_comme_un_reclic():
+    """« Ligne introuvable » est un incident, pas un doublon. Les deux ne
+    doivent pas porter le même message."""
+    from bot_listener import libelle_scan_play
+    incident = libelle_scan_play(0, 0, 4, 0)
+    reclic = libelle_scan_play(0, 4, 0, 0)
+    assert incident != reclic
+    assert "aucun enregistré" in incident
+    assert "✅" not in incident
+
+
+def test_un_succes_reste_un_succes():
+    from bot_listener import libelle_scan_play
+    assert libelle_scan_play(9, 0, 0, 0) == "✅ 9 joués"
+    assert libelle_scan_play(1, 0, 0, 0) == "✅ 1 joué"
+
+
+def test_un_succes_partiel_annonce_les_deux_nombres():
+    """Neuf enregistrés dont deux ignorés ne doit pas se lire « 9 joués »
+    tout court : le total du message ne correspondrait pas au scan."""
+    from bot_listener import libelle_scan_play
+    lib = libelle_scan_play(7, 2, 0, 0)
+    assert "7" in lib and "2" in lib and lib.startswith("✅")
+
+
+def test_une_erreur_technique_est_comptee_comme_un_echec():
+    from bot_listener import libelle_scan_play
+    lib = libelle_scan_play(0, 0, 0, 3)
+    assert "✅" not in lib and "aucun enregistré" in lib

@@ -300,14 +300,26 @@ def _selection_label(market: str, outcome: str, line, home: str, away: str) -> s
     return outcome
 
 
-def select_playable(rows, played_markets: set, cfg, now: datetime) -> list[dict]:
+def select_playable(rows, played_markets: set, cfg, now: datetime,
+                    books_off: set[str] | None = None) -> list[dict]:
     """Parmi les détections récentes, celles encore jouables maintenant.
 
-    Trois filtres, dans cet ordre :
+    Quatre filtres, dans cet ordre :
       - le coup d'envoi est encore assez loin (même règle que les alertes) ;
       - le marché n'a pas déjà été joué — un clic sur « Jouer » sur le 1 d'un
         1X2 fait taire le X et le 2, comme pour les alertes ;
+      - le book n'a pas été coupé via /book ;
       - le pari atteindrait bien un canal.
+
+    ⚠️ LE FILTRE PAR BOOK MANQUAIT, ET C'ÉTAIT UNE INCOHÉRENCE VISIBLE.
+    L'alerter écarte les books mis en sourdine (`src/alerter.py:955`,
+    `if bet.book.value in self._books_off`), mais /scan les affichait quand
+    même : on coupait un bookmaker dans /book et il reparaissait au scan
+    suivant. Le réglage n'avait donc d'effet que sur la moitié du système.
+
+    `books_off` vient de `_load_books_alert_off()` — la MÊME source que
+    l'alerter, jamais une seconde liste : deux définitions de « book actif »
+    finiraient par diverger sans que rien ne le signale.
 
     Puis une seule ligne par opportunité, au meilleur prix : la même sélection
     est détectée sur plusieurs books, mais on n'en joue qu'une (§9).
@@ -322,6 +334,14 @@ def select_playable(rows, played_markets: set, cfg, now: datetime) -> list[dict]
             continue
         line = r["line"]
         if f"{r['event_key']}|{r['market']}|{line}" in played_markets:
+            continue
+        # ⚠️ ÉCARTÉ AVANT L'ÉLECTION DU MEILLEUR PRIX, ET C'EST VOULU.
+        # La même sélection est souvent offerte par plusieurs books. Filtrer
+        # après coup ferait disparaître l'opportunité entière dès que son
+        # meilleur prix vient d'un book coupé — alors qu'un book actif te la
+        # propose peut-être deux centièmes moins cher. Ici, elle reste et
+        # s'affiche au meilleur prix ACTIF.
+        if books_off and r["book"] in books_off:
             continue
         ev, odd = r["ev_pct"], r["odd_taken"]
         if not is_premium(cfg, ev, odd):
@@ -386,9 +406,12 @@ def fetch_playable(cfg, *, now: datetime | None = None) -> list[dict]:
         ).fetchall()
     finally:
         con.close()
-    from src.alerter import _load_played_keys
+    from src.alerter import _load_books_alert_off, _load_played_keys
     _, played_markets = _load_played_keys()
-    return select_playable(rows, played_markets, cfg, now)
+    # Relu à chaque scan, comme l'alerter le relit à chaque cycle : une
+    # bascule dans /book prend effet tout de suite, sans redémarrage.
+    return select_playable(rows, played_markets, cfg, now,
+                           books_off=_load_books_alert_off())
 
 
 def _esc(s: str) -> str:
@@ -552,6 +575,37 @@ def _scan_play_tokens(scan_token: str) -> list[str]:
     return [r[0] for r in rows]
 
 
+def libelle_scan_play(done: int, deja: int, introuvable: int,
+                      erreur: int) -> str:
+    """Le libellé du bouton après « Tout jouer ». Pur, donc testable seul.
+
+    ⚠️ « ✅ 0 joué » — UNE COCHE VERTE SUR UN ÉCHEC — était le défaut signalé
+    le 20/09. Le message ne distinguait pas « tout était déjà joué », qui est
+    le comportement NORMAL d'un reclic, de « rien n'a pu être enregistré »,
+    qui est un vrai problème. Les deux affichaient le même « ✅ 0 joué », et
+    le détail « (N ignorés) » ne vivait que dans la notification éphémère,
+    pas sur le bouton qui reste à l'écran.
+
+    Mesuré sur les trois derniers scans réels : 9/9, 6/6 et 11/11 jetons déjà
+    présents dans le classeur, AUCUN absent de `pending_plays`. C'était donc
+    bien un reclic, et aucune donnée n'a jamais été perdue — seul l'affichage
+    mentait. C'est le §13.12 appliqué à l'interface : deux causes opposées
+    derrière un même chiffre.
+    """
+    def n(x: int, mot: str) -> str:
+        return f"{x} {mot}{'s' if x > 1 else ''}"
+
+    ignores = deja + introuvable + erreur
+    if done:
+        base = f"✅ {n(done, 'joué')}"
+        return base + (f" · {n(ignores, 'ignoré')}" if ignores else "")
+    if deja and not introuvable and not erreur:
+        # Le cas rassurant : ces paris SONT enregistrés, depuis un clic
+        # précédent. Le dire explicitement évite de recliquer en boucle.
+        return f"↩️ déjà joué · {n(deja, 'pari')}"
+    return f"⚠️ aucun enregistré · {n(ignores, 'ignoré')}"
+
+
 def handle_scan_play(cb: dict) -> None:
     """Clic sur « Tout jouer » : enregistre d'un coup tous les paris du message.
 
@@ -566,27 +620,36 @@ def handle_scan_play(cb: dict) -> None:
     if not tokens:
         tg("answerCallbackQuery", callback_query_id=cb_id, text="Scan introuvable")
         return
-    done = skipped = 0
+    # Trois causes de rejet, trois compteurs. Les fondre dans un seul
+    # `skipped` rendait « déjà joué » indiscernable de « ligne perdue » — la
+    # première est normale, la seconde est un incident.
+    done = deja = introuvable = erreur = 0
     for t in tokens:
         try:
             if already_logged(t):
-                skipped += 1
+                deja += 1
                 continue
             bet = fetch_bet(t)
             if not bet:
-                skipped += 1
+                introuvable += 1
                 continue
             append_bet(bet)
             _record_played(bet)
             done += 1
         except Exception as e:      # un pari en échec ne doit pas bloquer les autres
-            skipped += 1
+            erreur += 1
             print(f"scan play {t} echoue: {type(e).__name__}: {e}")
-    _mark_button_done(cb, f"✅ {done} joué{'s' if done > 1 else ''}")
-    note = f" ({skipped} ignoré{'s' if skipped > 1 else ''})" if skipped else ""
+
+    _mark_button_done(cb, libelle_scan_play(done, deja, introuvable, erreur))
+    detail = ", ".join(
+        f"{v} {mot}" for v, mot in ((deja, "déjà joué"),
+                                    (introuvable, "introuvable"),
+                                    (erreur, "en erreur")) if v)
     tg("answerCallbackQuery", callback_query_id=cb_id,
-       text=f"{done} pari{'s' if done > 1 else ''} enregistré{'s' if done > 1 else ''}{note}")
-    print(f"[{datetime.now():%H:%M:%S}] scan {scan_token}: {done} joues, {skipped} ignores")
+       text=(f"{done} enregistré{'s' if done > 1 else ''}"
+             + (f" — {detail}" if detail else "")))
+    print(f"[{datetime.now():%H:%M:%S}] scan {scan_token}: {done} joues, "
+          f"{deja} deja, {introuvable} introuvables, {erreur} erreurs")
 
 
 # ------------------------------------------------------------- /book --------
