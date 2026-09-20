@@ -155,34 +155,66 @@ def _bandes_cote(valeur, ou: str) -> tuple:
                               and b not in canonique])
 
 
-def _par_sport_valide(brut, nom: str, valideur) -> list:
-    """Valide une table « sport -> sélection de bandes », quelle qu'elle soit.
+def _cle_sport(valeur, ou: str) -> str:
+    """Un sport canonique, ou un refus. Le périmètre s'applique ici aussi."""
+    cle = str(valeur).strip().lower()
+    if cle not in SPORTS_AUTORISES:
+        raise FiltreInvalide(
+            f"{ou} : sport hors périmètre {cle!r}. Autorisés : "
+            f"{', '.join(sorted(SPORTS_AUTORISES))}.")
+    return cle
 
-    ⚠️ FACTORISÉ ENTRE L'EV ET LA COTE, ET PAS PAR GOÛT DE LA CONCISION.
-    Deux boucles jumelles finissent toujours par diverger — sur un message,
-    sur le traitement d'une entrée vide, sur le refus d'un doublon — et cet
-    écart ne se voit pas : les deux filtres marchent, simplement pas pareil.
-    `nom` porte le libellé attendu par l'appelant pour que les messages
-    restent ceux que ses tests verrouillent.
+
+def _cle_bande_cote(valeur, ou: str) -> str:
+    """Une bande de cote canonique, depuis son LIBELLÉ ou depuis son SLUG.
+
+    Les deux écritures arrivent réellement : « 1.0-1.8 » dans un document
+    JSON, « 1_0_1_8 » dans une query string, où le libellé devrait être
+    encodé. Elles désignent la même tranche et doivent donc se normaliser
+    vers la même clé — sinon la même règle, écrite des deux façons,
+    compterait pour deux et se ferait refuser comme un doublon."""
+    from .perimetre import bornes_cote, slug_cote, slugs_cote
+    brut = str(valeur).strip()
+    table = bornes_cote()
+    if brut in table:
+        return brut
+    slugs = slugs_cote()
+    cle = slug_cote(brut)
+    if cle in slugs:
+        return slugs[cle]
+    raise FiltreInvalide(
+        f"{ou} : bande de cote inconnue {brut!r}. Connues : "
+        f"{', '.join(table)} (ou leurs formes d'URL : "
+        f"{', '.join(slugs)}).")
+
+
+def _table_valide(brut, nom: str, cle_valide, valideur, quoi: str) -> list:
+    """Valide une table « clé -> règle », quelle que soit la nature de la clé.
+
+    ⚠️ FACTORISÉ ENTRE L'EV, LA COTE ET LES TRANCHES DE COTE, ET PAS PAR GOÛT
+    DE LA CONCISION. Des boucles jumelles finissent toujours par diverger —
+    sur un message, sur le traitement d'une entrée vide, sur le refus d'un
+    doublon — et cet écart ne se voit pas : les filtres marchent tous,
+    simplement pas pareil.
+
+    `cle_valide` est le SEUL point qui change d'une table à l'autre. `nom`
+    porte le libellé attendu par l'appelant pour que les messages restent ceux
+    que ses tests verrouillent, et `quoi` nomme la clé dans ces messages.
     """
     out, vus = [], set()
     brut = brut.items() if isinstance(brut, dict) else brut
     for paire in brut or ():
         try:
-            sport, valeurs = paire
+            cle_brute, valeurs = paire
         except (TypeError, ValueError):
             raise FiltreInvalide(
-                f"{nom} attend des paires (sport, bandes) — "
+                f"{nom} attend des paires ({quoi}, règle) — "
                 f"reçu : {paire!r}") from None
-        cle = str(sport).strip().lower()
-        if cle not in SPORTS_AUTORISES:
-            raise FiltreInvalide(
-                f"{nom} : sport hors périmètre {cle!r}. Autorisés : "
-                f"{', '.join(sorted(SPORTS_AUTORISES))}.")
+        cle = cle_valide(cle_brute, nom)
         if cle in vus:
             raise FiltreInvalide(
-                f"{nom} : le sport {cle!r} apparaît deux fois. Une "
-                f"seule règle par sport, sinon laquelle s'applique ?")
+                f"{nom} : le {quoi} {cle!r} apparaît deux fois. Une "
+                f"seule règle par {quoi}, sinon laquelle s'applique ?")
         vus.add(cle)
         choisies = valideur(valeurs, f"{nom}[{cle}]")
         # Une entrée VIDE est retirée plutôt que conservée : « aucune bande
@@ -192,6 +224,17 @@ def _par_sport_valide(brut, nom: str, valideur) -> list:
         if choisies:
             out.append((cle, choisies))
     return out
+
+
+def _par_sport_valide(brut, nom: str, valideur) -> list:
+    """Table « sport -> règle ». Corps partagé, voir `_table_valide`."""
+    return _table_valide(brut, nom, _cle_sport, valideur, "sport")
+
+
+def _par_cote_valide(brut, nom: str, valideur) -> list:
+    """Table « tranche de cote -> règle ». Même corps que par sport, et c'est
+    ce qui garantit que les deux refusent exactement les mêmes choses."""
+    return _table_valide(brut, nom, _cle_bande_cote, valideur, "tranche")
 
 
 def _bornes_ev(valeur, ou: str) -> tuple:
@@ -250,6 +293,48 @@ def _ev_libre_par_sport_depuis(d: dict) -> tuple:
                     courant[rang] = valeur
                     out[sport] = tuple(courant)
     return tuple(sorted((s, b) for s, b in out.items()))
+
+
+#: Préfixes des bornes libres d'EV par TRANCHE DE COTE :
+#: `?ev_odds_min_1_0_1_8=3&ev_odds_max_1_0_1_8=12`.
+#:
+#: ⚠️ PAS `ev_min_<tranche>`. Ce nom commencerait par `PREFIXE_EV_MIN_SPORT`,
+#: et le lecteur par sport y verrait un sport nommé « odds_1_0_1_8 » — refusé
+#: comme hors périmètre, donc une requête légitime rejetée. Deux familles de
+#: paramètres dont l'une préfixe l'autre ne cohabitent qu'avec une exception
+#: écrite quelque part ; on évite l'exception plutôt que de l'écrire.
+PREFIXE_EV_MIN_COTE = "ev_odds_min_"
+PREFIXE_EV_MAX_COTE = "ev_odds_max_"
+
+
+def _ev_libre_par_cote_depuis(d: dict) -> tuple:
+    """Les bornes libres d'EV par tranche de cote, dans leurs deux écritures.
+
+    * `ev_free_by_odds` : un dict `{tranche: [min, max]}` — ce que rend
+      `en_dict`, donc ce qu'un aller-retour JSON doit savoir relire ;
+    * `ev_odds_min_<slug>` / `ev_odds_max_<slug>` : les paramètres plats, la
+      seule forme qu'une query string porte sans encoder du JSON dans une URL.
+
+    Les clés ne sont PAS canonisées ici : `_cle_bande_cote` s'en charge à la
+    validation. Écrire la même tranche sous ses deux formes produit donc deux
+    entrées, que la validation refuse comme un doublon — c'est voulu, « qui
+    l'emporte » n'a pas de réponse évidente."""
+    out: dict = {}
+    table = d.get("ev_free_by_odds") or d.get("ev_libre_par_cote") or {}
+    if isinstance(table, dict):
+        for bande, bornes in table.items():
+            out[str(bande).strip()] = tuple(bornes or (None, None))
+    for cle, valeur in d.items():
+        nom = str(cle)
+        for prefixe, rang in ((PREFIXE_EV_MIN_COTE, 0),
+                              (PREFIXE_EV_MAX_COTE, 1)):
+            if nom.startswith(prefixe) and len(nom) > len(prefixe):
+                bande = nom[len(prefixe):].strip()
+                if bande:
+                    courant = list(out.get(bande, (None, None)))
+                    courant[rang] = valeur
+                    out[bande] = tuple(courant)
+    return tuple(sorted((b, v) for b, v in out.items()))
 
 
 #: Préfixe des paramètres d'EV par sport dans une query string :
@@ -347,6 +432,17 @@ class Filtres:
     #: Se cumulent en ET avec les bandes du même sport, exactement comme
     #: `ev_min`/`ev_max` se cumulent avec `ev_bandes` au niveau global.
     ev_libre_par_sport: tuple = ()
+    #: Bornes LIBRES d'EV par TRANCHE DE COTE — tuple de paires
+    #: `(tranche, (min, max))`.
+    #:
+    #: ⚠️ CELLE-CI PRIME, ELLE NE S'AJOUTE PAS. Un pari dont la cote tombe
+    #: dans une tranche réglée ici obéit à CETTE borne et à aucune autre. Une
+    #: règle qui s'ajouterait en ET serait un piège : demander « cote 1.0-1.8
+    #: → EV ≥ 3 » alors que la borne globale vaut 5 ne rendrait rien de neuf,
+    #: le 5 continuant de s'appliquer aux mêmes lignes. L'ordre complet est
+    #: tranche de cote, puis sport, puis règle globale — et c'est exactement
+    #: ce que `requete.clause_ev_libre` écrit en SQL.
+    ev_libre_par_cote: tuple = ()
     date_from: "str | None" = None
     date_to: "str | None" = None
     delai_min_h: "float | None" = None
@@ -438,6 +534,16 @@ class Filtres:
         ev_libre = tuple(sorted(_par_sport_valide(
             self.ev_libre_par_sport, "ev_libre_par_sport", _bornes_ev)))
 
+        # Les tranches sont rangées dans l'ORDRE DE LA MATRICE, pas par ordre
+        # alphabétique : « > 6.0 » se trierait avant « 1.0-1.8 » et l'export
+        # PDF lirait les règles à l'envers de la table qu'il accompagne.
+        from .perimetre import ordre_cote
+        rang = {b: i for i, b in enumerate(ordre_cote())}
+        ev_libre_cote = tuple(sorted(
+            _par_cote_valide(self.ev_libre_par_cote, "ev_libre_par_cote",
+                             _bornes_ev),
+            key=lambda paire: rang.get(paire[0], len(rang))))
+
         # Bandes de COTE : mêmes règles, même aide, donc mêmes refus.
         bandes_cote = _bandes_cote(self.cote_bandes, "cote_bandes")
         cote_par_sport = tuple(sorted(_par_sport_valide(
@@ -498,7 +604,7 @@ class Filtres:
             cote_max=cote_max, ev_min=ev_min, ev_max=ev_max,
             ev_bandes=bandes, ev_par_sport=par_sport,
             cote_bandes=bandes_cote, cote_par_sport=cote_par_sport,
-            ev_libre_par_sport=ev_libre,
+            ev_libre_par_sport=ev_libre, ev_libre_par_cote=ev_libre_cote,
             delai_min_h=d_min, delai_max_h=d_max, population=population,
             stake=stake, fenetre_morte_min=fm)
 
@@ -525,6 +631,16 @@ class Filtres:
         table = {None: self.cote_bandes}
         table.update(dict(self.cote_par_sport))
         return table
+
+    def ev_libre_cote_effectif(self) -> dict:
+        """Ce que l'EV filtre réellement, TRANCHE DE COTE par tranche.
+
+        Rend `{tranche: (min, max)}` pour les seules tranches réglées. Une
+        tranche absente n'est pas « sans contrainte » : elle retombe sur la
+        règle du sport, puis sur `ev_min`/`ev_max`. Même contrat de lecture
+        que `ev_effectif` — un filtre qu'on ne peut pas RELIRE est exactement
+        celui qu'on croit appliqué et qui ne l'est pas."""
+        return dict(self.ev_libre_par_cote)
 
     def sports_effectifs(self) -> tuple:
         """Les sports réellement analysés : la sélection, ou tout le périmètre.
@@ -561,6 +677,8 @@ class Filtres:
             "ev_bands_by_sport": {s: list(b) for s, b in self.ev_par_sport},
             "ev_free_by_sport": {s: list(b)
                                  for s, b in self.ev_libre_par_sport},
+            "ev_free_by_odds": {b: list(v)
+                                for b, v in self.ev_libre_par_cote},
             "odds_bands": list(self.cote_bandes),
             "odds_bands_by_sport": {s: list(b)
                                     for s, b in self.cote_par_sport},
@@ -598,6 +716,7 @@ class Filtres:
                               "cote_bandes"),
             cote_par_sport=_cote_par_sport_depuis(d),
             ev_libre_par_sport=_ev_libre_par_sport_depuis(d),
+            ev_libre_par_cote=_ev_libre_par_cote_depuis(d),
             date_from=d.get("date_from"), date_to=d.get("date_to"),
             delai_min_h=d.get("delay_min", d.get("delai_min_h")),
             delai_max_h=d.get("delay_max", d.get("delai_max_h")),

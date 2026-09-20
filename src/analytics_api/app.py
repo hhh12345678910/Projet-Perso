@@ -37,7 +37,10 @@ from fastapi import Depends, FastAPI, HTTPException, Query, Request
 from fastapi.responses import JSONResponse
 
 from ..analytics import Filtres, analyser, detail
-from ..analytics.filtres import PREFIXE_EV_SPORT, FiltreInvalide, PREFIXE_COTE_SPORT, PREFIXE_EV_MIN_SPORT, PREFIXE_EV_MAX_SPORT
+from ..analytics.filtres import (PREFIXE_COTE_SPORT, PREFIXE_EV_MAX_COTE,
+                                PREFIXE_EV_MAX_SPORT, PREFIXE_EV_MIN_COTE,
+                                PREFIXE_EV_MIN_SPORT, PREFIXE_EV_SPORT,
+                                FiltreInvalide)
 from ..analytics.perimetre import (BORNES_EV, MARCHES_ANALYTICS, MIN_SEGMENT,
                                    SPORTS_ANALYTICS)
 from ..analytics.service import (DB_DEFAUT, GRANULARITES, meilleurs_segments,
@@ -107,11 +110,45 @@ def _openapi_cote_sport() -> dict:
                               bornes_cote(), "COTE")
 
 
-def _openapi_filtres_sport() -> dict:
-    """Les TROIS familles réunies : c'est ce que les routes déclarent."""
+def _openapi_ev_libre_cote() -> dict:
+    """Décrit `ev_odds_min_<slug>` / `ev_odds_max_<slug>` pour OpenAPI.
+
+    Les tranches sont nommées par leur SLUG et non par leur libellé : « > 6.0 »
+    ne se met pas dans une URL sans encodage, et une URL illisible ne se
+    partage pas. `perimetre.slugs_cote` refuse les collisions, donc ce nom
+    désigne une tranche et une seule."""
+    from ..analytics.perimetre import slugs_cote
+    slugs = slugs_cote()
+    return {
+        "parameters": [
+            {
+                "name": prefixe + slug, "in": "query", "required": False,
+                "schema": {"type": "number"},
+                "description": (
+                    f"Borne {'basse' if rang == 'min' else 'haute'} d'EV "
+                    f"appliquée UNIQUEMENT aux paris de cote « {libelle} ». "
+                    f"PRIME sur `ev_{rang}` et sur `ev_{rang}_<sport>` pour "
+                    f"cette tranche — elle les REMPLACE, elle ne s'y ajoute "
+                    f"pas. Les tranches non réglées gardent la règle de leur "
+                    f"sport, puis la règle globale. Appliqué DANS LE SQL."),
+            }
+            for slug, libelle in slugs.items()
+            for prefixe, rang in ((PREFIXE_EV_MIN_COTE, "min"),
+                                  (PREFIXE_EV_MAX_COTE, "max"))
+        ],
+    }
+
+
+def _openapi_familles_filtres() -> dict:
+    """Les QUATRE familles réunies : c'est ce que les routes déclarent.
+
+    Trois sont indexées par sport, la dernière par tranche de cote. Elles
+    sont déclarées ensemble parce qu'une route qui en omettrait une aurait
+    des paramètres fantômes — lus par le code, absents de la documentation."""
     return {"parameters": (_openapi_ev_sport()["parameters"]
                            + _openapi_cote_sport()["parameters"]
-                           + _openapi_ev_libre_sport()["parameters"])}
+                           + _openapi_ev_libre_sport()["parameters"]
+                           + _openapi_ev_libre_cote()["parameters"])}
 
 
 def _openapi_ev_sport() -> dict:
@@ -220,6 +257,28 @@ def _ev_libre_par_sport(request: Request) -> dict:
             courant = list(out.get(sport, (None, None)))
             courant[rang] = request.query_params.get(cle)
             out[sport] = tuple(courant)
+    return out
+
+
+def _ev_libre_par_cote(request: Request) -> dict:
+    """Les BORNES LIBRES d'EV par tranche de cote présentes dans la requête.
+
+    Jumeau de `_ev_libre_par_sport`, sur des clés qui ne peuvent PAS se
+    confondre avec les siennes : `ev_odds_min_…` ne commence pas par
+    `ev_min_`. Si un jour l'un devenait préfixe de l'autre, ce balayage
+    volerait ses paramètres au voisin sans rien signaler."""
+    out: dict = {}
+    for cle in request.query_params.keys():
+        for prefixe, rang in ((PREFIXE_EV_MIN_COTE, 0),
+                              (PREFIXE_EV_MAX_COTE, 1)):
+            if not cle.startswith(prefixe) or len(cle) == len(prefixe):
+                continue
+            bande = cle[len(prefixe):].strip()
+            if not bande:
+                continue
+            courant = list(out.get(bande, (None, None)))
+            courant[rang] = request.query_params.get(cle)
+            out[bande] = tuple(courant)
     return out
 
 
@@ -340,6 +399,9 @@ def creer_app(db_path: Optional[str] = None) -> FastAPI:
         libres = _ev_libre_par_sport(request)
         if libres:
             brut["ev_free_by_sport"] = libres
+        libres_cote = _ev_libre_par_cote(request)
+        if libres_cote:
+            brut["ev_free_by_odds"] = libres_cote
         return Filtres.depuis_dict(brut).valider()
 
     # ── Les routes ───────────────────────────────────────────────────
@@ -360,7 +422,7 @@ def creer_app(db_path: Optional[str] = None) -> FastAPI:
         return valeurs_disponibles(base())
 
     @app.get("/api/analyse", dependencies=[Depends(exiger_acces)],
-             openapi_extra=_openapi_filtres_sport())
+             openapi_extra=_openapi_familles_filtres())
     def analyse(
         request: Request,
         ev_bands: Optional[List[str]] = Query(None, description=AIDE_EV),
@@ -405,7 +467,7 @@ def creer_app(db_path: Optional[str] = None) -> FastAPI:
         return analyser(base(), f, granularite=granularite)
 
     @app.get("/api/detail", dependencies=[Depends(exiger_acces)],
-             openapi_extra=_openapi_filtres_sport())
+             openapi_extra=_openapi_familles_filtres())
     def detail_route(
         request: Request,
         ev_bands: Optional[List[str]] = Query(None, description=AIDE_EV),
@@ -453,7 +515,7 @@ def creer_app(db_path: Optional[str] = None) -> FastAPI:
                       tri=sort, ordre=order)
 
     @app.get("/api/segments", dependencies=[Depends(exiger_acces)],
-             openapi_extra=_openapi_filtres_sport())
+             openapi_extra=_openapi_familles_filtres())
     def segments_route(
         request: Request,
         ev_bands: Optional[List[str]] = Query(None, description=AIDE_EV),

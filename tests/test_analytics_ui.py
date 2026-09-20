@@ -853,3 +853,80 @@ def test_installateur_caddy_explique_un_demarrage_refuse():
          / "scripts" / "setup-caddy.sh").read_text(encoding="utf-8")
     assert "journalctl -u caddy" in s
     assert "$CIBLE.avant-" in s, "aucun retour en arrière indiqué"
+
+
+# ══ L'EV PAR TRANCHE DE COTE ══════════════════════════════════════
+
+def test_le_bloc_ev_par_tranche_de_cote_existe():
+    for jeton in ('id="ev-cote-split"', 'id="ev-par-cote"',
+                  'EV par tranche de cote'):
+        assert jeton in HTML, jeton
+
+
+def test_linterface_ANNONCE_que_la_regle_prime():
+    """⚠️ SANS CETTE PHRASE, LE RÉGLAGE EST UN PIÈGE. « Se cumule (ET) »
+    est écrit deux blocs plus haut pour les bornes libres ; si celui-ci ne
+    disait pas l'inverse, l'utilisateur assouplirait une tranche en croyant
+    ajouter une condition et ne comprendrait pas le résultat."""
+    bloc = HTML[HTML.index('id="champ-ev-cote"'):]
+    bloc = bloc[:bloc.index('<div class="champ')]
+    assert "remplace" in bloc.lower(), bloc
+
+
+def test_les_bornes_par_tranche_PARTENT_AU_SERVEUR():
+    assert "ev_odds_min_" in JS and "ev_odds_max_" in JS
+
+
+def test_le_slug_vient_du_SERVEUR_et_nest_pas_refabrique_en_JS():
+    """⚠️ DEUX RÈGLES DE FABRICATION FINIRAIENT PAR DIVERGER. Le serveur
+    expose `slug` dans `/api/filters` ; le JavaScript le lit, il ne le
+    recalcule pas. Une normalisation maison produirait tôt ou tard un nom que
+    le serveur refuse — ou pire, qu'il accepte pour la mauvaise tranche."""
+    bloc = JS[JS.index("function panneauxEvParCote"):]
+    bloc = bloc[:bloc.index("\n}")]
+    assert "b.slug" in bloc
+    assert "replace(" not in bloc and "toLowerCase" not in bloc
+
+
+def test_toutes_les_tranches_sont_proposees_pas_seulement_les_cochees():
+    """Une tranche absente du panneau se lirait comme « non filtrée », alors
+    qu'elle garde la règle générale."""
+    bloc = JS[JS.index("function panneauxEvParCote"):]
+    bloc = bloc[:bloc.index("\n}")]
+    assert "REFS.odds_bands" in bloc
+    assert "coches(" not in bloc, "le panneau dépend des cases cochées"
+
+
+def test_lexport_PDF_porte_la_regle_par_tranche():
+    """Un export qui tait une règle prioritaire ment par omission : deux
+    lecteurs du même papier en déduiraient deux filtres différents."""
+    bloc = JS[JS.index("function enteteExport"):]
+    assert "ev_free_by_odds" in bloc[:bloc.index("\n}")]
+
+
+def test_la_reinitialisation_redessine_le_panneau_des_tranches():
+    """`form.reset()` décoche la case mais ne vide pas les champs déjà
+    construits : le réglage resterait visible sans plus partir au serveur."""
+    bloc = JS[JS.index("$('reinit').addEventListener"):]
+    assert "panneauxEvParCote()" in bloc[:bloc.index("\n  });")]
+
+
+def test_les_champs_de_bornes_ne_pretendent_plus_porter_UN_SPORT():
+    """`bornesPaire` sert aux sports ET aux tranches de cote. Un attribut
+    `data-sport` portant un slug de tranche ferait lire le mauvais filtre au
+    premier qui s'y fierait."""
+    assert "bornesSport(" not in JS
+    assert "dataset.sport = sport" not in JS
+    assert "input[type=\"number\"][data-cle]" in JS
+
+
+def test_lexport_ecrit_un_couple_de_bornes_en_FLECHE_pas_en_VIRGULE():
+    """⚠️ « 1.0-1.8 : 3, » ne dit ni que la borne haute manque, ni laquelle
+    des deux vaut 3. Sur un PDF qu'on relit trois mois plus tard, c'est un
+    filtre qu'on ne peut plus reconstituer."""
+    bloc = JS[JS.index("function enteteExport"):]
+    bloc = bloc[:bloc.index("\n}")]
+    assert "const bornes = " in bloc
+    assert "bornes(f.ev_free_by_odds)" in bloc
+    assert "bornes(f.ev_free_by_sport)" in bloc
+    assert "table(f.ev_free_by_sport)" not in bloc

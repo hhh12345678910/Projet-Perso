@@ -517,3 +517,33 @@ table.segments tbody tr:hover { background: var(--neutre); }
 }
 
 @page { size: A4 portrait; margin: 12mm 10mm; }
+
+/* ── EV par tranche de cote ──────────────────────────────────────── */
+
+/* Six tranches, deux champs chacune : en blocs empilés comme les panneaux
+   par sport, le formulaire gagnait plus de 400 px et repoussait le bouton
+   ANALYSER hors de l'écran. Une grille « nom | bornes » tient en six lignes. */
+.ev-cote-grille {
+  display: grid;
+  grid-template-columns: max-content 1fr;
+  gap: 6px 10px;
+  align-items: center;
+  margin-top: 8px;
+  padding: 8px 10px;
+  border: 1px solid var(--bordure);
+  border-left: 3px solid var(--pos);
+  border-radius: var(--r);
+  background: var(--fond-page);
+}
+.ev-cote-nom {
+  font-size: 12px;
+  font-variant-numeric: tabular-nums;
+  color: var(--encre-2);
+  white-space: nowrap;
+}
+.ev-cote-grille .aide { grid-column: 1 / -1; }
+
+@media (max-width: 480px) {
+  .ev-cote-grille { grid-template-columns: 1fr; gap: 2px 0; }
+  .ev-cote-nom { margin-top: 6px; }
+}

@@ -442,3 +442,92 @@ def test_les_bornes_libres_par_sport_font_laller_retour_JSON():
     f = Filtres(ev_libre_par_sport=(("soccer", (5, 15)),)).valider()
     assert (Filtres.depuis_dict(f.en_dict()).valider().ev_libre_par_sport
             == f.ev_libre_par_sport)
+
+
+# ── Bornes LIBRES d'EV par TRANCHE DE COTE ───────────────────────────
+
+def test_les_bornes_dev_par_tranche_de_cote_sont_validees():
+    f = Filtres(ev_libre_par_cote=(("1.0-1.8", (3, 9)),
+                                   ("> 6.0", (12, None)))).valider()
+    assert f.ev_libre_par_cote == (("1.0-1.8", (3.0, 9.0)),
+                                   ("> 6.0", (12.0, None)))
+
+
+def test_les_tranches_sont_rangees_dans_lORDRE_DE_LA_MATRICE():
+    """⚠️ PAS PAR ORDRE ALPHABÉTIQUE. « > 6.0 » se trierait AVANT « 1.0-1.8 »,
+    et l'export PDF listerait les règles à l'envers du tableau qu'il
+    accompagne — deux lectures contradictoires du même filtre."""
+    f = Filtres(ev_libre_par_cote=(("> 6.0", (12, None)),
+                                   ("1.8-2.3", (5, None)),
+                                   ("1.0-1.8", (3, None)))).valider()
+    assert [b for b, _ in f.ev_libre_par_cote] == ["1.0-1.8", "1.8-2.3", "> 6.0"]
+
+
+def test_le_slug_et_le_libelle_designent_la_MEME_tranche():
+    """« 1_0_1_8 » est la forme d'URL de « 1.0-1.8 » : les deux doivent se
+    normaliser vers la même clé, sinon la même règle écrite des deux façons
+    filtrerait deux fois."""
+    par_slug = Filtres(ev_libre_par_cote=(("1_0_1_8", (3, None)),)).valider()
+    par_libelle = Filtres(ev_libre_par_cote=(("1.0-1.8", (3, None)),)).valider()
+    assert par_slug.ev_libre_par_cote == par_libelle.ev_libre_par_cote
+
+
+def test_une_tranche_de_cote_inconnue_est_REFUSEE():
+    """Ignorer la règle rendrait un lot filtré par la seule borne globale,
+    sous un en-tête qui annonce autre chose."""
+    with pytest.raises(FiltreInvalide) as e:
+        Filtres(ev_libre_par_cote=(("2.0-2.5", (3, None)),)).valider()
+    assert "inconnue" in str(e.value)
+
+
+def test_la_meme_tranche_ecrite_deux_fois_est_refusee():
+    """Laquelle des deux s'appliquerait ? La question n'a pas de bonne
+    réponse, donc on refuse au lieu d'en choisir une au hasard."""
+    with pytest.raises(FiltreInvalide) as e:
+        Filtres(ev_libre_par_cote=(("1.0-1.8", (3, None)),
+                                   ("1_0_1_8", (9, None)))).valider()
+    assert "apparaît deux fois" in str(e.value)
+
+
+def test_une_tranche_sans_borne_perd_sa_regle_plutot_que_ses_lignes():
+    assert Filtres(ev_libre_par_cote=(("1.0-1.8", (None, None)),)
+                   ).valider().ev_libre_par_cote == ()
+
+
+def test_une_borne_a_lenvers_est_refusee_sur_la_tranche_de_cote():
+    with pytest.raises(FiltreInvalide) as e:
+        Filtres(ev_libre_par_cote=(("1.0-1.8", (20, 5)),)).valider()
+    assert "au-dessus de la haute" in str(e.value)
+
+
+def test_la_query_string_porte_ev_odds_min_et_max():
+    f = Filtres.depuis_dict({"ev_odds_min_1_0_1_8": 3,
+                             "ev_odds_max_1_0_1_8": 9,
+                             "ev_odds_min_6_0": 12}).valider()
+    assert f.ev_libre_par_cote == (("1.0-1.8", (3.0, 9.0)),
+                                   ("> 6.0", (12.0, None)))
+
+
+def test_ev_odds_min_ne_VOLE_NI_la_borne_globale_NI_celle_dun_sport():
+    """⚠️ LE PIÈGE DE NOMMAGE ÉVITÉ. `ev_min_<sport>` et `ev_odds_min_<slug>`
+    ne doivent pas se confondre : si l'un préfixait l'autre, un
+    `ev_odds_min_1_0_1_8` serait lu comme le sport « odds_1_0_1_8 » et la
+    requête entière serait refusée comme hors périmètre."""
+    f = Filtres.depuis_dict({"ev_min": 8, "ev_min_soccer": 5,
+                             "ev_odds_min_1_0_1_8": 3}).valider()
+    assert f.ev_min == 8.0
+    assert f.ev_libre_par_sport == (("soccer", (5.0, None)),)
+    assert f.ev_libre_par_cote == (("1.0-1.8", (3.0, None)),)
+
+
+def test_les_bornes_par_tranche_font_laller_retour_JSON():
+    f = Filtres(ev_libre_par_cote=(("1.0-1.8", (3, 9)),)).valider()
+    assert (Filtres.depuis_dict(f.en_dict()).valider().ev_libre_par_cote
+            == f.ev_libre_par_cote)
+
+
+def test_les_regles_par_tranche_se_RELISENT():
+    """Un filtre qu'on ne peut pas relire est celui qu'on croit appliqué et
+    qui ne l'est pas."""
+    f = Filtres(ev_libre_par_cote=(("1.0-1.8", (3, None)),)).valider()
+    assert f.ev_libre_cote_effectif() == {"1.0-1.8": (3.0, None)}

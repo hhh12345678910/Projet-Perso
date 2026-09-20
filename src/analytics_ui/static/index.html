@@ -104,6 +104,25 @@
         <span class="aide">Se cumule (ET) avec les tranches ci-dessus</span>
       </div>
 
+      <!-- ⚠️ CE BLOC PRIME SUR LES DEUX PRÉCÉDENTS, IL NE S'Y AJOUTE PAS.
+           Un pari dont la cote tombe dans une tranche réglée ici obéit à
+           CETTE borne et à aucune autre. Une règle qui s'additionnerait
+           serait un piège : demander « sous 1.80, accepte dès 3 % » alors
+           que la borne globale vaut 5 % ne rendrait aucune ligne de plus, et
+           rien ne le dirait. L'ordre est donc tranche de cote, puis sport,
+           puis règle globale — le même que celui du SQL, parce que c'est la
+           même clause. -->
+      <div class="champ large pliable" id="champ-ev-cote">
+        <label>EV par tranche de cote (%)</label>
+        <label class="case" style="border:1px solid var(--bordure)">
+          <input type="checkbox" id="ev-cote-split">
+          <span>EV <b>différent par tranche de cote</b></span>
+        </label>
+        <div id="ev-par-cote"></div>
+        <span class="aide">Une tranche réglée ici <b>remplace</b> la règle
+          générale ; les tranches laissées vides ne changent pas.</span>
+      </div>
+
       <div class="champ large">
         <label>Période</label>
         <div class="paire">

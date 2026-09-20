@@ -40,7 +40,8 @@ from .metriques import (avertissements, clv_de, resume, statut_de,
 from .perimetre import (BANDES_DELAI, BORNES_EV, MARCHES_ANALYTICS,
                         SPORTS_ANALYTICS, bande_delai, canoniser_book,
                         libelle_book, libelle_groupe_book, libelle_marche,
-                        libelle_sport, ordre_delai, taille_echantillon)
+                        libelle_sport, ordre_delai, slug_cote,
+                        taille_echantillon)
 from .populations import (Population, alias_de, EXPLICATION, EXPOSEES,
                           LIBELLE, LIMITES)
 from .requete import construire
@@ -241,7 +242,12 @@ def valeurs_disponibles(db_path=DB_DEFAUT) -> dict:
             # une bande ajoutée au moteur doit apparaître dans l'interface
             # sans qu'on touche au frontend.
             "ev_bands": list(_ordre_ev()),
-            "odds_bands": [{"key": lab, "min": lo,
+            # ⚠️ LE SLUG VIENT DU SERVEUR, IL N'EST PAS RECALCULÉ EN JS.
+            # C'est lui qui nomme les paramètres `ev_odds_min_<slug>` ; une
+            # seconde règle de fabrication côté navigateur finirait par
+            # produire un nom que le serveur ne reconnaît plus, et le filtre
+            # serait refusé — ou pire, ignoré.
+            "odds_bands": [{"key": lab, "slug": slug_cote(lab), "min": lo,
                             "max": None if hi >= 1e9 else hi}
                            for lab, lo, hi in _bandes_cote()],
             "delay_bands": [{"key": lab, "min": lo, "max": hi}

@@ -184,31 +184,49 @@ def _sql_union_ev(bandes) -> "tuple[str, list]":
     return "(" + " OR ".join(bouts) + ")", params
 
 
-def _sql_bande_cote(label: str) -> "tuple[str, list]":
+#: La cote rendue TOTALE, pour le seul test qu'on doit pouvoir NIER.
+#:
+#: `value_bets.odd_taken` est `REAL NOT NULL` : aucune ligne NULL n'existe
+#: aujourd'hui, et ce COALESCE ne corrige donc rien d'observé. Il est là
+#: parce que la NÉGATION change la conséquence d'un NULL. Dans un filtre
+#: ordinaire, `odd >= 1.8` sur NULL vaut NULL et la ligne est simplement
+#: écartée — visible. Dans `NOT (bande1 OR bande2)`, elle n'irait dans AUCUNE
+#: branche, pas même le repli : elle disparaîtrait d'un total dont elle fait
+#: partie. Le repli par sport se protège déjà pareil, avec le même COALESCE.
+#: La valeur de secours est hors de toute bande — une cote décimale vaut
+#: toujours plus que 1.
+COTE_TOTALE = "COALESCE(vb.odd_taken, -1)"
+
+
+def _sql_bande_cote(label: str, colonne: str = "vb.odd_taken") -> "tuple[str, list]":
     """Une bande de COTE en SQL. Bornes basses INCLUSES, hautes EXCLUES.
 
     Même convention que `_bande_cote` du service, qui construit les lignes de
     la matrice : une borne haute incluse ferait compter deux fois une cote
-    exactement à 2,30 — une fois dans « 1.8-2.3 », une fois dans « 2.3-3.0 »."""
+    exactement à 2,30 — une fois dans « 1.8-2.3 », une fois dans « 2.3-3.0 ».
+
+    `colonne` existe pour que la MÊME expression serve au filtre et à sa
+    négation : deux façons d'écrire « dans la bande » finiraient par ne plus
+    désigner le même ensemble, et le trou se logerait entre les deux."""
     from .perimetre import bornes_cote
     lo, hi = bornes_cote()[label]
     bouts, params = [], []
     if lo is not None:
-        bouts.append("vb.odd_taken >= ?")
+        bouts.append(f"{colonne} >= ?")
         params.append(lo)
     if hi is not None:
-        bouts.append("vb.odd_taken < ?")
+        bouts.append(f"{colonne} < ?")
         params.append(hi)
     return ("(" + " AND ".join(bouts) + ")" if bouts else "1 = 1"), params
 
 
-def _sql_union_cote(bandes) -> "tuple[str, list]":
+def _sql_union_cote(bandes, colonne: str = "vb.odd_taken") -> "tuple[str, list]":
     """L'UNION (OR) d'une sélection de bandes de cote. Vide = aucune contrainte."""
     if not bandes:
         return "1 = 1", []
     bouts, params = [], []
     for b in bandes:
-        sql, p = _sql_bande_cote(b)
+        sql, p = _sql_bande_cote(b, colonne)
         bouts.append(sql)
         params.extend(p)
     return "(" + " OR ".join(bouts) + ")", params
@@ -262,14 +280,63 @@ def _sql_bornes_ev(bornes) -> "tuple[str, list]":
     return ("(" + " AND ".join(bouts) + ")" if bouts else "1 = 1"), params
 
 
-def clause_ev_libre(filtres) -> "tuple[str, list]":
-    """Les BORNES LIBRES d'EV, règles par sport comprises.
+def _clause_par_cote(par_cote, repli) -> "tuple[str, list]":
+    """La disjonction « une règle par TRANCHE DE COTE, repli pour le reste ».
 
-    Jumelle de `clause_ev` pour les bornes plutôt que pour les bandes, et sur
-    le même corps partagé : un sport sans borne propre retombe sur les bornes
-    globales `ev_min`/`ev_max` au lieu de disparaître."""
-    return _clause_par_sport((filtres.ev_min, filtres.ev_max),
-                             filtres.ev_libre_par_sport, _sql_bornes_ev)
+    ⚠️ CETTE CLAUSE ENVELOPPE LE REPLI, ELLE NE S'Y AJOUTE PAS — et c'est
+    toute la question. Une clause séparée, cumulée en ET avec la règle
+    générale, serait un piège : demander « cote 1.0-1.8 → EV ≥ 3 » alors que
+    la borne globale vaut 5 ne rendrait RIEN de neuf, parce que le 5 global
+    continuerait de s'appliquer aux mêmes lignes. L'utilisateur verrait son
+    réglage sans effet, sans savoir pourquoi. En enveloppant, la règle de la
+    tranche REMPLACE le repli pour les paris de cette tranche — ce que
+    « choisir l'EV par tranche de cote » veut dire.
+
+    La forme produite est :
+
+        (   (cote dans 1.0-1.8       AND EV dans les bornes de cette tranche)
+         OR (cote dans > 6.0         AND EV dans les bornes de celle-là)
+         OR (cote dans AUCUNE réglée AND <repli>)  )
+
+    `repli` porte déjà la règle par sport et la règle globale, dans cet
+    ordre : la priorité complète est donc tranche de cote, puis sport, puis
+    global. La dernière branche est ce qui empêche une fuite — une tranche
+    non réglée garde sa règle, elle ne disparaît pas."""
+    regles = [(bande, bornes) for bande, bornes in par_cote if bornes]
+    repli_sql, repli_params = repli
+    if not regles:
+        return repli_sql, repli_params
+
+    branches, params = [], []
+    for bande, bornes in regles:
+        sql_b, p_b = _sql_bande_cote(bande, COTE_TOTALE)
+        sql_r, p_r = _sql_bornes_ev(bornes)
+        branches.append(f"({sql_b} AND {sql_r})")
+        params.extend(p_b)
+        params.extend(p_r)
+
+    sql_u, p_u = _sql_union_cote([b for b, _ in regles], COTE_TOTALE)
+    branches.append(f"(NOT {sql_u} AND {repli_sql})")
+    params.extend(p_u)
+    params.extend(repli_params)
+    return "(" + " OR ".join(branches) + ")", params
+
+
+def clause_ev_libre(filtres) -> "tuple[str, list]":
+    """Les BORNES LIBRES d'EV : par tranche de cote, par sport, puis globales.
+
+    Trois niveaux, un seul SQL, et une priorité stricte — c'est volontaire.
+    Trois clauses cumulées en ET rendraient toujours la plus sévère des trois,
+    et un réglage plus PERMISSIF sur une tranche n'aurait jamais d'effet
+    visible : le filtre existerait, sans jamais rien changer.
+
+    Un sport sans borne propre retombe sur `ev_min`/`ev_max`, et une tranche
+    de cote sans borne propre retombe sur la règle de son sport. Rien ne
+    disparaît à aucun des trois étages."""
+    return _clause_par_cote(
+        filtres.ev_libre_par_cote,
+        _clause_par_sport((filtres.ev_min, filtres.ev_max),
+                          filtres.ev_libre_par_sport, _sql_bornes_ev))
 
 
 def clause_cote(filtres) -> "tuple[str, list]":

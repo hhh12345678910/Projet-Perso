@@ -207,6 +207,20 @@ function parametres(extra) {
     });
   }
 
+  /* Bornes d'EV par TRANCHE DE COTE. Le slug vient du serveur (`b.slug`), il
+   * n'est pas refabriqué ici : deux règles de fabrication finiraient par
+   * produire un nom que le serveur ne reconnaît plus. */
+  if ($('ev-cote-split').checked) {
+    ((REFS && REFS.odds_bands) || []).forEach((b) => {
+      [['ev_odds_min_', 'evcote-min-'], ['ev_odds_max_', 'evcote-max-']]
+        .forEach(([par, id]) => {
+          const n = $(id + b.slug);
+          const v = n && n.value.trim();
+          if (v) p.set(par + b.slug, v);
+        });
+    });
+  }
+
   const lig = valOuNull('f-league');
   if (lig) p.append('leagues', lig);
 
@@ -617,6 +631,12 @@ function enteteExport(d) {
   const joint = (v) => (v && v.length ? v.join(', ') : 'tous');
   const table = (t) => Object.entries(t || {})
     .map(([k, v]) => `${k} : ${Array.isArray(v) ? v.join(', ') : v}`).join(' · ');
+  /* ⚠️ UN COUPLE DE BORNES N'EST PAS UNE LISTE. `table()` joint à la virgule
+   * et rendait « 1.0-1.8 : 3, » quand la borne haute manque : sur le papier,
+   * cette virgule orpheline ne dit ni que la borne est absente, ni laquelle
+   * des deux vaut 3. Une flèche et un tiret le disent. */
+  const bornes = (t) => Object.entries(t || {})
+    .map(([k, v]) => `${k} : ${v[0] ?? '—'} → ${v[1] ?? '—'}`).join(' · ');
 
   lignes.push(['Période', `${f.date_from || REFS.date_min || '—'} → ${f.date_to || REFS.date_max || '—'}`]);
   lignes.push(['Sports', joint(f.sports)]);
@@ -628,9 +648,14 @@ function enteteExport(d) {
   if (f.ev_bands && f.ev_bands.length) ev.push(`tranches ${f.ev_bands.join(', ')}`);
   if (f.ev_min != null || f.ev_max != null) ev.push(`bornes ${f.ev_min ?? '—'} → ${f.ev_max ?? '—'}`);
   const evs = table(f.ev_bands_by_sport);
-  const evl = table(f.ev_free_by_sport);
+  const evl = bornes(f.ev_free_by_sport);
+  const evc = bornes(f.ev_free_by_odds);
   if (evs) ev.push(`par sport : ${evs}`);
   if (evl) ev.push(`bornes par sport : ${evl}`);
+  // ⚠️ Cette ligne PRIME sur les deux précédentes pour les tranches qu'elle
+  // nomme. Le papier doit le dire, sinon deux règles contradictoires se
+  // lisent comme cumulatives.
+  if (evc) ev.push(`bornes par tranche de cote (prioritaires) : ${evc}`);
   lignes.push(['EV', ev.length ? ev.join(' · ') : 'aucune contrainte']);
 
   const co = [];
@@ -889,18 +914,23 @@ async function chargerDetail() {
  * touchant un filtre voisin, et ne le voit pas forcément.
  */
 
-/* Deux champs « min → max » pour un sport donné, réutilisés par l'EV et par
- * la cote. Les identifiants suivent la convention `<quoi>-min-<sport>`, celle
- * que `parametres()` relit pour construire `ev_min_<sport>`. */
-function bornesSport(quoi, sport, valeurs, unite) {
+/* Deux champs « min → max » pour une CLÉ donnée — un sport, ou une tranche
+ * de cote. Les identifiants suivent la convention `<quoi>-min-<clé>`, celle
+ * que `parametres()` relit pour construire `ev_min_<sport>` comme
+ * `ev_odds_min_<slug>`.
+ *
+ * ⚠️ L'ATTRIBUT S'APPELLE `data-cle` ET PAS `data-sport`. Il porte un slug de
+ * tranche aussi souvent qu'un sport, et un nom qui ment sur son contenu finit
+ * par produire le filtre d'à côté. */
+function bornesPaire(quoi, cle, valeurs, unite) {
   const ligne = el('div', 'paire bornes-sport');
   ['min', 'max'].forEach((bout, i) => {
     const n = el('input');
     n.type = 'number';
-    n.id = `${quoi}-${bout}-${sport}`;
-    n.dataset.sport = sport;
+    n.id = `${quoi}-${bout}-${cle}`;
+    n.dataset.cle = cle;
     n.placeholder = bout + (unite ? ' ' + unite : '');
-    n.step = quoi === 'ev' ? '0.5' : '0.05';
+    n.step = quoi === 'cote' ? '0.05' : '0.5';
     n.value = valeurs[i] || '';
     if (i) ligne.appendChild(el('span', null, '→'));
     ligne.appendChild(n);
@@ -913,10 +943,10 @@ function bornesSport(quoi, sport, valeurs, unite) {
  * une petite trahison répétée à chaque clic. */
 function bornesCourantes(hote, quoi) {
   const out = {};
-  hote.querySelectorAll('input[type="number"][data-sport]').forEach((n) => {
-    const sp = n.dataset.sport;
-    out[sp] = out[sp] || ['', ''];
-    out[sp][n.id.startsWith(quoi + '-min-') ? 0 : 1] = n.value;
+  hote.querySelectorAll('input[type="number"][data-cle]').forEach((n) => {
+    const cle = n.dataset.cle;
+    out[cle] = out[cle] || ['', ''];
+    out[cle][n.id.startsWith(quoi + '-min-') ? 0 : 1] = n.value;
   });
   return out;
 }
@@ -945,7 +975,7 @@ function panneauxEvParSport() {
     // Bornes LIBRES propres au sport. Elles se cumulent en ET avec les
     // tranches juste au-dessus, exactement comme `ev_min`/`ev_max` se
     // cumulent avec les tranches globales.
-    bloc.appendChild(bornesSport('ev', sp, bornes[sp] || ['', ''], '%'));
+    bloc.appendChild(bornesPaire('ev', sp, bornes[sp] || ['', ''], '%'));
     hote.appendChild(bloc);
     groupeCases(boite, REFS.ev_bands, { courte: true, coches: memoire[sp] || [] });
   });
@@ -983,7 +1013,32 @@ function panneauxCoteParSport() {
   }
 }
 
-/* `REFS.odds_bands` porte des objets `{key, min, max}` ; `groupeCases` veut
+/* ── EV par tranche de cote ────────────────────────────────────────
+ *
+ * ⚠️ TOUTES LES TRANCHES SONT AFFICHÉES, PAS SEULEMENT CELLES COCHÉES
+ * PLUS HAUT. Une tranche laissée vide n'est pas « sans contrainte » : elle
+ * garde la règle de son sport, puis la règle globale. Ne montrer qu'une
+ * partie des tranches laisserait croire que les autres ne sont pas filtrées.
+ */
+function panneauxEvParCote() {
+  const hote = $('ev-par-cote');
+  const actif = $('ev-cote-split').checked;
+  const bornes = bornesCourantes(hote, 'evcote');
+  hote.innerHTML = '';
+  if (!actif || !REFS) return;
+
+  const grille = el('div', 'ev-cote-grille');
+  (REFS.odds_bands || []).forEach((b) => {
+    grille.appendChild(el('span', 'ev-cote-nom', b.key));
+    grille.appendChild(bornesPaire('evcote', b.slug,
+                                   bornes[b.slug] || ['', ''], '%'));
+  });
+  hote.appendChild(grille);
+  hote.appendChild(el('p', 'aide',
+    'Vide = cette tranche garde la règle générale.'));
+}
+
+/* `REFS.odds_bands` porte des objets `{key, slug, min, max}` ; `groupeCases` veut
  * `{key, label}`. La clé RESTE canonique — c'est elle qui repart en filtre. */
 function bandesCote() {
   return (REFS && REFS.odds_bands ? REFS.odds_bands : [])
@@ -1236,6 +1291,8 @@ async function demarrer() {
   groupeCases($('f-odds-bands'), bandesCote(), { courte: true });
   $('cote-split').addEventListener('change', panneauxCoteParSport);
   panneauxCoteParSport();
+  $('ev-cote-split').addEventListener('change', panneauxEvParCote);
+  panneauxEvParCote();
   $('f-delay-unite').addEventListener('change', majAideDelai);
   ['f-delay-min', 'f-delay-max'].forEach(
     (id) => $(id).addEventListener('input', majAideDelai));
@@ -1304,6 +1361,9 @@ async function demarrer() {
       .forEach((b) => b.classList.remove('actif'));
     panneauxEvParSport();
     panneauxCoteParSport();
+    // Sans ça, `form.reset()` décocherait la case et laisserait les bornes
+    // saisies à l'écran : un réglage visible qui ne part plus au serveur.
+    panneauxEvParCote();
     majAideDelai();
     if (REFS.date_min) $('f-date-from').value = REFS.date_min;
     if (REFS.date_max) $('f-date-to').value = REFS.date_max;

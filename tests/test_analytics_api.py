@@ -866,3 +866,69 @@ def test_openapi_declare_les_bornes_dev_par_sport(client):
             ["paths"]["/api/analyse"]["get"]["parameters"]}
     assert {"ev_min_soccer", "ev_max_soccer",
             "ev_min_tennis", "ev_max_tennis"} <= noms
+
+
+# ── L'EV par TRANCHE DE COTE, vue de l'API ──────────────────────────
+
+def test_ev_par_tranche_de_cote_est_acceptee_et_RENDUE(client):
+    """Le filtre appliqué repart dans la réponse, sous son LIBELLÉ : c'est
+    lui que l'interface affiche et que l'export PDF imprime, pas le slug."""
+    d = client.get("/api/analyse",
+                   params={"ev_odds_min_1_0_1_8": 3,
+                           "ev_odds_max_1_0_1_8": 9}).json()
+    assert d["filters"]["ev_free_by_odds"] == {"1.0-1.8": [3.0, 9.0]}
+
+
+def test_la_tranche_sans_slug_lisible_passe_quand_meme(client):
+    """« > 6.0 » ne se met pas dans une URL sans encodage. Son slug « 6_0 »
+    doit donc désigner la bonne tranche, et se relire sous son vrai nom."""
+    d = client.get("/api/analyse", params={"ev_odds_min_6_0": 12}).json()
+    assert d["filters"]["ev_free_by_odds"] == {"> 6.0": [12.0, None]}
+
+
+def test_ev_odds_min_NE_VOLE_PAS_la_borne_par_sport(client):
+    """⚠️ `ev_odds_min_…` ne commence PAS par `ev_min_`, et c'est voulu : si
+    l'un préfixait l'autre, le lecteur par sport y verrait un sport nommé
+    « odds_1_0_1_8 » et refuserait la requête comme hors périmètre."""
+    d = client.get("/api/analyse",
+                   params={"ev_min": 8, "ev_min_tennis": 25,
+                           "ev_odds_min_1_0_1_8": 3}).json()
+    assert d["filters"]["ev_min"] == 8.0
+    assert d["filters"]["ev_free_by_sport"] == {"tennis": [25.0, None]}
+    assert d["filters"]["ev_free_by_odds"] == {"1.0-1.8": [3.0, None]}
+
+
+def test_une_tranche_de_cote_inconnue_rend_400(client):
+    r = client.get("/api/analyse", params={"ev_odds_min_2_0_2_5": 3})
+    assert r.status_code == 400
+    assert "inconnue" in r.json()["detail"]
+
+
+def test_la_regle_de_tranche_PRIME_et_ne_sadditionne_pas(client):
+    """Le contrat de bout en bout : assouplir une tranche doit RENDRE DES
+    LIGNES. Si la borne globale continuait de s'appliquer par-dessus, ce
+    nombre serait identique au précédent et le réglage serait décoratif."""
+    strict = client.get("/api/analyse",
+                        params={"ev_min": 10}).json()["summary"]["opportunities"]
+    ouvert = client.get("/api/analyse",
+                        params={"ev_min": 10,
+                                "ev_odds_min_1_0_1_8": 0}).json()
+    assert ouvert["summary"]["opportunities"] > strict
+
+
+def test_openapi_declare_les_bornes_dev_par_tranche(client):
+    noms = {p["name"] for p in client.get("/openapi.json").json()
+            ["paths"]["/api/analyse"]["get"]["parameters"]}
+    assert {"ev_odds_min_1_0_1_8", "ev_odds_max_1_0_1_8",
+            "ev_odds_min_6_0"} <= noms
+    # Et les trois familles par sport n'ont pas disparu au passage.
+    assert {"ev_bands_soccer", "odds_bands_tennis", "ev_min_soccer"} <= noms
+
+
+def test_les_filtres_exposent_le_slug_de_chaque_tranche(client):
+    """⚠️ LE SLUG VIENT DU SERVEUR. Le recalculer en JavaScript ferait vivre
+    deux règles de fabrication, et la divergence se verrait le jour où un
+    libellé change — sous la forme d'un filtre refusé, ou ignoré."""
+    bandes = client.get("/api/filters").json()["odds_bands"]
+    assert {b["key"]: b["slug"] for b in bandes}["1.0-1.8"] == "1_0_1_8"
+    assert all(b.get("slug") for b in bandes)

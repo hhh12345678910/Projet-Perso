@@ -30,6 +30,8 @@ canonique — et l'Analytics a déjà payé ce piège avec `played_bets.book`, d
 """
 from __future__ import annotations
 
+import re
+
 from ..reference import KAMBI_BOOKS
 
 # ── Le périmètre ─────────────────────────────────────────────────────
@@ -138,6 +140,39 @@ def ordre_cote() -> tuple:
     """L'ordre canonique des bandes de cote, celui de la matrice."""
     from scripts.pnl_detections import BANDES_COTE
     return tuple(lab for lab, _, _ in BANDES_COTE)
+
+
+def slug_cote(label) -> str:
+    """Le nom d'URL d'une bande de cote : « 1.0-1.8 » → « 1_0_1_8 ».
+
+    Une query string ne peut pas porter « > 6.0 » sans l'encoder, et un
+    libellé encodé se relit mal dans un journal comme dans une URL partagée.
+
+    ⚠️ DÉRIVÉ DU LIBELLÉ, JAMAIS DU RANG. Un `ev_odds_min_3` désignerait « la
+    troisième bande » — donc une AUTRE bande le jour où `BANDES_COTE` en gagne
+    une, et toute URL enregistrée changerait de sens sans rien dire. Le
+    libellé, lui, ne peut pas glisser : s'il disparaît de la table, le filtre
+    est REFUSÉ, ce qui se voit."""
+    return re.sub(r"[^a-z0-9]+", "_", str(label).lower()).strip("_")
+
+
+def slugs_cote() -> dict:
+    """`slug -> libellé`, collisions REFUSÉES.
+
+    Deux bandes réduites au même slug rendraient un filtre indéchiffrable :
+    « ev_odds_min_… » s'appliquerait à l'une des deux, et laquelle dépendrait
+    de l'ordre d'itération. On préfère une panne franche à une tranche qui
+    reçoit la règle de sa voisine."""
+    out: dict = {}
+    for label in ordre_cote():
+        cle = slug_cote(label)
+        if cle in out:
+            raise ValueError(
+                f"Deux bandes de cote partagent le slug {cle!r} : "
+                f"{out[cle]!r} et {label!r}. Renomme l'une des deux dans "
+                f"scripts.pnl_detections.BANDES_COTE.")
+        out[cle] = label
+    return out
 
 
 def _libelle(table: dict, valeur) -> str:

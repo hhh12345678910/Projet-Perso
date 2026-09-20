@@ -443,3 +443,79 @@ def test_l_analyse_renvoie_les_filtres_normalises(tmp_path):
     assert len(rendus["bookmakers"]) == 4
     import json
     assert json.loads(json.dumps(rendus)) == rendus
+
+
+# ── L'EV par TRANCHE DE COTE, exécutée côté base ────────────────────
+#
+# ⚠️ CE BLOC VÉRIFIE UN CHOIX DE CONCEPTION, PAS UNE MÉCANIQUE.
+# La règle d'une tranche REMPLACE la règle générale pour les paris de cette
+# tranche ; elle ne s'y ajoute pas. L'alternative — un ET avec la borne
+# globale — aurait rendu tout assouplissement INVISIBLE : demander « sous
+# 1.80, accepte dès 3 % » alors que la borne globale vaut 5 % n'aurait rendu
+# aucune ligne de plus, et rien ne l'aurait dit.
+
+def _quatre_coins(tmp_path):
+    """Deux cotes × deux EV : le carré minimal qui distingue les deux
+    conceptions. Cote 1.50 tombe dans « 1.0-1.8 », cote 2.00 dans « 1.8-2.3 »."""
+    return monter(tmp_path, [
+        Opp(1, home="A", away="B", odd=1.50, ev=4.0),   # tranche réglée, EV basse
+        Opp(2, home="C", away="D", odd=1.50, ev=8.0),   # tranche réglée, EV haute
+        Opp(3, home="E", away="F", odd=2.00, ev=4.0),   # tranche libre, EV basse
+        Opp(4, home="G", away="H", odd=2.00, ev=8.0),   # tranche libre, EV haute
+    ])
+
+
+def test_la_regle_dune_tranche_REMPLACE_la_borne_globale(tmp_path):
+    """Borne globale 5 %, mais 3 % sous 1.80. Le pari à 1.50 / 4 % doit
+    ENTRER — c'est toute la demande. S'il sort, la règle s'est ajoutée en ET
+    au lieu de primer, et le réglage ne sert à rien."""
+    p = _quatre_coins(tmp_path)
+    assert _n(p, ev_min=5) == 2                       # sans règle de tranche
+    assert _n(p, ev_min=5,
+              ev_libre_par_cote=(("1.0-1.8", (3, None)),)) == 3
+
+
+def test_une_tranche_non_reglee_GARDE_la_borne_globale(tmp_path):
+    """L'autre moitié du contrat : assouplir une tranche ne doit pas ouvrir
+    les autres. Le pari à 2.00 / 4 % reste dehors."""
+    p = _quatre_coins(tmp_path)
+    f = Filtres(ev_min=5, ev_libre_par_cote=(("1.0-1.8", (3, None)),))
+    assert analyser(str(p), f)["summary"]["opportunities"] == 3
+    retenus = sorted((r["odds"], r["ev_pct"])
+                     for r in detail(str(p), f)["items"])
+    assert retenus == [(1.5, 4.0), (1.5, 8.0), (2.0, 8.0)]
+    # Le 2.00 / 4 % est bien absent : la tranche 1.8-2.3 garde le 5 % global.
+
+
+def test_une_tranche_peut_aussi_SERRER_la_regle(tmp_path):
+    """Le sens inverse doit marcher tout autant : exiger plus sur les cotes
+    longues est le cas d'usage réel — le CLV s'y dégrade plus vite."""
+    p = _quatre_coins(tmp_path)
+    assert _n(p, ev_min=3,
+              ev_libre_par_cote=(("1.8-2.3", (6, None)),)) == 3
+
+
+def test_la_tranche_de_cote_PRIME_SUR_LE_SPORT(tmp_path):
+    """L'ordre est tranche, puis sport, puis global — et il doit se voir.
+    Le football exige 20 %, mais la tranche sous 1.80 redescend à 3 %."""
+    p = _quatre_coins(tmp_path)
+    assert _n(p, ev_libre_par_sport=(("soccer", (20, None)),)) == 0
+    assert _n(p, ev_libre_par_sport=(("soccer", (20, None)),),
+              ev_libre_par_cote=(("1.0-1.8", (3, None)),)) == 2
+
+
+def test_le_sport_REPREND_LA_MAIN_hors_des_tranches_reglees(tmp_path):
+    """La branche de repli n'est pas décorative : sans elle, les paris hors
+    des tranches réglées perdraient leur règle de sport en silence."""
+    p = _quatre_coins(tmp_path)
+    assert _n(p, ev_libre_par_sport=(("soccer", (6, None)),),
+              ev_libre_par_cote=(("1.0-1.8", (3, None)),)) == 3
+    # 1.50/4 et 1.50/8 par la tranche, 2.00/8 par le sport ; 2.00/4 dehors.
+
+
+def test_aucune_ligne_ne_DISPARAIT_dun_total(tmp_path):
+    """La somme des deux moitiés doit faire le tout : une branche de repli
+    mal écrite ferait s'évaporer les paris qu'aucune règle ne couvre."""
+    p = _quatre_coins(tmp_path)
+    regle = (("1.0-1.8", (0, None)),)
+    assert _n(p, ev_libre_par_cote=regle) == 4
