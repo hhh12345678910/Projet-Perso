@@ -325,3 +325,103 @@ def test_le_compactage_erode_la_marge_sans_perdre_le_match():
 
     assert compacte < brut, "le nom brut doit toujours être au moins aussi bon"
     assert compacte >= 85.0, "et pourtant le match n'est pas perdu — c'est le point"
+
+
+# ══ L'AIDE AU DIAGNOSTIC DOIT DÉSIGNER LE BON FICHIER ══════════════
+#
+# Le panneau « ligues où la source ne résout RIEN » proposait, pour les DEUX
+# sports, d'inventorier `data/scores/soccer/<jour>.json`. Pour le tennis c'est
+# un fichier de FOOTBALL, sans rapport avec ses tournois — et il n'existe même
+# pas de `data/scores/tennis/`, la source étant interrogée en direct.
+#
+# Une aide qui désigne le mauvais fichier est pire qu'aucune aide : elle fait
+# conclure « la source n'a pas ce tournoi » sur un inventaire qui ne pouvait
+# pas le contenir par construction.
+
+class _SourceVide:
+    """Une source qui ne rend rien — pour que TOUTES les ligues tombent à
+    zéro et que le panneau de diagnostic s'affiche, sans appel réseau."""
+
+    def __enter__(self):
+        return self
+
+    def __exit__(self, *exc):
+        return None
+
+    def fetch_with_counters(self, sport, day):
+        return [], {}
+
+
+def _source_vide(monkeypatch):
+    """Remplacer les VRAIES sources de scores, sans toucher à `src.main`.
+
+    ⚠️ NE PAS PATCHER `src.main.score_provider_for` ICI. `tests/test_main.py`
+    fait `del sys.modules["src.main"]` pour forcer une réimportation : il
+    existe alors DEUX objets module, ce fichier garde l'`app` de l'ancien et
+    le patch atterrirait sur le nouveau. Le test passait seul et échouait
+    dans la suite complète, selon l'ordre alphabétique des fichiers.
+
+    `provider_for` cherche `LiveTennisScores` et `ApiFootballScores` dans les
+    globales de `src.score_sources` AU MOMENT DE L'APPEL — patcher là est
+    donc immunisé contre cette réimportation, quel que soit le module `main`
+    qui exécute la commande."""
+    monkeypatch.setattr("src.score_sources.LiveTennisScores", _SourceVide)
+    monkeypatch.setattr("src.score_sources.BridgedFootballScores", _SourceVide)
+    monkeypatch.setattr("src.score_sources.ApiFootballScores", _SourceVide)
+
+
+def _db_tennis(tmp_path, jour):
+    db = _db_path(tmp_path)
+    st = Storage(db)
+    ek = "t0::joueura__vs__joueurb"
+    st.upsert_event(ek, "tennis", "ITF Women Kyoto - R1", "Joueur A", "Joueur B",
+                    datetime(jour.year, jour.month, jour.day, 12,
+                             tzinfo=timezone.utc))
+    st.insert_value_bet(ValueBet(
+        event_key=ek, book=Book.UNIBET_BE, market=MarketType.H2H,
+        outcome=Outcome(label="home"), odd_taken=2.0, fair_prob=0.5,
+        fair_odd=1.9, ev_pct=10.0, kelly_stake_pct=1.0,
+        detected_at=datetime(jour.year, jour.month, jour.day, 9,
+                             tzinfo=timezone.utc)))
+    return db
+
+
+def _compact(sortie: str) -> str:
+    """Rich coupe les lignes à la largeur de la console : une comparaison
+    littérale casserait au gré du retour à la ligne. On retire donc tous les
+    blancs avant de chercher."""
+    return "".join(sortie.split())
+
+
+def test_le_diagnostic_tennis_ne_renvoie_PAS_vers_un_fichier_football(
+        monkeypatch, tmp_path, jours):
+    """⚠️ LA RÉGRESSION QUE CE CORRECTIF FERME."""
+    _db_tennis(tmp_path, jours["hier"])
+    _source_vide(monkeypatch)
+    monkeypatch.setenv("SCORES_INGEST_DIR", str(tmp_path / "scores"))
+    monkeypatch.chdir(tmp_path)
+    r = runner.invoke(app, ["results-update", "--dry-run", "--sport", "tennis",
+                            "--day", jours["hier"].isoformat()])
+    assert r.exit_code == 0, r.output
+    sortie = _compact(r.output)
+    assert "nerésoutRIEN" in sortie, "le panneau de diagnostic ne s'affiche pas"
+    assert "data/scores/soccer" not in sortie, (
+        "le diagnostic tennis renvoie encore vers un fichier de football")
+    assert "ENDIRECT" in sortie, "l'aide propre au tennis est absente"
+
+
+def test_le_diagnostic_football_garde_son_inventaire_de_fichier(
+        monkeypatch, tmp_path, jours):
+    """L'autre moitié du correctif : le football, lui, A un fichier sur
+    disque, et l'aide qui l'inventorie doit rester."""
+    _base(tmp_path, [jours["hier"]])
+    _source_vide(monkeypatch)
+    monkeypatch.setenv("SCORES_FOOTBALL_BRIDGE", "1")
+    monkeypatch.setenv("SCORES_INGEST_DIR", str(tmp_path / "scores"))
+    monkeypatch.chdir(tmp_path)
+    r = runner.invoke(app, ["results-update", "--dry-run", "--sport", "soccer",
+                            "--day", jours["hier"].isoformat()])
+    assert r.exit_code == 0, r.output
+    sortie = _compact(r.output)
+    assert "data/scores/soccer" in sortie
+    assert "ENDIRECT" not in sortie

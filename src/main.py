@@ -3380,6 +3380,28 @@ def results_update(
             # pas — et l'inventaire du fichier, lui, les sépare.
             muettes = [lg for lg, r, t in rates if r == 0]
             if muettes:
+                # ⚠️ L'AIDE DÉPEND DU SPORT, ET C'EST TOUT SON INTÉRÊT.
+                # Le football passe par le pont navigateur : ses journées sont
+                # sur disque, donc inspectables. Le tennis interroge sa source
+                # EN DIRECT — il n'existe aucun `data/scores/tennis/`.
+                # Ce message envoyait pourtant les DEUX sports inventorier
+                # `data/scores/soccer/<jour>.json`, c'est-à-dire, pour le
+                # tennis, un fichier de football sans rapport avec ses ligues.
+                # Une aide qui désigne le mauvais fichier est pire qu'aucune
+                # aide : elle fait conclure « la source n'a pas ce tournoi »
+                # sur un inventaire qui ne le contenait pas par construction.
+                if sp == "soccer":
+                    aide = ("Inventorie ce que la source a réellement servi "
+                            "ce jour-là :\n   [/dim][cyan]grep -o "
+                            "'\"name\":\"[^\"]*\"' "
+                            "data/scores/soccer/<jour>.json | sort -u[/cyan]")
+                else:
+                    aide = ("Le tennis interroge sa source EN DIRECT : aucun "
+                            "fichier à inspecter.\n   Reprends une journée "
+                            "révolue seule, et compare un tournoi qui résout "
+                            "à un qui\n   ne résout pas :\n   [/dim][cyan]"
+                            f"python -m src.main results-update --dry-run "
+                            f"--day <jour> --sport {sp}[/cyan]")
                 console.print(
                     f"[yellow]⚠️ {len(muettes)} ligue(s) où la source ne résout "
                     f"RIEN[/yellow] :\n   {', '.join(muettes[:8])}"
@@ -3387,9 +3409,7 @@ def results_update(
                     + "\n   [dim]Deux causes possibles, et un zéro ne les "
                       "sépare pas : la source n'a pas cette\n   compétition, "
                       "OU elle l'a et les noms ne s'apparient pas (convention "
-                      "différente).\n   Vérifie dans le fichier avant de "
-                      "conclure :\n   [/dim][cyan]grep -o '\"name\":\"[^\"]*\"' "
-                      "data/scores/soccer/<jour>.json | sort -u[/cyan]")
+                      "différente).\n   " + aide)
             console.print(
                 "[dim]Manque RÉPARTI sur beaucoup de ligues → le P&L restera "
                 "représentatif.\nManque CONCENTRÉ sur quelques compétitions → "
