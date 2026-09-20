@@ -122,8 +122,62 @@ def test_l_alias_ne_duplique_pas_un_book_deja_nomme():
 
 
 def test_la_casse_du_book_est_normalisee():
-    assert Filtres(books=("UNIBET_BE", " ladbrokes_be ")).valider().books \
-        == ("unibet_be", "ladbrokes_be")
+    """Deux books SANS jumeau, pour que ce test ne parle que de la casse :
+    un jumeau Kambi en déplierait quatre et masquerait ce qu'on vérifie."""
+    assert Filtres(books=("BETANO_BE", " ladbrokes_be ")).valider().books \
+        == ("betano_be", "ladbrokes_be")
+
+
+# ── Les jumeaux Kambi : un coché en déplie quatre ────────────────────
+#
+# Unibet, 711, Bingoal et Scooore servent un seul flux Kambi et cotent à
+# l'identique. Les garder séparés faisait dépendre le résultat du jumeau
+# coché — alors que le prix est le même — et éclatait les effectifs en quatre
+# lots trop petits pour conclure quoi que ce soit.
+
+def test_scooore_et_unibet_rendent_le_MEME_lot():
+    """⚠️ LA FORME FORTE DE L'EXIGENCE, SANS DÉPENDRE DU CODE NEUF.
+
+    Les noms sont écrits en clair et rien n'est importé du correctif : ce
+    test tombe donc sur le COMPORTEMENT — avant, `scooore_be` rendait
+    `('scooore_be',)` et `unibet_be` rendait `('unibet_be',)`, deux lots
+    différents pour un prix identique."""
+    assert (set(Filtres(books=("scooore_be",)).valider().books)
+            == set(Filtres(books=("unibet_be",)).valider().books)
+            == set(Filtres(books=("seven_eleven_be",)).valider().books)
+            == set(Filtres(books=("bingoal_be",)).valider().books))
+
+
+def test_cocher_UN_jumeau_les_deplie_TOUS():
+    from src.analytics.perimetre import GROUPES_JUMEAUX
+    attendu = set(GROUPES_JUMEAUX[0])
+    assert set(Filtres(books=("scooore_be",)).valider().books) == attendu
+
+
+def test_NIMPORTE_LEQUEL_des_jumeaux_donne_le_MEME_lot():
+    """⚠️ L'EXIGENCE, EXPRIMÉE TELLE QUELLE : choisir Scooore, 711, Bingoal
+    ou Unibet doit rendre rigoureusement la même chose."""
+    from src.analytics.perimetre import GROUPES_JUMEAUX
+    lots = {frozenset(Filtres(books=(b,)).valider().books)
+            for b in GROUPES_JUMEAUX[0]}
+    assert len(lots) == 1, "le résultat dépend encore du jumeau coché"
+
+
+def test_lalias_kambi_donne_exactement_la_meme_chose():
+    assert (set(Filtres(books=("kambi",)).valider().books)
+            == set(Filtres(books=("bingoal_be",)).valider().books))
+
+
+def test_un_book_SANS_jumeau_nest_pas_deplie():
+    assert Filtres(books=("ladbrokes_be",)).valider().books == ("ladbrokes_be",)
+
+
+def test_le_groupe_vient_de_reference_pas_dune_recopie():
+    """Une seconde liste divergerait le jour où un cinquième jumeau
+    apparaît — c'est ce que `src/reference.py` interdit explicitement."""
+    from src.analytics.perimetre import GROUPES_JUMEAUX
+    from src.reference import KAMBI_BOOKS
+    assert GROUPES_JUMEAUX[0] == tuple(b.value for b in KAMBI_BOOKS)
 
 
 def test_tous_les_books_de_l_enum_sont_acceptes():
@@ -252,13 +306,13 @@ def test_le_dict_est_du_json_pur():
 
 def test_depuis_dict_accepte_les_noms_de_l_API():
     f = Filtres.depuis_dict({
-        "sports[]": ["soccer", "tennis"], "bookmakers[]": ["unibet_be"],
+        "sports[]": ["soccer", "tennis"], "bookmakers[]": ["betano_be"],
         "odds_min": 2, "odds_max": 4, "ev_min": 5, "ev_max": 20,
         "date_from": "2026-08-01", "date_to": "2026-09-12",
         "population": "settled", "played": "oui",
         "delay_min": 2, "delay_max": 24,
     }).valider()
-    assert f.sports == ("soccer", "tennis") and f.books == ("unibet_be",)
+    assert f.sports == ("soccer", "tennis") and f.books == ("betano_be",)
     assert f.cote_min == 2 and f.delai_max_h == 24
     assert f.population is Population.SETTLED and f.joue == "oui"
 
@@ -272,8 +326,8 @@ def test_depuis_dict_accepte_le_SINGULIER_comme_le_pluriel():
 
 
 def test_une_liste_separee_par_des_virgules_est_acceptee():
-    f = Filtres.depuis_dict({"bookmakers": "unibet_be,ladbrokes_be"}).valider()
-    assert f.books == ("unibet_be", "ladbrokes_be")
+    f = Filtres.depuis_dict({"bookmakers": "betano_be,ladbrokes_be"}).valider()
+    assert f.books == ("betano_be", "ladbrokes_be")
 
 
 def test_un_dict_vide_donne_les_valeurs_par_defaut():

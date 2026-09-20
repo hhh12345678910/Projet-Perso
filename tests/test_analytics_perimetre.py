@@ -315,9 +315,12 @@ def test_les_decoupes_portent_key_ET_label(tmp_path):
     « Unibet BE » au serveur, qui ne connaît que `unibet_be`."""
     p = _jeu(tmp_path)
     a = analyser(p, Filtres())
+    from src.analytics.perimetre import libelle_groupe_book
     for t in a["by_book"]:
         assert t["key"] == t["key"].lower()
-        assert t["label"] == libelle_book(t["key"])
+        # La DÉCOUPE porte le libellé du groupe ; `libelle_book` reste celui
+        # du détail, qui doit nommer le book où le prix a été vu.
+        assert t["label"] == libelle_groupe_book(t["key"])
     for t in a["by_sport"]:
         assert t["label"] == libelle_sport(t["key"])
 
@@ -413,3 +416,82 @@ def test_le_pnl_cumule_est_une_SOMME_et_la_clv_cumulee_une_PONDERATION(tmp_path)
     assert t[-1]["clv_cumul"] < 3.0, "moyenne de moyennes détectée"
     assert t[-1]["pnl_cumul"] == pytest.approx(
         (t[0]["pnl"] or 0) + (t[1]["pnl"] or 0), abs=0.02)
+
+
+# ══ LES JUMEAUX KAMBI, DE BOUT EN BOUT ═════════════════════════════
+#
+# Unibet, 711, Bingoal et Scooore servent un seul flux Kambi et cotent à
+# l'identique. Le moteur le sait depuis toujours — `merge_twin_book_value_bets`
+# fusionne leurs alertes — mais l'Analytics les traitait comme quatre
+# bookmakers distincts. Conséquence : le résultat dépendait du jumeau coché,
+# et les effectifs se retrouvaient éclatés en quatre lots trop petits pour
+# conclure, là où il n'y a qu'un seul compte à jouer.
+
+def _jumeaux(tmp_path):
+    """Quatre matchs DISTINCTS, un par jumeau. Distincts pour que le
+    dédoublonnage SQL — dont la clé ignore le book — ne les fusionne pas de
+    lui-même : ce qu'on teste ici est le groupement par bookmaker, pas lui."""
+    from src.analytics.perimetre import GROUPES_JUMEAUX
+    return monter(tmp_path, [
+        Opp(id=i, home=f"Dom{i}", away=f"Ext{i}", book=b, sport="soccer",
+            odd=2.0, ev=10.0, jour="2026-08-10", cloture=1.9,
+            gagnant="home", outcome="home")
+        for i, b in enumerate(GROUPES_JUMEAUX[0], start=1)])
+
+
+def test_les_quatre_jumeaux_ne_font_QUUNE_ligne_par_bookmaker(tmp_path):
+    """⚠️ L'EXIGENCE VUE DE BOUT EN BOUT.
+
+    Sans la fusion, `by_book` rendait quatre lignes de un pari."""
+    from src.analytics.perimetre import GROUPES_JUMEAUX
+    a = analyser(_jumeaux(tmp_path), Filtres())
+    assert {t["key"] for t in a["by_book"]} == {GROUPES_JUMEAUX[0][0]}
+    ligne = a["by_book"][0]
+    assert ligne["opportunities"] == 4
+    assert ligne["label"] == "Unibet / Scooore / 711 / Bingoal"
+
+
+def test_NIMPORTE_LEQUEL_des_jumeaux_rend_le_MEME_resultat(tmp_path):
+    """⚠️ LA DEMANDE, MOT POUR MOT : « qu'on choisisse Scooore, 711 ou
+    Unibet, je veux qu'on ait les mêmes résultats »."""
+    from src.analytics.perimetre import GROUPES_JUMEAUX
+    p = _jumeaux(tmp_path)
+    resumes = []
+    for b in GROUPES_JUMEAUX[0]:
+        s = analyser(p, Filtres(books=(b,)))["summary"]
+        assert s["opportunities"] == 4, f"{b} ne voit pas les quatre paris"
+        resumes.append((s["opportunities"], s["clv"], s["roi"], s["settled"]))
+    assert len(set(resumes)) == 1, "le résultat dépend encore du jumeau choisi"
+
+
+def test_un_book_sans_jumeau_reste_seul(tmp_path):
+    """La fusion ne doit toucher QUE le groupe Kambi."""
+    p = monter(tmp_path, [
+        Opp(id=1, home="A", away="B", book="ladbrokes_be", sport="soccer",
+            odd=2.0, ev=10.0, jour="2026-08-10", cloture=1.9,
+            gagnant="home", outcome="home"),
+        Opp(id=2, home="C", away="D", book="betano_be", sport="soccer",
+            odd=2.0, ev=10.0, jour="2026-08-10", cloture=1.9,
+            gagnant="home", outcome="home")])
+    a = analyser(p, Filtres())
+    assert {t["key"] for t in a["by_book"]} == {"ladbrokes_be", "betano_be"}
+    assert analyser(p, Filtres(books=("betano_be",)))["summary"]["opportunities"] == 1
+
+
+def test_la_liste_des_filtres_ne_propose_QUUNE_case_pour_les_quatre(tmp_path):
+    from src.analytics.perimetre import GROUPES_JUMEAUX
+    v = valeurs_disponibles(_jumeaux(tmp_path))
+    assert v["bookmakers"] == [GROUPES_JUMEAUX[0][0]]
+    assert v["bookmakers_labels"][GROUPES_JUMEAUX[0][0]] == \
+        "Unibet / Scooore / 711 / Bingoal"
+
+
+def test_le_DETAIL_nomme_le_vrai_book_pas_le_groupe(tmp_path):
+    """⚠️ CE QUE LA FUSION NE DOIT PAS EMPORTER.
+
+    Une ligne de détail dit où le prix a RÉELLEMENT été vu. La remplacer par
+    le libellé du groupe ferait perdre l'information sur quel compte miser."""
+    from src.analytics.service import detail
+    d = detail(_jumeaux(tmp_path), Filtres(), page=1, par_page=50)
+    books = {r["bookmaker"] for r in d["items"]}
+    assert len(books) == 4, f"le détail a perdu le book réel : {books}"

@@ -38,9 +38,9 @@ from .filtres import Filtres
 from .metriques import (avertissements, clv_de, resume, statut_de,
                         _cellule, _gains)
 from .perimetre import (BANDES_DELAI, BORNES_EV, MARCHES_ANALYTICS,
-                        SPORTS_ANALYTICS, bande_delai, libelle_book,
-                        libelle_marche, libelle_sport, ordre_delai,
-                        taille_echantillon)
+                        SPORTS_ANALYTICS, bande_delai, canoniser_book,
+                        libelle_book, libelle_groupe_book, libelle_marche,
+                        libelle_sport, ordre_delai, taille_echantillon)
 from .populations import Population, alias_de, EXPLICATION, LIMITES
 from .requete import construire
 
@@ -211,12 +211,12 @@ def valeurs_disponibles(db_path=DB_DEFAUT) -> dict:
         sports = sorted(col(
             f"SELECT DISTINCT lower(sport) FROM events "
             f"WHERE lower(sport) IN ({marqueurs_s})", SPORTS_ANALYTICS))
-        books = sorted(col(
+        books = sorted({canoniser_book(b) for b in col(
             f"SELECT DISTINCT vb.book FROM value_bets vb "
             f"JOIN events e ON e.event_key = vb.event_key "
             f"WHERE lower(e.sport) IN ({marqueurs_s}) "
             f"  AND vb.market IN ({marqueurs_m})",
-            tuple(SPORTS_ANALYTICS) + tuple(MARCHES_ANALYTICS)))
+            tuple(SPORTS_ANALYTICS) + tuple(MARCHES_ANALYTICS))})
         marches = sorted(col(
             f"SELECT DISTINCT market FROM value_bets "
             f"WHERE market IN ({marqueurs_m})", MARCHES_ANALYTICS))
@@ -227,8 +227,11 @@ def valeurs_disponibles(db_path=DB_DEFAUT) -> dict:
         return {
             "sports": sports,
             "sports_labels": {s: libelle_sport(s) for s in sports},
+            # Une seule case à cocher pour les quatre jumeaux : en proposer
+            # quatre laisserait croire à quatre choix distincts alors qu'ils
+            # rendent tous le même lot.
             "bookmakers": books,
-            "bookmakers_labels": {b: libelle_book(b) for b in books},
+            "bookmakers_labels": {b: libelle_groupe_book(b) for b in books},
             "markets": marches,
             "markets_labels": {m: libelle_marche(m) for m in marches},
             "leagues": ligues,
@@ -295,8 +298,13 @@ def analyser(db_path=DB_DEFAUT, filtres=None, granularite="semaine") -> dict:
         "by_time": _cumuler(_decouper(lignes, filtres.stake,
                                       lambda r: _bande_temps(r, granularite),
                                       ordre=None, tri=True)),
-        "by_book": _decouper(lignes, filtres.stake, lambda r: r["book"] or "?",
-                             libelle=libelle_book),
+        # Les jumeaux Kambi comptent pour UNE ligne : quatre lignes portant
+        # le même prix donneraient quatre échantillons trop petits là où il
+        # n'y a qu'une opportunité. `libelle_book` reste employé pour le
+        # DÉTAIL, qui doit nommer le book où le prix a vraiment été vu.
+        "by_book": _decouper(lignes, filtres.stake,
+                             lambda r: canoniser_book(r["book"] or "?"),
+                             libelle=libelle_groupe_book),
         "by_sport": _decouper(lignes, filtres.stake,
                               lambda r: r["sport"] or "?",
                               ordre=list(SPORTS_ANALYTICS),

@@ -566,7 +566,9 @@ def test_les_identifiants_sont_bien_decoupes_par_virgules(client):
     """Le pendant : sports, books et marchés acceptent les trois écritures."""
     for champ, valeur, attendu in (
             ("sports", "soccer,tennis", 2),
-            ("bookmakers", "unibet_be,ladbrokes_be", 2),
+            # Deux books SANS jumeau : ce test parle du découpage par
+            # virgules, pas du dépliage des jumeaux Kambi.
+            ("bookmakers", "betano_be,ladbrokes_be", 2),
             ("markets", "h2h,totals", 2)):
         d = client.get("/api/analyse", params={champ: valeur}).json()
         cle = {"sports": "sports", "bookmakers": "bookmakers",
@@ -678,7 +680,13 @@ def test_le_perimetre_est_ANNONCE_par_api_filters(client):
 def test_api_filters_rend_les_LIBELLES(client):
     f = client.get("/api/filters").json()
     assert f["sports_labels"]["soccer"] == "Soccer"
-    assert f["bookmakers_labels"].get("unibet_be") == "Unibet BE"
+    assert f["bookmakers_labels"].get("ladbrokes_be") == "Ladbrokes"
+    # Les quatre jumeaux Kambi ne font qu'une case à cocher, sous le libellé
+    # du GROUPE : en proposer quatre laisserait croire à quatre choix.
+    assert f["bookmakers_labels"].get("unibet_be") == \
+        "Unibet / Scooore / 711 / Bingoal"
+    for jumeau in ("scooore_be", "seven_eleven_be", "bingoal_be"):
+        assert jumeau not in f["bookmakers"], jumeau
     assert f["markets_labels"]["h2h"] == "H2H"
     # ⚠️ Les valeurs canoniques restent canoniques : c'est elles qui repartent
     # en filtre. Un libellé dans `sports` casserait toutes les requêtes.

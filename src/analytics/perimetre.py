@@ -30,6 +30,8 @@ canonique — et l'Analytics a déjà payé ce piège avec `played_bets.book`, d
 """
 from __future__ import annotations
 
+from ..reference import KAMBI_BOOKS
+
 # ── Le périmètre ─────────────────────────────────────────────────────
 
 #: Les sports analysés. Fermé, et appliqué DANS LE SQL.
@@ -70,6 +72,36 @@ LIBELLE_BOOK = {
     "asianodds": "AsianOdds",
 }
 
+#: ── Les books JUMEAUX, fusionnés pour l'analyse ─────────────────────
+#:
+#: ⚠️ LA LISTE VIENT DE `src/reference.py`, ELLE N'EST PAS RECOPIÉE ICI.
+#: Unibet, 711, Bingoal et Scooore partagent un seul flux Kambi et cotent à
+#: l'identique : le même pari sur les quatre est UNE opportunité, pas quatre.
+#: Le moteur le sait depuis toujours — `merge_twin_book_value_bets` fusionne
+#: leurs alertes — mais l'Analytics l'ignorait. Cocher « Scooore » y rendait
+#: donc autre chose que cocher « Unibet » alors que c'est rigoureusement le
+#: même prix, et les effectifs se retrouvaient éclatés en quatre.
+#:
+#: `reference.py` dit lui-même pourquoi il ne faut pas dupliquer ce groupe :
+#: « Le recopier ailleurs le ferait diverger le jour où un cinquième jumeau
+#: apparaît (§17.7). » On le LIT donc, on ne le réécrit pas.
+GROUPES_JUMEAUX: tuple[tuple[str, ...], ...] = (
+    tuple(b.value for b in KAMBI_BOOKS),
+)
+
+#: book -> tous les books de son groupe (lui compris). Absent = pas de jumeau.
+_JUMEAUX_DE = {b: grp for grp in GROUPES_JUMEAUX for b in grp}
+#: book -> le REPRÉSENTANT de son groupe. Le premier, comme `_TWIN_PRIMARY`
+#: du moteur : c'est déjà la clé sous laquelle le moteur stocke et dédoublonne.
+_REPRESENTANT = {b: grp[0] for grp in GROUPES_JUMEAUX for b in grp}
+
+#: Le libellé du GROUPE, distinct de celui du book seul. `LIBELLE_BOOK` garde
+#: « Unibet BE » parce qu'une ligne de DÉTAIL doit nommer le book où le prix a
+#: réellement été vu ; c'est la DÉCOUPE qui parle du groupe.
+LIBELLE_GROUPE_BOOK = {
+    GROUPES_JUMEAUX[0][0]: "Unibet / Scooore / 711 / Bingoal",
+}
+
 LIBELLE_MARCHE = {
     "h2h": "H2H",
     "totals": "Totals",
@@ -97,6 +129,35 @@ def libelle_sport(v) -> str:
 
 def libelle_book(v) -> str:
     return _libelle(LIBELLE_BOOK, v)
+
+
+def jumeaux_de(book) -> tuple[str, ...]:
+    """Tous les books qui servent le MÊME prix que celui-ci, lui compris.
+
+    Un book sans jumeau se rend seul — l'appelant n'a donc pas de cas
+    particulier à écrire."""
+    cle = str(book or "").lower()
+    return _JUMEAUX_DE.get(cle, (cle,))
+
+
+def canoniser_book(book) -> str:
+    """Le représentant du groupe de ce book, ou le book lui-même.
+
+    C'est ce qui fait qu'une découpe par bookmaker rend UNE ligne pour les
+    quatre jumeaux Kambi au lieu de quatre lignes portant le même prix."""
+    cle = str(book or "").lower()
+    return _REPRESENTANT.get(cle, cle)
+
+
+def libelle_groupe_book(v) -> str:
+    """Le libellé à afficher pour une DÉCOUPE par bookmaker.
+
+    Rend « Unibet / Scooore / 711 / Bingoal » pour le groupe Kambi, et le
+    libellé ordinaire pour tous les autres."""
+    cle = str(v or "").lower()
+    if cle in LIBELLE_GROUPE_BOOK:
+        return LIBELLE_GROUPE_BOOK[cle]
+    return libelle_book(v)
 
 
 def libelle_marche(v) -> str:

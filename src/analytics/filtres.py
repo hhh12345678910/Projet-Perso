@@ -24,8 +24,8 @@ from dataclasses import dataclass, replace
 from datetime import datetime, timedelta
 
 from ..models import Book, MarketType
-from ..reference import KAMBI_BOOKS
-from .perimetre import BORNES_EV, MARCHES_ANALYTICS, SPORTS_ANALYTICS
+from .perimetre import (BORNES_EV, GROUPES_JUMEAUX, MARCHES_ANALYTICS,
+                        SPORTS_ANALYTICS, jumeaux_de)
 from .populations import Population
 
 #: Les books que la base peut contenir. Fermé : il vient de l'énumération du
@@ -42,10 +42,15 @@ MARCHES_CONNUS = frozenset(m.value for m in MarketType)
 SPORTS_AUTORISES = frozenset(SPORTS_ANALYTICS)
 MARCHES_AUTORISES = frozenset(MARCHES_ANALYTICS)
 
-#: Alias de commodité. `kambi` se déplie en Unibet + 711 + Bingoal + Scooore —
-#: le groupe est LU dans `reference.KAMBI_BOOKS`, jamais recopié : ces books
-#: servent des prix identiques et les séparer fausse les effectifs.
-ALIAS_BOOKS = {"kambi": tuple(b.value for b in KAMBI_BOOKS)}
+#: Alias de commodité. `kambi` se déplie en Unibet + 711 + Bingoal + Scooore.
+#: Le groupe vient de `perimetre.GROUPES_JUMEAUX`, qui le lit lui-même dans
+#: `reference.KAMBI_BOOKS` — une seule dérivation, jamais une recopie.
+#:
+#: ⚠️ L'ALIAS N'EST PLUS LE SEUL CHEMIN. Cocher n'importe lequel des quatre
+#: jumeaux déplie désormais le groupe entier (voir `valider`) : il fallait
+#: taper « kambi » pour obtenir le lot complet, et cocher « Scooore » rendait
+#: un sous-ensemble arbitraire du même prix.
+ALIAS_BOOKS = {"kambi": GROUPES_JUMEAUX[0]}
 
 JOUE_VALEURS = ("tous", "oui", "non")
 
@@ -221,7 +226,13 @@ class Filtres:
             if cle in ALIAS_BOOKS:
                 books.extend(ALIAS_BOOKS[cle])
             elif cle in BOOKS_CONNUS:
-                books.append(cle)
+                # ⚠️ UN JUMEAU EN DÉPLIE QUATRE, ET C'EST LE POINT.
+                # Unibet, 711, Bingoal et Scooore servent le même flux Kambi.
+                # Les garder séparés faisait dépendre le résultat du jumeau
+                # coché, alors que le prix est identique — et éclatait les
+                # effectifs en quatre lots trop petits pour conclure.
+                # `jumeaux_de` rend `(cle,)` pour un book sans jumeau.
+                books.extend(jumeaux_de(cle))
             else:
                 # ⚠️ Un book inconnu ne doit PAS être ignoré en silence : la
                 # requête rendrait un lot amputé sous un en-tête normal.
