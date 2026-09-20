@@ -24,25 +24,118 @@ def _football():
 
 def test_only_finished_matches_are_kept():
     """L'échantillon porte FT, FT, FT, PST, AET, PEN, NS — un de chaque cas
-    réellement rencontré le 15/08."""
+    réellement rencontré le 15/08.
+
+    ⚠️ CE DÉCOMPTE A CHANGÉ LE 20/09, ET PAS POUR FAIRE PASSER LE TEST.
+    AET et PEN étaient refusés EN BLOC, sur un échantillon de 10 matchs.
+    Mesuré depuis sur les 714 AET/PEN de la base de production : l'ambigu est
+    minoritaire — 7 sur 409 exploitables — et il SE RECONNAÎT, parce que
+    `goals` est le score final et que `goals == fulltime + extratime` prouve
+    que `fulltime` s'arrête à 90 minutes. Le refus est donc désormais par
+    ENREGISTREMENT, plus par classe.
+
+    Dans cet échantillon : le PEN est prouvable et entre ; l'AET du Schweizer
+    Cup ne l'est pas et reste dehors — c'est exactement le match que la
+    version précédente de ce test protégeait."""
     results, counters = _football()
-    assert counters["retenus"] == 3
-    assert counters["non_termine"] == 4          # PST, AET, PEN, NS
+    assert counters["retenus"] == 4               # 3 FT + le PEN prouvable
+    assert counters["non_termine"] == 2           # PST, NS
+    assert counters["prolongation_ambigue"] == 1  # l'AET du Schweizer Cup
     assert all(r.sport == "soccer" for r in results)
 
 
-def test_extra_time_matches_are_refused_not_graded():
-    """AET et PEN sont écartés parce que leur score à 90 minutes est ambigu
-    dans cette API : un AET du Schweizer Cup rend `fulltime` 3-4 avec
-    `extratime` 0-1, donc `fulltime` porte déjà la prolongation et le score
-    réglementaire (3-3) n'apparaît nulle part. Or 1X2 et totaux se règlent sur
-    90 minutes. 10 matchs sur 1 215 — le prix du silence est dérisoire."""
-    results, _ = _football()
+def test_un_score_de_prolongation_NON_PROUVABLE_reste_refuse():
+    """⚠️ LE GARDE-FOU QUE LE CORRECTIF NE DOIT PAS OUVRIR.
+
+    L'AET du Schweizer Cup rend `fulltime` 3-4, `extratime` 0-1 et `goals`
+    3-4. Donc `goals == fulltime` : `fulltime` porte DÉJÀ la prolongation, et
+    le score réglementaire (3-3) n'apparaît nulle part. Le noter sur 3-4
+    rendrait « victoire extérieure » là où le 1X2 vaut « nul ».
+
+    Il doit rester dehors — et être COMPTÉ, pour que le refus se voie."""
+    results, counters = _football()
     ids = {r.source_id for r in results}
     payload = _load("apifootball_fixtures_sample.json")
+    vus = 0
     for f in payload["response"]:
-        if f["fixture"]["status"]["short"] in ("AET", "PEN"):
-            assert str(f["fixture"]["id"]) not in ids
+        if f["fixture"]["status"]["short"] != "AET":
+            continue
+        vus += 1
+        assert f["goals"] == f["score"]["fulltime"], (
+            "l'échantillon n'est plus le cas ambigu que ce test protège")
+        assert str(f["fixture"]["id"]) not in ids
+    assert vus == 1
+    assert counters["prolongation_ambigue"] == 1
+
+
+def test_les_tirs_au_but_se_reglent_en_NUL_pas_sur_le_vainqueur_du_tir():
+    """⚠️ LE PIÈGE LE PLUS COÛTEUX DE CE CORRECTIF.
+
+    Launceston City gagne la séance 5-3 et `teams.home.winner` vaut True.
+    Mais le 1X2 se règle sur les 90 minutes, et c'est 1-1 : un NUL. Se fier
+    au vainqueur de la qualification inverserait tous les paris du match."""
+    results, _ = _football()
+    pen = [r for r in results if r.source_id == "1620983"]
+    assert len(pen) == 1, "le PEN prouvable doit être retenu"
+    assert (pen[0].home_score, pen[0].away_score) == (1.0, 1.0)
+    assert pen[0].winner == "draw"
+
+
+def test_une_prolongation_PROUVABLE_est_notee_sur_les_90_minutes():
+    """Quand `goals == fulltime + extratime`, `fulltime` EST le score
+    réglementaire. Le but marqué en prolongation ne doit pas entrer dans le
+    1X2 — sinon un nul devient une défaite."""
+    payload = {"response": [{
+        "fixture": {"id": 42, "date": "2026-08-30T18:00:00+00:00",
+                    "status": {"short": "AET"}},
+        "league": {"name": "Coupe"},
+        "teams": {"home": {"name": "Alpha"}, "away": {"name": "Beta"}},
+        "goals": {"home": 2, "away": 3},
+        "score": {"fulltime": {"home": 2, "away": 2},
+                  "extratime": {"home": 0, "away": 1}},
+    }]}
+    results, counters = parse_apifootball_results(payload)
+    assert counters["retenus"] == 1
+    assert counters["prolongation_ambigue"] == 0
+    assert (results[0].home_score, results[0].away_score) == (2.0, 2.0)
+    assert results[0].winner == "draw"
+
+
+def test_le_correctif_nouvre_QUE_AET_et_PEN():
+    """CANC, ABD, AWD, PST, NS, mi-temps : tous restent écartés. Un match
+    abandonné ou attribué sur tapis vert n'a pas de résultat sportif à 90
+    minutes, et l'élargissement ne doit pas déborder sur eux."""
+    for st in ("CANC", "ABD", "AWD", "PST", "NS", "HT", "1H", "SUSP"):
+        payload = {"response": [{
+            "fixture": {"id": 1, "date": "2026-08-30T18:00:00+00:00",
+                        "status": {"short": st}},
+            "league": {"name": "L"},
+            "teams": {"home": {"name": "A"}, "away": {"name": "B"}},
+            "goals": {"home": 1, "away": 0},
+            "score": {"fulltime": {"home": 1, "away": 0},
+                      "extratime": {"home": 0, "away": 0}},
+        }]}
+        results, counters = parse_apifootball_results(payload)
+        assert results == [], st
+        assert counters["non_termine"] == 1, st
+
+
+def test_un_AET_aux_champs_manquants_est_refuse():
+    """`extratime` absent — fréquent : 305 cas sur 714 dans la base de
+    production. Sans lui, l'égalité ne peut pas être vérifiée, donc on
+    refuse. On ne devine jamais un score de règlement."""
+    payload = {"response": [{
+        "fixture": {"id": 7, "date": "2026-08-30T18:00:00+00:00",
+                    "status": {"short": "PEN"}},
+        "league": {"name": "Coupe"},
+        "teams": {"home": {"name": "A"}, "away": {"name": "B"}},
+        "goals": {"home": 1, "away": 1},
+        "score": {"fulltime": {"home": 1, "away": 1},
+                  "extratime": {"home": None, "away": None}},
+    }]}
+    results, counters = parse_apifootball_results(payload)
+    assert results == []
+    assert counters["prolongation_ambigue"] == 1
 
 
 def test_winner_is_derived_from_the_ninety_minute_score():

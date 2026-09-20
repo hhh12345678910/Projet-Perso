@@ -96,6 +96,56 @@ API_FOOTBALL_BASE = "https://v3.football.api-sports.io"
 # est dérisoire, celui de l'erreur ne l'est pas.
 _FOOTBALL_PLAYED_TO_COMPLETION = {"FT"}
 
+#: Statuts où le match est allé AU-DELÀ des 90 minutes. Leur score
+#: réglementaire est récupérable, mais seulement quand la source permet de le
+#: PROUVER — voir `_score_90_minutes`, qui refuse tout le reste.
+_FOOTBALL_DECIDE_APRES_90 = {"AET", "PEN"}
+
+
+def _score_90_minutes(f: dict) -> tuple[int, int] | None:
+    """Le score à 90 MINUTES d'un match allé en prolongation ou aux tirs au but.
+
+    ⚠️ `score.fulltime` NE SUFFIT PAS ici, et c'est pourquoi AET et PEN
+    étaient écartés EN BLOC. Le commentaire ci-dessus cite un match du
+    Schweizer Cup rendant `fulltime` 3-4 avec `extratime` 0-1 : `fulltime` y
+    porte déjà la prolongation, et le score réglementaire (3-3) n'apparaît
+    nulle part. Le noter sur `fulltime` aurait rendu « victoire extérieure »
+    là où le 1X2 vaut « nul » — un pari INVERSÉ, sans aucune erreur levée.
+
+    Ce que la mesure du 20/09 ajoute, sur les 714 AET/PEN de la base de
+    production et non sur les 10 de l'échantillon du 15/08 :
+
+        AET   goals == fulltime + extratime   152    fulltime = 90 min
+        AET   goals == fulltime                 5    fulltime inclut la prolong.
+        AET   ni l'un ni l'autre                2    enregistrement incohérent
+        PEN   prolongation sans but           216    les deux lectures coïncident
+        PEN   goals == fulltime + extratime    34    fulltime = 90 min
+
+    Le cas ambigu est donc MINORITAIRE — 7 sur 409 exploitables — et surtout
+    il se RECONNAÎT : `goals` est le score final, donc `goals == fulltime +
+    extratime` PROUVE que `fulltime` s'arrête à 90 minutes.
+
+    On ne relâche pas le principe de prudence, on l'applique par
+    enregistrement au lieu de l'appliquer à la classe entière. Tout ce qui
+    n'est pas prouvable continue d'être refusé, et compté : un pari non réglé
+    est un trou VISIBLE, un pari réglé faux empoisonne le ROI sans jamais se
+    signaler.
+
+    Renvoie `None` dès qu'un champ manque ou que l'égalité ne tient pas.
+    """
+    score = f.get("score") or {}
+    ft = score.get("fulltime") or {}
+    et = score.get("extratime") or {}
+    buts = f.get("goals") or {}
+    if any(v is None for v in (ft.get("home"), ft.get("away"),
+                               et.get("home"), et.get("away"),
+                               buts.get("home"), buts.get("away"))):
+        return None
+    if (buts["home"], buts["away"]) != (ft["home"] + et["home"],
+                                        ft["away"] + et["away"]):
+        return None
+    return ft["home"], ft["away"]
+
 
 # Filet, et rien de plus. MESURÉ le 21/08 sur les 181 fixtures du 20/08 :
 # API-Football porte DÉJÀ le marqueur sur l'équipe (« Houston Dash W »,
@@ -109,13 +159,17 @@ _FOOTBALL_PLAYED_TO_COMPLETION = {"FT"}
 def parse_apifootball_results(payload: dict) -> tuple[list[MatchResult], dict[str, int]]:
     """`/fixtures?date=` d'API-Football -> résultats notables."""
     counters = {"retenus": 0, "non_termine": 0, "score_manquant": 0,
-                "classe_reportee": 0}
+                "classe_reportee": 0,
+                # Matchs allés au-delà de 90 min dont la source ne permet pas
+                # de PROUVER le score réglementaire. Comptés, jamais devinés.
+                "prolongation_ambigue": 0}
     out: list[MatchResult] = []
 
     for f in payload.get("response") or []:
         fixture = f.get("fixture") or {}
         status = ((fixture.get("status") or {}).get("short") or "").upper()
-        if status not in _FOOTBALL_PLAYED_TO_COMPLETION:
+        if (status not in _FOOTBALL_PLAYED_TO_COMPLETION
+                and status not in _FOOTBALL_DECIDE_APRES_90):
             counters["non_termine"] += 1
             continue
 
@@ -134,8 +188,17 @@ def parse_apifootball_results(payload: dict) -> tuple[list[MatchResult], dict[st
                           with_class_marker(away, marker))
             if (home, away) != avant:
                 counters["classe_reportee"] += 1
-        ft = (f.get("score") or {}).get("fulltime") or {}
-        hs, as_ = ft.get("home"), ft.get("away")
+        if status in _FOOTBALL_DECIDE_APRES_90:
+            # 1X2 et totaux se règlent sur 90 MINUTES. On ne prend ce match
+            # que si la source prouve où s'arrêtent ces 90 minutes.
+            reglementaire = _score_90_minutes(f)
+            if reglementaire is None:
+                counters["prolongation_ambigue"] += 1
+                continue
+            hs, as_ = reglementaire
+        else:
+            ft = (f.get("score") or {}).get("fulltime") or {}
+            hs, as_ = ft.get("home"), ft.get("away")
 
         if not (start and home and away) or hs is None or as_ is None:
             counters["score_manquant"] += 1
