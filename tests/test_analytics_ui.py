@@ -796,3 +796,26 @@ def test_limpression_force_lencre_sombre_sur_fond_blanc():
     bloc = CSS[CSS.index("@media print"):]
     assert 'data-theme="dark"' in bloc
     assert "#fff" in bloc
+
+
+# ══ L'EXPOSITION PUBLIQUE : le gabarit Caddy ═══════════════════════
+
+def test_le_gabarit_caddy_ne_code_AUCUNE_valeur_en_dur():
+    """⚠️ MÊME RÈGLE QUE LES UNITÉS SYSTEMD DU PROJET. Un fichier écrit à la
+    main sur la VM dérive en silence et personne ne le sait — c'est
+    exactement ce qui est arrivé à `valuebet-analytics.service`."""
+    g = (pathlib.Path(__file__).parent.parent
+         / "scripts" / "Caddyfile.in").read_text(encoding="utf-8")
+    for jeton in ("__DOMAINE__", "__UTILISATEUR__", "__HASH__"):
+        assert jeton in g, jeton
+    assert "equodds" not in g.lower(), "un domaine réel est codé en dur"
+
+
+def test_le_gabarit_caddy_ne_relaie_que_la_BOUCLE_LOCALE():
+    """L'Analytics n'a AUCUNE authentification à elle : Caddy doit être la
+    seule porte, et le port 8899 rester inaccessible autrement."""
+    g = (pathlib.Path(__file__).parent.parent
+         / "scripts" / "Caddyfile.in").read_text(encoding="utf-8")
+    assert "reverse_proxy 127.0.0.1:8899" in g
+    assert "0.0.0.0" not in g
+    assert "basic_auth" in g, "aucun mot de passe devant l'API"

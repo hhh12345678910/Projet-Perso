@@ -1,0 +1,55 @@
+### Gabarit — __DOMAINE__, __UTILISATEUR__ et __HASH__ sont remplacés à
+### l'installation par scripts/setup-caddy.sh.
+### Ne pas copier ce fichier tel quel dans /etc/caddy/Caddyfile.
+#
+# POURQUOI UN REVERSE PROXY, ET PAS UNE ÉCOUTE PUBLIQUE DIRECTE
+# -------------------------------------------------------------
+# `scripts/analytics_serve.py` REFUSE de se lier ailleurs que sur la boucle
+# locale sans `--public`, et ce garde n'est pas une commodité : l'API n'a
+# AUCUN contrôle d'accès — `analytics_api.exiger_acces` est une fonction vide.
+# L'exposer telle quelle publierait sans mot de passe tout l'historique des
+# détections, des paris joués et des résultats.
+#
+# Caddy est donc la SEULE porte. L'Analytics continue d'écouter uniquement sur
+# 127.0.0.1:8899, et rien d'autre que ce proxy ne lui parle. Le jour où
+# `exiger_acces` authentifiera vraiment, ce fichier pourra se simplifier —
+# pas avant.
+
+__DOMAINE__ {
+	encode zstd gzip
+
+	# ⚠️ LA SEULE AUTHENTIFICATION DU SYSTÈME. Le hachage est produit par
+	# `caddy hash-password` : le mot de passe en clair n'apparaît jamais,
+	# ni ici, ni dans l'historique du shell si on passe par l'invite.
+	basic_auth {
+		__UTILISATEUR__ __HASH__
+	}
+
+	reverse_proxy 127.0.0.1:8899 {
+		# L'Analytics met plusieurs secondes sur les gros lots — la
+		# recherche de segments monte à ~6 s sur la base de production.
+		# Un délai trop court rendrait un 502 là où la requête aboutissait.
+		transport http {
+			read_timeout 120s
+		}
+	}
+
+	header {
+		# La page ne doit jamais être embarquée ailleurs, ni deviner un
+		# type MIME. Elle n'a aucune raison d'être référencée non plus.
+		X-Frame-Options "DENY"
+		X-Content-Type-Options "nosniff"
+		Referrer-Policy "no-referrer"
+		-Server
+	}
+
+	# Un accès refusé doit rester VISIBLE : sans journal, « le mot de passe
+	# ne marche pas » et « quelqu'un essaie des mots de passe » sont le même
+	# silence.
+	log {
+		output file /var/log/caddy/analytics.log {
+			roll_size 10MiB
+			roll_keep 5
+		}
+	}
+}
