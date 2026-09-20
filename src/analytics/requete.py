@@ -247,6 +247,31 @@ def _clause_par_sport(bandes_globales, par_sport, union) -> "tuple[str, list]":
     return "(" + " OR ".join(branches) + ")", params
 
 
+def _sql_bornes_ev(bornes) -> "tuple[str, list]":
+    """Un couple de bornes libres d'EV en SQL. Les DEUX bornes INCLUSES —
+    c'est la convention des bornes libres globales (`>=` et `<=`), et elle
+    diffère volontairement de celle des bandes, où la haute est exclue."""
+    lo, hi = bornes if bornes else (None, None)
+    bouts, params = [], []
+    if lo is not None:
+        bouts.append("vb.ev_pct >= ?")
+        params.append(lo)
+    if hi is not None:
+        bouts.append("vb.ev_pct <= ?")
+        params.append(hi)
+    return ("(" + " AND ".join(bouts) + ")" if bouts else "1 = 1"), params
+
+
+def clause_ev_libre(filtres) -> "tuple[str, list]":
+    """Les BORNES LIBRES d'EV, règles par sport comprises.
+
+    Jumelle de `clause_ev` pour les bornes plutôt que pour les bandes, et sur
+    le même corps partagé : un sport sans borne propre retombe sur les bornes
+    globales `ev_min`/`ev_max` au lieu de disparaître."""
+    return _clause_par_sport((filtres.ev_min, filtres.ev_max),
+                             filtres.ev_libre_par_sport, _sql_bornes_ev)
+
+
 def clause_cote(filtres) -> "tuple[str, list]":
     """La contrainte de COTE par bandes, règles PAR SPORT comprises.
 
@@ -315,8 +340,13 @@ def construire(filtres) -> "tuple[str, list]":
     borne("vb.detected_at", filtres.borne_haute_exclusive(), "<")
     borne("vb.odd_taken", filtres.cote_min, ">=")
     borne("vb.odd_taken", filtres.cote_max, "<=")
-    borne("vb.ev_pct", filtres.ev_min, ">=")
-    borne("vb.ev_pct", filtres.ev_max, "<=")
+    # Les bornes libres d'EV passent par la clause par sport : sans règle
+    # propre elle rend exactement `ev_pct >= ? AND ev_pct <= ?`, donc le même
+    # SQL qu'avant ; avec, chaque sport reçoit les siennes.
+    sql_evl, params_evl = clause_ev_libre(filtres)
+    if sql_evl != "1 = 1":
+        clauses.append(f"      AND {sql_evl}")
+        params.extend(params_evl)
     # L'expression est RÉPÉTÉE et non référencée par son alias : un alias de
     # SELECT n'est pas garanti visible dans le WHERE du même niveau.
     borne(EXPR_DELAI, filtres.delai_min_h, ">=")

@@ -393,3 +393,52 @@ def test_la_query_string_porte_les_bandes_de_cote_par_sport():
                              "odds_bands_tennis": ["> 6.0"]}).valider()
     assert f.cote_bandes == ("1.8-2.3",)
     assert f.cote_par_sport == (("tennis", ("> 6.0",)),)
+
+
+# ── Bornes LIBRES d'EV par sport ─────────────────────────────────────
+
+def test_les_bornes_libres_dev_par_sport_sont_validees():
+    f = Filtres(ev_libre_par_sport=(("soccer", (5, 15)),
+                                    ("tennis", (25, None)))).valider()
+    assert f.ev_libre_par_sport == (("soccer", (5.0, 15.0)),
+                                    ("tennis", (25.0, None)))
+
+
+def test_une_borne_dev_a_lenvers_est_refusee():
+    with pytest.raises(FiltreInvalide) as e:
+        Filtres(ev_libre_par_sport=(("soccer", (20, 5)),)).valider()
+    assert "au-dessus de la haute" in str(e.value)
+
+
+def test_un_sport_hors_perimetre_est_refuse_sur_lev_libre():
+    with pytest.raises(FiltreInvalide):
+        Filtres(ev_libre_par_sport=(("basketball", (5, 15)),)).valider()
+
+
+def test_deux_bornes_vides_retirent_la_regle():
+    """Une règle qui ne filtre rien ferait perdre au sport la règle GLOBALE
+    dont il devrait hériter."""
+    assert Filtres(ev_libre_par_sport=(("soccer", (None, None)),)
+                   ).valider().ev_libre_par_sport == ()
+
+
+def test_la_query_string_porte_ev_min_et_ev_max_par_sport():
+    f = Filtres.depuis_dict({"ev_min_soccer": 5, "ev_max_soccer": 15,
+                             "ev_min_tennis": 25}).valider()
+    assert f.ev_libre_par_sport == (("soccer", (5.0, 15.0)),
+                                    ("tennis", (25.0, None)))
+
+
+def test_ev_min_GLOBAL_nest_pas_pris_pour_un_sport():
+    """⚠️ `ev_min` nu est la borne globale. La lire comme le sport « » la
+    ferait disparaître de la règle globale — un filtre qui se déplace tout
+    seul est pire qu'un filtre absent."""
+    f = Filtres.depuis_dict({"ev_min": 8, "ev_max": 20}).valider()
+    assert f.ev_min == 8.0 and f.ev_max == 20.0
+    assert f.ev_libre_par_sport == ()
+
+
+def test_les_bornes_libres_par_sport_font_laller_retour_JSON():
+    f = Filtres(ev_libre_par_sport=(("soccer", (5, 15)),)).valider()
+    assert (Filtres.depuis_dict(f.en_dict()).valider().ev_libre_par_sport
+            == f.ev_libre_par_sport)

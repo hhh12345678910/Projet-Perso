@@ -846,3 +846,23 @@ def test_openapi_declare_les_bandes_de_cote_par_sport(client):
     assert "odds_bands_soccer" in noms and "odds_bands_tennis" in noms
     # Et l'EV n'a pas disparu au passage.
     assert "ev_bands_soccer" in noms
+
+
+def test_ev_min_par_sport_est_accepte_et_RENDU(client):
+    d = client.get("/api/analyse",
+                   params={"ev_min_tennis": 25, "ev_max_tennis": 40}).json()
+    assert d["filters"]["ev_free_by_sport"] == {"tennis": [25.0, 40.0]}
+
+
+def test_ev_min_GLOBAL_reste_global_dans_lAPI(client):
+    """⚠️ `ev_min` nu ne doit pas être happé par la lecture par sport."""
+    d = client.get("/api/analyse", params={"ev_min": 8}).json()
+    assert d["filters"]["ev_min"] == 8.0
+    assert d["filters"]["ev_free_by_sport"] == {}
+
+
+def test_openapi_declare_les_bornes_dev_par_sport(client):
+    noms = {p["name"] for p in client.get("/openapi.json").json()
+            ["paths"]["/api/analyse"]["get"]["parameters"]}
+    assert {"ev_min_soccer", "ev_max_soccer",
+            "ev_min_tennis", "ev_max_tennis"} <= noms

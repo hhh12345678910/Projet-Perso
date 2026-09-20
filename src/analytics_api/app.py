@@ -37,7 +37,7 @@ from fastapi import Depends, FastAPI, HTTPException, Query, Request
 from fastapi.responses import JSONResponse
 
 from ..analytics import Filtres, analyser, detail
-from ..analytics.filtres import PREFIXE_EV_SPORT, FiltreInvalide, PREFIXE_COTE_SPORT
+from ..analytics.filtres import PREFIXE_EV_SPORT, FiltreInvalide, PREFIXE_COTE_SPORT, PREFIXE_EV_MIN_SPORT, PREFIXE_EV_MAX_SPORT
 from ..analytics.perimetre import (BORNES_EV, MARCHES_ANALYTICS, MIN_SEGMENT,
                                    SPORTS_ANALYTICS)
 from ..analytics.service import (DB_DEFAUT, GRANULARITES, meilleurs_segments,
@@ -108,9 +108,10 @@ def _openapi_cote_sport() -> dict:
 
 
 def _openapi_filtres_sport() -> dict:
-    """Les deux familles réunies : c'est ce que les routes déclarent."""
+    """Les TROIS familles réunies : c'est ce que les routes déclarent."""
     return {"parameters": (_openapi_ev_sport()["parameters"]
-                           + _openapi_cote_sport()["parameters"])}
+                           + _openapi_cote_sport()["parameters"]
+                           + _openapi_ev_libre_sport()["parameters"])}
 
 
 def _openapi_ev_sport() -> dict:
@@ -198,6 +199,49 @@ def _bandes_par_sport(request: Request, prefixe: str, exclue: str) -> dict:
         if sport:
             out[sport] = _liste_multi(request, cle)
     return out
+
+
+def _ev_libre_par_sport(request: Request) -> dict:
+    """Les BORNES LIBRES d'EV par sport présentes dans la query string.
+
+    ⚠️ `ev_min` et `ev_max` NUS ne sont pas lus ici : ce sont les bornes
+    GLOBALES. Les prendre pour un sport dont le nom serait vide les ferait
+    disparaître de la règle globale — un filtre qui se déplace tout seul est
+    pire qu'un filtre absent."""
+    out: dict = {}
+    for cle in request.query_params.keys():
+        for prefixe, rang in ((PREFIXE_EV_MIN_SPORT, 0),
+                              (PREFIXE_EV_MAX_SPORT, 1)):
+            if not cle.startswith(prefixe) or len(cle) == len(prefixe):
+                continue
+            sport = cle[len(prefixe):].strip().lower()
+            if not sport:
+                continue
+            courant = list(out.get(sport, (None, None)))
+            courant[rang] = request.query_params.get(cle)
+            out[sport] = tuple(courant)
+    return out
+
+
+def _openapi_ev_libre_sport() -> dict:
+    """Décrit `ev_min_<sport>` / `ev_max_<sport>` pour OpenAPI."""
+    return {
+        "parameters": [
+            {
+                "name": prefixe + sport, "in": "query", "required": False,
+                "schema": {"type": "number"},
+                "description": (
+                    f"Borne {'basse' if rang == 'min' else 'haute'} d'EV "
+                    f"appliquée UNIQUEMENT au sport « {sport} ». Prime sur "
+                    f"`ev_{rang}` pour ce sport ; les autres sports gardent la "
+                    f"borne globale. Se cumule en ET avec les bandes du même "
+                    f"sport. Appliqué DANS LE SQL."),
+            }
+            for sport in SPORTS_ANALYTICS
+            for prefixe, rang in ((PREFIXE_EV_MIN_SPORT, "min"),
+                                  (PREFIXE_EV_MAX_SPORT, "max"))
+        ],
+    }
 
 
 def _cote_par_sport(request: Request) -> dict:
@@ -293,6 +337,9 @@ def creer_app(db_path: Optional[str] = None) -> FastAPI:
         regles_cote = _cote_par_sport(request)
         if regles_cote:
             brut["odds_bands_by_sport"] = regles_cote
+        libres = _ev_libre_par_sport(request)
+        if libres:
+            brut["ev_free_by_sport"] = libres
         return Filtres.depuis_dict(brut).valider()
 
     # ── Les routes ───────────────────────────────────────────────────

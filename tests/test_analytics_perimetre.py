@@ -576,3 +576,45 @@ def test_les_bandes_viennent_de_la_MEME_table_que_la_matrice(tmp_path):
     assert set(bornes_cote()) == {lab for lab, _, _ in BANDES_COTE}
     v = valeurs_disponibles(_cotes(tmp_path))
     assert [b["key"] for b in v["odds_bands"]] == list(ordre_cote())
+
+
+# ══ L'EV LIBRE PAR SPORT ═══════════════════════════════════════════
+#
+# Les BANDES d'EV étaient déjà réglables par sport ; les bornes libres ne
+# l'étaient pas. On pouvait donc dire « 8-15 % au foot, 15-35 % au tennis »
+# mais pas « au moins 10 % au foot, au moins 25 % au tennis ».
+
+def _evs(tmp_path):
+    return monter(tmp_path, [
+        Opp(id=i, home=f"H{i}", away=f"A{i}", sport=s, book="unibet_be",
+            odd=2.0, ev=e, jour="2026-08-10", cloture=1.9, gagnant="home")
+        for i, (s, e) in enumerate(
+            [("soccer", 3.0), ("soccer", 7.0), ("soccer", 12.0), ("soccer", 30.0),
+             ("tennis", 3.0), ("tennis", 7.0), ("tennis", 12.0), ("tennis", 30.0)],
+            start=1)])
+
+
+def test_des_bornes_dev_DIFFERENTES_par_sport(tmp_path):
+    """⚠️ LA DEMANDE : « EV libre, choisir par différent sport »."""
+    p = _evs(tmp_path)
+    r = analyser(p, Filtres(ev_libre_par_sport=(("soccer", (10, None)),
+                                                ("tennis", (25, None)))))
+    par = {t["key"]: t["opportunities"] for t in r["by_sport"]}
+    assert par == {"soccer": 2, "tennis": 1}
+
+
+def test_un_sport_sans_borne_propre_garde_la_borne_GLOBALE(tmp_path):
+    p = _evs(tmp_path)
+    r = analyser(p, Filtres(ev_min=25,
+                            ev_libre_par_sport=(("soccer", (5, 15)),)))
+    par = {t["key"]: t["opportunities"] for t in r["by_sport"]}
+    assert par == {"soccer": 2, "tennis": 1}   # foot 7 et 12 ; tennis 30
+
+
+def test_sans_regle_par_sport_le_SQL_ne_change_pas(tmp_path):
+    """Le passage par la clause par sport ne doit rien changer quand aucune
+    règle propre n'existe — sinon c'est une régression invisible."""
+    p = _evs(tmp_path)
+    assert analyser(p, Filtres(ev_min=10))["summary"]["opportunities"] == 4
+    assert analyser(p, Filtres(ev_min=10, ev_max=12)
+                    )["summary"]["opportunities"] == 2

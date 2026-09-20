@@ -194,6 +194,64 @@ def _par_sport_valide(brut, nom: str, valideur) -> list:
     return out
 
 
+def _bornes_ev(valeur, ou: str) -> tuple:
+    """Valide un couple de bornes libres d'EV et le rend `(min, max)`.
+
+    Rend `()` quand les deux sont absentes : une règle vide est retirée, pas
+    conservée — même convention que les bandes. Un `(None, None)` conservé
+    ferait exister une règle qui ne filtre rien, et le sport concerné
+    n'hériterait plus de la règle globale sans que personne l'ait voulu."""
+    if valeur in (None, (), []):
+        return ()
+    try:
+        lo, hi = valeur
+    except (TypeError, ValueError):
+        raise FiltreInvalide(
+            f"{ou} attend un couple (min, max) — reçu : {valeur!r}") from None
+    lo = _nombre(lo, f"{ou}[min]")
+    hi = _nombre(hi, f"{ou}[max]")
+    if lo is None and hi is None:
+        return ()
+    if lo is not None and hi is not None and lo > hi:
+        raise FiltreInvalide(
+            f"{ou} : borne basse {lo} au-dessus de la haute {hi}.")
+    return (lo, hi)
+
+
+#: Préfixes des bornes libres d'EV par sport : `?ev_min_soccer=5&ev_max_soccer=15`.
+PREFIXE_EV_MIN_SPORT = "ev_min_"
+PREFIXE_EV_MAX_SPORT = "ev_max_"
+
+
+def _ev_libre_par_sport_depuis(d: dict) -> tuple:
+    """Les bornes libres d'EV par sport, dans leurs deux écritures.
+
+    * `ev_free_by_sport` : un dict `{sport: [min, max]}` — ce que rend
+      `en_dict`, donc ce qu'un aller-retour JSON doit savoir relire ;
+    * `ev_min_<sport>` / `ev_max_<sport>` : les paramètres plats, seule forme
+      qu'une query string porte sans encoder du JSON dans une URL.
+    """
+    out: dict = {}
+    table = d.get("ev_free_by_sport") or d.get("ev_libre_par_sport") or {}
+    if isinstance(table, dict):
+        for sport, bornes in table.items():
+            out[str(sport).strip().lower()] = tuple(bornes or (None, None))
+    for cle, valeur in d.items():
+        nom = str(cle)
+        for prefixe, rang in ((PREFIXE_EV_MIN_SPORT, 0),
+                              (PREFIXE_EV_MAX_SPORT, 1)):
+            # ⚠️ `ev_min` et `ev_max` NUS ne doivent pas être lus ici : ce
+            # sont les bornes GLOBALES, et les prendre pour un sport nommé ""
+            # les ferait disparaître de la règle globale.
+            if nom.startswith(prefixe) and len(nom) > len(prefixe):
+                sport = nom[len(prefixe):].strip().lower()
+                if sport:
+                    courant = list(out.get(sport, (None, None)))
+                    courant[rang] = valeur
+                    out[sport] = tuple(courant)
+    return tuple(sorted((s, b) for s, b in out.items()))
+
+
 #: Préfixe des paramètres d'EV par sport dans une query string :
 #: `?ev_bands_soccer=5-8%&ev_bands_soccer=8-15%&ev_bands_tennis=15-35%`.
 PREFIXE_EV_SPORT = "ev_bands_"
@@ -285,6 +343,10 @@ class Filtres:
     #: tuple de paires `(sport, (bandes…))`, et un sport absent retombe sur la
     #: sélection globale plutôt que de disparaître.
     cote_par_sport: tuple = ()
+    #: Bornes LIBRES d'EV par sport — tuple de paires `(sport, (min, max))`.
+    #: Se cumulent en ET avec les bandes du même sport, exactement comme
+    #: `ev_min`/`ev_max` se cumulent avec `ev_bandes` au niveau global.
+    ev_libre_par_sport: tuple = ()
     date_from: "str | None" = None
     date_to: "str | None" = None
     delai_min_h: "float | None" = None
@@ -373,6 +435,9 @@ class Filtres:
         par_sport = tuple(sorted(_par_sport_valide(
             self.ev_par_sport, "ev_par_sport", _bandes_ev)))
 
+        ev_libre = tuple(sorted(_par_sport_valide(
+            self.ev_libre_par_sport, "ev_libre_par_sport", _bornes_ev)))
+
         # Bandes de COTE : mêmes règles, même aide, donc mêmes refus.
         bandes_cote = _bandes_cote(self.cote_bandes, "cote_bandes")
         cote_par_sport = tuple(sorted(_par_sport_valide(
@@ -433,6 +498,7 @@ class Filtres:
             cote_max=cote_max, ev_min=ev_min, ev_max=ev_max,
             ev_bandes=bandes, ev_par_sport=par_sport,
             cote_bandes=bandes_cote, cote_par_sport=cote_par_sport,
+            ev_libre_par_sport=ev_libre,
             delai_min_h=d_min, delai_max_h=d_max, population=population,
             stake=stake, fenetre_morte_min=fm)
 
@@ -493,6 +559,8 @@ class Filtres:
             "ev_min": self.ev_min, "ev_max": self.ev_max,
             "ev_bands": list(self.ev_bandes),
             "ev_bands_by_sport": {s: list(b) for s, b in self.ev_par_sport},
+            "ev_free_by_sport": {s: list(b)
+                                 for s, b in self.ev_libre_par_sport},
             "odds_bands": list(self.cote_bandes),
             "odds_bands_by_sport": {s: list(b)
                                     for s, b in self.cote_par_sport},
@@ -529,6 +597,7 @@ class Filtres:
             cote_bandes=multi("odds_band", "odds_bands", "odds_bands[]",
                               "cote_bandes"),
             cote_par_sport=_cote_par_sport_depuis(d),
+            ev_libre_par_sport=_ev_libre_par_sport_depuis(d),
             date_from=d.get("date_from"), date_to=d.get("date_to"),
             delai_min_h=d.get("delay_min", d.get("delai_min_h")),
             delai_max_h=d.get("delay_max", d.get("delai_max_h")),
