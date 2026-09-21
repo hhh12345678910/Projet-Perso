@@ -33,6 +33,7 @@ SONDES = [
     "handicap_conventions", "book_health", "scores_coverage", "repair_events",
     "repair_leagues", "clv_roi_matrix", "staking_curves", "closing_gap",
     "book_latency", "alert_cost", "noms_hostiles", "book_exclusif", "rapport_clv_roi",
+    "survie_cote",
 ]
 
 
