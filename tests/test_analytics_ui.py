@@ -930,3 +930,58 @@ def test_lexport_ecrit_un_couple_de_bornes_en_FLECHE_pas_en_VIRGULE():
     assert "bornes(f.ev_free_by_odds)" in bloc
     assert "bornes(f.ev_free_by_sport)" in bloc
     assert "table(f.ev_free_by_sport)" not in bloc
+
+
+# ══ LE PARI (1 X 2) ═══════════════════════════════════════════════
+
+def test_le_bloc_pari_existe_et_part_au_serveur():
+    assert 'id="f-outcomes"' in HTML
+    assert "append('outcomes'" in JS
+
+
+def test_linterface_ANNONCE_ce_que_le_1X2_ecarte():
+    """⚠️ SANS CETTE PHRASE, LE FILTRE SE LIT COMME UNE PANNE. Ne cocher que
+    « 1 » et « X » fait disparaître les Over/Under — c'est correct, un Over
+    n'étant ni l'un ni l'autre, mais un total qui rétrécit sans explication
+    ressemble à une perte de données."""
+    bloc = HTML[HTML.index('id="champ-pari"'):]
+    bloc = bloc[:bloc.index("<!--")]
+    assert "Over/Under" in bloc
+    assert "tennis" in bloc.lower(), "le cas du tennis n'est pas expliqué"
+
+
+def test_les_libelles_de_pari_viennent_du_SERVEUR():
+    """Écrire « 1 — Domicile » dans le JavaScript ferait vivre deux
+    vocabulaires pour le même pari ; l'un des deux finirait par ne plus
+    correspondre à ce que le filtre envoie."""
+    bloc = JS[JS.index("groupeCases($('f-outcomes')"):]
+    bloc = bloc[:bloc.index(";")]
+    assert "REFS.outcomes" in bloc
+    assert "Domicile" not in JS, "un libellé de pari est codé en dur en JS"
+
+
+def test_la_decoupe_par_pari_est_affichee():
+    for cle in ("g-clv-outcome", "g-roi-outcome"):
+        assert f'id="{cle}"' in HTML, cle
+    assert "d.by_outcome" in JS
+
+
+def test_lexport_PDF_nomme_le_pari_en_CLAIR():
+    """« home » sur un papier relu dans trois mois ne dit pas grand-chose ;
+    « 1 — Domicile » si."""
+    bloc = JS[JS.index("function enteteExport"):]
+    bloc = bloc[:bloc.index("\n}")]
+    assert "f.outcomes" in bloc
+    assert "nomPari" in bloc
+
+
+def test_aucun_identifiant_HTML_nest_EN_DOUBLE():
+    """⚠️ RÉGRESSION VÉCUE, 21/09. Un bloc inséré deux fois donne deux
+    éléments de même `id`. `document.getElementById` rend alors TOUJOURS le
+    premier : le second reste vide pour toujours, sans erreur, sans trace
+    dans la console. Aucun test de présence ne voit ça — ils cherchent tous
+    une occurrence et en trouvent une."""
+    import re
+    ids = re.findall(r'\bid="([^"]+)"', HTML)
+    doubles = sorted({i for i in ids if ids.count(i) > 1})
+    assert not doubles, f"identifiants en double : {doubles}"

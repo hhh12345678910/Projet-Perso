@@ -64,6 +64,24 @@ COLONNES = (
 #: `value_bets`, la seule source temporelle autorisée.
 EXPR_DELAI = "(julianday(e.start_time) - julianday(vb.detected_at)) * 24.0"
 
+#: Le PARI d'une ligne : le premier mot du libellé, en minuscules.
+#:
+#: ⚠️ CE DÉCOUPAGE EST CELUI DE `clv.settle`, REFAIT EN SQL. Le règlement lit
+#: `outcome_label.split()[0].lower()` pour un total, et compare le libellé
+#: entier pour un 1X2 — les deux coïncident, « home » n'ayant pas d'espace.
+#: Découper autrement ici ferait qu'une ligne réglée comme « over » ne
+#: sortirait pas du filtre « Over » : le lot manquerait des paris que le
+#: tableau affiche pourtant comme gagnés.
+#:
+#: `perimetre.pari_de` applique la même règle côté Python pour la découpe
+#: « par pari », et un test compare les deux sur le même corpus de libellés.
+EXPR_PARI = """lower(CASE
+        WHEN instr(trim(vb.outcome_label), ' ') > 0
+        THEN substr(trim(vb.outcome_label), 1,
+                    instr(trim(vb.outcome_label), ' ') - 1)
+        ELSE trim(vb.outcome_label)
+    END)"""
+
 #: La clé de déduplication. Repli sur `event_key` quand l'événement manque :
 #: sans lui, toutes les lignes sans équipes tomberaient dans un même groupe
 #: et se fondraient en une seule opportunité.
@@ -430,6 +448,13 @@ def construire(filtres) -> "tuple[str, list]":
     dans("lower(e.sport)",
          [s.lower() for s in (filtres.sports or SPORTS_ANALYTICS)])
     dans("vb.market", list(filtres.markets or MARCHES_ANALYTICS))
+
+    # ⚠️ APPLIQUÉ AVANT LA DÉDUPLICATION, comme les autres filtres de LIGNE.
+    # Le pari fait partie de la clé de dédup (`EXPR_CLE`) : un « home » et un
+    # « draw » du même match sont deux opportunités distinctes, et filtrer
+    # après coup n'en changerait rien — mais le faire ici évite d'élire un
+    # représentant qu'on jetterait ensuite.
+    dans(EXPR_PARI, list(filtres.paris))
 
     dans("vb.book", list(filtres.books))
     dans("e.league", list(filtres.leagues))

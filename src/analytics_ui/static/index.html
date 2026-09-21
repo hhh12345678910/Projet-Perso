@@ -62,6 +62,18 @@
            à un sport qui prime, et bornes libres qui se cumulent en ET. Une
            seconde grammaire pour la même idée se paierait en erreurs de
            lecture. -->
+      <!-- ⚠️ L'AVERTISSEMENT FAIT PARTIE DU FILTRE. Un Over n'est ni un 1,
+           ni un X, ni un 2 : ne cocher que du 1X2 écarte les totals. C'est
+           le sens exact de la demande, mais un total qui rétrécit sans
+           explication se lit comme une panne. -->
+      <div class="champ large pliable ouvert" id="champ-pari">
+        <label>Pari</label>
+        <div class="cases" id="f-outcomes"></div>
+        <span class="aide">Rien de coché = tous. Ne cocher que des paris
+          <b>1X2</b> écarte les <b>Over/Under</b>, et réciproquement.
+          Au tennis, <b>1</b> désigne le joueur cité en premier.</span>
+      </div>
+
       <div class="champ large pliable ouvert" id="champ-cote">
         <label>Cote — tranches</label>
         <div class="cases" id="f-odds-bands"></div>
@@ -249,6 +261,8 @@
       <figure><figcaption>ROI par sport</figcaption><div id="g-roi-sport"></div></figure>
       <figure><figcaption>CLV par marché</figcaption><div id="g-clv-market"></div></figure>
       <figure><figcaption>ROI par marché</figcaption><div id="g-roi-market"></div></figure>
+      <figure><figcaption>CLV par pari (1 X 2)</figcaption><div id="g-clv-outcome"></div></figure>
+      <figure><figcaption>ROI par pari (1 X 2)</figcaption><div id="g-roi-outcome"></div></figure>
       <figure><figcaption>CLV par délai avant coup d'envoi</figcaption><div id="g-clv-delay"></div></figure>
       <figure><figcaption>ROI par délai avant coup d'envoi</figcaption><div id="g-roi-delay"></div></figure>
     </div>

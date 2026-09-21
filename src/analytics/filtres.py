@@ -24,8 +24,9 @@ from dataclasses import dataclass, replace
 from datetime import datetime, timedelta
 
 from ..models import Book, MarketType
-from .perimetre import (BORNES_EV, GROUPES_JUMEAUX, MARCHES_ANALYTICS,
-                        SPORTS_ANALYTICS, jumeaux_de)
+from .perimetre import (ALIAS_PARI, BORNES_EV, GROUPES_JUMEAUX,
+                        MARCHES_ANALYTICS, PARIS_ANALYTICS,
+                        SPORTS_ANALYTICS, jumeaux_de, pari_de)
 from .populations import Population
 
 #: Les books que la base peut contenir. Fermé : il vient de l'énumération du
@@ -41,6 +42,10 @@ MARCHES_CONNUS = frozenset(m.value for m in MarketType)
 #: que tout ce module existe pour empêcher.
 SPORTS_AUTORISES = frozenset(SPORTS_ANALYTICS)
 MARCHES_AUTORISES = frozenset(MARCHES_ANALYTICS)
+
+#: Les paris nommables. Fermé, et dérivé du vocabulaire du moteur : un
+#: libellé inconnu doit être REFUSÉ, pas rapproché du plus proche.
+PARIS_AUTORISES = frozenset(PARIS_ANALYTICS)
 
 #: Alias de commodité. `kambi` se déplie en Unibet + 711 + Bingoal + Scooore.
 #: Le groupe vient de `perimetre.GROUPES_JUMEAUX`, qui le lit lui-même dans
@@ -403,6 +408,14 @@ class Filtres:
     sports: tuple = ()
     books: tuple = ()
     markets: tuple = ()
+    #: Les PARIS retenus — « 1 », « X », « 2 » du 1X2, « Over », « Under »
+    #: des totals. Vide = tous.
+    #:
+    #: ⚠️ NE COCHER QUE DES PARIS 1X2 ÉCARTE LES TOTALS, et c'est logique :
+    #: un Over n'est ni un 1, ni un X, ni un 2. Ce n'est pas une fuite, mais
+    #: ça doit être DIT à l'écran, sinon l'utilisateur lit un total amputé
+    #: sans savoir de quoi.
+    paris: tuple = ()
     leagues: tuple = ()
     cote_min: "float | None" = None
     cote_max: "float | None" = None
@@ -525,6 +538,21 @@ class Filtres:
                     f"volley, 21 de hockey). Les données restent en base.")
         leagues = tuple(dict.fromkeys(g.strip() for g in self.leagues))
 
+        # Les PARIS : normalisés par la règle du règlement, puis dépliés
+        # depuis la notation du coupon. « 1 » et « home » sont le même pari.
+        paris = []
+        for brut_pari in self.paris:
+            cle = pari_de(brut_pari)
+            cle = ALIAS_PARI.get(cle, cle)
+            if cle not in PARIS_AUTORISES:
+                raise FiltreInvalide(
+                    f"Pari inconnu : {brut_pari!r}. Connus : "
+                    + ", ".join(PARIS_ANALYTICS)
+                    + f". Notation du coupon acceptée : "
+                    + ", ".join(sorted(ALIAS_PARI)) + ".")
+            paris.append(cle)
+        paris = tuple(dict.fromkeys(paris))
+
         bandes = _bandes_ev(self.ev_bandes, "ev_bandes")
         # EV par sport : chaque entrée est validée comme une sélection à part
         # entière, et son sport doit lui aussi être dans le périmètre.
@@ -599,7 +627,8 @@ class Filtres:
                 f"fenetre_morte_min ne peut pas être négative — reçu : {fm}")
 
         return replace(
-            self, sports=sports, books=books, markets=marches, leagues=leagues,
+            self, sports=sports, books=books, markets=marches, paris=paris,
+            leagues=leagues,
             date_from=depuis, date_to=jusqu, cote_min=cote_min,
             cote_max=cote_max, ev_min=ev_min, ev_max=ev_max,
             ev_bandes=bandes, ev_par_sport=par_sport,
@@ -670,7 +699,8 @@ class Filtres:
         exotique : c'est ce qui rendra « enregistrer cette analyse » trivial."""
         return {
             "sports": list(self.sports), "bookmakers": list(self.books),
-            "markets": list(self.markets), "leagues": list(self.leagues),
+            "markets": list(self.markets), "outcomes": list(self.paris),
+            "leagues": list(self.leagues),
             "odds_min": self.cote_min, "odds_max": self.cote_max,
             "ev_min": self.ev_min, "ev_max": self.ev_max,
             "ev_bands": list(self.ev_bandes),
@@ -706,6 +736,7 @@ class Filtres:
             sports=multi("sport", "sports", "sports[]"),
             books=multi("bookmaker", "bookmakers", "bookmakers[]", "books"),
             markets=multi("market", "markets", "markets[]"),
+            paris=multi("outcome", "outcomes", "outcomes[]", "paris"),
             leagues=multi("league", "leagues", "leagues[]"),
             cote_min=d.get("odds_min", d.get("cote_min")),
             cote_max=d.get("odds_max", d.get("cote_max")),

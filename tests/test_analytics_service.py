@@ -519,3 +519,65 @@ def test_aucune_ligne_ne_DISPARAIT_dun_total(tmp_path):
     p = _quatre_coins(tmp_path)
     regle = (("1.0-1.8", (0, None)),)
     assert _n(p, ev_libre_par_cote=regle) == 4
+
+
+# ── Le filtre « pari » et la découpe qui va avec ────────────────────
+
+def _trois_paris(tmp_path):
+    """Un 1, un X, un 2 — et un Over, pour vérifier ce que le 1X2 écarte."""
+    return monter(tmp_path, [
+        Opp(1, outcome="home", odd=2.00, ev=8, gagnant="home", cloture=1.95),
+        Opp(2, home="C", away="D", outcome="draw", odd=3.40, ev=10,
+            gagnant="home", cloture=3.30),
+        Opp(3, home="E", away="F", outcome="away", odd=4.00, ev=12,
+            gagnant="away", cloture=3.90),
+        Opp(4, home="G", away="H", market="totals", outcome="over", line=2.5,
+            odd=1.90, ev=6, score_dom=2, score_ext=1, cloture=1.85),
+    ])
+
+
+def test_le_filtre_pari_retient_exactement_le_pari_demande(tmp_path):
+    p = _trois_paris(tmp_path)
+    assert _n(p) == 4
+    assert _n(p, paris=("1",)) == 1
+    assert _n(p, paris=("X", "2")) == 2
+    assert _n(p, paris=("over",)) == 1
+
+
+def test_ne_cocher_que_du_1X2_ECARTE_les_totals(tmp_path):
+    """Ce n'est pas une fuite — un Over n'est ni un 1, ni un X, ni un 2 —
+    mais c'est la conséquence que l'interface doit annoncer."""
+    p = _trois_paris(tmp_path)
+    assert _n(p, paris=("1", "X", "2")) == 3
+
+
+def test_la_decoupe_par_pari_separe_ce_que_by_market_confond(tmp_path):
+    """⚠️ LA RAISON D'ÊTRE DE CETTE DÉCOUPE. `by_market` range les trois
+    paris 1X2 sous une seule ligne « h2h » : « suis-je meilleur sur les nuls
+    que sur les victoires à domicile ? » n'y était pas lisible."""
+    d = analyser(str(_trois_paris(tmp_path)), Filtres())
+    par_pari = {t["key"]: t["opportunities"] for t in d["by_outcome"]}
+    assert par_pari == {"home": 1, "draw": 1, "away": 1, "over": 1}
+    par_marche = {t["key"]: t["opportunities"] for t in d["by_market"]}
+    assert par_marche["h2h"] == 3
+
+
+def test_la_decoupe_par_pari_porte_la_notation_du_coupon(tmp_path):
+    d = analyser(str(_trois_paris(tmp_path)), Filtres())
+    libelles = {t["key"]: t["label"] for t in d["by_outcome"]}
+    assert libelles["home"].startswith("1")
+    assert libelles["draw"].startswith("X")
+    assert libelles["away"].startswith("2")
+
+
+def test_le_pari_est_filtre_AVANT_la_deduplication(tmp_path):
+    """Le pari fait partie de la clé de dédup : un « home » et un « draw »
+    du même match sont deux opportunités, jamais deux exemplaires d'une
+    seule. Filtrer sur « X » ne doit donc pas faire disparaître le nul au
+    profit du représentant le mieux coté du match."""
+    p = monter(tmp_path, [
+        Opp(1, outcome="home", odd=2.00, ev=8),
+        Opp(2, outcome="draw", odd=3.40, ev=10),   # MÊME match, autre pari
+    ])
+    assert _n(p) == 2
+    assert _n(p, paris=("X",)) == 1

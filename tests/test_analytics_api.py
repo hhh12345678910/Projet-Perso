@@ -932,3 +932,48 @@ def test_les_filtres_exposent_le_slug_de_chaque_tranche(client):
     bandes = client.get("/api/filters").json()["odds_bands"]
     assert {b["key"]: b["slug"] for b in bandes}["1.0-1.8"] == "1_0_1_8"
     assert all(b.get("slug") for b in bandes)
+
+
+# ── Le pari (1 X 2) vu de l'API ─────────────────────────────────────
+
+def test_le_pari_est_accepte_et_RENDU(client):
+    d = client.get("/api/analyse", params={"outcomes": "1"}).json()
+    assert d["filters"]["outcomes"] == ["home"]
+
+
+def test_la_notation_du_coupon_passe_par_lURL(client):
+    d = client.get("/api/analyse", params=[("outcome", "X"),
+                                           ("outcome", "2")]).json()
+    assert d["filters"]["outcomes"] == ["draw", "away"]
+
+
+def test_un_pari_inconnu_rend_400_pas_un_lot_ampute(client):
+    r = client.get("/api/analyse", params={"outcomes": "btts"})
+    assert r.status_code == 400
+    assert "Pari inconnu" in r.json()["detail"]
+
+
+def test_la_decoupe_par_pari_est_servie(client):
+    d = client.get("/api/analyse").json()
+    assert "by_outcome" in d
+    cles = {t["key"] for t in d["by_outcome"]}
+    assert cles <= {"home", "draw", "away", "over", "under"}
+
+
+def test_les_filtres_exposent_les_paris_AVEC_leur_marche(client):
+    """L'interface doit pouvoir dire ce qu'une sélection 1X2 écarte ; sans le
+    marché de chaque pari, elle ne le peut pas."""
+    paris = client.get("/api/filters").json()["outcomes"]
+    par_valeur = {o["value"]: o for o in paris}
+    assert par_valeur["home"]["market"] == "h2h"
+    assert par_valeur["over"]["market"] == "totals"
+    assert par_valeur["home"]["libelle"].startswith("1")
+
+
+def test_openapi_declare_le_parametre_outcomes(client):
+    params = client.get("/openapi.json").json()[
+        "paths"]["/api/analyse"]["get"]["parameters"]
+    decl = [p for p in params if p["name"] == "outcomes"]
+    assert decl, "outcomes est un paramètre fantôme"
+    assert set(decl[0]["schema"]["items"]["enum"]) == {
+        "home", "draw", "away", "over", "under"}

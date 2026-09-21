@@ -618,3 +618,44 @@ def test_sans_regle_par_sport_le_SQL_ne_change_pas(tmp_path):
     assert analyser(p, Filtres(ev_min=10))["summary"]["opportunities"] == 4
     assert analyser(p, Filtres(ev_min=10, ev_max=12)
                     )["summary"]["opportunities"] == 2
+
+
+# ── Le pari : une seule définition, trois lecteurs ───────────────────
+
+def test_le_decoupage_du_pari_est_IDENTIQUE_en_SQL_et_en_PYTHON():
+    """⚠️ TROIS ENDROITS LISENT LE MÊME MOT : `clv.settle` pour régler,
+    `requete.EXPR_PARI` pour filtrer, `perimetre.pari_de` pour découper. Deux
+    découpages différents feraient qu'une ligne réglée « over » ne sortirait
+    pas du filtre « Over » — le tableau l'afficherait gagnée, le filtre ne la
+    verrait pas."""
+    import sqlite3
+    from src.analytics.perimetre import pari_de
+    from src.analytics.requete import EXPR_PARI
+
+    corpus = ["home", "draw", "away", "over", "under", "Over 2.5",
+              "UNDER 1.5", "  home  ", "over  2.5", "Draw", ""]
+    c = sqlite3.connect(":memory:")
+    c.execute("CREATE TABLE vb (outcome_label TEXT)")
+    c.executemany("INSERT INTO vb VALUES (?)", [(x,) for x in corpus])
+    for brut, par_sql in c.execute(
+            f"SELECT outcome_label, {EXPR_PARI} FROM vb"):
+        assert par_sql == pari_de(brut), brut
+
+
+def test_le_decoupage_du_pari_suit_celui_du_REGLEMENT():
+    """La règle n'est pas inventée ici : elle est copiée de `clv.settle`."""
+    from src.clv import settle
+    from src.analytics.perimetre import pari_de
+    # Un total gagné, dont le libellé porte la ligne.
+    assert settle("totals", "Over 2.5", 2.5, None, 2, 1) == "won"
+    assert pari_de("Over 2.5") == "over"
+    # Un 1X2 : le libellé entier EST le pari, le découpage ne change rien.
+    assert settle("h2h", "draw", None, "draw", None, None) == "won"
+    assert pari_de("draw") == "draw"
+
+
+def test_chaque_pari_appartient_a_un_marche_du_perimetre():
+    from src.analytics.perimetre import (MARCHE_DU_PARI, MARCHES_ANALYTICS,
+                                         PARIS_ANALYTICS)
+    assert set(MARCHE_DU_PARI) == set(PARIS_ANALYTICS)
+    assert set(MARCHE_DU_PARI.values()) <= set(MARCHES_ANALYTICS)

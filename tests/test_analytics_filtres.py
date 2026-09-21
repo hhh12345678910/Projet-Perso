@@ -531,3 +531,48 @@ def test_les_regles_par_tranche_se_RELISENT():
     qui ne l'est pas."""
     f = Filtres(ev_libre_par_cote=(("1.0-1.8", (3, None)),)).valider()
     assert f.ev_libre_cote_effectif() == {"1.0-1.8": (3.0, None)}
+
+
+# ── Le PARI : 1 X 2, Over / Under ────────────────────────────────────
+
+def test_le_pari_accepte_la_NOTATION_DU_COUPON():
+    """« 1 », « X », « 2 » sont ce qu'un parieur écrit. Exiger « home » et
+    « draw » obligerait à connaître le vocabulaire interne du moteur."""
+    assert Filtres(paris=("1", "X", "2")).valider().paris == ("home", "draw",
+                                                              "away")
+
+
+def test_le_pari_accepte_aussi_le_vocabulaire_interne():
+    assert Filtres(paris=("home", "over")).valider().paris == ("home", "over")
+
+
+def test_le_pari_est_normalise_comme_au_REGLEMENT():
+    """⚠️ « Over 2.5 » doit valoir « over ». `clv.settle` lit
+    `outcome_label.split()[0].lower()` : si le filtre découpait autrement, un
+    pari réglé comme gagné ne sortirait pas du filtre « Over »."""
+    assert Filtres(paris=("Over 2.5", "  UNDER 1.5 ")).valider().paris == (
+        "over", "under")
+
+
+def test_un_pari_inconnu_est_REFUSE_pas_ignore():
+    """Ignorer rendrait un lot filtré sur rien, sous un en-tête qui annonce
+    un pari précis."""
+    with pytest.raises(FiltreInvalide) as e:
+        Filtres(paris=("btts",)).valider()
+    assert "Pari inconnu" in str(e.value)
+
+
+def test_le_meme_pari_ecrit_deux_fois_ne_compte_quune_fois():
+    assert Filtres(paris=("1", "home", "Home")).valider().paris == ("home",)
+
+
+def test_le_pari_fait_laller_retour_JSON():
+    f = Filtres(paris=("1", "over")).valider()
+    assert f.en_dict()["outcomes"] == ["home", "over"]
+    assert Filtres.depuis_dict(f.en_dict()).valider().paris == f.paris
+
+
+def test_la_query_string_porte_le_pari_sous_plusieurs_noms():
+    for cle in ("outcome", "outcomes", "outcomes[]", "paris"):
+        assert Filtres.depuis_dict({cle: "1,2"}).valider().paris == ("home",
+                                                                     "away")

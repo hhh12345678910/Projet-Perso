@@ -170,6 +170,7 @@ function parametres(extra) {
   sports.forEach((v) => p.append('sports', v));
   coches('f-books').forEach((v) => p.append('bookmakers', v));
   coches('f-markets').forEach((v) => p.append('markets', v));
+  coches('f-outcomes').forEach((v) => p.append('outcomes', v));
 
   /* ⚠️ L'EV PAR SPORT PART VERS LE SERVEUR, IL N'EST PAS APPLIQUÉ ICI.
    * C'est la seule façon que les KPI, les découpes, la matrice ET le détail
@@ -642,6 +643,12 @@ function enteteExport(d) {
   lignes.push(['Sports', joint(f.sports)]);
   lignes.push(['Bookmakers', joint(f.bookmakers)]);
   lignes.push(['Marchés', joint(f.markets)]);
+  // Le pari retenu change le lot autant qu'un sport : le papier doit le
+  // nommer, et sous le libellé lu à l'écran, pas sous « home ».
+  const nomPari = (v) => ((REFS.outcomes || []).find((o) => o.value === v)
+                          || { libelle: v }).libelle;
+  lignes.push(['Pari', (f.outcomes && f.outcomes.length)
+    ? f.outcomes.map(nomPari).join(', ') : 'tous']);
   if (f.leagues && f.leagues.length) lignes.push(['Compétition', joint(f.leagues)]);
 
   const ev = [];
@@ -1190,6 +1197,8 @@ async function analyser() {
     barres($('g-roi-sport'), d.by_sport, 'roi', 'ROI par sport');
     barres($('g-clv-market'), d.by_market, 'clv', 'CLV par marché');
     barres($('g-roi-market'), d.by_market, 'roi', 'ROI par marché');
+    barres($('g-clv-outcome'), d.by_outcome, 'clv', 'CLV par pari');
+    barres($('g-roi-outcome'), d.by_outcome, 'roi', 'ROI par pari');
     barres($('g-clv-delay'), d.by_delay, 'clv', 'CLV par délai');
     barres($('g-roi-delay'), d.by_delay, 'roi', 'ROI par délai');
     // ⚠️ Le P&L cumulé est en EUROS : il passe son propre formateur d'axe.
@@ -1285,6 +1294,13 @@ async function demarrer() {
   groupeCases($('f-books'), REFS.bookmakers, { labels: REFS.bookmakers_labels });
   groupeCases($('f-markets'), REFS.markets,
     { labels: REFS.markets_labels, courte: true });
+  /* ⚠️ LES LIBELLÉS VIENNENT DU SERVEUR, y compris la notation « 1 X 2 ».
+   * Les écrire ici ferait exister deux vocabulaires pour le même pari, et
+   * l'un des deux finirait par ne plus correspondre à ce que le filtre
+   * envoie au serveur. */
+  groupeCases($('f-outcomes'),
+    (REFS.outcomes || []).map((o) => ({ key: o.value, label: o.libelle })),
+    { courte: true });
   groupeCases($('f-ev-bands'), REFS.ev_bands, { courte: true });
   $('ev-split').addEventListener('change', panneauxEvParSport);
   panneauxEvParSport();

@@ -139,8 +139,32 @@ def _openapi_ev_libre_cote() -> dict:
     }
 
 
+def _openapi_paris() -> dict:
+    """Décrit `outcomes` pour OpenAPI, avec son vocabulaire FERMÉ.
+
+    Déclaré alors que `sports` et `markets` ne le sont pas : ceux-là ont un
+    vocabulaire que `GET /api/filters` rend déjà, celui-ci a en plus une
+    conséquence non évidente — ne cocher que du 1X2 écarte les totals — qui
+    doit se lire là où l'on choisit le paramètre."""
+    from ..analytics.perimetre import ALIAS_PARI, PARIS_ANALYTICS
+    return {
+        "parameters": [{
+            "name": "outcomes", "in": "query", "required": False,
+            "schema": {"type": "array",
+                       "items": {"type": "string",
+                                 "enum": list(PARIS_ANALYTICS)}},
+            "style": "form", "explode": True,
+            "description": (
+                "Paris retenus, en union. Notation du coupon acceptée ("
+                + ", ".join(sorted(ALIAS_PARI)) + "). ⚠️ Ne retenir que des "
+                "paris 1X2 écarte les Over/Under, qui n'en sont pas — et "
+                "réciproquement. Vide = tous."),
+        }],
+    }
+
+
 def _openapi_familles_filtres() -> dict:
-    """Les QUATRE familles réunies : c'est ce que les routes déclarent.
+    """Les familles de filtres fins réunies : ce que les routes déclarent.
 
     Trois sont indexées par sport, la dernière par tranche de cote. Elles
     sont déclarées ensemble parce qu'une route qui en omettrait une aurait
@@ -148,7 +172,8 @@ def _openapi_familles_filtres() -> dict:
     return {"parameters": (_openapi_ev_sport()["parameters"]
                            + _openapi_cote_sport()["parameters"]
                            + _openapi_ev_libre_sport()["parameters"]
-                           + _openapi_ev_libre_cote()["parameters"])}
+                           + _openapi_ev_libre_cote()["parameters"]
+                           + _openapi_paris()["parameters"])}
 
 
 def _openapi_ev_sport() -> dict:
@@ -384,6 +409,8 @@ def creer_app(db_path: Optional[str] = None) -> FastAPI:
                                            "bookmakers[]", "books") or None)
         brut["markets"] = (_liste_multi(request, "market", "markets",
                                         "markets[]") or None)
+        brut["outcomes"] = (_liste_multi(request, "outcome", "outcomes",
+                                         "outcomes[]") or None)
         brut["leagues"] = (_liste_multi(request, "league", "leagues",
                                         "leagues[]", decouper=False) or None)
         brut["ev_bands"] = _liste_multi(request, "ev_band", "ev_bands",

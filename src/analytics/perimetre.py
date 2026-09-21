@@ -42,6 +42,27 @@ SPORTS_ANALYTICS = ("soccer", "tennis")
 #: Les marchés analysés — exactement ceux que `clv.settle` sait régler.
 MARCHES_ANALYTICS = ("h2h", "totals")
 
+#: Les PARIS possibles, marché par marché. FERMÉ, et pris au vocabulaire du
+#: moteur : `live_value` impose littéralement `{"over", "under"}` aux totals,
+#: et `asianodds_live` produit `("home", "draw", "away")` pour le 1X2. Lire
+#: la base à la place ferait apparaître dans l'interface toute saleté qu'une
+#: ligne ancienne contiendrait, sous les mêmes atours qu'un vrai choix.
+PARIS_PAR_MARCHE = {
+    "h2h": ("home", "draw", "away"),
+    "totals": ("over", "under"),
+}
+
+#: L'ordre d'affichage : celui du coupon, 1 X 2 puis Over/Under.
+PARIS_ANALYTICS = tuple(pari for marche in MARCHES_ANALYTICS
+                        for pari in PARIS_PAR_MARCHE[marche])
+
+#: ⚠️ À QUEL MARCHÉ CHAQUE PARI APPARTIENT. L'interface en a besoin pour
+#: DIRE que ne cocher que « 1 » et « X » écarte les Over/Under — un filtre
+#: dont l'effet de bord n'est pas annoncé est un filtre mal compris.
+MARCHE_DU_PARI = {pari: marche
+                  for marche, paris in PARIS_PAR_MARCHE.items()
+                  for pari in paris}
+
 
 # ── Les libellés d'affichage ─────────────────────────────────────────
 
@@ -142,6 +163,23 @@ def ordre_cote() -> tuple:
     return tuple(lab for lab, _, _ in BANDES_COTE)
 
 
+def pari_de(outcome_label) -> str:
+    """Le PARI canonique d'une sélection : « Over 2.5 » → « over ».
+
+    ⚠️ C'EST LA RÈGLE DE `clv.settle`, ET PAS UNE AUTRE. Le règlement lit
+    `outcome_label.split()[0].lower()` pour décider si un total est gagné, et
+    compare le libellé entier pour le 1X2 — les deux coïncident, les paris
+    1X2 n'ayant pas d'espace. Si le filtre lisait autrement, une même ligne
+    pourrait être RÉGLÉE comme « over » et FILTRÉE comme autre chose : deux
+    vérités sur le même pari, dont une invisible.
+
+    `requete.EXPR_PARI` refait ce découpage en SQL, et un test vérifie que
+    les deux rendent le même mot sur le même libellé."""
+    texte = str(outcome_label or "").strip().lower()
+    coupe = texte.find(" ")
+    return texte if coupe < 0 else texte[:coupe]
+
+
 def slug_cote(label) -> str:
     """Le nom d'URL d'une bande de cote : « 1.0-1.8 » → « 1_0_1_8 ».
 
@@ -175,6 +213,27 @@ def slugs_cote() -> dict:
     return out
 
 
+#: ⚠️ LE LIBELLÉ PORTE LA NOTATION DU COUPON. « home » ne se lit pas sur une
+#: grille ; « 1 » si. Au tennis, « 1 » désigne le joueur cité en premier —
+#: l'interface le dit, parce que « domicile » n'y veut rien dire.
+LIBELLE_PARI = {
+    "home": "1 — Domicile",
+    "draw": "X — Nul",
+    "away": "2 — Extérieur",
+    "over": "Over",
+    "under": "Under",
+}
+
+#: Ce qu'un humain écrit vraiment dans une URL ou une case. Refuser « 1 »
+#: obligerait à connaître le vocabulaire interne du moteur pour filtrer sur
+#: une victoire à domicile.
+ALIAS_PARI = {
+    "1": "home", "domicile": "home",
+    "x": "draw", "n": "draw", "nul": "draw",
+    "2": "away", "exterieur": "away", "extérieur": "away",
+}
+
+
 def _libelle(table: dict, valeur) -> str:
     """Le libellé d'une valeur canonique, ou la valeur elle-même.
 
@@ -184,6 +243,17 @@ def _libelle(table: dict, valeur) -> str:
     if valeur in (None, ""):
         return "—"
     return table.get(str(valeur).lower(), str(valeur))
+
+
+def libelle_pari(v) -> str:
+    """« home » → « 1 — Domicile ». Une valeur inconnue reste BRUTE plutôt
+    que de disparaître derrière un « ? » qui n'apprendrait rien."""
+    return _libelle(LIBELLE_PARI, v)
+
+
+def ordre_pari() -> tuple:
+    """L'ordre canonique des paris : celui du coupon."""
+    return PARIS_ANALYTICS
 
 
 def libelle_sport(v) -> str:

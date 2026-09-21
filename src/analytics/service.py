@@ -37,11 +37,12 @@ from pathlib import Path
 from .filtres import Filtres
 from .metriques import (avertissements, clv_de, resume, statut_de,
                         _cellule, _gains)
-from .perimetre import (BANDES_DELAI, BORNES_EV, MARCHES_ANALYTICS,
+from .perimetre import (BANDES_DELAI, BORNES_EV, MARCHE_DU_PARI,
+                        MARCHES_ANALYTICS, PARIS_ANALYTICS,
                         SPORTS_ANALYTICS, bande_delai, canoniser_book,
                         libelle_book, libelle_groupe_book, libelle_marche,
-                        libelle_sport, ordre_delai, slug_cote,
-                        taille_echantillon)
+                        libelle_pari, libelle_sport, ordre_delai, pari_de,
+                        slug_cote, taille_echantillon)
 from .populations import (Population, alias_de, EXPLICATION, EXPOSEES,
                           LIBELLE, LIMITES)
 from .requete import construire
@@ -236,6 +237,11 @@ def valeurs_disponibles(db_path=DB_DEFAUT) -> dict:
             "bookmakers_labels": {b: libelle_groupe_book(b) for b in books},
             "markets": marches,
             "markets_labels": {m: libelle_marche(m) for m in marches},
+            # Le marché de chaque pari voyage AVEC lui : l'interface doit
+            # pouvoir dire que cocher « 1 » et « X » écarte les Over/Under.
+            "outcomes": [{"value": pari, "libelle": libelle_pari(pari),
+                          "market": MARCHE_DU_PARI[pari]}
+                         for pari in PARIS_ANALYTICS],
             "leagues": ligues,
             # Les bandes que l'interface propose en cases à cocher. Elles
             # viennent d'ici et non d'une liste recopiée dans le JavaScript :
@@ -323,6 +329,15 @@ def analyser(db_path=DB_DEFAUT, filtres=None, granularite="semaine") -> dict:
                                lambda r: r["market"] or "?",
                                ordre=list(MARCHES_ANALYTICS),
                                libelle=libelle_marche),
+        # ⚠️ LA DÉCOUPE QUI MANQUAIT. « Est-ce que je suis meilleur sur les
+        # victoires à domicile que sur les nuls ? » ne se lisait nulle part :
+        # `by_market` range les trois ensemble sous « h2h ». Le découpage
+        # passe par `pari_de`, la même règle que le filtre et que le
+        # règlement — trois lectures d'un même mot, une seule définition.
+        "by_outcome": _decouper(lignes, filtres.stake,
+                                lambda r: pari_de(r["outcome_label"]),
+                                ordre=list(PARIS_ANALYTICS),
+                                libelle=libelle_pari),
         "by_odds": _decouper(lignes, filtres.stake,
                              lambda r: _bande_cote(float(r["odd_taken"])),
                              ordre=[l for l, _, _ in _bandes_cote()]),
