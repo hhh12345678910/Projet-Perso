@@ -177,6 +177,15 @@ class UnibetScraper:
                     par_index[i] = self.fetch_listview(sport, tk)
                 except httpx.HTTPError:
                     continue
+                except Exception:
+                    # ⚠️ LE MÊME FILET QUE LA BRANCHE PARALLÈLE, ET POUR LA
+                    # MÊME RAISON. Son commentaire dit déjà « en série ça
+                    # faisait tomber toute la collecte Unibet » — mais la
+                    # branche série ne l'avait jamais reçu. `UNIBET_PARALLEL_
+                    # TERMS=1` est un réglage prévu (ménager le débit Kambi) :
+                    # une seule compétition au JSON illisible y emportait un
+                    # book du canal premium, sans un mot dans le journal.
+                    continue
         else:
             with ThreadPoolExecutor(max_workers=ouvriers) as ex:
                 futs = {ex.submit(self.fetch_listview, sport, tk): i

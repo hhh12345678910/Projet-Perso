@@ -147,3 +147,44 @@ def test_un_reglage_absurde_ne_casse_pas_la_collecte(valeur, monkeypatch):
     res = _Faux(PAYLOADS, RETARDS).fetch_all_events("soccer")
     assert [e["event"]["id"] for e in res["events"]] == [1, 99, 2, 3, 4], (
         f"UNIBET_PARALLEL_TERMS={valeur!r} a changé ou cassé la collecte")
+
+
+def test_une_exception_non_http_ne_tombe_pas_NON_PLUS_EN_SERIE(monkeypatch):
+    """⚠️ LE JUMEAU MANQUANT DU TEST CI-DESSUS, ET LE TROU QU'IL LAISSAIT.
+
+    Le test précédent ne couvre que la branche PARALLÈLE : il force
+    `UNIBET_PARALLEL_TERMS=6`. La branche série n'avait donc aucun filet
+    contre une exception non-HTTP, alors que le commentaire de sa voisine
+    annonçait déjà « en série ça emportait toute la collecte Unibet ».
+
+    `=1` n'est pas un réglage théorique : c'est celui qu'on pose pour ménager
+    le débit Kambi, qui a déjà coûté la désactivation des trois jumeaux. Un
+    book du canal premium ne doit pas s'éteindre sur une compétition au JSON
+    illisible, dans l'une ou l'autre des deux branches."""
+    class _Pire(_Faux):
+        def fetch_listview(self, sport="soccer", path_suffix=""):
+            if path_suffix == "france":
+                raise ValueError("JSON illisible")
+            return super().fetch_listview(sport, path_suffix)
+
+    monkeypatch.setenv("UNIBET_PARALLEL_TERMS", "1")
+    res = _Pire(PAYLOADS, RETARDS).fetch_all_events("soccer")
+    assert [e["event"]["id"] for e in res["events"]] == [1, 99, 3, 4], (
+        "seule « france » doit manquer, pas toute la collecte")
+
+
+def test_les_DEUX_branches_traitent_une_panne_a_lIDENTIQUE(monkeypatch):
+    """Deux branches qui ne se comportent pas pareil, c'est un réglage qui
+    change silencieusement la donnée collectée. Le test le verrouille."""
+    class _Pire(_Faux):
+        def fetch_listview(self, sport="soccer", path_suffix=""):
+            if path_suffix == "france":
+                raise ValueError("JSON illisible")
+            return super().fetch_listview(sport, path_suffix)
+
+    resultats = {}
+    for ouvriers in ("1", "6"):
+        monkeypatch.setenv("UNIBET_PARALLEL_TERMS", ouvriers)
+        res = _Pire(PAYLOADS, RETARDS).fetch_all_events("soccer")
+        resultats[ouvriers] = [e["event"]["id"] for e in res["events"]]
+    assert resultats["1"] == resultats["6"], resultats
