@@ -93,6 +93,11 @@ class NapoleonScraper:
         retry=retry_if_exception(_is_retryable),
         stop=stop_after_attempt(3),
         wait=wait_exponential(multiplier=1, min=1, max=8),
+        # ⚠️ `reraise` N'EST PAS UN DÉTAIL. Sans lui, tenacity emballe l'échec
+        # final dans une `RetryError`, qui n'est PAS une `httpx.HTTPError` :
+        # tous les `except httpx.HTTPError` en aval la laissent passer, et un
+        # filet écrit pour sauter UNE requête perd alors TOUT le lot.
+        reraise=True,
     )
     def fetch_by_date(self, sport: str = "soccer", *, days_ahead: int = 4) -> dict:
         """Fetch every active prematch event of a sport (with 1X2 odds) in one

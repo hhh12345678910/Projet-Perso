@@ -83,6 +83,11 @@ class SmarketsScraper:
         # Longer max wait so 429s get a real cool-down — the public Smarkets
         # rate limit resets on a ~30 s window.
         wait=wait_exponential(multiplier=2, min=2, max=30),
+        # ⚠️ `reraise` N'EST PAS UN DÉTAIL. Sans lui, tenacity emballe l'échec
+        # final dans une `RetryError`, qui n'est PAS une `httpx.HTTPError` :
+        # tous les `except httpx.HTTPError` en aval la laissent passer, et un
+        # filet écrit pour sauter UNE requête perd alors TOUT le lot.
+        reraise=True,
     )
     def _get(self, path: str, params: dict | None = None) -> dict:
         if self._delay:

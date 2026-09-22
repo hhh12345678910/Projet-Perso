@@ -267,6 +267,11 @@ class PinnacleScraper:
         retry=retry_if_exception(_is_retryable),
         stop=stop_after_attempt(3),
         wait=wait_exponential(multiplier=1, min=1, max=8),
+        # ⚠️ `reraise` N'EST PAS UN DÉTAIL. Sans lui, tenacity emballe l'échec
+        # final dans une `RetryError`, qui n'est PAS une `httpx.HTTPError` :
+        # tous les `except httpx.HTTPError` en aval la laissent passer, et un
+        # filet écrit pour sauter UNE requête perd alors TOUT le lot.
+        reraise=True,
     )
     def _get(self, path: str, params: dict | None = None) -> list | dict:
         if self._delay:
