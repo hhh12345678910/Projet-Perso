@@ -1,7 +1,25 @@
 # Valuebet — état du projet
 
 Document de reprise. À lire en premier pour reprendre le travail sans
-redécouvrir le contexte. Dernière mise à jour : 21/08/2026.
+redécouvrir le contexte. Dernière mise à jour : 22/09/2026.
+
+**Nouveau (22/09) — voir §27, qui couvre tout le 12 au 22/09 :**
+- §27.3 : **le dashboard d'analyse est EN LIGNE en permanence** —
+  https://analytics.equodds.com, HTTPS, mot de passe, plus aucun tunnel SSH.
+  L'API n'a **aucune authentification propre** (`exiger_acces` est une fonction
+  vide) : Caddy est la seule porte, et `8899` doit rester sur `127.0.0.1`.
+- §27.4 : **règlement tennis 49,8 % → 81,9 %** (1 305 résultats récupérés) et
+  **+180 en football**. Total 14 509 → 16 465. Juin-juillet en tennis est
+  irrécupérable ; le football plafonne vers 82-84 %.
+- §27.8 : ⛔ **« retirer le breather » ne sert à rien** — la collecte Ladbrokes
+  est saine (14 879 lots sur 14 880, zéro échec) et **97,4 % de ses prix sont
+  encore là à 30 s**. Le « 1 sur 5 » reste INEXPLIQUÉ.
+- §27.9 : deux mines désamorcées — `reraise=True` sur les quatorze scrapers
+  (une compétition en 429 faisait tomber les quatre-vingts) et le filet
+  manquant de la branche série d'Unibet.
+- §27.11 : **la sélection manuelle vaut +4,9 points de CLV, uniquement dans la
+  bande d'EV 5-8 %** — dont seuls 7,6 % sont examinés.
+- §27.10 : ce qui reste ouvert, dont **le hockey qui ne produit aucune ligne**.
 
 **Nouveau (21/08, seconde session) :**
 - §21.16 : 🔴 **la couverture est MESURÉE : 12,3 %.** Un catalogue limité aux
@@ -446,7 +464,7 @@ est **définitivement perdu**.
 
 ### 4.1 Les sondes de `scripts/` — aucune n'était documentée ici
 
-les sondes existent (39 modules au 12/09), **aucune n'apparaissait dans ce document** : elles se
+les sondes existent (**44 modules au 22/09**, 39 au 12/09), **aucune n'apparaissait dans ce document** : elles se
 redécouvraient par `ls`, ou pas du tout. Toutes se lancent en
 
 > ⚠️ **Toujours faux pour deux sondes** : `ev_outliers` prend `--help` pour un
@@ -766,6 +784,10 @@ de résultat). L'équivalent accessible existe déjà dans le système : les
 ---
 
 ## 8. Points ouverts au moment de la rédaction
+
+> ⚠️ **CETTE SECTION DATE DE FIN JUILLET.** Les points ouverts À JOUR sont au
+> **§27.10**. Ceux qui suivent sont conservés pour l'historique — plusieurs
+> sont résolus depuis, et aucun n'a été réécrit.
 
 1. **Vérifier au matin du 31/07 que le tennis Circus n'a pas décroché la
    nuit.** `ls -l data/circus/ && date -u` — les deux fichiers doivent avoir
@@ -7023,6 +7045,11 @@ variante dangereuse pour confirmer que le test la fait tomber.
 > Il n'est plus interrogé et ne tient donc plus aucun chemin critique. Le
 > goulot du fetch est désormais **Ladbrokes**. Le point 4 ci-dessous n'a
 > plus d'objet.
+>
+> **Mesuré le 21/09 sur 14 880 lots** (§27.8) : Ladbrokes tient le chemin
+> critique **91 % du temps**, pour **1,9 s par lot — 42 % du temps de fetch**.
+> Cause : `fetch_all_meetings` émet une requête par compétition, jusqu'à 80,
+> **en série**. Cycle médian 8,0 s, dont 77 % de fetch.
 
 4. **EliteSports**, nouveau chemin critique du fetch (43 %).
 5. **`tools/line_speed.py` est cassé** depuis l'écriture parcimonieuse : il
@@ -7706,3 +7733,309 @@ avant tout P&L par compte.
 
 En revanche, la crainte d'un défaut de rattachement est **levée** : 2 699 clics,
 2 699 rattachés, zéro orphelin. `backfill-played-bets` n'a rien à faire.
+
+## 27. Sessions du 12 au 22/09 — l'Analytics de bout en bout, les résultats récupérés, deux mines désamorcées
+
+> Ce document s'arrêtait au 08/09 (§26). Tout ce qui suit était absent : quatre
+> phases d'Analytics, sa mise en ligne permanente, la récupération des
+> résultats, et deux défauts de collecte trouvés en enquêtant sur autre chose.
+
+### 27.1 Ce qui existe maintenant et n'existait pas le 08/09
+
+| | État au 22/09 |
+|---|---|
+| **Système d'analyse** | `src/analytics/` (couche), `src/analytics_api/` (FastAPI, lecture seule), `src/analytics_ui/` (interface web) |
+| **Accès** | **https://analytics.equodds.com**, permanent, HTTPS, mot de passe. Plus aucun tunnel SSH |
+| **Service** | `valuebet-analytics.service`, `127.0.0.1:8899`, base en lecture seule |
+| **Reverse proxy** | Caddy 2.11.4, gabarit versionné (`scripts/Caddyfile.in` + `scripts/setup-caddy.sh`) |
+| **Sondes** | 44 modules dans `scripts/` (39 au 12/09), dont `survie_cote` |
+| **Suite de tests** | **2 584 tests**, 2 577 passés, 4 ignorés, 3 échecs antérieurs |
+
+⚠️ **AUCUNE MIGRATION DE BASE, AUCUN `ALTER`, AUCUNE ÉCRITURE.** Tout
+l'Analytics est en lecture seule sur le schéma existant. C'était la condition
+posée, elle n'a jamais été levée.
+
+### 27.2 L'Analytics — quatre phases, une seule contrainte
+
+`4bdec12` (couche) → `76c16bf` (API) → `46b43f0` (interface) → `8055665`
+(backtest et segmentation). Trois règles structurent tout :
+
+1. **Aucune valeur utilisateur n'entre dans une chaîne SQL.** Ce qui varie est
+   le NOMBRE de marqueurs `?`, jamais leur contenu (`analytics/requete.py`).
+2. **Un filtre hors périmètre est REFUSÉ, jamais ignoré.** Recevoir zéro ligne
+   sous un en-tête normal est le mode de panne du projet (§11) ; un sport ou un
+   marché inconnu rend un 400 avec le motif.
+3. **La déduplication est obligatoire.** `event_key` contient l'HEURE du coup
+   d'envoi : un match de tennis peut compter **43 fois** sans elle. La clé
+   analytique est `équipes + jour + marché + pari + ligne`, jamais `event_key`.
+
+⚠️ **`sigma_roi` et `sigma_clv` sont des statistiques t, pas des écarts-types**
+(`analytics/metriques.py`). Les lire comme des σ ferait conclure l'inverse.
+
+⚠️ **LE TROU DE DÉVIGAGE.** La CLV se calcule contre `clv_snapshots.fair_odd`
+(clôture DÉVIGUÉE), jamais contre `pinnacle_odd`. **100 % de juin et 70 % de
+juillet ont un `fair_odd` NULL** : toute analyse remontant avant le 01/08
+mesure un sous-ensemble non aléatoire.
+
+### 27.3 Le dashboard est PERMANENT — et comment il l'est devenu
+
+`e0d27e1` pose `scripts/Caddyfile.in` et `scripts/setup-caddy.sh`. Le fichier
+vit dans le dépôt et le script le RÉALISE ; `--check` compare ce qui tourne à
+ce que le dépôt produirait. C'est la leçon de `valuebet-analytics.service`,
+écrit à la main sur la VM et que `setup.sh --check` ne verra jamais dériver.
+
+**Pourquoi un reverse proxy et pas une écoute publique :** `analytics_serve.py`
+refuse de se lier hors de la boucle locale sans `--public`, et ce garde n'est
+pas une commodité — `analytics_api.exiger_acces` est une **fonction vide**.
+Exposer l'API telle quelle publierait sans mot de passe tout l'historique des
+détections, des paris joués et des résultats. Caddy est la seule porte.
+
+Vérifié le 20/09 : `401` sans mot de passe, `200` avec, `8899` toujours en
+`127.0.0.1` seul, `--check` « conforme au dépôt », service `enabled`.
+
+> ⚠️ **UNE PANNE À RETENIR — `caddy validate` PROVISIONNE.** Il ne lit pas la
+> configuration, il instancie ses modules : lancé sous `sudo`, il crée
+> `/var/log/caddy/analytics.log` appartenant à **root**. Le service tourne sous
+> l'utilisateur `caddy` et meurt alors sur « permission denied », avec une
+> configuration déclarée valide deux lignes plus haut. `0bc7f11` reprend la
+> propriété APRÈS la validation, retire les `|| true` qui masquaient l'échec du
+> `chown`, et fait afficher `journalctl` quand le démarrage échoue.
+
+### 27.4 Les résultats récupérés — tennis 49,8 % → 81,9 %
+
+**Le bug de la classe tennis (`7bcb8e5`).** `bind_results` estampillait le
+marqueur de classe déduit de la ligue sur NOS noms, pour tous les sports ; seul
+`parse_apifootball_results` le reflétait côté source. Au tennis le marqueur ne
+tombait donc que d'un côté, et `team_similarity` rendait **0,0 dur**.
+
+`SPORTS_A_CLASSE_SYMETRIQUE = ("soccer",)` : la classe n'est posée que si la
+source du sport la porte. **1 305 résultats récupérés**, règlement tennis
+**49,8 % → 81,9 %**.
+
+**Les prolongations football (`7f9855e`).** API-Football renseigne `goals` et
+`score.fulltime` sans dire lequel comprend les prolongations. Règle retenue :
+si `goals == fulltime + extratime`, alors `fulltime` EST le score à 90 minutes
+et le résultat est utilisable ; sinon le cas est compté
+(`prolongation_ambigue`) et écarté. **+180 résultats prouvables**, zéro
+supposition.
+
+Total sur la session du 20/09 : **14 509 → 16 465 résultats**.
+
+> ⚠️ **JUIN-JUILLET EN TENNIS EST IRRÉCUPÉRABLE.** Le ratio incomplet/double
+> croît de façon monotone avec l'âge (0,65 → 0,85 → 1,03 → **2,53**). Ne pas y
+> dépenser une session de plus.
+
+> ⚠️ **LE FOOTBALL PLAFONNE VERS 82-84 %.** Mesuré : **74 % de l'écart restant
+> est une absence réelle de source**, pas un défaut d'appariement. Une table
+> d'alias/acronymes a été construite puis **rejetée** : 1,1 % de gain pour un
+> faux positif avéré (`AIK` ←→ `Al-Ittihad Kalba`).
+
+### 27.5 Les jumeaux Kambi, fusionnés dans l'analyse
+
+Unibet, Scooore, 711 et Bingoal servent le **même flux Kambi** — seul Unibet
+est scrapé, les trois autres sont désactivés « anti rate-limit » depuis
+`orchestration.fetch_all_parallel`. Les garder séparés dans l'Analytics faisait
+dépendre le résultat du jumeau coché, pour un prix identique, et éclatait les
+effectifs en quatre lots trop petits.
+
+`b6ec384` : `GROUPES_JUMEAUX` est dérivé de `reference.KAMBI_BOOKS` (jamais
+recopié), cocher n'importe lequel des quatre déplie le groupe entier, et la
+découpe les rassemble sous « Unibet / Scooore / 711 / Bingoal ».
+
+⚠️ **AUCUN DOUBLE COMPTAGE N'ÉTAIT POSSIBLE, ET C'EST IMPORTANT DE LE SAVOIR.**
+La clé de déduplication SQL ne contient PAS le book : sélectionner plusieurs
+books n'a jamais pu compter deux fois la même opportunité. Le représentant est
+la meilleure cote.
+
+### 27.6 Le `/scan` et le message « 0 joué »
+
+`dd3f9b4`, deux défauts distincts dans `bot_listener.py` :
+
+1. **Le `/scan` du canal premium ignorait les books coupés.** Le filtre par
+   book est maintenant appliqué **AVANT** l'élection du meilleur prix — l'ordre
+   compte : filtrer après aurait élu un représentant chez un book muet, puis
+   l'aurait jeté, perdant l'opportunité au lieu de la reporter sur un book
+   actif.
+2. **« 0 joué » mentait.** Un seul compteur confondait « déjà joué »,
+   « introuvable » et « erreur ». Trois compteurs distincts, et
+   `libelle_scan_play` rend « ✅ N joués » / « ↩️ déjà joué · N paris » /
+   « ⚠️ aucun enregistré ».
+
+### 27.7 Les filtres fins de l'Analytics
+
+| Commit | Ce qu'il ajoute |
+|---|---|
+| `fb71835` | Tranches de cote filtrables **par sport** ; cinq populations nommées en français (`BET` retiré, c'était un alias de `CLICKED`) |
+| `4ae4e44` | Bornes libres d'EV **par sport** |
+| `bbf9d80` | Interface : délai en **minutes ou heures**, panneaux par sport, **export PDF** (`window.print()` + `@media print`, aucune dépendance téléchargée) |
+| `b6653b9` | EV réglable **par tranche de cote** |
+| `b868287` | Filtre et découpe **par pari** — 1, X, 2, Over, Under |
+
+⚠️ **L'EV PAR TRANCHE DE COTE REMPLACE LA RÈGLE GÉNÉRALE, ELLE NE S'Y AJOUTE
+PAS.** Une clause cumulée en ET aurait rendu tout assouplissement INVISIBLE :
+demander « 3 % sous 1,80 » alors que la borne globale vaut 5 % n'aurait rendu
+aucune ligne de plus, et rien ne l'aurait dit. `clause_ev_libre` enveloppe donc
+le repli. Priorité : **tranche de cote → sport → global**.
+
+⚠️ **LE MOT « PARI » A UNE SEULE DÉFINITION, POUR TROIS LECTEURS.**
+`clv.settle` règle en lisant `outcome_label.split()[0].lower()` ;
+`requete.EXPR_PARI` refait ce découpage en SQL ; `perimetre.pari_de`
+l'applique à la découpe. Un découpage différent ferait qu'une ligne réglée
+« over » ne sortirait pas du filtre « Over ». Un test compare les trois sur le
+même corpus.
+
+**La découpe `by_outcome` répond à une question qui n'était lisible nulle
+part** : `by_market` range les trois paris 1X2 sous une seule ligne « h2h ».
+
+> ⚠️ **Ne cocher que du 1X2 écarte les Over/Under**, et réciproquement. C'est
+> correct — un Over n'est ni un 1, ni un X, ni un 2 — mais l'interface doit le
+> dire, sinon un total qui rétrécit se lit comme une panne.
+
+**Deux pièges d'interface corrigés, tous deux invisibles aux tests de
+présence :**
+
+- `4844763` : les fichiers statiques sont servis avec `Cache-Control:
+  no-cache`. Sans lui, le navigateur mélangeait l'ancien JavaScript et le
+  nouveau HTML — une page hybride qui n'existe dans aucune version.
+- `b868287` : **aucun identifiant HTML ne peut être en double.** Un bloc inséré
+  deux fois donne deux éléments de même `id` ; `getElementById` rend toujours
+  le premier, et le second reste vide **pour toujours, sans erreur ni trace en
+  console**. Aucun test de présence ne voit ça : ils cherchent une occurrence
+  et en trouvent une.
+
+### 27.8 Ladbrokes « 1 fois sur 5 » — ce que l'enquête a RÉFUTÉ
+
+Symptôme rapporté : « je ne prends la cote Ladbrokes qu'une fois sur cinq ».
+Hypothèse initiale : un rate-limit qui ferait échouer la collecte. **Fausse**,
+et c'est la mesure qui l'a dit.
+
+**Mesure 1 — la collecte (`scripts.book_latency`, 14 880 lots) :**
+
+| | |
+|---|---|
+| Lots où Ladbrokes a répondu | **14 879 / 14 880** |
+| Échecs (`skipped:`) | **0** — contre 5 pour GoldenPalace, 7 pour StarCasino |
+| Cotes par cycle | football **~2 031**, tennis **~382**, stables |
+
+**Mesure 2 — le coût, lui, est réel.** Ladbrokes tient le **chemin critique du
+fetch 91 % du temps** : médiane 4,0 s, p90 7,4 s, max 211,4 s, **1,9 s par lot
+(42 % du temps de fetch)**. Cause lue dans le code : `fetch_all_meetings` émet
+1 requête de menu **plus une par compétition, SÉQUENTIELLEMENT**, plafonné à
+80. Cycle médian **8,0 s**, dont 77 % de fetch.
+
+**Mesure 3 — la fraîcheur (`scripts.survie_cote`, 30 j, 689 courbes) :**
+
+| Palier | Prix Ladbrokes perdus |
+|---|---|
+| 15 s | 1,5 % |
+| **30 s** | **2,6 %** |
+| 60 s | 8,4 % |
+| 120 s | 14,5 % |
+| 300 s | 30,3 % |
+
+À 30 s — la fenêtre de réaction déclarée — **97,4 % des prix sont encore là**.
+Ladbrokes est au milieu du peloton : golden_palace 1,7 %, betfirst 2,1 %,
+ladbrokes 2,6 %, unibet 2,8 %, starcasino 3,5 %, circus 4,8 %, napoleon 5,9 %.
+
+> ⛔ **RETIRER LE BREATHER NE SERT À RIEN, ET C'ÉTAIT L'HYPOTHÈSE DE DÉPART.**
+> Deux raisons, dans cet ordre. **Le breather ne vieillit pas le prix
+> annoncé** : le `time.sleep` s'exécute APRÈS l'alerte (`main.py:1569`), la
+> cote part avec au plus 8 s d'âge ; il ne retarde que la DÉCOUVERTE de
+> l'opportunité suivante. Et surtout : le gagner ferait passer la perte de
+> 2,6 % à environ 3,5 % — **moins d'un point**, contre un échec décrit à 80 %.
+> Deux ordres de grandeur. `BREATHER` reste réglable dans `.env`
+> (`scan-daemon.sh:22`, défaut 10) ; il n'y a simplement aucune raison d'y
+> toucher.
+
+**Ce qui reste, et que seule l'observation peut trancher.** Le profil des
+alertes ne montre rien d'anormal côté marchés — **94,8 % de 1X2**, totals
+uniquement en ligne 2.5. Mais Ladbrokes détecte à **cote moyenne 3,78 / EV
+11,52 %** dans des **4ᵉ et 5ᵉ divisions** (Serie D, Tercera División, 4. Liga
+tchèque, 3ᵉ division norvégienne, 2ᵉ Amateur belge), là où Unibet (3,52 /
+10,32 %) sort aussi de la Champions League et de la Pro League.
+
+⚠️ **LA BASE NE PEUT PAS RÉPONDRE À LA SUITE.** `odds_history` enregistre ce
+que voit l'**API du scraper**, jamais ce que le **site affiche à un utilisateur
+connecté**. Si les deux divergent — marché suspendu, plafond de mise, cote non
+servie — aucune requête ne le verra. La prochaine étape est une observation
+manuelle sur dix alertes : marché absent, cote plus basse, ou mise refusée.
+
+### 27.9 Deux mines désamorcées dans les scrapers
+
+**`6c2c81f` — `reraise=True` sur les quatorze scrapers.** `@retry(...)` sans
+lui ne relance pas l'échec final : tenacity l'emballe dans une
+`tenacity.RetryError`, **qui n'hérite pas de `httpx.HTTPError`** (vérifié sur
+tenacity 9.1.4). Tous les filets du projet attrapent des erreurs HTTP — ils la
+laissaient passer.
+
+Conséquence mesurée par un test : `fetch_all_meetings` promet « *Best-effort:
+HTTP errors on a single meeting are skipped* » et parcourt 80 compétitions.
+**Une seule qui renvoyait 429 trois fois de suite faisait tomber les
+quatre-vingts**, en emportant celles déjà collectées, et le journal n'écrivait
+qu'un « Ladbrokes 48.0s skipped: RetryError[...] » sans nommer la fautive.
+
+> ⚠️ **CE N'EST PAS UNE HYPOTHÈSE — LE PROJET L'A DÉJÀ VÉCU SUR PINNACLE.** Un
+> 503 de maintenance traversait `fetch_pinnacle_quotes` sans poser le drapeau
+> d'échec, et le cycle concluait « Pinnacle sans événement (hors-saison ?) » —
+> sur du football, un 4 août. `orchestration._unwrap_retry` avait réparé ça au
+> point d'appel ; `reraise=True` le règle à la source. Les deux se complètent :
+> une exception qui n'est pas une `RetryError` traverse `_unwrap_retry`
+> inchangée, et deux tests verrouillent le tri 403/429/5xx qui décide du recul
+> Pinnacle.
+
+**`e428f6d` — le filet manquant d'Unibet.** `fetch_all_events` a deux
+branches. La parallèle attrape les exceptions non-HTTP (JSON illisible) et
+saute la compétition ; la **série** (`UNIBET_PARALLEL_TERMS=1`) ne les
+attrapait pas. Le commentaire de la branche parallèle annonçait pourtant le
+défaut — « *en série ça faisait tomber toute la collecte Unibet* » — mais le
+filet n'avait jamais été posé de ce côté, et le test qui le couvre force `=6`.
+**Le trou était invisible par construction.**
+
+> ⚠️ **LE GARDE-FOU ANTI-RETOUR A LUI-MÊME FAILLI ÊTRE AVEUGLE.** Le test qui
+> exige `reraise=True` partout était ancré sur `\n    )` : il ne voyait pas les
+> **quatre** décorateurs écrits sur une seule ligne — exactement ceux qui
+> portaient le défaut. Il compte maintenant les parenthèses, et un test vérifie
+> qu'il voit les deux mises en page. Un garde-fou aveugle là où le défaut se
+> trouve ne garde rien.
+
+### 27.10 Ce qui reste ouvert au 22/09
+
+1. 🔴 **Le « 1 sur 5 » de Ladbrokes n'est PAS expliqué.** Collecte saine,
+   prix stables, marchés standards. Seule une observation manuelle sur dix
+   alertes peut trancher (§27.8).
+2. **Le prédicat de retry manque à quatre scrapers** (bingoal, scooore, 711,
+   **Unibet**) : ils réessaient sur n'importe quelle exception, y compris un
+   404 ou un JSON illisible, où réessayer ne peut pas aider — ~3 s perdues à
+   chaque fois. **Non corrigé faute de mesure** : sur Unibet, un réessai
+   récupère parfois un blocage WAF passager, et les échecs par compétition sont
+   avalés par le `continue`, donc invisibles. Instrumenter (`before_sleep`)
+   avant de décider.
+3. **Ladbrokes est le chemin critique du fetch à 91 %.** Paralléliser ses 80
+   requêtes ferait passer le cycle de 8,0 s à ~3,5 s. Aucun rapport avec le
+   « 1 sur 5 » ; à ne faire que si la durée de cycle redevient un sujet.
+4. ⚠️ **Deux sports par cycle, pas trois.** 14 880 lots pour 7 440 cycles :
+   `scan-daemon.sh` prévoit `soccer,tennis,hockey`, le hockey ne produit
+   aucune ligne de book. Vérifier `SPORT_LIST` dans `.env`. **Non élucidé.**
+5. **Les trois mêmes tests en échec** qu'au 03/09 :
+   `test_corrections::test_the_curve_runs_to_kickoff_not_to_alignment`,
+   `test_routage_branche::test_le_bouton_jouer_reste_sur_le_premium`,
+   `test_sondes_help[ev_outliers]`.
+6. **`paris.xlsx` contient 18 doublons** (0,57 % de 3 148) — mesuré, jugé
+   non rentable à corriger.
+
+### 27.11 Le résultat d'analyse qui vaut le plus
+
+Mesuré sur la porte premium : **la sélection manuelle vaut ~+4,9 points de
+CLV, et exclusivement dans la bande d'EV 5-8 %.**
+
+| Contrôle | Écart | t |
+|---|---|---|
+| À heure contrôlée | **+4,97** | 3,65 |
+| Stratifié par délai | **+4,91** | 4,67 |
+| Test des signes | 6/6 | p = 0,031 |
+
+Or seulement **7,6 %** de cette bande est examinée, contre **46 %** de la
+bande 8-15 % — où le choix manuel n'ajoute rien de mesurable. **Déplacer
+l'attention de la seconde vers la première est le levier le plus rentable qui
+reste identifié.** Vérifiable dans le dashboard : `ev_min=5`, `ev_max=8`, puis
+comparer les populations « Cliqué » et « Parié ».
