@@ -94,8 +94,8 @@ from src.main import _EV_BUCKET_ORDER, _ev_bucket  # noqa: E402
 # fois en silence. Elles ont donc été DÉPLACÉES vers `src/analytics/`, sans
 # une virgule de changement, et sont réimportées ici sous leur nom d'origine :
 # tout ce qui les importait depuis ce module continue de marcher.
-from src.analytics.metriques import (_cellule, _gains,  # noqa: E402,F401
-                                     _vecteurs)
+from src.analytics.metriques import (SEUIL_EFFECTIF,  # noqa: E402,F401
+                                     _cellule, _gains, _vecteurs)
 from src.analytics.populations import (FENETRE_MORTE,  # noqa: E402,F401
                                        MI_TEMPS, _alertable,
                                        _raison_non_alertable)
@@ -236,7 +236,17 @@ def _bande_clv(row) -> str:
 #: pire qu'absent : il désigne le mauvais moment de la journée, et c'est sur ce
 #: moment-là qu'on agirait. `zoneinfo` gère le passage à l'heure d'hiver, ce
 #: qu'un décalage fixe ne ferait pas sur une fenêtre qui traverse octobre.
-FUSEAU = os.getenv("TZ_RAPPORT", "Europe/Brussels")
+FUSEAU_DEFAUT = "Europe/Brussels"
+
+
+def _fuseau() -> str:
+    """Le fuseau du rapport, lu À L'APPEL.
+
+    ⚠️ Pas à l'import : `main()` charge `.env` APRÈS l'import du module
+    (`load_env_file`), donc une constante lue à l'import ignorerait un
+    `TZ_RAPPORT` posé dans `.env` — le piège du §20.12, « lire
+    l'environnement à l'import fige la configuration »."""
+    return os.getenv("TZ_RAPPORT", FUSEAU_DEFAUT)
 SANS_ENVOI = "non notifié"
 
 
@@ -257,7 +267,7 @@ def _bande_heure(row) -> str:
     if t is None:
         return SANS_ENVOI
     from zoneinfo import ZoneInfo
-    return f"{datetime.fromtimestamp(t, ZoneInfo(FUSEAU)).hour:02d} h"
+    return f"{datetime.fromtimestamp(t, ZoneInfo(_fuseau())).hour:02d} h"
 
 
 ORDRE_HEURE = [f"{h:02d} h" for h in range(24)] + [SANS_ENVOI]
@@ -326,73 +336,216 @@ def _bande_jour(row) -> str:
     if t is None:
         return SANS_HORAIRE
     from zoneinfo import ZoneInfo
-    return JOURS[datetime.fromtimestamp(t, ZoneInfo(FUSEAU)).weekday()]
+    return JOURS[datetime.fromtimestamp(t, ZoneInfo(_fuseau())).weekday()]
+
+
+def _date_locale(row) -> "str | None":
+    """La date du MATCH, à l'heure locale — celle qui décide du jour."""
+    t = _coup_d_envoi(row)
+    if t is None:
+        return None
+    from zoneinfo import ZoneInfo
+    return datetime.fromtimestamp(t, ZoneInfo(_fuseau())).date().isoformat()
+
+
+def _cle_match(row) -> tuple:
+    """Le match d'une opportunité : l'UNITÉ D'OBSERVATION du test.
+
+    ⚠️ Pas le pari. Plusieurs opportunités d'un même match (1X2, over 2.5,
+    over 3.5…) ont des CLV corrélées : la ligne de Pinnacle bouge pour tout le
+    match à la fois. Les compter comme indépendantes sous-estime l'écart-type,
+    et un test qui se croit sur 1 300 observations n'en a que 1 000."""
+    if row["home"] and row["away"]:
+        return ((row["home"] or "").lower(), (row["away"] or "").lower(),
+                (row["start_time"] or "")[:10])
+    return ("clé", str(row["event_key"] if "event_key" in row.keys() else ""))
+
+
+def _clv_par_groupe(rows: list, cle_de) -> list:
+    """La CLV moyenne de chaque groupe (match ou journée) : une valeur par groupe.
+
+    Un groupe sans aucune clôture n'a pas de CLV et n'est pas compté."""
+    groupes: dict = defaultdict(list)
+    for r in rows:
+        v = r["closing_fair_odd"]
+        if v and float(v) > 0:
+            groupes[cle_de(r)].append(
+                clv_pct(float(r["odd_taken"]), float(v)) * 100.0)
+    return [sum(x) / len(x) for x in groupes.values()]
+
+
+#: Quantiles de Student à 97,5 % — pour que 10 journées ne soient pas jugées
+#: au seuil de 10 000 paris. On prend le degré de liberté TABULÉ juste en
+#: dessous du vrai : le seuil n'est jamais plus indulgent que la vérité.
+_T975 = ((1, 12.71), (2, 4.30), (3, 3.18), (4, 2.78), (5, 2.57), (6, 2.45),
+         (7, 2.36), (8, 2.31), (9, 2.26), (10, 2.23), (12, 2.18), (15, 2.13),
+         (20, 2.09), (25, 2.06), (30, 2.04), (40, 2.02), (60, 2.00),
+         (120, 1.98))
+
+
+def _seuil_student(ddl: int) -> float:
+    seuil = 1.96
+    for d, q in reversed(_T975):
+        if ddl >= d:
+            return q if ddl < 1000 else seuil
+    return float("inf")
+
+
+def _contraste_par_sport(par_sport: dict, unite) -> "dict | None":
+    """Δ CLV week-end − semaine, À SPORT CONSTANT, en groupes indépendants.
+
+    Chaque sport est comparé à lui-même (week-end contre semaine), puis les
+    écarts sont moyennés, pondérés par le nombre de groupes du sport. Le
+    week-end ne contient pas la même part de football que la semaine :
+    comparer les deux lots bruts mesurerait autant la COMPOSITION que le jour.
+
+    `unite` rend la clé du groupe (match, ou journée) : c'est elle qui fait
+    l'observation, pas le pari."""
+    strates = []
+    for we, se in par_sport.values():
+        a, b = _clv_par_groupe(we, unite), _clv_par_groupe(se, unite)
+        if len(a) < 2 or len(b) < 2:
+            continue
+        v = st.variance(a) / len(a) + st.variance(b) / len(b)
+        strates.append((len(a) + len(b), st.mean(a) - st.mean(b), v,
+                        len(a), len(b)))
+    if not strates:
+        return None
+    n = sum(x[0] for x in strates)
+    delta = sum(x[0] / n * x[1] for x in strates)
+    var = sum((x[0] / n) ** 2 * x[2] for x in strates)
+    n_we, n_se = sum(x[3] for x in strates), sum(x[4] for x in strates)
+    return {"delta": delta, "t": (delta / var ** 0.5 if var > 0 else None),
+            "n_we": n_we, "n_se": n_se,
+            "seuil": _seuil_student(min(n_we, n_se) - 1)}
 
 
 def _bloc_week_end(opp: list, stake: float) -> None:
-    """Le week-end contre la semaine — UNE comparaison, posée AVANT de regarder.
+    """Le week-end contre la semaine : UN test qui décide, le reste décrit.
 
-    ⚠️ Pourquoi un bloc à part alors que « chaque bande contre le reste » teste
-    déjà les sept jours : ce test-là compare chaque jour seul, avec un seuil de
-    Bonferroni à sept comparaisons. L'hypothèse de l'utilisateur est UNE seule
-    comparaison, posée avant la mesure (samedi + dimanche contre lundi →
-    vendredi) : elle se teste au seuil simple de 1,96, sans correction.
-    Regarder les sept jours PUIS choisir la coupure la plus flatteuse serait
-    l'erreur du §9 — cent hypothèses cherchées après coup ne valent rien.
+    ⚠️ UN SEUL TEST PORTE UN ✔, ET C'EST VOULU. La première version marquait
+    au seuil simple jusqu'à dix lignes (TOUS, chaque sport, CLV et ROI) :
+    simulée sur des données SANS AUCUN effet de jour, elle affichait un ✔
+    quelque part une fois sur trois. Pour quelqu'un qui pense déjà « je gagne
+    le week-end », c'était une confirmation fabriquée.
 
-    ⚠️ Le week-end n'a pas la même composition que la semaine : plus de
-    football, de grands championnats, moins d'amicaux. D'où la même
-    comparaison refaite SPORT PAR SPORT — si l'écart disparaît à sport
-    constant, c'était un effet de composition, pas de jour."""
-    seuil = st.NormalDist().inv_cdf(0.975)
-    print("\nWEEK-END CONTRE SEMAINE — samedi + dimanche contre lundi → "
-          "vendredi, jour du MATCH")
-    print(f"Une seule comparaison, posée avant la mesure : seuil simple "
-          f"|t| ≥ {seuil:.2f}.")
-    ent = (f"{'périmètre':10} {'lot':9} {'n_clv':>6} {'CLV':>8} {'réglés':>7} "
-           f"{'ROI':>8}   {'Δ CLV':>9} {'t':>6}   {'Δ ROI':>9} {'t':>6}")
-    print(ent)
-    print("-" * len(ent))
+    Le test retenu, posé AVANT de regarder :
+    * la CLV (le ROI est ~8 fois plus bruité par pari, §25.4) ;
+    * à sport constant (le week-end a plus de football) ;
+    * le MATCH comme observation (ses paris sont corrélés entre eux) ;
+    * contre-vérifié avec la JOURNÉE comme observation — un samedi hors
+      norme ne doit pas suffire. Le ✔ exige que les deux concluent pareil,
+      avec au moins SEUIL_EFFECTIF matchs de chaque côté.
 
-    def moy(v):
-        return None if not v else sum(v) / len(v)
+    Tout le reste du bloc est DESCRIPTIF et ne porte aucune marque."""
+    print("\nWEEK-END CONTRE SEMAINE — l'edge du SYSTÈME selon le jour du "
+          "match (heure locale)")
+    print("Samedi + dimanche contre lundi → vendredi. Δ = week-end MOINS "
+          "semaine.")
+
+    def cote(r):
+        j = _bande_jour(r)
+        if j == SANS_HORAIRE:
+            return None
+        return "we" if j in WEEK_END else "se"
 
     sports = sorted({(r["sport"] or "?") for r in opp})
-    perimetres = [("TOUS", opp)] + [
-        (s, [r for r in opp if (r["sport"] or "?") == s]) for s in sports]
+    par_sport: dict = {}
+    seuls: list = []
+    for s in sports:
+        lot = [r for r in opp if (r["sport"] or "?") == s]
+        we = [r for r in lot if cote(r) == "we"]
+        se = [r for r in lot if cote(r) == "se"]
+        if we and se:
+            par_sport[s] = (we, se)
+        elif we or se:
+            seuls.append((s, "le week-end" if we else "en semaine",
+                          len(we) + len(se)))
+
+    print("\n1. Ce qui s'observe — DESCRIPTIF, aucun test sur ces lignes")
+    ent = (f"{'périmètre':10} {'lot':9} {'matchs':>6} {'n_clv':>6} {'CLV':>8} "
+           f"{'réglés':>7} {'ROI':>9}   {'Δ CLV':>9} {'Δ ROI':>10}")
+    print(ent)
+    print("-" * len(ent))
     f = lambda v, u="": "—" if v is None else f"{v:+.2f}{u}"  # noqa: E731
-    for nom, lot in perimetres:
-        we = [r for r in lot if _bande_jour(r) in WEEK_END]
-        sem = [r for r in lot if _bande_jour(r) in JOURS
-               and _bande_jour(r) not in WEEK_END]
-        if not we or not sem:
-            continue
-        c_we, g_we = _vecteurs(we, stake)
-        c_se, g_se = _vecteurs(sem, stake)
-        if not (c_we or g_we) or not (c_se or g_se):
-            continue
-        dc, tc = _welch(c_we, c_se)
-        dg, tg = _welch(g_we, g_se)
-        dr = None if dg is None else dg / stake * 100.0
-        roi = lambda g: None if not g else sum(g) / (stake * len(g)) * 100.0  # noqa: E731
-        marque = ""
-        if tc is not None and abs(tc) >= seuil:
-            marque += " CLV✔"
-        if tg is not None and abs(tg) >= seuil:
-            marque += " ROI✔"
-        print(f"{nom[:10]:10} {'week-end':9} {len(c_we):6} {f(moy(c_we), '%'):>8} "
-              f"{len(g_we):7} {f(roi(g_we), '%'):>8}   {f(dc, ' pt'):>9} "
-              f"{f(tc):>6}   {f(dr, ' pt'):>9} {f(tg):>6}{marque}")
-        print(f"{'':10} {'semaine':9} {len(c_se):6} {f(moy(c_se), '%'):>8} "
-              f"{len(g_se):7} {f(roi(g_se), '%'):>8}")
-    n_sans = sum(1 for r in opp if _bande_jour(r) == SANS_HORAIRE)
+    tous_we = [r for r in opp if cote(r) == "we"]
+    tous_se = [r for r in opp if cote(r) == "se"]
+    perimetres = ([("TOUS", (tous_we, tous_se))] if tous_we and tous_se else []) \
+        + list(par_sport.items())
+    for nom, (we, se) in perimetres:
+        cw, cs = _cellule(we, stake), _cellule(se, stake)
+        dc = (None if cw["clv_moy_pct"] is None or cs["clv_moy_pct"] is None
+              else cw["clv_moy_pct"] - cs["clv_moy_pct"])
+        dr = (None if cw["roi_pct"] is None or cs["roi_pct"] is None
+              else cw["roi_pct"] - cs["roi_pct"])
+        for lib, c, d1, d2 in (("week-end", cw, dc, dr), ("semaine", cs, None, None)):
+            maigre = " ⚠️" if 0 < c["n_regles"] < SEUIL_EFFECTIF else ""
+            deltas = (f"   {f(d1, ' pt'):>9} {f(d2, ' pt'):>10}"
+                      if lib == "week-end" else "")
+            print(f"{(nom if lib == 'week-end' else '')[:10]:10} {lib:9} "
+                  f"{len({_cle_match(r) for r in (we if lib == 'week-end' else se)}):6} "
+                  f"{c['n_clv']:6} {f(c['clv_moy_pct'], '%'):>8} "
+                  f"{c['n_regles']:7} {f(c['roi_pct'], '%'):>9}{deltas}{maigre}")
+    for s, ou, n in seuls:
+        print(f"{s[:10]:10} uniquement {ou} ({n} opportunité(s)) — pas de "
+              f"comparaison possible")
+    n_sans = sum(1 for r in opp if cote(r) is None)
     if n_sans:
-        print(f"\n{n_sans} opportunité(s) sans horaire de match : exclues de "
-              f"cette comparaison, comptées dans le tableau.")
-    print("\n⚠️ Δ = week-end MOINS semaine. La CLV décide ; le ROI, ~8 fois plus "
-          "bruité par pari\n   (§25.4), ne peut confirmer qu'un écart énorme. "
-          "Lire la ligne TOUS avec les lignes\n   par sport : un écart qui "
-          "s'efface à sport constant est un effet de composition.")
+        print(f"{n_sans} opportunité(s) sans horaire de match : hors "
+              f"comparaison, comptées dans le tableau.")
+    if any(0 < _cellule(l, stake)["n_regles"] < SEUIL_EFFECTIF
+           for _n, (we, se) in perimetres for l in (we, se)):
+        print(f"⚠️ = moins de {SEUIL_EFFECTIF} paris réglés : le ROI de la ligne "
+              f"n'est qu'un indice.")
+
+    print("\n2. Le test qui décide — CLV à sport constant")
+    if not par_sport:
+        print("   Aucune comparaison possible : aucun sport n'a de paris des "
+              "deux côtés.")
+        return
+    par_match = _contraste_par_sport(par_sport, _cle_match)
+    par_jour = _contraste_par_sport(
+        par_sport, lambda r: ((r["sport"] or "?"), _date_locale(r)))
+    ft = lambda v: "—" if v is None else f"{v:+.2f}"  # noqa: E731
+    for lib, res, unite in (("par match  ", par_match, "matchs"),
+                            ("par journée", par_jour, "journées")):
+        if res is None:
+            print(f"   {lib} : pas assez de {unite} avec une clôture de chaque "
+                  f"côté.")
+        else:
+            print(f"   {lib} : Δ CLV {f(res['delta'], ' pt'):>9}   "
+                  f"t = {ft(res['t']):>6}  (seuil {res['seuil']:.2f})   "
+                  f"{unite} : {res['n_we']} le week-end, {res['n_se']} en semaine")
+
+    def passe(res):
+        return (res is not None and res["t"] is not None
+                and abs(res["t"]) >= res["seuil"])
+
+    if par_match is None or min(par_match["n_we"], par_match["n_se"]) < SEUIL_EFFECTIF:
+        print(f"\n   → PAS DE VERDICT : moins de {SEUIL_EFFECTIF} matchs avec "
+              f"clôture d'un côté. Attendre plus de données.")
+    elif (passe(par_match) and passe(par_jour)
+          and (par_match["delta"] > 0) == (par_jour["delta"] > 0)):
+        sens = "le WEEK-END" if par_match["delta"] > 0 else "en SEMAINE"
+        print(f"\n   → ✔ ÉCART ÉTABLI : l'edge est plus fort {sens}, de "
+              f"{abs(par_match['delta']):.2f} pt de CLV à sport constant. Les "
+              f"deux découpages concordent.")
+    else:
+        print("\n   → PAS D'ÉCART ÉTABLI. Ce n'est pas « le jour ne compte "
+              "pas » : c'est « à cet\n     effectif, on ne peut pas le "
+              "distinguer du hasard ». Le ✔ exige que le test\n     par match "
+              "ET le test par journée franchissent leur seuil, dans le même "
+              "sens.")
+
+    print("\n⚠️ C'est l'edge du SYSTÈME (toutes les opportunités de la porte "
+          "choisie), pas ta\n   bankroll : pour tes paris cliqués, relance "
+          "avec --joues oui.")
+    print("⚠️ Même à sport constant, le week-end n'a pas les mêmes ligues ni "
+          "les mêmes délais :\n   un écart établi reste à croiser avec --axe "
+          "delai avant d'y voir un effet du jour.")
+    print("⚠️ Le ROI (lignes du 1.) est ~8 fois plus bruité par pari que la "
+          "CLV (§25.4) :\n   un écart de ROI sans écart de CLV est du hasard "
+          "jusqu'à preuve du contraire.")
 
 
 def _axe(nom: str):
@@ -524,7 +677,29 @@ def _appliquer_fenetre(rows: list, a) -> tuple:
     return rows, fenetre
 
 
-def _lister(opp: list, stake: float, bande_de) -> None:
+def _cle_dedup(r) -> tuple:
+    """La clé d'une OPPORTUNITÉ : équipes + jour + marché + pari (§17.8).
+
+    ⚠️ Sans ligne `events` (§19.7), équipes et horaire sont NULL. Les réduire
+    à des chaînes vides fondait TOUS ces paris — quels que soient le match et
+    le jour — en une seule opportunité par (marché, pari, ligne). Ils prennent
+    alors les équipes normalisées et la date écrites dans leur propre clé."""
+    if r["home"] and r["away"]:
+        base = ((r["home"] or "").lower(), (r["away"] or "").lower(),
+                (r["start_time"] or "")[:10])
+    else:
+        ek = str(r["event_key"] or "")
+        try:
+            quand, reste = ek.split("::", 1)
+            dom, ext = reste.split("__vs__", 1)
+            d = datetime.strptime(quand, "%Y%m%d%H%M").date().isoformat()
+            base = (dom, ext, d)
+        except ValueError:
+            base = ("clé", ek, "")
+    return base + (r["market"], r["outcome_label"], r["line"])
+
+
+def _lister(opp: list, stake: float, bande_de, ordre=None) -> None:
     """Chaque opportunité, NOMMÉE, groupée par bande de l'axe courant.
 
     ⚠️ POURQUOI CETTE SORTIE EXISTE. Une moyenne ne se vérifie pas. Un ROI de
@@ -545,7 +720,10 @@ def _lister(opp: list, stake: float, bande_de) -> None:
 
     print("\n\n══ LES PARIS, UN PAR UN ══")
     print("Statut : ✅ gagné · ❌ perdu · ➖ annulé · ⏳ pas encore réglé")
-    for bande in sorted(par_bande):
+    # L'ordre de l'axe (lundi d'abord, heures dans l'ordre…), pas l'ordre
+    # alphabétique qui mettrait « dimanche » en tête et couperait le week-end.
+    rang = {b: i for i, b in enumerate(ordre or [])}
+    for bande in sorted(par_bande, key=lambda b: (rang.get(b, len(rang)), b)):
         lot = par_bande[bande]
         # Le plus récent d'abord : c'est celui dont on se souvient.
         lot.sort(key=lambda r: str(r["detected_at"] or ""), reverse=True)
@@ -574,7 +752,10 @@ def _lister(opp: list, stake: float, bande_de) -> None:
             if r["line"] is not None:
                 pari += f" {r['line']:g}"
             match = f"{r['home'] or '?'} - {r['away'] or '?'}"
-            print(f"  {marque} {(r['start_time'] or '')[:10]} "
+            # La date LOCALE du match : c'est elle qui range le pari dans son
+            # jour. La date UTC mettrait un match de 00 h 30 le dimanche au
+            # samedi, sous l'en-tête « dimanche ».
+            print(f"  {marque} {_date_locale(r) or '':10} "
                   f"{match[:34]:<34} {str(r['market'])[:10]:<10} "
                   f"{pari[:14]:<14} @{float(r['odd_taken']):5.2f} "
                   f"{(r['book'] or '')[:12]:<12} "
@@ -804,9 +985,7 @@ def preparer(a):
         alertable: dict = {}
         raisons: dict = {}
         for r in gardees:
-            cle = ((r["home"] or "").lower(), (r["away"] or "").lower(),
-                   (r["start_time"] or "")[:10], r["market"],
-                   r["outcome_label"], r["line"])
+            cle = _cle_dedup(r)
             joue[cle] = joue.get(cle, False) or bool(r["played"])
             if minutes is not None:
                 pourquoi = _raison_non_alertable(r, minutes)
@@ -1178,7 +1357,7 @@ def main() -> int:
         # taux ferait lire la bande « non notifié » comme « jamais alerté ».
         n_ok = sum(1 for r in opp if r["notified_at"])
         print(f"Heure d'envoi retrouvée pour {n_ok} opportunités sur "
-              f"{len(opp)} ({100 * n_ok / len(opp):.0f} %), fuseau {FUSEAU}.")
+              f"{len(opp)} ({100 * n_ok / len(opp):.0f} %), fuseau {_fuseau()}.")
         print("⚠️ Le reste tombe en « non notifié » : soit le pari n'a jamais "
               "été alerté (book\n   en sourdine, mi-temps, canal saturé), soit "
               "la clé d'événement a été révisée\n   entre la détection et "
@@ -1279,7 +1458,7 @@ def main() -> int:
               "conclure.")
 
     if a.lister:
-        _lister(opp, a.stake, bande_de)
+        _lister(opp, a.stake, bande_de, ordre)
 
     if a.out:
         champs = ["sport", "tranche", "n_opportunites", "n_matchs", "n_joues",
