@@ -49,9 +49,16 @@ delà des « > 48 h » où le §16.4 s'arrêtait : 48-72, 72-96, 96-120, 120-168
 parce que c'est la seule où le ROI garde un effectif lisible dans les bandes
 lointaines.
 
+`--axe jour` découpe par jour de la semaine du MATCH, à l'heure locale, puis
+compare samedi + dimanche à lundi → vendredi, tous sports puis sport par
+sport. C'est la réponse chiffrée à « je perds en semaine, je gagne le
+week-end » : une impression sur quelques relevés de bankroll, que seuls
+plusieurs milliers de paris peuvent confirmer ou démentir.
+
 Usage :
     .venv/bin/python -m scripts.clv_roi_matrix --premium
     .venv/bin/python -m scripts.clv_roi_matrix --premium --axe delai
+    .venv/bin/python -m scripts.clv_roi_matrix --premium --axe jour
     .venv/bin/python -m scripts.clv_roi_matrix --premium --books kambi,ladbrokes_be
     .venv/bin/python -m scripts.clv_roi_matrix --premium --books kambi,ladbrokes_be \\
         --out clv_roi.csv
@@ -276,10 +283,124 @@ def _bande_semaine(row) -> str:
     return f"{lundi.isoformat()} (S{d.isocalendar()[1]:02d})"
 
 
+#: Les jours dans l'ordre du calendrier belge, lundi d'abord — c'est aussi
+#: l'ordre d'impression, donc le libellé ne porte aucun chiffre de tri.
+JOURS = ("lundi", "mardi", "mercredi", "jeudi", "vendredi", "samedi",
+         "dimanche")
+WEEK_END = frozenset({"samedi", "dimanche"})
+SANS_HORAIRE = "? (sans horaire)"
+ORDRE_JOUR = list(JOURS) + [SANS_HORAIRE]
+
+
+def _coup_d_envoi(row) -> "float | None":
+    """L'instant du coup d'envoi : `events.start_time`, sinon la clé.
+
+    ⚠️ Le repli sur `event_key` n'est pas un confort. `events` n'a pas de ligne
+    pour tous les paris (§19.7), et sans lui ces paris tomberaient dans « sans
+    horaire » alors que leur heure est écrite en tête de leur propre clé
+    (`AAAAMMJJHHMM`, en UTC — `matcher.parse_event_key`)."""
+    t = _heures(row["start_time"])
+    if t is not None:
+        return t
+    ek = row["event_key"] if "event_key" in row.keys() else None
+    try:
+        d = datetime.strptime(str(ek).split("::", 1)[0], "%Y%m%d%H%M")
+    except (TypeError, ValueError):
+        return None
+    return d.replace(tzinfo=timezone.utc).timestamp()
+
+
+def _bande_jour(row) -> str:
+    """Le jour de la semaine du MATCH, à l'heure LOCALE.
+
+    ⚠️ SUR LE COUP D'ENVOI, PAS SUR LA DÉTECTION. La question posée est « je
+    perds en semaine et je gagne le week-end » : elle parle du jour où le
+    résultat tombe et où la bankroll bouge, c'est-à-dire du jour du match. Un
+    pari détecté le vendredi pour un match du samedi est un pari du samedi.
+
+    ⚠️ À L'HEURE LOCALE, PAS UTC. Un match lancé à 00 h 30 à Bruxelles le
+    dimanche est à 22 h 30 UTC le samedi : en UTC il changerait de jour, et
+    c'est précisément la frontière samedi/dimanche — celle du week-end — qu'on
+    déplacerait. Même fuseau que l'axe horaire (`TZ_RAPPORT`)."""
+    t = _coup_d_envoi(row)
+    if t is None:
+        return SANS_HORAIRE
+    from zoneinfo import ZoneInfo
+    return JOURS[datetime.fromtimestamp(t, ZoneInfo(FUSEAU)).weekday()]
+
+
+def _bloc_week_end(opp: list, stake: float) -> None:
+    """Le week-end contre la semaine — UNE comparaison, posée AVANT de regarder.
+
+    ⚠️ Pourquoi un bloc à part alors que « chaque bande contre le reste » teste
+    déjà les sept jours : ce test-là compare chaque jour seul, avec un seuil de
+    Bonferroni à sept comparaisons. L'hypothèse de l'utilisateur est UNE seule
+    comparaison, posée avant la mesure (samedi + dimanche contre lundi →
+    vendredi) : elle se teste au seuil simple de 1,96, sans correction.
+    Regarder les sept jours PUIS choisir la coupure la plus flatteuse serait
+    l'erreur du §9 — cent hypothèses cherchées après coup ne valent rien.
+
+    ⚠️ Le week-end n'a pas la même composition que la semaine : plus de
+    football, de grands championnats, moins d'amicaux. D'où la même
+    comparaison refaite SPORT PAR SPORT — si l'écart disparaît à sport
+    constant, c'était un effet de composition, pas de jour."""
+    seuil = st.NormalDist().inv_cdf(0.975)
+    print("\nWEEK-END CONTRE SEMAINE — samedi + dimanche contre lundi → "
+          "vendredi, jour du MATCH")
+    print(f"Une seule comparaison, posée avant la mesure : seuil simple "
+          f"|t| ≥ {seuil:.2f}.")
+    ent = (f"{'périmètre':10} {'lot':9} {'n_clv':>6} {'CLV':>8} {'réglés':>7} "
+           f"{'ROI':>8}   {'Δ CLV':>9} {'t':>6}   {'Δ ROI':>9} {'t':>6}")
+    print(ent)
+    print("-" * len(ent))
+
+    def moy(v):
+        return None if not v else sum(v) / len(v)
+
+    sports = sorted({(r["sport"] or "?") for r in opp})
+    perimetres = [("TOUS", opp)] + [
+        (s, [r for r in opp if (r["sport"] or "?") == s]) for s in sports]
+    f = lambda v, u="": "—" if v is None else f"{v:+.2f}{u}"  # noqa: E731
+    for nom, lot in perimetres:
+        we = [r for r in lot if _bande_jour(r) in WEEK_END]
+        sem = [r for r in lot if _bande_jour(r) in JOURS
+               and _bande_jour(r) not in WEEK_END]
+        if not we or not sem:
+            continue
+        c_we, g_we = _vecteurs(we, stake)
+        c_se, g_se = _vecteurs(sem, stake)
+        if not (c_we or g_we) or not (c_se or g_se):
+            continue
+        dc, tc = _welch(c_we, c_se)
+        dg, tg = _welch(g_we, g_se)
+        dr = None if dg is None else dg / stake * 100.0
+        roi = lambda g: None if not g else sum(g) / (stake * len(g)) * 100.0  # noqa: E731
+        marque = ""
+        if tc is not None and abs(tc) >= seuil:
+            marque += " CLV✔"
+        if tg is not None and abs(tg) >= seuil:
+            marque += " ROI✔"
+        print(f"{nom[:10]:10} {'week-end':9} {len(c_we):6} {f(moy(c_we), '%'):>8} "
+              f"{len(g_we):7} {f(roi(g_we), '%'):>8}   {f(dc, ' pt'):>9} "
+              f"{f(tc):>6}   {f(dr, ' pt'):>9} {f(tg):>6}{marque}")
+        print(f"{'':10} {'semaine':9} {len(c_se):6} {f(moy(c_se), '%'):>8} "
+              f"{len(g_se):7} {f(roi(g_se), '%'):>8}")
+    n_sans = sum(1 for r in opp if _bande_jour(r) == SANS_HORAIRE)
+    if n_sans:
+        print(f"\n{n_sans} opportunité(s) sans horaire de match : exclues de "
+              f"cette comparaison, comptées dans le tableau.")
+    print("\n⚠️ Δ = week-end MOINS semaine. La CLV décide ; le ROI, ~8 fois plus "
+          "bruité par pari\n   (§25.4), ne peut confirmer qu'un écart énorme. "
+          "Lire la ligne TOUS avec les lignes\n   par sport : un écart qui "
+          "s'efface à sport constant est un effet de composition.")
+
+
 def _axe(nom: str):
     """(libellé de colonne, fonction de bande, ordre d'affichage)."""
     if nom == "heure":
         return "heure d'envoi", _bande_heure, ORDRE_HEURE
+    if nom == "jour":
+        return "jour du match", _bande_jour, ORDRE_JOUR
     if nom == "semaine":
         # Ordre canonique VIDE, et c'est voulu : les semaines présentes
         # dépendent des données. L'appelant complète l'ordre par un tri des
@@ -781,11 +902,14 @@ def main() -> int:
     ap.add_argument("--out", default=None, metavar="CSV",
                     help="Écrire la table dans un CSV.")
     ap.add_argument("--axe",
-                    choices=("cote", "delai", "ev", "clv", "semaine", "heure"),
+                    choices=("cote", "delai", "ev", "clv", "semaine", "heure",
+                             "jour"),
                     default="cote",
                     help="Axe des lignes : tranche de COTE (défaut), DÉLAI "
                          "avant le coup d'envoi, EV détectée, CLV réalisée, "
-                         "ou SEMAINE de détection. Le délai découpe au-delà "
+                         "SEMAINE de détection, HEURE d'envoi, ou JOUR du "
+                         "match (heure locale, suivi d'un bloc week-end "
+                         "contre semaine). Le délai découpe au-delà "
                          "de 48 h, là où le §16.4 s'arrêtait.")
     ap.add_argument("--joues", choices=("tous", "oui", "non"), default="tous",
                     help="Restreindre aux opportunités CLIQUÉES sur « Jouer » "
@@ -1132,6 +1256,8 @@ def main() -> int:
               "résultat.")
 
     _bloc_contre_le_reste(opp, bande_de, ordre, a.stake, col_axe)
+    if a.axe == "jour":
+        _bloc_week_end(opp, a.stake)
 
     print("\n⚠️ `n_clv` et `réglés` ne décrivent PAS la même population : la CLV "
           "exige une clôture\n   capturée, le ROI un résultat. Comparer leurs "
