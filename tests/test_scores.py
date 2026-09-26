@@ -253,3 +253,110 @@ def test_a_flipped_football_draw_stays_a_draw():
     bindings, counters = bind_results(ours, res, sport="soccer")
     _, r = bindings[0]
     assert r.winner == "draw"
+
+
+# ------------------------------------------- orientation : noms emboîtés ---
+#
+# Mesuré le 27/09 : l'ancienne règle (le seul score d'appariement) stockait le
+# score À L'ENVERS sur des clubs aux noms emboîtés — « Dundee » vaut 100 contre
+# « Dundee United » par fragment. Ces paires sont réelles ; chacune est jouée
+# dans l'ordre de la source ET à l'envers.
+
+from src.scores import _is_swapped, _orientation  # noqa: E402
+
+PAIRES_REELLES = [
+    (("Dundee Utd", "Dundee"), ("Dundee United", "Dundee")),
+    (("Dundee United", "Dundee"), ("Dundee United", "Dundee")),
+    (("Inter", "Inter Miami"), ("Inter", "Inter Miami")),
+    (("Sporting CP", "Sporting Braga"), ("Sporting CP", "Braga")),
+    (("Man Utd", "Man City"), ("Manchester United", "Manchester City")),
+    (("Real Madrid", "Atletico Madrid"), ("Real Madrid", "Atlético Madrid")),
+    (("Dep. Maipu", "Atl. Tucuman"), ("Deportivo Maipu", "Atletico Tucuman")),
+    (("Sinner J", "Alcaraz C"), ("Jannik Sinner", "Carlos Alcaraz")),
+    (("Zverev A", "Zverev M"), ("Alexander Zverev", "Mischa Zverev")),
+    (("Aberdeen B", "Elgin City"), ("Aberdeen U21", "Elgin City")),
+    (("Newcastle Jets", "Newcastle United"), ("Newcastle Jets", "Newcastle")),
+    (("Paris FC", "Paris Saint-Germain"), ("Paris FC", "Paris Saint Germain")),
+    (("Olimpia", "Olimpija Ljubljana"), ("Olimpia", "Olimpija")),
+    (("Inter Toronto", "Vancouver FC"), ("York United", "Vancouver FC")),
+]
+
+
+@pytest.mark.parametrize("nous, source", PAIRES_REELLES)
+def test_l_orientation_n_est_jamais_fausse(nous, source):
+    """Dans l'ordre de la source : « direct » ou « on ne sait pas ». À
+    l'envers : « inverse » ou « on ne sait pas ». Jamais le contraire."""
+    ev = _ours(*nous, T)
+    assert _orientation(ev, _res(*source, T)) in ("direct", None)
+    assert _orientation(ev, _res(source[1], source[0], T)) in ("inverse", None)
+
+
+def test_l_ancienne_regle_retournait_ces_matchs():
+    """La preuve que la correction corrige quelque chose : sur les mêmes
+    paires, l'ancienne règle se trompait au moins une fois par cas cité."""
+    faux = []
+    for nous, source in PAIRES_REELLES:
+        ev = _ours(*nous, T)
+        if _is_swapped(ev, _res(*source, T)):
+            faux.append((nous, "même ordre"))
+        if not _is_swapped(ev, _res(source[1], source[0], T)):
+            faux.append((nous, "inversée"))
+    assert {n for n, _o in faux} >= {("Dundee Utd", "Dundee"),
+                                     ("Dundee United", "Dundee"),
+                                     ("Inter", "Inter Miami"),
+                                     ("Paris FC", "Paris Saint-Germain"),
+                                     ("Zverev A", "Zverev M")}
+
+
+def test_dundee_utd_n_est_plus_regle_a_l_envers():
+    """Même ordre, abréviation « Utd » : l'ancienne règle retournait le score
+    (Dundee United vainqueur 2-1 stocké comme Dundee vainqueur). La nouvelle,
+    faute de pouvoir trancher, laisse le match sans résultat."""
+    ours = [_ours("Dundee Utd", "Dundee", T)]
+    res = [_res("Dundee United", "Dundee", T, winner="home", hs=2, aws=1)]
+    bindings, counters = bind_results(ours, res, sport="soccer")
+    assert bindings == []
+    assert counters["orientation_indecidable"] == 1
+
+
+def test_un_derby_a_l_envers_est_remis_d_aplomb():
+    """« Inter v Inter Miami » contre une source qui les inverse : l'ancienne
+    règle voyait l'égalité et laissait le score à l'envers."""
+    ours = [_ours("Inter", "Inter Miami", T)]
+    res = [_res("Inter Miami", "Inter", T, winner="home", hs=3, aws=0)]
+    bindings, counters = bind_results(ours, res, sport="soccer")
+    _, r = bindings[0]
+    assert (r.home, r.away) == ("Inter", "Inter Miami")
+    assert (r.home_score, r.away_score, r.winner) == (0, 3, "away")
+    assert counters["orientation_corrigee"] == 1
+
+
+def test_un_nul_symetrique_se_regle_meme_sans_orientation():
+    """1-1 reste 1-1 dans les deux sens : l'incertitude d'orientation ne doit
+    pas coûter ce résultat."""
+    ours = [_ours("Dundee Utd", "Dundee", T)]
+    res = [_res("Dundee United", "Dundee", T, winner="draw", hs=1, aws=1)]
+    bindings, counters = bind_results(ours, res, sport="soccer")
+    assert len(bindings) == 1 and counters["orientation_indecidable"] == 0
+
+
+def test_les_freres_zverev_ne_sont_jamais_regles_a_l_envers():
+    ours = [_ours("Zverev A", "Zverev M", T)]
+    for src in (("Alexander Zverev", "Mischa Zverev"),
+                ("Mischa Zverev", "Alexander Zverev")):
+        res = [_res(*src, T, sport="tennis", winner="home", hs=12, aws=8)]
+        bindings, _c = bind_results(ours, res, sport="tennis")
+        for _k, r in bindings:
+            gagnant = r.home if r.winner == "home" else r.away
+            assert gagnant == src[0], (src, r)
+
+
+def test_un_tennis_a_jeux_egaux_n_est_pas_sans_cote():
+    """7-6 4-6 7-6 : 18 jeux partout, et pourtant un vainqueur. Seul un NUL
+    au score symétrique se passe d'orientation ; ce match-là, faute de savoir
+    dans quel sens le lire, doit rester sans résultat."""
+    ours = [_ours("Zverev A", "Zverev M", T)]
+    res = [_res("Mischa Zverev", "Alexander Zverev", T, sport="tennis",
+                winner="home", hs=18, aws=18)]
+    bindings, counters = bind_results(ours, res, sport="tennis")
+    assert bindings == [] and counters["orientation_indecidable"] == 1

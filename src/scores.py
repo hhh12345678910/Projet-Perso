@@ -34,8 +34,11 @@ from dataclasses import dataclass, replace
 from datetime import date, datetime
 from typing import Iterable, Protocol
 
-from .matcher import (class_marker_from_league, match_event, team_similarity,
-                      tolerance_for, wide_tolerance_for, with_class_marker)
+from rapidfuzz import fuzz
+
+from .matcher import (_strip_class_tag, class_marker_from_league, match_event,
+                      normalize_team, team_similarity, tolerance_for,
+                      wide_tolerance_for, with_class_marker)
 
 # Les sports où le total d'un marché « totals » se déduit du score, donc où le
 # vainqueur aussi. Le football en fait partie : plus de buts = victoire. Le
@@ -169,18 +172,61 @@ def tolerance_for_scores(sport: str | None) -> int:
 
 
 def _is_swapped(ev: "OurEvent", res: MatchResult) -> bool:
-    """L'appariement a-t-il retenu l'orientation inverse ?
-
-    On compare la ressemblance de NOTRE domicile avec chacun des deux camps du
-    résultat. Si elle est meilleure avec le second, c'est que la source ordonne
-    les joueurs dans l'autre sens.
-
-    En cas d'égalité parfaite on répond False — ne rien changer est le choix
-    sûr : inverser sur une hésitation créerait l'erreur qu'on cherche à éviter.
-    """
+    """L'ANCIENNE décision d'orientation, gardée pour la sonde qui retrouve les
+    résultats qu'elle a mal orientés (`scripts/verif_resultats.py`). La
+    production ne l'appelle plus : voir `_orientation`."""
     direct = (team_similarity(ev.home, res.home) + team_similarity(ev.away, res.away))
     swap = (team_similarity(ev.home, res.away) + team_similarity(ev.away, res.home))
     return swap > direct
+
+
+def _nom_entier(nom: str) -> str:
+    return _strip_class_tag(normalize_team(nom))
+
+
+def _orientation(ev: "OurEvent", res: MatchResult) -> str | None:
+    """"direct", "inverse", ou None quand on ne peut pas le savoir.
+
+    ⚠️ LE SCORE D'APPARIEMENT NE SUFFIT PAS À ORIENTER. `team_similarity`
+    prend le meilleur FRAGMENT (`partial_ratio`) : « Dundee » vaut 100 contre
+    « Dundee United », et « Inter » contre « Inter Miami ». Entre deux clubs
+    aux noms emboîtés, les deux orientations font jeu égal — ou pire, la
+    mauvaise l'emporte : « Dundee Utd v Dundee » contre la source « Dundee
+    United v Dundee », DANS LE MÊME ORDRE, était retourné (200 contre 187).
+    Mesuré le 27/09 : l'ancienne règle stockait le score À L'ENVERS sur
+    Dundee, Inter/Inter Miami, Paris FC/PSG et Zverev A/M, sans rien lever.
+
+    D'où deux avis indépendants :
+    * le score d'appariement (celui de `match_event`) ;
+    * la ressemblance des noms EN ENTIER (`fuzz.ratio`, classe retirée), qui
+      ne se laisse pas prendre à un fragment.
+    S'ils s'accordent, on suit. Si l'appariement hésite (égalité), les noms
+    entiers tranchent — et l'inverse. S'ils se CONTREDISENT, ou hésitent tous
+    deux, on ne sait pas : None, et le match reste sans résultat. Un pari non
+    réglé est un trou visible ; un pari réglé à l'envers empoisonne le ROI sans
+    jamais se signaler."""
+    appariement = ((team_similarity(ev.home, res.away) + team_similarity(ev.away, res.home))
+                   - (team_similarity(ev.home, res.home) + team_similarity(ev.away, res.away)))
+    h, a = _nom_entier(ev.home), _nom_entier(ev.away)
+    rh, ra = _nom_entier(res.home), _nom_entier(res.away)
+    entier = ((fuzz.ratio(h, ra) + fuzz.ratio(a, rh))
+              - (fuzz.ratio(h, rh) + fuzz.ratio(a, ra)))
+    p = (appariement > 0) - (appariement < 0)
+    e = (entier > 0) - (entier < 0)
+    if p and e and p != e:
+        return None
+    sens = p or e
+    if not sens:
+        return None
+    return "inverse" if sens > 0 else "direct"
+
+
+def _sans_cote(res: MatchResult) -> bool:
+    """Un résultat que l'orientation ne change pas : nul au score symétrique
+    (1-1), ou nul sans score. Le retourner le laisse identique."""
+    if res.winner != "draw":
+        return False
+    return res.home_score == res.away_score
 
 
 def _flip(res: MatchResult) -> MatchResult:
@@ -257,6 +303,9 @@ def bind_results(
         "sans_candidat": 0,      # aucun résultat proche : la source ne l'a pas
         "resultat_inutilisable": 0,  # apparié, mais ni vainqueur ni scores
         "orientation_corrigee": 0,   # apparié à l'envers, vainqueur remis d'aplomb
+        # Apparié, mais impossible de dire dans quel sens (noms emboîtés qui
+        # se contredisent) : laissé sans résultat plutôt que réglé à l'envers.
+        "orientation_indecidable": 0,
         "classe_posee": 0,           # féminin/jeunes : classe reprise de la ligue
         # Événements dont la ligue porte une classe que la source de CE sport
         # ne sait pas porter. Compté plutôt que tu : sans ce chiffre, « la
@@ -303,7 +352,15 @@ def bind_results(
         # du mauvais côté : le pari `home` est noté sur le joueur que NOUS
         # appelons `away`. Rien ne le signale — le score et le vainqueur restent
         # cohérents entre eux, seul leur rattachement à nos noms est faux.
-        if _is_swapped(ev, best):
+        # Voir `_orientation` : sur des noms emboîtés (« Dundee » / « Dundee
+        # United »), le score d'appariement désignait parfois le mauvais sens.
+        # Quand on ne peut pas savoir, on ne règle pas — sauf un nul
+        # symétrique, que l'orientation ne change pas.
+        sens = _orientation(ev, best)
+        if sens is None and not _sans_cote(best):
+            counters["orientation_indecidable"] += 1
+            continue
+        if sens == "inverse":
             best = _flip(best)
             counters["orientation_corrigee"] += 1
 
