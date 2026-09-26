@@ -44,8 +44,16 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
+import json  # noqa: E402
+
+from rapidfuzz import fuzz  # noqa: E402
+
 from src.clv import settle  # noqa: E402
 from src.config import load_env_file  # noqa: E402
+from src.matcher import (_strip_class_tag, class_marker_from_league,  # noqa: E402
+                         normalize_team, team_class, team_similarity,
+                         with_class_marker)
+from src.scores import tolerance_for_scores  # noqa: E402
 
 #: Même grâce que `results-update` (`until = now - 2 h`) : avant, le match
 #: n'est pas encore réclamé, et le compter comme « manquant » serait faux.
@@ -153,6 +161,109 @@ def classer(r, maintenant: datetime, dossier: Path, jours_pont: int,
     return etat_journee(jour, dossier, maintenant, jours_pont, final_apres)
 
 
+# ── Pourquoi un match de football n'a pas été rapproché ─────────────
+#
+# Une journée COMPLÈTE sans résultat pour un match laisse quatre coupables
+# possibles, et ils appellent quatre gestes différents. Le fichier du pont est
+# sur disque : on y cherche le match le plus proche et on dit lequel.
+
+ABSENT = "absent de la source ce jour-là (trou de catalogue)"
+CLASSE = "présent, mais la barrière de CLASSE le rejette (réserve / jeunes / féminin)"
+NOMS = "candidat aux noms proches — à vérifier à l'œil"
+HORAIRE = "présent, mais horaire décalé au-delà de la tolérance"
+STATUT = "présent, mais pas terminé normalement (reporté, annulé, arrêté…)"
+PROLONG = "présent, allé en prolongation — score à 90 min non prouvable"
+APPARIABLE = "présent et appariable — relancer results-update"
+
+ORDRE_POURQUOI = [ABSENT, CLASSE, NOMS, HORAIRE, STATUT, PROLONG, APPARIABLE]
+
+#: En dessous, aucun candidat n'est retenu comme « le même match ». Le score
+#: flou est large : « Sporting Lisbon » contre « Porto » vaut 80. Au-dessus de
+#: ce plancher, la sonde MONTRE le candidat au lieu de le déclarer identique.
+PLANCHER_CANDIDAT = 70.0
+#: Le seuil du vrai rapprochement (`bind_results`, `match_event`).
+SEUIL_APPARIEMENT = 85.0
+
+
+def _sim_sans_classe(a: str, b: str) -> float:
+    """`team_similarity` SANS la barrière de classe — pour la voir agir."""
+    sa, sb = _strip_class_tag(normalize_team(a)), _strip_class_tag(normalize_team(b))
+    return max(fuzz.token_set_ratio(sa, sb), fuzz.partial_ratio(sa, sb))
+
+
+def _paire(sim, h, a, th, ta) -> float:
+    """Même règle que `match_event` : moyenne des deux camps, meilleure des
+    deux orientations."""
+    return max((sim(h, th) + sim(a, ta)) / 2, (sim(h, ta) + sim(a, th)) / 2)
+
+
+def _fixtures_autour(dossier: Path, jour: date, cache: dict) -> list:
+    """Les matchs servis par la source la veille, le jour et le lendemain.
+
+    Les voisins comptent : un match à 23 h 30 chez nous peut être daté du
+    lendemain chez la source, et le chercher dans un seul fichier le déclarerait
+    absent à tort."""
+    out = []
+    for d in (jour - timedelta(days=1), jour, jour + timedelta(days=1)):
+        if d not in cache:
+            f = dossier / f"{d.isoformat()}.json"
+            try:
+                cache[d] = json.loads(f.read_text()).get("response") or []
+            except (OSError, ValueError, AttributeError):
+                cache[d] = []
+        out.extend(cache[d])
+    return out
+
+
+def diagnostiquer(r, noms: dict, dossier: Path, cache: dict) -> dict:
+    """Le match de la source le plus proche de CE pari, et le verdict.
+
+    Nos noms passent par le registre `teams` (le nom affiché, pas la forme
+    compactée de la clé) et reçoivent la classe de leur ligue ; ceux de la
+    source reçoivent la classe de LEUR ligue — exactement ce que font
+    `results-update` et `parse_apifootball_results`. Une sonde qui comparerait
+    autre chose que la production mentirait (§17.7)."""
+    marque = class_marker_from_league(r["league"] or "")
+    h = with_class_marker(noms.get(r["home"]) or r["home"] or "", marque)
+    a = with_class_marker(noms.get(r["away"]) or r["away"] or "", marque)
+    depart = _coup_d_envoi(r)
+    meilleur = None
+    for f in _fixtures_autour(dossier, depart.date(), cache):
+        fx, eq, lg = f.get("fixture") or {}, f.get("teams") or {}, f.get("league") or {}
+        m2 = class_marker_from_league(lg.get("name") or "")
+        th = with_class_marker(((eq.get("home") or {}).get("name") or "").strip(), m2)
+        ta = with_class_marker(((eq.get("away") or {}).get("name") or "").strip(), m2)
+        if not th or not ta:
+            continue
+        u = _paire(_sim_sans_classe, h, a, th, ta)
+        t = _instant(fx.get("date"))
+        dt = abs((t - depart).total_seconds()) / 60 if t else float("inf")
+        cle = (u, -dt)
+        if meilleur is None or cle > meilleur["_cle"]:
+            meilleur = {"_cle": cle, "u": u, "g": _paire(team_similarity, h, a, th, ta),
+                        "dt": dt, "nom": f"{th} - {ta}",
+                        "ligue": lg.get("name") or "?",
+                        "statut": ((fx.get("status") or {}).get("short") or "?").upper(),
+                        "classes": (team_class(normalize_team(h)),
+                                    team_class(normalize_team(th)))}
+    nous = f"{h} - {a}"
+    if meilleur is None or meilleur["u"] < PLANCHER_CANDIDAT:
+        return {"verdict": ABSENT, "nous": nous, "cand": meilleur}
+    if meilleur["g"] < SEUIL_APPARIEMENT <= meilleur["u"]:
+        verdict = CLASSE
+    elif meilleur["g"] < SEUIL_APPARIEMENT:
+        verdict = NOMS
+    elif meilleur["dt"] > tolerance_for_scores("soccer"):
+        verdict = HORAIRE
+    elif meilleur["statut"] == "FT":
+        verdict = APPARIABLE
+    elif meilleur["statut"] in ("AET", "PEN"):
+        verdict = PROLONG
+    else:
+        verdict = STATUT
+    return {"verdict": verdict, "nous": nous, "cand": meilleur}
+
+
 def charger(db: str, depuis: date) -> list:
     """Les paris JOUÉS dont le match tombe à partir de `depuis` (UTC)."""
     con = sqlite3.connect(f"file:{db}?mode=ro", uri=True)
@@ -169,10 +280,15 @@ def charger(db: str, depuis: date) -> list:
         LEFT JOIN events e  ON e.event_key = pb.event_key
         LEFT JOIN results r ON r.event_key = pb.event_key
     """))
+    try:
+        noms = {n: d for n, d in con.execute(
+            "SELECT normalized_name, display_name FROM teams")}
+    except sqlite3.OperationalError:
+        noms = {}                  # base sans registre : les noms de la clé
     con.close()
     seuil = datetime.combine(depuis, datetime.min.time(), tzinfo=timezone.utc)
     return [r for r in rows
-            if (_coup_d_envoi(r) or _instant(r["played_at"]) or seuil) >= seuil]
+            if (_coup_d_envoi(r) or _instant(r["played_at"]) or seuil) >= seuil], noms
 
 
 def analyser(rows: list, maintenant: datetime, dossier: Path, jours_pont: int,
@@ -188,7 +304,8 @@ def _nom(r) -> str:
 
 
 def imprimer(res: dict, depuis: date, dossier: Path, jours_pont: int,
-             source_jours: str, maintenant: datetime, lister: bool) -> None:
+             source_jours: str, maintenant: datetime, lister: bool,
+             noms: "dict | None" = None) -> None:
     classes, comptes = res["classes"], res["comptes"]
     total = len(classes)
     print(f"PARIS JOUÉS SANS RÉSULTAT — matchs à partir du {depuis.isoformat()} (UTC)")
@@ -223,6 +340,35 @@ def imprimer(res: dict, depuis: date, dossier: Path, jours_pont: int,
             (c, n), = foot[j].most_common(1)
             print(f"  {j.isoformat()}  {sum(foot[j].values()):3} pari(s)  — {c}")
 
+    pourquoi = Counter()
+    absents_foot = [r for r, c in classes if c == FOOT_ABSENT]
+    if absents_foot:
+        cache: dict = {}
+        diags = [(r, diagnostiquer(r, noms or {}, dossier, cache))
+                 for r in sorted(absents_foot, key=_coup_d_envoi)]
+        pourquoi = Counter(d["verdict"] for _r, d in diags)
+        print("\nFOOTBALL — CE QUE LA SOURCE AVAIT CE JOUR-LÀ, match par match")
+        print("(le candidat le plus proche dans le fichier du pont, veille et "
+              "lendemain compris)")
+        for v in ORDRE_POURQUOI:
+            if pourquoi[v]:
+                print(f"  {pourquoi[v]:3}  {v}")
+        for v in ORDRE_POURQUOI:
+            lot = [(r, d) for r, d in diags if d["verdict"] == v]
+            if not lot:
+                continue
+            print(f"\n── {v} ({len(lot)})")
+            for r, d in lot:
+                c = d["cand"]
+                print(f"  {_coup_d_envoi(r).strftime('%Y-%m-%d %H:%M')}  "
+                      f"{d['nous'][:40]:40}  [{(r['league'] or '?')[:30]}]")
+                if c is not None and v != ABSENT:
+                    ecart = ("" if c["dt"] == float("inf")
+                             else f" · Δ {c['dt']:.0f} min")
+                    print(f"      source : {c['nom'][:44]:44} [{c['ligue'][:24]}, "
+                          f"{c['statut']}] · noms {c['u']:.0f} / avec classes "
+                          f"{c['g']:.0f}{ecart}")
+
     print("\nQUE FAIRE, DANS CET ORDRE")
     jours_hors = sorted({_coup_d_envoi(r).date() for r, c in classes
                          if c in (HORS_FENETRE, TROP_TOT_HORS)})
@@ -247,17 +393,26 @@ def imprimer(res: dict, depuis: date, dossier: Path, jours_pont: int,
               "--sport soccer,tennis\n"
               "      .venv/bin/python -m src.main track-update\n"
               "    et relance cette sonde pour voir ce qui reste.")
-    if comptes[FOOT_ABSENT]:
-        jours = sorted({_coup_d_envoi(r).date() for r, c in classes
-                        if c == FOOT_ABSENT})
-        print(f"  • {comptes[FOOT_ABSENT]} match(s) de football sur des journées "
-              f"COMPLÈTES : la source ne les a pas,\n    ne les apparie pas, ou "
-              f"ils ne sont pas terminés. D'abord relancer results-update (si tu "
-              f"ne\n    l'as pas fait depuis ton dernier clic), puis, pour savoir "
-              f"lequel des trois :")
-        for j in jours[-3:]:
-            print(f"      .venv/bin/python -m src.main results-update --dry-run "
-                  f"--day {j.isoformat()} --sport soccer")
+    if pourquoi[APPARIABLE]:
+        print(f"  • {pourquoi[APPARIABLE]} match(s) présents et appariables : "
+              f"results-update n'est pas repassé\n    depuis leur arrivée —\n"
+              f"      .venv/bin/python -m src.main results-update --days 10 "
+              f"--sport soccer\n"
+              f"      .venv/bin/python -m src.main track-update")
+    if pourquoi[CLASSE] or pourquoi[NOMS] or pourquoi[HORAIRE]:
+        n = pourquoi[CLASSE] + pourquoi[NOMS] + pourquoi[HORAIRE]
+        print(f"  • {n} match(s) que la source A, mais que le rapprochement "
+              f"rejette (classe, noms ou\n    horaire) : c'est corrigeable dans "
+              f"le code. Envoie la section ci-dessus — chaque\n    candidat est "
+              f"à confirmer à l'œil avant de toucher aux règles.")
+    if pourquoi[STATUT] or pourquoi[PROLONG]:
+        print(f"  • {pourquoi[STATUT] + pourquoi[PROLONG]} match(s) reportés, "
+              f"annulés, arrêtés ou allés en prolongation :\n    vérifie le "
+              f"règlement chez le book (souvent remboursé) ; rien à corriger ici.")
+    if pourquoi[ABSENT]:
+        print(f"  • {pourquoi[ABSENT]} match(s) ABSENTS de la source (petites "
+              f"ligues, amicaux) : rien à\n    corriger — seul un autre "
+              f"fournisseur de résultats les couvrirait.")
     if comptes[TENNIS]:
         print(f"  • {comptes[TENNIS]} match(s) de tennis : relancer "
               f"`results-update --days 10 --sport tennis`. Ce qui reste\n"
@@ -328,9 +483,10 @@ def main(argv=None) -> None:
                   else maintenant.date() - timedelta(days=10))
     except ValueError:
         ap.error(f"--depuis attend AAAA-MM-JJ, reçu {a.depuis!r}")
-    rows = charger(a.db, depuis)
+    rows, noms = charger(a.db, depuis)
     res = analyser(rows, maintenant, dossier, jours_pont, final_apres)
-    imprimer(res, depuis, dossier, jours_pont, source_jours, maintenant, a.lister)
+    imprimer(res, depuis, dossier, jours_pont, source_jours, maintenant, a.lister,
+             noms)
 
 
 if __name__ == "__main__":

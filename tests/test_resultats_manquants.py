@@ -285,3 +285,137 @@ def test_la_ligne_n_est_pas_ecrite_deux_fois(tmp_path, monkeypatch, capsys):
              (_cle(5, 1), "soccer", _jour(5), "totals", "under 3.5", 3.5, None, True)]
     out, _ = _lancer(tmp_path, monkeypatch, capsys, paris, "2", "--lister")
     assert "over 2.5" in out and "under 3.5" in out and "3.5 3.5" not in out
+
+
+# ── Pourquoi un match de football n'a pas été rapproché ─────────────
+
+import json as _json  # noqa: E402
+
+
+def _fixture(dom, ext, quand, statut="FT", ligue="L"):
+    return {"fixture": {"date": quand, "status": {"short": statut}},
+            "league": {"name": ligue},
+            "teams": {"home": {"name": dom}, "away": {"name": ext}}}
+
+
+def _jour_source(dossier, jour: str, fixtures):
+    (dossier / f"{jour}.json").write_text(_json.dumps({"response": fixtures}))
+
+
+def _notre(dom, ext, quand, ligue="L1"):
+    return {"home": dom, "away": ext, "start_time": quand, "league": ligue,
+            "event_key": "x"}
+
+
+def _verdict(tmp_path, notre, fixtures, jour="2026-09-22", noms=None):
+    _jour_source(tmp_path, jour, fixtures)
+    return rm.diagnostiquer(notre, noms or {}, tmp_path, {})
+
+
+Q = "2026-09-22T18:45:00+00:00"
+
+
+def test_un_match_absent_de_la_source(tmp_path):
+    d = _verdict(tmp_path, _notre("Kontu", "LPS", Q),
+                 [_fixture("Arsenal", "Chelsea", Q)])
+    assert d["verdict"] == rm.ABSENT
+
+
+def test_la_barriere_de_classe_est_nommee(tmp_path):
+    """Chez nous « Rangers B » (réserve), chez la source « Rangers » : les noms
+    sont identiques, seule la classe les sépare. C'est corrigeable, et la sonde
+    doit le dire au lieu de conclure « absent »."""
+    d = _verdict(tmp_path, _notre("rangersxreserve", "clyde", Q),
+                 [_fixture("Clyde", "Rangers", Q)],
+                 noms={"rangersxreserve": "Rangers B", "clyde": "Clyde"})
+    assert d["verdict"] == rm.CLASSE, d
+
+
+def test_un_horaire_decale_est_nomme(tmp_path):
+    d = _verdict(tmp_path, _notre("Kingstonian", "Bedfont", Q),
+                 [_fixture("Kingstonian FC", "Bedfont", "2026-09-22T19:45:00+00:00")])
+    assert d["verdict"] == rm.HORAIRE
+    assert round(d["cand"]["dt"]) == 60
+
+
+def test_un_match_reporte(tmp_path):
+    d = _verdict(tmp_path, _notre("Vancouver", "Inter Toronto", Q),
+                 [_fixture("Vancouver FC", "Inter Toronto", Q, statut="PST")])
+    assert d["verdict"] == rm.STATUT and d["cand"]["statut"] == "PST"
+
+
+def test_une_prolongation(tmp_path):
+    d = _verdict(tmp_path, _notre("Clyde", "Stranraer", Q),
+                 [_fixture("Clyde", "Stranraer", Q, statut="AET")])
+    assert d["verdict"] == rm.PROLONG
+
+
+def test_un_match_appariable_designe_results_update(tmp_path):
+    d = _verdict(tmp_path, _notre("Lower Breck", "Atherton Collieries", Q),
+                 [_fixture("Lower Breck FC", "Atherton Collieries", Q)])
+    assert d["verdict"] == rm.APPARIABLE
+
+
+def test_des_noms_seulement_proches_sont_montres_pas_declares(tmp_path):
+    notre = _notre("Deportivo Maipu", "Atletico Tucuman", Q)
+    d = _verdict(tmp_path, notre, [_fixture("Dep. Maipu", "Atl. Tucuman", Q)])
+    # Le jeu d'essai doit tomber dans la zone grise, sinon le test ne prouve rien.
+    assert rm.PLANCHER_CANDIDAT <= d["cand"]["u"] < rm.SEUIL_APPARIEMENT, d
+    assert d["verdict"] == rm.NOMS
+
+
+def test_le_fichier_du_lendemain_est_aussi_lu(tmp_path):
+    """Un match à 23 h 50 chez nous, daté de 00 h 05 le lendemain chez la
+    source : le chercher dans un seul fichier le déclarerait absent à tort."""
+    _jour_source(tmp_path, "2026-09-23",
+                 [_fixture("Clyde", "Stranraer", "2026-09-23T00:05:00+00:00")])
+    d = rm.diagnostiquer(_notre("Clyde", "Stranraer", "2026-09-22T23:50:00+00:00"),
+                         {}, tmp_path, {})
+    assert d["verdict"] == rm.HORAIRE
+
+
+def test_le_diagnostic_apparait_dans_la_sortie(tmp_path, monkeypatch, capsys):
+    """De bout en bout : une journée complète, un match classé autrement."""
+    scores = tmp_path / "scores"
+    (scores / "soccer").mkdir(parents=True)
+    monkeypatch.setattr(rm, "load_env_file", lambda *a, **k: 0)
+    monkeypatch.setenv("SCORES_INGEST_DIR", str(scores))
+    monkeypatch.setenv("SCORES_BRIDGE_DAYS", "14")
+    n = 4
+    jour = (datetime.now(timezone.utc).date() - timedelta(days=n))
+    quand = f"{jour.isoformat()}T15:00:00+00:00"
+    p = _base(tmp_path, [(_cle(n, 0), "soccer", quand, "h2h", "home", None,
+                          None, True)])
+    # La journée est capturée le lendemain à 12 h : complète, définitive.
+    f = scores / "soccer" / f"{jour.isoformat()}.json"
+    f.write_text(_json.dumps({"response": [_fixture("dom0 FC", "ext0", quand)]}))
+    capture = datetime.combine(jour + timedelta(days=1), datetime.min.time(),
+                               tzinfo=timezone.utc) + timedelta(hours=12)
+    os.utime(f, (capture.timestamp(), capture.timestamp()))
+    rm.main(["--db", str(p), "--depuis", (jour - timedelta(days=1)).isoformat()])
+    out = capsys.readouterr().out
+    assert "CE QUE LA SOURCE AVAIT CE JOUR-LÀ" in out
+    assert rm.APPARIABLE in out
+    assert "results-update n'est pas repassé" in out
+
+
+def test_les_noms_affiches_sont_utilises_pas_la_cle_compactee(tmp_path):
+    """`events.home` porte la forme COMPACTÉE (« deportivorincon ») ; le
+    registre `teams` rend le nom affiché. Comparé compacté, ce match tombe à
+    84 — sous le seuil — alors qu'avec les vrais noms il est appariable. La
+    sonde doit juger comme `results-update`, qui passe par le registre."""
+    d = _verdict(tmp_path, _notre("deportivorincon", "independientesantafe", Q),
+                 [_fixture("Dep. Rincón", "Santa Fe", Q)],
+                 noms={"deportivorincon": "Deportivo Rincon",
+                       "independientesantafe": "Independiente Santa Fe"})
+    assert d["verdict"] == rm.APPARIABLE, d
+
+
+def test_la_classe_de_la_ligue_source_est_reportee(tmp_path):
+    """Le féminin : la classe vit dans la LIGUE des deux côtés (« NWSL Women »
+    chez la source). Sans report côté source, la sonde verrait une barrière de
+    classe là où la production apparie normalement."""
+    d = _verdict(tmp_path, _notre("Houston Dash", "Orlando Pride", Q,
+                                  ligue="USA - National Womens Soccer League"),
+                 [_fixture("Houston Dash", "Orlando Pride", Q, ligue="NWSL Women")])
+    assert d["verdict"] == rm.APPARIABLE, d
