@@ -85,6 +85,8 @@ HORS_FENETRE = "journée JAMAIS récupérée — hors de la fenêtre du pont, ne
 REFUSEE = "journée REFUSÉE par la source — hors de ton abonnement API-Football"
 TROP_TOT = "journée capturée trop tôt — sera reprise au prochain clic"
 TROP_TOT_HORS = "journée capturée trop tôt et hors fenêtre — ne sera plus reprise"
+TROP_TOT_REFUSEE = "journée capturée trop tôt, puis REFUSÉE à la reprise — ne sera plus reprise"
+FICHIER_ILLISIBLE = "fichier du pont ILLISIBLE — results-update tombe en panne sur TOUT le football"
 FOOT_ABSENT = "journée complète, mais match absent de la source, non apparié ou non terminé"
 TENNIS = "tennis sans résultat (doubles et abandons ne se règlent jamais)"
 SANS_EVENTS = "aucune ligne `events` — jamais réclamé"
@@ -97,25 +99,41 @@ MARCHE = "marché que `settle` ne sait pas régler (mi-temps…)"
 INEXPLOITABLE = "résultat en base, mais insuffisant pour ce pari"
 # Propres aux DÉTECTIONS, où l'unité est le match et non le pari.
 REGLE_SANS_SCORE = "réglé, mais sans score — ses totals ne se règlent pas"
-AUTRE_CLE = "résultat connu sous une AUTRE clé du même match (horaire révisé)"
-DOUBLE = "tennis, double — la source n'en sert aucun"
+AUTRE_CLE = ("résultat connu sous une AUTRE clé du même match (horaire révisé "
+             "au-delà de la tolérance)")
+TENNIS_RELIER = ("tennis, résultat connu sous une autre clé à moins de 12 h — "
+                 "un results-update tennis le reliera")
+DOUBLE = "tennis, double — la source les sert, notre lecteur les écarte (noms de paires mutilés)"
 TENNIS_SIMPLE = "tennis, simple sans résultat — abandon, forfait, ou absent de la source"
+#: Posée APRÈS le contrôle de production, sur un match que les fichiers du pont
+#: permettent déjà de régler : il ne manque qu'un passage de results-update.
+APPARIABLE = "présent et appariable — relancer results-update"
 
 #: L'ordre d'impression : ce qui est normal d'abord, puis ce qui demande un
 #: geste, du plus fréquent attendu au plus rare.
-ORDRE = [REGLE, A_VENIR, FOOT_DU_JOUR, FOOT_SANS_PONT, JAMAIS_DEMANDEE,
-         HORS_FENETRE, REFUSEE, TROP_TOT, TROP_TOT_HORS, FOOT_ABSENT, TENNIS,
+ORDRE = [REGLE, A_VENIR, FOOT_DU_JOUR, FOOT_SANS_PONT, FICHIER_ILLISIBLE,
+         JAMAIS_DEMANDEE, HORS_FENETRE, REFUSEE, TROP_TOT, TROP_TOT_HORS,
+         TROP_TOT_REFUSEE, APPARIABLE, AUTRE_CLE, FOOT_ABSENT, TENNIS,
          TENNIS_SANS_CLE, SANS_EVENTS, SPORT_INCONNU, SANS_SOURCE, NON_RATTACHE,
          MARCHE, INEXPLOITABLE]
 NORMAUX = {REGLE, A_VENIR, FOOT_DU_JOUR}
 ORDRE_DET = [REGLE, REGLE_SANS_SCORE, A_VENIR, FOOT_DU_JOUR, FOOT_SANS_PONT,
-             JAMAIS_DEMANDEE, HORS_FENETRE, REFUSEE, TROP_TOT, TROP_TOT_HORS,
-             AUTRE_CLE, FOOT_ABSENT, DOUBLE, TENNIS_SIMPLE, TENNIS_SANS_CLE,
-             SPORT_INCONNU, SANS_SOURCE]
+             FICHIER_ILLISIBLE, JAMAIS_DEMANDEE, HORS_FENETRE, REFUSEE, TROP_TOT,
+             TROP_TOT_HORS, TROP_TOT_REFUSEE, APPARIABLE, AUTRE_CLE, FOOT_ABSENT,
+             TENNIS_RELIER, DOUBLE, TENNIS_SIMPLE, TENNIS_SANS_CLE, SPORT_INCONNU,
+             SANS_SOURCE]
 NORMAUX_DET = {REGLE, REGLE_SANS_SCORE, A_VENIR, FOOT_DU_JOUR}
 #: Les causes qui tiennent à la JOURNÉE du pont football.
 FOOT_PONT = (JAMAIS_DEMANDEE, HORS_FENETRE, REFUSEE, TROP_TOT, TROP_TOT_HORS,
-             FOOT_ABSENT)
+             TROP_TOT_REFUSEE, FOOT_ABSENT)
+#: Celles où un fichier du pont existe (le sien ou un voisin) et que la
+#: production pourrait donc déjà régler : on le vérifie avant de conclure.
+A_VERIFIER = FOOT_PONT
+#: Les causes qu'un passage de `results-update` peut régler — les seules qui
+#: comptent pour le `--days` conseillé. Un match qu'aucune relance ne règlera
+#: (source absente, sport sans source…) n'a pas à élargir la fenêtre.
+RELANCABLES = {JAMAIS_DEMANDEE, HORS_FENETRE, REFUSEE, TROP_TOT, TROP_TOT_HORS,
+               TROP_TOT_REFUSEE, APPARIABLE, SANS_EVENTS, SPORT_INCONNU}
 
 #: Le bouton, écrit comme le menu Tampermonkey l'affiche
 #: (`tools/scores-ingest.user.js`) — un libellé approché ne se trouve pas.
@@ -152,8 +170,26 @@ def _col(r, nom: str, defaut=None):
         return defaut
 
 
+def lisible(f: Path, memo: "dict | None" = None) -> bool:
+    """La production saura-t-elle lire ce fichier ? `BridgedFootballScores`
+    lève sur un JSON illisible, et `results-update` met alors TOUT le football
+    en panne — pas seulement cette journée. On rejoue exactement sa lecture :
+    `json.loads`, puis `parse_apifootball_results`."""
+    if memo is not None and f in memo:
+        return memo[f]
+    try:
+        parse_apifootball_results(json.loads(f.read_text(encoding="utf-8")))
+        ok = True
+    except Exception:                                         # noqa: BLE001
+        ok = False
+    if memo is not None:
+        memo[f] = ok
+    return ok
+
+
 def etat_journee(jour: date, dossier: Path, maintenant: datetime,
-                 jours_pont: int, final_apres: int) -> str:
+                 jours_pont: int, final_apres: int,
+                 memo: "dict | None" = None) -> str:
     """Ce que le pont football a fait de cette journée UTC — la même règle
     que `_handle_scores_plan`, relue et non recopiée à l'aveugle :
 
@@ -175,16 +211,23 @@ def etat_journee(jour: date, dossier: Path, maintenant: datetime,
         if tombe:
             return REFUSEE
         return JAMAIS_DEMANDEE if dans_fenetre else HORS_FENETRE
+    if not lisible(f, memo):
+        return FICHIER_ILLISIBLE
     fin = datetime.combine(jour + timedelta(days=1), datetime.min.time(),
                            tzinfo=timezone.utc).timestamp()
     if f.stat().st_mtime < fin + final_apres:
-        return TROP_TOT if dans_fenetre and not tombe else TROP_TOT_HORS
+        # Deux raisons distinctes de ne plus être reprise, deux gestes
+        # distincts : la pierre tombale s'efface (abonnement payant), la
+        # fenêtre s'élargit.
+        if tombe:
+            return TROP_TOT_REFUSEE
+        return TROP_TOT if dans_fenetre else TROP_TOT_HORS
     return FOOT_ABSENT
 
 
 def classer(r, maintenant: datetime, dossier: Path, jours_pont: int,
             final_apres: int, pont_actif: bool = True,
-            cle_tennis: bool = True) -> str:
+            cle_tennis: bool = True, memo: "dict | None" = None) -> str:
     """La raison pour laquelle CE pari joué a — ou n'a pas — son résultat.
 
     `pont_actif` et `cle_tennis` : ce que `.env` dit des sources. Sans eux, la
@@ -223,7 +266,8 @@ def classer(r, maintenant: datetime, dossier: Path, jours_pont: int,
     jour = depart.date()
     if jour >= maintenant.date():
         return FOOT_DU_JOUR
-    return etat_journee(jour, dossier, maintenant, jours_pont, final_apres)
+    return etat_journee(jour, dossier, maintenant, jours_pont, final_apres,
+                        None if memo is None else memo.setdefault("lisible", {}))
 
 
 # ── Pourquoi un match de football n'a pas été rapproché ─────────────
@@ -238,9 +282,8 @@ NOMS = "candidat aux noms proches — à vérifier à l'œil"
 HORAIRE = "présent, mais horaire décalé au-delà de la tolérance"
 STATUT = "présent, mais pas terminé normalement (reporté, annulé, arrêté…)"
 PROLONG = "présent, allé en prolongation — la source ne prouve pas le score à 90 min"
-APPARIABLE = "présent et appariable — relancer results-update"
-VOISIN = ("présent, mais dans le fichier de la veille ou du lendemain — "
-          "results-update ne le lit pas")
+VOISIN = ("présent dans le fichier de la veille ou du lendemain, que "
+          "results-update ne lira pas (aucun autre match à régler ce jour-là)")
 AMBIGU = ("présent, mais un autre match de la source lui ressemble trop — "
           "le rapprochement refuse de choisir")
 SANS_SCORE_SOURCE = "présent et terminé, mais la source ne donne pas son score"
@@ -383,7 +426,9 @@ class SourceFoot:
                                     and ft.get("away") is not None),
                         # Pour les prolongations NON prouvables : la forme de
                         # ce que la source a donné, pour chiffrer une règle.
-                        "prolong": _forme_prolongation(ft, et, buts)})
+                        "prolong": _forme_prolongation(
+                            ((fx.get("status") or {}).get("short") or "").upper(),
+                            ft, et, buts)})
         self._prep[d] = out
 
     def resultats(self, d: date) -> list:
@@ -402,9 +447,7 @@ class SourceFoot:
 
         Les voisins comptent : un match à 23 h 30 chez nous peut être daté du
         lendemain chez la source, et le chercher dans un seul fichier le
-        déclarerait absent à tort. Mais `results-update` ne lit que le fichier
-        du jour de NOTRE match : trouvé chez un voisin, il n'est pas
-        « appariable » pour autant."""
+        déclarerait absent à tort."""
         if jour not in self._fen:
             fx = [x for d in (jour - timedelta(days=1), jour, jour + timedelta(days=1))
                   for x in self._prepares(d)]
@@ -459,17 +502,18 @@ TAB_DIRECTS = "tirs au but directs — pas de prolongation saisie, buts = score 
 PROLONG_SANS_DETAIL = "prolongation sans détail exploitable"
 
 
-def _forme_prolongation(ft: dict, et: dict, buts: dict) -> str:
+def _forme_prolongation(statut: str, ft: dict, et: dict, buts: dict) -> str:
     """Ce que la source a donné pour un AET/PEN, en une étiquette.
 
-    `TAB_DIRECTS` : aucune prolongation saisie (`extratime` vide) et des buts
-    égaux au temps réglementaire — la forme d'un match allé DIRECTEMENT aux
+    `TAB_DIRECTS` : un PEN sans prolongation saisie (`extratime` vide) et des
+    buts égaux au temps réglementaire — la forme d'un match allé DIRECTEMENT aux
     tirs au but (Coupe de la Ligue anglaise, Copa Argentina, MLS Next Pro…).
+    Jamais un AET : décidé en prolongation, il en a joué une.
     `_score_90_minutes` exige une prolongation chiffrée et l'écarte ; si la
     source dit vrai, son score à 90 min est `fulltime`. La sonde le COMPTE, elle
     ne le décide pas : c'est une règle de production à trancher sur ce chiffre."""
     vals = (ft.get("home"), ft.get("away"), buts.get("home"), buts.get("away"))
-    if (et.get("home") is None and et.get("away") is None
+    if (statut == "PEN" and et.get("home") is None and et.get("away") is None
             and None not in vals and vals[:2] == vals[2:]):
         return TAB_DIRECTS
     return PROLONG_SANS_DETAIL
@@ -517,18 +561,62 @@ def _notre_evenement(r, noms: dict) -> "OurEvent":
                     league=r["league"] or "")
 
 
-def diagnostiquer(r, noms: dict, dossier: Path, cache: dict) -> dict:
+def _resultats_production(source: "SourceFoot", jour: date,
+                          jours: "set | None") -> list:
+    """Les résultats contre lesquels `results-update` rapproche un match du
+    jour `jour`.
+
+    ⚠️ Pas le seul fichier de ce jour. `results-update` charge le fichier de
+    CHAQUE journée qui a un match de football en attente dans sa fenêtre
+    (`days_needed`), met tous leurs résultats dans un même lot, et rapproche
+    chaque match contre ce lot (src/main.py, `fetched.extend` puis
+    `bind_results(events, fetched)`). La tolérance horaire (10 min) ne laisse
+    passer qu'un voisin immédiat : la veille ou le lendemain, s'ils sont
+    chargés. `jours` : les journées chargées ; `None` = toutes (le cas réel,
+    où chaque journée a au moins un match en attente)."""
+    return [x for d in (jour - timedelta(days=1), jour, jour + timedelta(days=1))
+            if d == jour or jours is None or d in jours
+            for x in source.resultats(d)]
+
+
+def lie_en_production(r, noms: dict, source: "SourceFoot",
+                      jours: "set | None" = None) -> "str | None":
+    """Ce que `results-update` ferait de CE match avec les fichiers présents :
+    "lie" s'il le rapproche, "ambigu" si seule sa garde d'ambiguïté l'en
+    empêche, None sinon. Même construction du match (`_notre_evenement`),
+    même lot de résultats (`_resultats_production`), même `bind_results`."""
+    ev = _notre_evenement(r, noms)
+    if ev.start_time is None:
+        return None
+    lot = _resultats_production(source, ev.start_time.date(), jours)
+    if bind_results([ev], lot, sport="soccer")[0]:
+        return "lie"
+    # La garde d'ambiguïté de `match_event` : deux résultats presque aussi
+    # bons, et la production refuse de choisir. Sans marge, elle aurait lié.
+    marque = class_marker_from_league(ev.league)
+    evm = replace(ev, home=with_class_marker(ev.home, marque),
+                  away=with_class_marker(ev.away, marque))
+    if match_event(evm, lot, time_tolerance_minutes=tolerance_for_scores("soccer"),
+                   min_score=SEUIL_APPARIEMENT, ambiguity_margin=0) is not None:
+        return "ambigu"
+    return None
+
+
+def diagnostiquer(r, noms: dict, dossier: Path, cache: dict,
+                  jours: "set | None" = None, production: "str | None" = "?") -> dict:
     """Le match de la source le plus proche de CE match, et le verdict.
 
-    D'abord la PRODUCTION elle-même : `bind_results` sur les résultats du
-    fichier du jour, exactement comme `results-update`. S'il lie, le match est
-    appariable et rien d'autre ne compte. Sinon, on cherche dans les trois
+    D'abord la PRODUCTION elle-même (`lie_en_production`) : s'il lie, le match
+    est appariable et rien d'autre ne compte. Sinon, on cherche dans les trois
     fichiers le candidat le plus proche, SANS la barrière de classe, pour dire
     ce qui a bloqué. Une sonde qui jugerait autrement que la production
     mentirait (§17.7) ; et si les deux se contredisent, elle le dit
     (`INEXPLIQUE`) au lieu de trancher.
 
-    `cache` : un dict partagé d'un appel à l'autre, qui garde les fichiers lus."""
+    `cache` : un dict partagé d'un appel à l'autre, qui garde les fichiers lus.
+    `jours` : les journées que `results-update` chargera (voir
+    `_resultats_production`). `production` : le verdict de
+    `lie_en_production` s'il est déjà connu — "?" pour le calculer ici."""
     source = cache.get(dossier)
     if source is None:
         source = cache[dossier] = SourceFoot(dossier)
@@ -572,14 +660,11 @@ def diagnostiquer(r, noms: dict, dossier: Path, cache: dict) -> dict:
                 # ce qui dit QUELLE correction lèverait une barrière de classe.
                 "conflits": _conflits(h, a, x, meilleur["droit"])}
 
-    resultats = source.resultats(depart.date())
-    if bind_results([ev], resultats, sport="soccer")[0]:
+    if production == "?":
+        production = lie_en_production(r, noms, source, jours)
+    if production == "lie":
         return {"verdict": APPARIABLE, "nous": nous, "cand": cand}
-    # La garde d'ambiguïté de `match_event` : deux résultats presque aussi
-    # bons, et la production refuse de choisir. Sans marge, elle aurait lié.
-    evm = replace(ev, home=h, away=a)
-    if match_event(evm, resultats, time_tolerance_minutes=tol,
-                   min_score=SEUIL_APPARIEMENT, ambiguity_margin=0) is not None:
+    if production == "ambigu":
         return {"verdict": AMBIGU, "nous": nous, "cand": cand}
 
     if cand is None or not cand["plausible"]:
@@ -590,19 +675,21 @@ def diagnostiquer(r, noms: dict, dossier: Path, cache: dict) -> dict:
         verdict = NOMS
     elif cand["dt"] > tol:
         verdict = HORAIRE
-    # Une prolongation dont le score à 90 min est PROUVÉ se règle comme un FT
-    # (`parse_apifootball_results`) : 402 des 409 cas exploitables en base.
     elif cand["statut"] == "FT" and not cand["a_score"]:
         # `parse_apifootball_results` l'écarte (`score_manquant`) : sans score,
         # rien à régler, et ce n'est pas une contradiction avec la production.
         verdict = SANS_SCORE_SOURCE
+    # Une prolongation dont le score à 90 min est PROUVÉ se règle comme un FT
+    # (`parse_apifootball_results`) : 402 des 409 cas exploitables en base.
     elif cand["statut"] == "FT" or (cand["statut"] in ("AET", "PEN")
                                     and cand["a_90"]):
-        # La production n'a PAS lié ce match (vérifié plus haut). Trouvé chez
-        # un voisin, c'est attendu ; dans le bon fichier, c'est une
-        # contradiction entre la sonde et la production — à signaler, pas à
-        # arbitrer ici.
-        verdict = VOISIN if cand["jour_fichier"] != depart.date() else INEXPLIQUE
+        # La production n'a PAS lié ce match (vérifié plus haut). Trouvé dans
+        # un fichier voisin qu'elle ne chargera pas, c'est attendu ; sinon,
+        # c'est une contradiction entre la sonde et la production — à
+        # signaler, pas à arbitrer ici.
+        charge = (cand["jour_fichier"] == depart.date() or jours is None
+                  or cand["jour_fichier"] in jours)
+        verdict = INEXPLIQUE if charge else VOISIN
     elif cand["statut"] in ("AET", "PEN"):
         verdict = PROLONG
     else:
@@ -651,13 +738,38 @@ def charger(db: str, depuis: date) -> list:
             if (_coup_d_envoi(r) or _instant(r["played_at"]) or seuil) >= seuil], noms
 
 
+def jours_reclames_base(db: str, depuis: date, maintenant: datetime) -> set:
+    """Les journées dont `results-update` chargera le fichier football : celles
+    qui ont au moins un match EN ATTENTE — toutes détections confondues, pas
+    seulement les paris joués (`events_awaiting_result`)."""
+    con = sqlite3.connect(f"file:{db}?mode=ro", uri=True)
+    try:
+        lignes = con.execute("""
+            SELECT DISTINCT e.start_time FROM events e
+            WHERE e.sport = 'soccer' AND e.start_time >= ? AND e.start_time < ?
+              AND EXISTS (SELECT 1 FROM value_bets vb WHERE vb.event_key = e.event_key)
+              AND NOT EXISTS (SELECT 1 FROM results r WHERE r.event_key = e.event_key)
+        """, ((datetime.combine(depuis, datetime.min.time(), tzinfo=timezone.utc)
+               - timedelta(days=1)).isoformat(),
+              (maintenant - GRACE).isoformat())).fetchall()
+    except sqlite3.OperationalError:
+        return set()
+    finally:
+        con.close()
+    return {t.date() for (brut,) in lignes for t in [_instant(brut)] if t}
+
+
 def analyser(rows: list, maintenant: datetime, dossier: Path, jours_pont: int,
              final_apres: int, pont_actif: bool = True,
-             cle_tennis: bool = True) -> dict:
+             cle_tennis: bool = True, noms: "dict | None" = None,
+             jours: "set | None" = None, reglees: "dict | None" = None) -> dict:
+    memo: dict = {}
     classes = [(r, classer(r, maintenant, dossier, jours_pont, final_apres,
-                           pont_actif, cle_tennis))
+                           pont_actif, cle_tennis, memo))
                for r in rows]
-    return {"classes": classes,
+    classes, diags, _l = verifier_production(classes, noms or {}, dossier, jours,
+                                             reglees)
+    return {"classes": classes, "diags": diags,
             "comptes": Counter(c for _r, c in classes)}
 
 
@@ -689,12 +801,23 @@ SQL_SPORT = ("UPDATE events SET sport = (SELECT pb.sport FROM played_bets pb "
              "played_bets WHERE sport IN ('soccer','tennis'))")
 
 
-def _commande_sport(db: str) -> str:
+#: Pour les DÉTECTIONS : le sport vu à la détection (`bet_features`), sinon
+#: celui d'un clic. Ne remplit QUE les lignes sans sport ; n'écrase rien.
+SQL_SPORT_DET = ("UPDATE events SET sport = COALESCE((SELECT bf.sport FROM "
+                 "bet_features bf WHERE bf.event_key = events.event_key AND "
+                 "COALESCE(bf.sport,'') NOT IN ('','unknown') LIMIT 1), (SELECT "
+                 "pb.sport FROM played_bets pb WHERE pb.event_key = "
+                 "events.event_key AND COALESCE(pb.sport,'') NOT IN "
+                 "('','unknown') LIMIT 1), sport) WHERE COALESCE(sport,'') IN "
+                 "('','unknown')")
+
+
+def _commande_sport(db: str, sql: str = SQL_SPORT) -> str:
     """La commande à coller dans le shell : le SQL entre `\\"`, parce que
     l'argument de `-c` est lui-même entre guillemets doubles."""
     return (".venv/bin/python -c \"import sqlite3; "
             f"c = sqlite3.connect('{db}'); "
-            f"n = c.execute(\\\"{SQL_SPORT}\\\").rowcount; c.commit(); "
+            f"n = c.execute(\\\"{sql}\\\").rowcount; c.commit(); "
             "print(n, 'ligne(s) corrigée(s)')\"")
 
 
@@ -744,14 +867,8 @@ def imprimer(res: dict, depuis: date, dossier: Path, jours_pont: int,
             print(f"  {j.isoformat()}  {sum(foot[j].values()):3} pari(s)  — {c}")
 
     pourquoi = Counter()
-    absents_foot = [r for r, c in classes if c == FOOT_ABSENT]
-    if absents_foot:
-        source = SourceFoot(dossier)
-        cache: dict = {dossier: source}
-        diags = []
-        for r in sorted(absents_foot, key=_coup_d_envoi):
-            source.oublier(_coup_d_envoi(r).date() - timedelta(days=1))
-            diags.append((r, diagnostiquer(r, noms or {}, dossier, cache)))
+    diags = res.get("diags") or []
+    if diags:
         pourquoi = Counter(d["verdict"] for _r, d in diags)
         print("\nFOOTBALL — CE QUE LA SOURCE AVAIT CE JOUR-LÀ, match par match")
         print("(le candidat le plus proche dans le fichier du pont, veille et "
@@ -815,59 +932,105 @@ LIGUES_MONTREES = 8
 
 def charger_detections(db: str, depuis: date) -> tuple:
     """(matchs portant au moins un value bet et joués à partir de `depuis` ;
-    noms affichés ; clés « équipes + jour » des matchs qui ONT un résultat).
+    noms affichés ; matchs qui ONT un résultat, par « équipes + jour + ligue »).
 
     Le troisième élément sert à reconnaître un match réglé sous une autre
-    clé : une révision d'horaire crée une clé neuve (§17.8), et la même clé
-    « équipes + jour » est celle du dashboard (`analytics.requete.EXPR_CLE`)."""
+    clé : une révision d'horaire crée une clé neuve (§17.8). La LIGUE en fait
+    partie : sans elle, un match féminin ou de jeunes — dont la classe ne vit
+    que dans la ligue, les noms compactés étant les mêmes — passerait pour le
+    match des seniors."""
     con = sqlite3.connect(f"file:{db}?mode=ro", uri=True)
     con.row_factory = sqlite3.Row
     borne = datetime.combine(depuis, datetime.min.time(),
                              tzinfo=timezone.utc).isoformat()
-    # `bet_features` porte la ligue vue au moment de la détection ; `events`
-    # peut l'avoir perdue (`build_event_rows` écrit "" quand aucune cote n'en
-    # portait, et INSERT OR IGNORE ne la corrige jamais). La production ne lit
-    # QUE `events.league` — celle de `bet_features` sert à mesurer ce qu'elle
+    # `bet_features` porte la ligue et le sport vus à la détection ; `events`
+    # peut avoir perdu l'une ou l'autre (`upsert_events` complète une ligue
+    # vide, mais seulement si une cote plus tardive la porte ; la ligue n'est
+    # collectée que depuis le 01/08). La production ne lit QUE `events` —
+    # `bet_features` et `played_bets` servent à MESURER ce qu'une réparation
     # rapporterait, jamais à juger.
+    #
+    # Les détections comptées sont celles que `settle` sait régler (1X2 et
+    # totaux) : une mi-temps n'est jamais réglée, la compter gonflerait le
+    # dénominateur de la couverture.
     requete = """
         SELECT e.event_key, e.sport, e.league, e.home, e.away, e.start_time,
-               v.n AS n_det,
+               v.n_h2h + v.n_tot AS n_det, v.n_h2h AS n_h2h,
                (r.event_key IS NOT NULL) AS has_result,
                (r.home_score IS NOT NULL AND r.away_score IS NOT NULL) AS has_scores,
-               {ligue_bf} AS league_bf
-        FROM (SELECT event_key, COUNT(*) AS n FROM value_bets
-              GROUP BY event_key) v
+               {ligue_bf} AS league_bf, {sport_bf} AS sport_bf,
+               {sport_pb} AS sport_pb
+        FROM (SELECT event_key,
+                     SUM(market = 'h2h') AS n_h2h,
+                     SUM(market = 'totals') AS n_tot
+              FROM value_bets GROUP BY event_key) v
         JOIN events e       ON e.event_key = v.event_key
         LEFT JOIN results r ON r.event_key = e.event_key
         WHERE e.start_time >= ?
     """
-    try:
-        rows = list(con.execute(requete.format(ligue_bf="""(
-            SELECT bf.league FROM bet_features bf
-            WHERE bf.event_key = e.event_key AND COALESCE(bf.league, '') <> ''
-            LIMIT 1)"""), (borne,)))
-    except sqlite3.OperationalError:
-        rows = list(con.execute(requete.format(ligue_bf="NULL"), (borne,)))
-    reglees = {(h, a, j) for h, a, j in con.execute("""
-        SELECT lower(e.home), lower(e.away), substr(e.start_time, 1, 10)
-        FROM results r JOIN events e ON e.event_key = r.event_key
-        WHERE e.start_time >= ?""", ((datetime.fromisoformat(borne)
-                                      - timedelta(days=1)).isoformat(),))}
+    def colonne(table, champ):
+        return f"""(SELECT x.{champ} FROM {table} x
+                    WHERE x.event_key = e.event_key
+                      AND COALESCE(x.{champ}, '') NOT IN ('', 'unknown')
+                    LIMIT 1)"""
+    options = {"ligue_bf": colonne("bet_features", "league"),
+               "sport_bf": colonne("bet_features", "sport"),
+               "sport_pb": colonne("played_bets", "sport")}
+    tables = {n for (n,) in con.execute(
+        "SELECT name FROM sqlite_master WHERE type = 'table'")}
+    for cle, table in (("ligue_bf", "bet_features"), ("sport_bf", "bet_features"),
+                       ("sport_pb", "played_bets")):
+        if table not in tables:
+            options[cle] = "NULL"
+    rows = [dict(r) for r in con.execute(requete.format(**options), (borne,))]
     try:
         noms = {n: d for n, d in con.execute(
             "SELECT normalized_name, display_name FROM teams")}
     except sqlite3.OperationalError:
         noms = {}
     con.close()
-    return [dict(r) for r in rows], noms, reglees
+    return rows, noms, charger_reglees(db, depuis)
 
 
-def _autre_cle(r, reglees: set) -> bool:
-    """Ce match a-t-il son résultat sous une autre clé : mêmes équipes, même
-    jour UTC, dans un sens ou dans l'autre ?"""
+def charger_reglees(db: str, depuis: date) -> dict:
+    """Les matchs qui ONT un résultat, par (équipes, jour UTC, ligue) → leurs
+    coups d'envoi. Seulement ceux dont la ligue est connue : voir
+    `ecart_cle_voisine`."""
+    con = sqlite3.connect(f"file:{db}?mode=ro", uri=True)
+    reglees: dict = defaultdict(list)
+    borne = (datetime.combine(depuis, datetime.min.time(), tzinfo=timezone.utc)
+             - timedelta(days=1)).isoformat()
+    try:
+        for h, a, t, lg in con.execute("""
+                SELECT lower(e.home), lower(e.away), e.start_time, e.league
+                FROM results r JOIN events e ON e.event_key = r.event_key
+                WHERE e.start_time >= ? AND COALESCE(e.league, '') <> ''""",
+                (borne,)):
+            instant = _instant(t)
+            if instant is not None:
+                reglees[(h, a, instant.date(), lg)].append(instant)
+    finally:
+        con.close()
+    return dict(reglees)
+
+
+def ecart_cle_voisine(r, reglees: dict) -> "float | None":
+    """L'écart, en minutes, avec la plus proche AUTRE clé du même match qui a
+    un résultat : mêmes équipes (dans un sens ou dans l'autre), même jour UTC,
+    même ligue NON vide. None s'il n'y en a pas.
+
+    Sans ligue, on ne sait pas si deux clés aux mêmes noms compactés sont le
+    même match ou un match féminin face au masculin : on ne conclut pas."""
+    t = _coup_d_envoi(r)
+    lg = r["league"] or ""
     h, a = (r["home"] or "").lower(), (r["away"] or "").lower()
-    j = (r["start_time"] or "")[:10]
-    return bool(h and a and j) and ((h, a, j) in reglees or (a, h, j) in reglees)
+    if t is None or not (h and a and lg):
+        return None
+    instants = (reglees.get((h, a, t.date(), lg), [])
+                + reglees.get((a, h, t.date(), lg), []))
+    if not instants:
+        return None
+    return min(abs((x - t).total_seconds()) / 60 for x in instants)
 
 
 def _est_double(r, noms: dict) -> bool:
@@ -879,10 +1042,11 @@ def _est_double(r, noms: dict) -> bool:
 
 def classer_detection(r, maintenant: datetime, dossier: Path, jours_pont: int,
                       final_apres: int, pont_actif: bool, cle_tennis: bool,
-                      reglees: set, noms: dict, memo: dict) -> str:
-    """La raison pour laquelle CE match détecté a — ou n'a pas — son résultat.
-    `memo` garde l'état de chaque journée du pont : il ne change pas d'un
-    match à l'autre."""
+                      reglees: dict, noms: dict, memo: dict) -> str:
+    """La raison pour laquelle CE match détecté a — ou n'a pas — son résultat,
+    AVANT le contrôle de production (`analyser_detections` le fait ensuite).
+    `memo` garde l'état de chaque journée du pont (et la lisibilité de chaque
+    fichier) : ils ne changent pas d'un match à l'autre."""
     if r["has_result"]:
         return REGLE if r["has_scores"] else REGLE_SANS_SCORE
     depart = _coup_d_envoi(r)
@@ -893,58 +1057,103 @@ def classer_detection(r, maintenant: datetime, dossier: Path, jours_pont: int,
         return SPORT_INCONNU
     if sport not in SPORTS_AVEC_SOURCE:
         return SANS_SOURCE
-    if _autre_cle(r, reglees):
-        return AUTRE_CLE
     if sport == "tennis":
         if not cle_tennis:
             return TENNIS_SANS_CLE
+        # Pas de fichier au tennis : la seule preuve est le résultat d'une clé
+        # voisine. À moins de 12 h (la tolérance tennis), `bind_results` —
+        # qui n'est pas « un résultat, un match » — la reliera au prochain
+        # passage ; au-delà, jamais.
+        ecart = ecart_cle_voisine(r, reglees)
+        if ecart is not None:
+            return (TENNIS_RELIER if ecart <= tolerance_for_scores("tennis")
+                    else AUTRE_CLE)
         return DOUBLE if _est_double(r, noms) else TENNIS_SIMPLE
     if not pont_actif:
         return FOOT_SANS_PONT
     jour = depart.date()
     if jour >= maintenant.date():
         return FOOT_DU_JOUR
-    if jour not in memo:
-        memo[jour] = etat_journee(jour, dossier, maintenant, jours_pont, final_apres)
-    return memo[jour]
+    cle = ("etat", jour)
+    if cle not in memo:
+        memo[cle] = etat_journee(jour, dossier, maintenant, jours_pont,
+                                 final_apres, memo.setdefault("lisible", {}))
+    return memo[cle]
+
+
+def jours_reclames_detections(rows: list, maintenant: datetime) -> set:
+    """Les journées dont `results-update` chargera le fichier : celles qui ont
+    au moins un match de football EN ATTENTE (`days_needed`)."""
+    return {d.date() for r in rows
+            if (r["sport"] or "").lower() == "soccer" and not r["has_result"]
+            for d in [_coup_d_envoi(r)] if d is not None and d <= maintenant - GRACE}
+
+
+def verifier_production(classes: list, noms: dict, dossier: Path, jours: set,
+                        reglees: "dict | None", progres=None,
+                        mesurer_ligue: bool = False) -> tuple:
+    """Le contrôle de production, match par match, pour tout ce que les
+    fichiers du pont pourraient déjà régler (`A_VERIFIER`) — dans l'ordre
+    chronologique, pour que `SourceFoot.oublier` libère la mémoire au fur et à
+    mesure.
+
+    * lié par `bind_results` → `APPARIABLE` : il ne manque qu'un passage ;
+    * sinon, réglé sous une autre clé (même ligue) → `AUTRE_CLE` ;
+    * sinon, journée complète → diagnostic (`diagnostiquer`) ;
+    * sinon, la cause du pont reste.
+
+    Rend (classes mises à jour, diagnostics, matchs que la ligue de
+    `bet_features` rendrait appariables)."""
+    source = SourceFoot(dossier)
+    cache: dict = {dossier: source}
+    a_voir = sorted((i for i, (_r, c) in enumerate(classes) if c in A_VERIFIER),
+                    key=lambda i: _coup_d_envoi(classes[i][0]))
+    nouvelles = list(classes)
+    diags = []
+    ligue_rendue = 0
+    for n, i in enumerate(a_voir, 1):
+        r, c = classes[i]
+        source.oublier(_coup_d_envoi(r).date() - timedelta(days=1))
+        prod = lie_en_production(r, noms, source, jours)
+        if prod == "lie":
+            nouvelles[i] = (r, APPARIABLE)
+        elif reglees is not None and ecart_cle_voisine(r, reglees) is not None:
+            nouvelles[i] = (r, AUTRE_CLE)
+        elif c == FOOT_ABSENT:
+            d = diagnostiquer(r, noms, dossier, cache, jours, prod)
+            diags.append((r, d))
+            # Ce que rapporterait la ligue de `bet_features` là où `events`
+            # n'en a pas : même rapprochement, seule la ligue change. Une
+            # mesure, pas un verdict.
+            if (mesurer_ligue and d["verdict"] != APPARIABLE
+                    and not (r["league"] or "") and _col(r, "league_bf")):
+                ev = replace(_notre_evenement(r, noms), league=r["league_bf"])
+                lot = _resultats_production(source, ev.start_time.date(), jours)
+                if bind_results([ev], lot, sport="soccer")[0]:
+                    ligue_rendue += 1
+        if progres and n % 250 == 0:
+            progres(n, len(a_voir))
+    return nouvelles, diags, ligue_rendue
 
 
 def analyser_detections(rows: list, maintenant: datetime, dossier: Path,
                         jours_pont: int, final_apres: int, pont_actif: bool,
-                        cle_tennis: bool, reglees: set, noms: dict,
+                        cle_tennis: bool, reglees: dict, noms: dict,
                         progres=None) -> dict:
     memo: dict = {}
     classes = [(r, classer_detection(r, maintenant, dossier, jours_pont,
                                      final_apres, pont_actif, cle_tennis,
                                      reglees, noms, memo))
                for r in rows]
+    classes, diags, ligue_rendue = verifier_production(
+        classes, noms, dossier, jours_reclames_detections(rows, maintenant),
+        reglees, progres, mesurer_ligue=True)
     comptes = Counter(c for _r, c in classes)
     dets = Counter()
     for r, c in classes:
         dets[c] += r["n_det"] or 0
-    a_diagnostiquer = sorted((r for r, c in classes if c == FOOT_ABSENT),
-                             key=_coup_d_envoi)
-    source = SourceFoot(dossier)
-    cache: dict = {dossier: source}
-    diags = []
-    ligue_rendue = 0
-    for i, r in enumerate(a_diagnostiquer, 1):
-        # Chronologique : les journées d'avant-hier ne serviront plus.
-        source.oublier(_coup_d_envoi(r).date() - timedelta(days=1))
-        d = diagnostiquer(r, noms, dossier, cache)
-        diags.append((r, d))
-        # Ce que rapporterait la ligue de `bet_features` là où `events` n'en a
-        # pas : même rapprochement, seule la ligue change. Une mesure, pas un
-        # verdict — la production, elle, ne lit que `events`.
-        if d["verdict"] != APPARIABLE and not (r["league"] or "") and r["league_bf"]:
-            ev = replace(_notre_evenement(r, noms), league=r["league_bf"])
-            if bind_results([ev], source.resultats(ev.start_time.date()),
-                            sport="soccer")[0]:
-                ligue_rendue += 1
-        if progres and i % 250 == 0:
-            progres(i, len(a_diagnostiquer))
     return {"classes": classes, "comptes": comptes, "dets": dets,
-            "diags": diags, "ligue_rendue": ligue_rendue}
+            "diags": diags, "ligue_rendue": ligue_rendue, "reglees": reglees}
 
 
 def _tranche_horaire(dt: float) -> str:
@@ -991,11 +1200,13 @@ def imprimer_detections(res: dict, depuis: date, dossier: Path, jours_pont: int,
         if c in (A_VENIR, FOOT_DU_JOUR):
             continue
         t = par_sport[(r["sport"] or "?").lower()]
-        regle = c in (REGLE, REGLE_SANS_SCORE)
-        t[0] += regle
+        t[0] += c in (REGLE, REGLE_SANS_SCORE)
         t[1] += 1
-        t[2] += (r["n_det"] or 0) if regle else 0
+        # Un résultat sans score règle le 1X2, jamais un total.
+        t[2] += ((r["n_det"] or 0) if c == REGLE
+                 else (_col(r, "n_h2h", 0) or 0) if c == REGLE_SANS_SCORE else 0)
         t[3] += r["n_det"] or 0
+    print("  (détections : 1X2 et totaux, les seules que `settle` sait régler)")
     print(f"  {'sport':12} {'matchs réglés':>18}   {'détections réglées':>22}")
     for sp, (a, b, da, db_) in sorted(par_sport.items(), key=lambda x: -x[1][1]):
         pct = f"{100 * a / b:3.0f} %" if b else "  — "
@@ -1005,12 +1216,17 @@ def imprimer_detections(res: dict, depuis: date, dossier: Path, jours_pont: int,
 
     jours = defaultdict(Counter)
     for r, c in classes:
-        if c in FOOT_PONT and c != FOOT_ABSENT:
+        if (c in FOOT_PONT or c == FICHIER_ILLISIBLE) and c != FOOT_ABSENT:
             jours[_coup_d_envoi(r).date()][c] += 1
-    print("\nFOOTBALL — LES JOURNÉES DU PONT")
-    if not jours:
-        print("  Toutes complètes : ce qui manque au football vient de la source ou "
-              "du rapprochement.")
+    foot_ponte = any(c in FOOT_PONT or c == FICHIER_ILLISIBLE
+                     or (c in (APPARIABLE, AUTRE_CLE)
+                         and (r["sport"] or "").lower() == "soccer")
+                     for r, c in classes)
+    if pont_actif and foot_ponte:
+        print("\nFOOTBALL — LES JOURNÉES DU PONT")
+        if not jours:
+            print("  Toutes complètes : ce qui manque au football vient de la "
+                  "source ou du rapprochement.")
     for j in sorted(jours):
         (c, _n), = jours[j].most_common(1)
         print(f"  {j.isoformat()}  {sum(jours[j].values()):4} match(s)  — {c}")
@@ -1024,8 +1240,9 @@ def imprimer_detections(res: dict, depuis: date, dossier: Path, jours_pont: int,
         sans_ligue = [r for r, _d in diags if not (r["league"] or "")]
         print(f"\nFOOTBALL — CE QUE LA SOURCE AVAIT, pour les {len(diags)} matchs "
               f"des journées complètes")
-        print("(la production d'abord — `bind_results` sur le fichier du jour — "
-              "puis le candidat le\nplus proche, veille et lendemain compris)")
+        print("(la production d'abord — `bind_results` sur les fichiers que "
+              "results-update charge —\npuis le candidat le plus proche, veille "
+              "et lendemain compris)")
         for v in ORDRE_POURQUOI:
             if pourquoi[v]:
                 print(f"  {pourquoi[v]:5}  ({pourquoi_d[v]:5} dét.)  {v}")
@@ -1090,7 +1307,9 @@ def imprimer_detections(res: dict, depuis: date, dossier: Path, jours_pont: int,
         print(f"\nRÉSULTAT SOUS UNE AUTRE CLÉ — {len(autres)} match(s), "
               f"{dets[AUTRE_CLE]} détections")
         for r in sorted(autres, key=lambda r: -(r["n_det"] or 0))[:EXEMPLES]:
-            print(f"  {r['event_key'][:60]:60}  {r['n_det']} dét.")
+            ecart = ecart_cle_voisine(r, res.get("reglees") or {})
+            print(f"  {r['event_key'][:60]:60}  {r['n_det']} dét."
+                  + (f" · Δ {ecart:.0f} min" if ecart is not None else ""))
     sans_src = Counter((r["sport"] or "?") for r, c in classes if c == SANS_SOURCE)
     if sans_src:
         print("\nSPORTS SANS SOURCE : " + ", ".join(
@@ -1100,22 +1319,28 @@ def imprimer_detections(res: dict, depuis: date, dossier: Path, jours_pont: int,
               "match(s)")
 
 
+def _maj(n: int, sports: str) -> str:
+    return (f"      .venv/bin/python -m src.main results-update --days {n} "
+            f"--sport {sports}\n"
+            f"      .venv/bin/python -m src.main track-update")
+
+
 def _conseils(classes, comptes, pourquoi, dossier: Path, jours_pont: int,
               maintenant: datetime, db: str, u: str) -> None:
     """Ce qu'il faut faire, dans l'ordre où il faut le faire — pour les
     paris joués comme pour les détections ; `u` nomme l'unité comptée."""
     print("\nQUE FAIRE, DANS CET ORDRE")
-    manques = [(r, c) for r, c in classes if c not in NORMAUX]
-    # UN `--days`, calculé sur le plus vieux match qui manque : c'est ce que
-    # `results-update` doit couvrir, et rien de plus petit ne le règle.
-    n_jours = jours_a_couvrir(maintenant, [_coup_d_envoi(r) for r, _c in manques])
-    n_tennis = jours_a_couvrir(maintenant, [_coup_d_envoi(r) for r, c in manques
-                                            if c in (TENNIS, TENNIS_SIMPLE)])
-    maj = (f"      .venv/bin/python -m src.main results-update --days {n_jours} "
-           f"--sport soccer,tennis\n"
-           f"      .venv/bin/python -m src.main track-update")
+    joues = u == "pari(s)"
 
-    # 1. La configuration d'abord : sans source, aucun autre geste n'aboutit.
+    def fenetre(causes) -> int:
+        """Le `--days` qui couvre les manques de ces causes — et seulement
+        eux : un match qu'aucune relance ne réglera n'élargit rien."""
+        return jours_a_couvrir(maintenant, [_coup_d_envoi(r) for r, c in classes
+                                            if c in causes])
+    n_foot = fenetre(RELANCABLES)
+    n_tennis = fenetre({TENNIS, TENNIS_SIMPLE, TENNIS_RELIER})
+
+    # 1. Ce qui empêche TOUT le reste : configuration, fichier illisible.
     if comptes[FOOT_SANS_PONT]:
         print(f"  • {comptes[FOOT_SANS_PONT]} {u} de football jugés par "
               f"l'API en direct, que la VM ne peut pas appeler :\n"
@@ -1129,96 +1354,126 @@ def _conseils(classes, comptes, pourquoi, dossier: Path, jours_pont: int,
               f"SCORES_TENNIS_KEY est vide dans .env (Live Tennis,\n"
               f"    palier Basic). Sans elle, results-update tombe en « panne » "
               f"sur le tennis.")
+    illisibles = sorted({_coup_d_envoi(r).date() for r, c in classes
+                         if c == FICHIER_ILLISIBLE})
+    if illisibles:
+        print(f"  • ⚠️ {len(illisibles)} fichier(s) du pont ILLISIBLE(S) : tant "
+              f"qu'il(s) reste(nt), results-update\n    met TOUT le football en "
+              f"panne, pas seulement ces journées. Supprime-les, le pont\n    "
+              f"les redemandera au prochain clic (si elles sont dans sa "
+              f"fenêtre) :\n"
+              + "\n".join(f"      rm -f {dossier}/{j.isoformat()}.json"
+                          for j in illisibles))
 
-    # 2. Élargir AVANT de cliquer : un clic sur l'ancienne fenêtre ne
-    #    reprendrait pas les journées qui en sont sorties, et on croirait le
-    #    trou comblé.
+    # 2. Élargir, ou effacer les refus, AVANT de cliquer : un clic sur
+    #    l'ancienne fenêtre ne reprendrait pas ces journées, et on croirait le
+    #    trou comblé. UNE seule commande : deux `sed` successifs laisseraient
+    #    le second écraser le premier.
     jours_hors = sorted({_coup_d_envoi(r).date() for r, c in classes
                          if c in (HORS_FENETRE, TROP_TOT_HORS)})
-    if jours_hors:
-        recul = (maintenant.date() - jours_hors[0]).days
-        print(f"  • {len(jours_hors)} journée(s) sont SORTIES de la fenêtre du "
-              f"pont ({jours_hors[0].isoformat()} → {jours_hors[-1].isoformat()}) "
-              f": le pont ne\n    les demandera plus. Élargis la fenêtre à "
-              f"{recul} jours au moins, puis redémarre le serveur :\n"
-              f"      sed -i '/^SCORES_BRIDGE_DAYS=/d' .env && echo "
-              f"'SCORES_BRIDGE_DAYS={recul}' >> .env\n"
-              f"      sudo systemctl restart betano-ingest\n"
-              f"    ⚠️ Si ton abonnement API-Football est gratuit, il ne sert que "
-              f"trois jours autour\n    d'aujourd'hui : les journées plus "
-              f"anciennes seront REFUSÉES.")
     jours_refus = sorted({_coup_d_envoi(r).date() for r, c in classes
-                          if c == REFUSEE})
-    if jours_refus:
-        recul_r = max(jours_pont, (maintenant.date() - jours_refus[0]).days)
-        print(f"  • {comptes[REFUSEE]} {u} sur {len(jours_refus)} journée(s) "
-              f"REFUSÉE(S) par ton abonnement API-Football ({jours_refus[0].isoformat()}"
-              f" → {jours_refus[-1].isoformat()}).\n"
-              f"    Au palier gratuit (trois jours autour d'aujourd'hui), ils "
-              f"ne se régleront pas. Avec un\n    abonnement payant, efface les "
-              f"refus et ouvre la fenêtre, puis clique :\n"
-              f"      rm -f {dossier}/*.refused\n"
-              f"      sed -i '/^SCORES_BRIDGE_DAYS=/d' .env && echo "
-              f"'SCORES_BRIDGE_DAYS={recul_r}' >> .env\n"
-              f"      sudo systemctl restart betano-ingest")
+                          if c in (REFUSEE, TROP_TOT_REFUSEE)})
+    if jours_hors or jours_refus:
+        besoin = max([jours_pont] + [(maintenant.date() - j).days
+                                     for j in jours_hors + jours_refus])
+        if jours_hors:
+            print(f"  • {len(jours_hors)} journée(s) sont SORTIES de la fenêtre "
+                  f"du pont ({jours_hors[0].isoformat()} → "
+                  f"{jours_hors[-1].isoformat()}) : il ne les demandera plus.")
+        if jours_refus:
+            n_refus = comptes[REFUSEE] + comptes[TROP_TOT_REFUSEE]
+            print(f"  • {n_refus} {u} sur {len(jours_refus)} journée(s) "
+                  f"REFUSÉE(S) par ton abonnement API-Football\n    "
+                  f"({jours_refus[0].isoformat()} → {jours_refus[-1].isoformat()})."
+                  f" Au palier gratuit (trois jours autour d'aujourd'hui),\n    "
+                  f"ils ne se régleront pas.")
+        print("    Pour les reprendre" + (" — avec un abonnement PAYANT pour les "
+                                          "journées refusées" if jours_refus else "")
+              + " :")
+        if jours_refus:
+            print(f"      rm -f {dossier}/*.refused")
+        if besoin > jours_pont:
+            print(f"      sed -i '/^SCORES_BRIDGE_DAYS=/d' .env && echo "
+                  f"'SCORES_BRIDGE_DAYS={besoin}' >> .env\n"
+                  f"      sudo systemctl restart betano-ingest")
+        if jours_hors and not jours_refus:
+            print("    ⚠️ Si ton abonnement API-Football est gratuit, il ne sert "
+                  "que trois jours autour\n    d'aujourd'hui : les journées plus "
+                  "anciennes seront REFUSÉES.")
 
     # 3. Cliquer, puis écrire en base.
     if jours_hors or jours_refus or comptes[JAMAIS_DEMANDEE] or comptes[TROP_TOT]:
         print(f"  • Dans le menu Tampermonkey (onglet Betano, Circus ou "
               f"MagicBetting), clique\n    {BOUTON}, attends « rien à "
-              f"récupérer — tout est à jour », puis :\n{maj}\n"
+              f"récupérer — tout est à jour », puis :\n"
+              f"{_maj(n_foot, 'soccer')}\n"
               f"    et relance cette sonde pour voir ce qui reste.")
-    if pourquoi[APPARIABLE]:
-        print(f"  • {pourquoi[APPARIABLE]} match(s) présents et appariables : "
-              f"results-update n'est pas repassé\n    depuis leur arrivée —\n{maj}")
+    n_app = comptes[APPARIABLE] + pourquoi[APPARIABLE]
+    if n_app:
+        print(f"  • {n_app} {u} que les fichiers du pont permettent DÉJÀ de "
+              f"régler : results-update\n    n'est pas repassé depuis leur "
+              f"arrivée —\n{_maj(n_foot, 'soccer')}")
     if pourquoi[VOISIN]:
-        print(f"  • {pourquoi[VOISIN]} match(s) que la source date de la veille "
-              f"ou du lendemain : results-update ne lit\n    que le fichier du "
-              f"jour de NOTRE match. Relancer ne sert à rien — c'est à "
-              f"corriger dans\n    src/main.py (lire aussi les journées "
-              f"voisines).")
+        print(f"  • {pourquoi[VOISIN]} {u} présents dans le fichier d'un jour "
+              f"voisin que results-update ne charge\n    pas (aucun autre match "
+              f"en attente ce jour-là) : relancer ne suffit pas. Rare, sans\n"
+              f"    correctif prévu.")
     if pourquoi[AMBIGU]:
-        print(f"  • {pourquoi[AMBIGU]} match(s) que deux matchs de la source "
+        print(f"  • {pourquoi[AMBIGU]} {u} que deux matchs de la source "
               f"revendiquent presque à égalité : le\n    rapprochement refuse de "
               f"choisir, et c'est voulu — un mauvais choix réglerait des paris "
               f"faux.")
     if pourquoi[INEXPLIQUE]:
-        print(f"  • {pourquoi[INEXPLIQUE]} match(s) où la sonde et la production "
+        print(f"  • {pourquoi[INEXPLIQUE]} {u} où la sonde et la production "
               f"se contredisent : envoie la section\n    ci-dessus — c'est un "
               f"défaut de la sonde ou du rapprochement, et il faut savoir "
               f"lequel.")
     if pourquoi[CLASSE] or pourquoi[NOMS] or pourquoi[HORAIRE]:
         n = pourquoi[CLASSE] + pourquoi[NOMS] + pourquoi[HORAIRE]
-        print(f"  • {n} match(s) que la source a sans doute, mais que le "
+        print(f"  • {n} {u} que la source a sans doute, mais que le "
               f"rapprochement rejette —\n    classe {pourquoi[CLASSE]}, horaire "
               f"{pourquoi[HORAIRE]}, noms proches {pourquoi[NOMS]} (ceux-là "
               f"contiennent du bruit :\n    un candidat n'est qu'un candidat). "
               f"Corrigeable dans le code : envoie la section\n    ci-dessus, "
               f"chaque règle se décide sur ses exemples.")
     if pourquoi[SANS_SCORE_SOURCE]:
-        print(f"  • {pourquoi[SANS_SCORE_SOURCE]} match(s) terminés dont la source "
+        print(f"  • {pourquoi[SANS_SCORE_SOURCE]} {u} terminés dont la source "
               f"ne donnait pas le score à la capture :\n    la journée est "
               f"définitive, le pont ne la redemandera pas. Rien à régler.")
     if pourquoi[STATUT]:
-        print(f"  • {pourquoi[STATUT]} match(s) reportés, annulés ou arrêtés : "
+        print(f"  • {pourquoi[STATUT]} {u} reportés, annulés ou arrêtés : "
               f"vérifie le règlement chez le book\n    (souvent remboursé) ; rien "
               f"à corriger ici.")
     if pourquoi[PROLONG]:
-        print(f"  • {pourquoi[PROLONG]} match(s) allés en prolongation sans score "
+        print(f"  • {pourquoi[PROLONG]} {u} allés en prolongation sans score "
               f"à 90 min prouvable : le book règle\n    sur 90 min, la source ne "
               f"le donne pas — à noter à la main si tu veux le P&L exact.")
     if pourquoi[ABSENT]:
-        print(f"  • {pourquoi[ABSENT]} match(s) ABSENTS de la source (petites "
+        print(f"  • {pourquoi[ABSENT]} {u} ABSENTS de la source (petites "
               f"ligues, amicaux) : rien à\n    corriger — seul un autre "
               f"fournisseur de résultats les couvrirait.")
+    if comptes[AUTRE_CLE]:
+        print(f"  • {comptes[AUTRE_CLE]} {u} ont leur résultat sous une AUTRE "
+              f"clé du même match (même ligue),\n    à un horaire au-delà de la "
+              f"tolérance : results-update vient d'échouer sur la clé\n    "
+              f"orpheline et échouera encore. Le dashboard lit le résultat sur "
+              f"la clé de la\n    MEILLEURE COTE : quand c'est l'orpheline, "
+              f"l'opportunité reste non réglée alors que\n    le score est "
+              f"connu. Corrigeable dans le code — à décider.")
+
     if comptes[TENNIS]:
-        print(f"  • {comptes[TENNIS]} match(s) de tennis : relancer\n"
+        print(f"  • {comptes[TENNIS]} {u} de tennis : relancer\n"
               f"      .venv/bin/python -m src.main results-update --days "
               f"{n_tennis} --sport tennis\n"
               f"    Ce qui reste ensuite est surtout des DOUBLES et des ABANDONS, "
               f"que la source ne règle\n    pas — ceux-là sont à noter à la "
               f"main, ou à laisser non réglés.")
-
+    if comptes[TENNIS_RELIER]:
+        print(f"  • {comptes[TENNIS_RELIER]} match(s) de tennis ont leur "
+              f"résultat sous une autre clé à moins de\n    12 h : un passage "
+              f"de results-update les reliera —\n"
+              f"      .venv/bin/python -m src.main results-update --days "
+              f"{n_tennis} --sport tennis")
     if comptes[TENNIS_SIMPLE]:
         print(f"  • {comptes[TENNIS_SIMPLE]} match(s) de tennis en SIMPLE sans "
               f"résultat. Si results-update n'est pas\n    repassé sur le "
@@ -1229,19 +1484,10 @@ def _conseils(classes, comptes, pourquoi, dossier: Path, jours_pont: int,
               f"des forfaits, que\n    la source ne règle pas — relancer ne "
               f"ferait que consommer du quota.")
     if comptes[DOUBLE]:
-        print(f"  • {comptes[DOUBLE]} match(s) de DOUBLE : la source tennis n'en "
-              f"sert aucun. Rien à relancer —\n    seule une autre source les "
-              f"réglerait.")
-    if comptes[AUTRE_CLE]:
-        print(f"  • {comptes[AUTRE_CLE]} match(s) ont leur résultat sous une AUTRE "
-              f"clé du même match : l'horaire\n    a été révisé au-delà de la "
-              f"tolérance (10 min au football, 12 h au tennis), et\n    "
-              f"results-update ne relie pas la clé orpheline. Le dashboard lit le "
-              f"résultat sur la\n    clé de la MEILLEURE COTE : quand c'est "
-              f"l'orpheline, l'opportunité reste non réglée\n    alors que le "
-              f"score est connu. Corrigeable dans le code — à décider, relancer "
-              f"ne sert à rien.")
-    if comptes[SANS_SOURCE] and u != "pari(s)":
+        print(f"  • {comptes[DOUBLE]} match(s) de DOUBLE : la source les sert, "
+              f"mais notre lecteur les écarte —\n    leurs noms de paires "
+              f"arrivent mutilés (`score_sources`). Rien à relancer.")
+    if comptes[SANS_SOURCE] and not joues:
         print(f"  • {comptes[SANS_SOURCE]} match(s) d'un sport sans source de "
               f"résultats : leur ROI n'est pas\n    mesurable. Rien à corriger "
               f"ici.")
@@ -1253,16 +1499,21 @@ def _conseils(classes, comptes, pourquoi, dossier: Path, jours_pont: int,
               f"ignore : il faut donc remettre le sport du clic ensuite —\n"
               f"      .venv/bin/python -m scripts.repair_events --apply\n"
               f"      {_commande_sport(db)}")
-    if comptes[SPORT_INCONNU] and u == "pari(s)":
+    if comptes[SPORT_INCONNU] and joues:
         print(f"  • {comptes[SPORT_INCONNU]} pari(s) dont la ligne `events` n'a "
               f"pas de sport : remets celui du clic —\n"
               f"      {_commande_sport(db)}")
     elif comptes[SPORT_INCONNU]:
+        n_rep = sum(1 for r, c in classes if c == SPORT_INCONNU
+                    and (_col(r, "sport_bf") or _col(r, "sport_pb")))
         print(f"  • {comptes[SPORT_INCONNU]} match(s) dont la ligne `events` n'a "
-              f"pas de sport (« unknown ») :\n    results-update ne les réclame "
-              f"pas. Sans clic, rien en base ne dit leur sport — à laisser.")
-    if comptes[SANS_EVENTS] or (comptes[SPORT_INCONNU] and u == "pari(s)"):
-        print(f"    puis :\n{maj}")
+              f"pas de sport (« unknown ») : results-update\n    ne les réclame "
+              f"pas. `bet_features` ou un clic en connaît le sport pour {n_rep}"
+              + (" — remets-le :\n"
+                 f"      {_commande_sport(db, SQL_SPORT_DET)}" if n_rep
+                 else " ; les autres sont à laisser."))
+    if comptes[SANS_EVENTS] or comptes[SPORT_INCONNU]:
+        print(f"    puis :\n{_maj(fenetre({SANS_EVENTS, SPORT_INCONNU}), 'soccer,tennis')}")
     if comptes[NON_RATTACHE]:
         print(f"  • {comptes[NON_RATTACHE]} clic(s) jamais rattaché(s) à leur "
               f"value bet (marché inconnu) :\n"
@@ -1325,7 +1576,9 @@ def main(argv=None) -> None:
     if a.joues:
         rows, noms = charger(a.db, depuis)
         res = analyser(rows, maintenant, dossier, jours_pont, final_apres,
-                       pont_actif, cle_tennis)
+                       pont_actif, cle_tennis, noms,
+                       jours_reclames_base(a.db, depuis, maintenant),
+                       charger_reglees(a.db, depuis))
         imprimer(res, depuis, dossier, jours_pont, source_jours, maintenant,
                  a.lister, noms, a.db, pont_actif, cle_tennis)
         return

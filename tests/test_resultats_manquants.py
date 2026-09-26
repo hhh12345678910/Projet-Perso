@@ -63,11 +63,12 @@ def test_le_fichier_passe_avant_la_pierre_tombale(tmp_path):
 
 def test_capturee_tot_puis_refusee_ne_sera_plus_reprise(tmp_path):
     """Dans la fenêtre, mais la pierre tombale empêche le pont de la
-    redemander : « sera reprise au prochain clic » serait faux."""
+    redemander : « sera reprise au prochain clic » serait faux — et « hors
+    fenêtre » aussi : c'est le refus, pas la fenêtre, qui la bloque."""
     j = date(2026, 9, 24)
     _fichier(tmp_path, j, MAINTENANT, ext="refused")
     _fichier(tmp_path, j, datetime(2026, 9, 25, 2, 0, tzinfo=timezone.utc))
-    assert rm.etat_journee(j, tmp_path, MAINTENANT, 7, FINAL) == rm.TROP_TOT_HORS
+    assert rm.etat_journee(j, tmp_path, MAINTENANT, 7, FINAL) == rm.TROP_TOT_REFUSEE
 
 
 def test_une_journee_capturee_trop_tot_sera_reprise(tmp_path):
@@ -374,8 +375,12 @@ def test_un_horaire_decale_est_nomme(tmp_path):
 
 
 def test_un_match_reporte(tmp_path):
-    d = _verdict(tmp_path, _notre("Vancouver", "Inter Toronto", Q),
-                 [_fixture("Vancouver FC", "Inter Toronto", Q, statut="PST")])
+    """Un PST tel que l'API l'envoie : ni score ni buts. Ce n'est pas « terminé
+    sans score » — il n'a pas été joué."""
+    f = _fixture("Vancouver FC", "Inter Toronto", Q, statut="PST")
+    f["score"]["fulltime"] = {"home": None, "away": None}
+    f["goals"] = {"home": None, "away": None}
+    d = _verdict(tmp_path, _notre("Vancouver", "Inter Toronto", Q), [f])
     assert d["verdict"] == rm.STATUT and d["cand"]["statut"] == "PST"
 
 
@@ -475,9 +480,12 @@ def test_le_diagnostic_apparait_dans_la_sortie(tmp_path, monkeypatch, capsys):
     os.utime(f, (capture.timestamp(), capture.timestamp()))
     rm.main(["--db", str(p), "--joues", "--depuis", (jour - timedelta(days=1)).isoformat()])
     out = capsys.readouterr().out
-    assert "CE QUE LA SOURCE AVAIT CE JOUR-LÀ" in out
-    assert rm.APPARIABLE in out
-    assert "results-update n'est pas repassé" in out
+    # Le contrôle de production le lie : ce n'est plus un « absent » à
+    # diagnostiquer, c'est un passage de results-update qui manque.
+    assert rm.APPARIABLE in out and rm.FOOT_ABSENT not in out
+    assert "permettent DÉJÀ de\n    régler" not in out
+    assert "permettent DÉJÀ de régler" in out
+    assert f"results-update --days {n + 1} --sport soccer" in out
 
 
 def test_les_noms_affiches_sont_utilises_pas_la_cle_compactee(tmp_path):
@@ -520,7 +528,7 @@ def test_la_commande_couvre_le_plus_vieux_manque(tmp_path, monkeypatch, capsys):
     paris = [(_cle(12, 0), "soccer", _jour(12), "h2h", "home", None, None, True),
              (_cle(2, 1), "soccer", _jour(2), "h2h", "home", None, None, True)]
     out, _ = _lancer(tmp_path, monkeypatch, capsys, paris, "14", depuis=20)
-    assert "results-update --days 13 --sport soccer,tennis" in out
+    assert "results-update --days 13 --sport soccer" in out
     assert "--days 10" not in out
 
 
@@ -645,15 +653,40 @@ def test_une_prolongation_non_prouvable_reste_a_la_main(tmp_path):
     assert d["verdict"] == rm.PROLONG, d
 
 
-def test_un_match_trouve_chez_le_voisin_n_est_pas_appariable(tmp_path):
-    """23 h 58 chez nous, 00 h 03 le lendemain chez la source : cinq minutes,
-    donc dans la tolérance — mais results-update ne lit que le fichier du jour
-    de NOTRE match. Relancer ne réglerait rien."""
+def test_le_lendemain_charge_par_la_production_rend_appariable(tmp_path):
+    """23 h 58 chez nous, 00 h 03 le lendemain chez la source. results-update
+    met dans UN lot les résultats de chaque journée qui a un match en attente
+    (src/main.py, `fetched.extend`) : si le lendemain en a un, il lie ce
+    match. Constaté par la revue du 27/09 en lançant la vraie commande."""
     _jour_source(tmp_path, "2026-09-23",
                  [_fixture("Clyde", "Stranraer", "2026-09-23T00:03:00+00:00")])
-    d = rm.diagnostiquer(_notre("Clyde", "Stranraer", "2026-09-22T23:58:00+00:00"),
-                         {}, tmp_path, {})
+    notre = _notre("Clyde", "Stranraer", "2026-09-22T23:58:00+00:00")
+    d = rm.diagnostiquer(notre, {}, tmp_path, {},
+                         jours={date(2026, 9, 22), date(2026, 9, 23)})
+    assert d["verdict"] == rm.APPARIABLE, d
+
+
+def test_le_lendemain_non_charge_reste_voisin(tmp_path):
+    """Le même match, mais le lendemain n'a AUCUN autre match en attente :
+    results-update ne charge pas son fichier, et ne lie pas."""
+    _jour_source(tmp_path, "2026-09-23",
+                 [_fixture("Clyde", "Stranraer", "2026-09-23T00:03:00+00:00")])
+    notre = _notre("Clyde", "Stranraer", "2026-09-22T23:58:00+00:00")
+    d = rm.diagnostiquer(notre, {}, tmp_path, {}, jours={date(2026, 9, 22)})
     assert d["verdict"] == rm.VOISIN, d
+
+
+def test_l_ambiguite_se_juge_sur_le_lot_entier(tmp_path):
+    """Le même couple 23 h 55 dans le fichier du jour et 00 h 05 dans celui
+    du lendemain : sur le lot entier, la garde d'ambiguïté refuse — la sonde
+    ne doit pas crier « appariable » en ne regardant qu'un fichier."""
+    _jour_source(tmp_path, "2026-09-22",
+                 [_fixture("Clyde", "Stranraer", "2026-09-22T23:55:00+00:00")])
+    _jour_source(tmp_path, "2026-09-23",
+                 [_fixture("Clyde", "Stranraer", "2026-09-23T00:05:00+00:00")])
+    d = rm.diagnostiquer(_notre("Clyde", "Stranraer", "2026-09-23T00:00:00+00:00"),
+                         {}, tmp_path, {})
+    assert d["verdict"] == rm.AMBIGU, d
 
 
 def test_le_diagnostic_dit_absent_de_bout_en_bout(tmp_path, monkeypatch, capsys):
@@ -682,9 +715,13 @@ def _det(**kw):
     return base
 
 
-def _classer_det(tmp_path, reglees=frozenset(), noms=None, pont=True, cle=True, **kw):
+def _classer_det(tmp_path, reglees=None, noms=None, pont=True, cle=True, **kw):
     return rm.classer_detection(_det(**kw), MAINTENANT, tmp_path, 7, FINAL, pont,
-                                cle, set(reglees), noms or {}, {})
+                                cle, reglees or {}, noms or {}, {})
+
+
+def _t(iso):
+    return datetime.fromisoformat(iso)
 
 
 def test_detection_reglee_avec_ou_sans_score(tmp_path):
@@ -701,12 +738,48 @@ def test_detection_a_venir_puis_les_sports(tmp_path):
     assert _classer_det(tmp_path) == rm.JAMAIS_DEMANDEE
 
 
-def test_detection_reglee_sous_une_autre_cle(tmp_path):
-    """Horaire révisé : la clé neuve a son résultat, l'ancienne non. Même
-    équipes, même jour — dans un sens comme dans l'autre."""
-    assert _classer_det(tmp_path, reglees={("a", "b", "2026-09-24")}) == rm.AUTRE_CLE
-    assert _classer_det(tmp_path, reglees={("b", "a", "2026-09-24")}) == rm.AUTRE_CLE
-    assert _classer_det(tmp_path, reglees={("a", "b", "2026-09-23")}) != rm.AUTRE_CLE
+def test_la_cle_voisine_exige_meme_jour_et_meme_ligue(tmp_path):
+    """Horaire révisé : la clé neuve a son résultat, l'ancienne non. Mêmes
+    équipes, même jour, MÊME ligue — dans un sens comme dans l'autre. Sans la
+    ligue, un match féminin (classe portée par la seule ligue, noms compactés
+    identiques) passerait pour celui des seniors."""
+    r = _det(league="L1")
+    j = date(2026, 9, 24)
+    t = [_t("2026-09-24T19:00:00+00:00")]
+    assert rm.ecart_cle_voisine(r, {("a", "b", j, "L1"): t}) == 60
+    assert rm.ecart_cle_voisine(r, {("b", "a", j, "L1"): t}) == 60
+    assert rm.ecart_cle_voisine(r, {("a", "b", date(2026, 9, 23), "L1"): t}) is None
+    assert rm.ecart_cle_voisine(r, {("a", "b", j, "L1 Women"): t}) is None
+    assert rm.ecart_cle_voisine(_det(league=""), {("a", "b", j, ""): t}) is None
+
+
+def test_tennis_a_moins_de_12_h_se_relie_au_dela_non(tmp_path):
+    """Au tennis, `bind_results` relie une clé à un résultat à 12 h près : une
+    clé voisine réglée à 3 h sera reliée au prochain passage, pas à 13 h."""
+    j = date(2026, 9, 24)
+    pres = {("a", "b", j, "L1"): [_t("2026-09-24T21:00:00+00:00")]}
+    loin = {("a", "b", j, "L1"): [_t("2026-09-24T00:30:00+00:00")]}
+    assert _classer_det(tmp_path, sport="tennis", reglees=pres) == rm.TENNIS_RELIER
+    assert _classer_det(tmp_path, sport="tennis", reglees=loin) == rm.AUTRE_CLE
+
+
+def test_foot_la_cle_voisine_se_juge_apres_la_production(tmp_path):
+    """Football : si les fichiers du pont lient la clé orpheline (écart dans
+    la tolérance), c'est un passage de results-update qui manque, pas un
+    défaut de code. AUTRE_CLE seulement quand la production échoue."""
+    j = date(2026, 9, 24)
+    _complet(tmp_path, j, [_fixture("A", "B", "2026-09-24T18:05:00+00:00")])
+    reglees = {("a", "b", j, "L1"): [_t("2026-09-24T18:05:00+00:00")]}
+    res = rm.analyser_detections([_det()], MAINTENANT, tmp_path, 7, FINAL, True,
+                                 True, reglees, {})
+    assert res["comptes"][rm.APPARIABLE] == 1
+    loin = tmp_path / "loin"
+    loin.mkdir()
+    _complet(loin, j, [_fixture("A", "B", "2026-09-24T19:30:00+00:00")])
+    reglees = {("a", "b", j, "L1"): [_t("2026-09-24T19:30:00+00:00")]}
+    res = rm.analyser_detections([_det()], MAINTENANT, loin, 7, FINAL, True, True,
+                                 reglees, {})
+    assert res["comptes"][rm.AUTRE_CLE] == 1
 
 
 def test_un_double_se_lit_sur_le_nom_affiche(tmp_path):
@@ -757,7 +830,8 @@ def test_la_population_est_celle_de_la_production(tmp_path):
     sonde = {r["event_key"] for r in rows if not r["has_result"]}
     assert sonde == attendu == {"k1", "k2"}
     assert {r["event_key"]: r["n_det"] for r in rows}["k1"] == 3
-    assert ("i", "j", "2026-09-23") in reglees
+    assert reglees[("i", "j", date(2026, 9, 23), "L1")] == [
+        datetime(2026, 9, 23, 15, 0, tzinfo=timezone.utc)]
 
 
 def test_la_ligue_de_bet_features_est_lue(tmp_path):
@@ -780,11 +854,12 @@ def test_une_base_sans_bet_features_se_lit_quand_meme(tmp_path):
     c.executescript("""
         CREATE TABLE events (event_key TEXT PRIMARY KEY, sport TEXT, league TEXT,
             home TEXT, away TEXT, start_time TEXT);
-        CREATE TABLE value_bets (id INTEGER PRIMARY KEY, event_key TEXT);
+        CREATE TABLE value_bets (id INTEGER PRIMARY KEY, event_key TEXT,
+            market TEXT);
         CREATE TABLE results (event_key TEXT PRIMARY KEY, winner TEXT,
             home_score REAL, away_score REAL, source TEXT, settled_at TEXT);
         INSERT INTO events VALUES ('k1','soccer','L','a','b','2026-09-20T15:00:00+00:00');
-        INSERT INTO value_bets (event_key) VALUES ('k1');
+        INSERT INTO value_bets (event_key, market) VALUES ('k1', 'h2h');
     """)
     c.commit()
     c.close()
@@ -886,7 +961,7 @@ def test_les_detections_de_bout_en_bout(tmp_path, monkeypatch, capsys):
     assert "→ 4 match(s) FINIS sans résultat, portant 8 détections" in out
     assert "COUVERTURE DES MATCHS FINIS, PAR SPORT" in out
     assert "basketball" in out and "aucune source" in out
-    assert rm.AUTRE_CLE in out and "clé orpheline" in out
+    assert rm.AUTRE_CLE in out and "orpheline" in out
     assert "classes (nous → source) : aucune → féminin : 1" in out
     assert "ABSENTS de la source" in out
 
@@ -953,7 +1028,7 @@ def test_la_couverture_ignore_le_foot_du_jour(tmp_path, capsys):
             _det(event_key="k2", home="psg", away="om",
                  start_time="2026-09-26T08:00:00+00:00")]
     res = rm.analyser_detections(rows, MAINTENANT, tmp_path, 7, FINAL, True, True,
-                                 set(), {})
+                                 {}, {})
     assert res["comptes"][rm.FOOT_DU_JOUR] == 1
     rm.imprimer_detections(res, date(2026, 9, 20), tmp_path, 7, "t", MAINTENANT,
                            False, "v.db", True, True)
@@ -979,8 +1054,8 @@ def test_les_detections_ne_gardent_qu_une_fenetre(tmp_path, monkeypatch):
     ouvertes = []
     vrai = rm.diagnostiquer
 
-    def espion(r, noms, dossier, cache):
-        d = vrai(r, noms, dossier, cache)
+    def espion(r, noms, dossier, cache, *args):
+        d = vrai(r, noms, dossier, cache, *args)
         ouvertes.append(cache[dossier].journees_ouvertes())
         return d
     monkeypatch.setattr(rm, "diagnostiquer", espion)
@@ -991,7 +1066,7 @@ def test_les_detections_ne_gardent_qu_une_fenetre(tmp_path, monkeypatch):
                  start_time=f"{date(2026, 8, 20) + timedelta(days=n)}T15:00:00+00:00")
             for n in range(30)]
     rm.analyser_detections(rows, MAINTENANT, tmp_path, 60, FINAL, True, True,
-                           set(), {})
+                           {}, {})
     assert len(ouvertes) == 30 and max(ouvertes) <= 4, ouvertes
 
 
@@ -1078,3 +1153,334 @@ def test_un_club_renomme_se_reconnait_aussi_a_l_envers(tmp_path):
     d = _verdict(tmp_path, _notre("Vancouver FC", "Inter Toronto", Q),
                  [_fixture("York United", "Vancouver FC", Q)])
     assert d["verdict"] == rm.NOMS, d
+
+
+
+# ── Ce que la revue adverse du 27/09 a trouvé ────────────────────────
+
+def test_un_fichier_illisible_est_une_panne_generale(tmp_path, monkeypatch, capsys):
+    """`BridgedFootballScores` lève sur un JSON illisible et results-update met
+    alors TOUT le football en panne. Le lire comme une journée vide ferait dire
+    « absent, rien à corriger » — le contraire de la vérité."""
+    jour = datetime.now(timezone.utc).date() - timedelta(days=4)
+    quand = f"{jour.isoformat()}T15:00:00+00:00"
+
+    def construire(c, d):
+        _ev(c, "k1", quand, h="arsenal", a="chelsea")
+        f = d / f"{jour.isoformat()}.json"
+        f.write_text('{"response": [ {"fixture": ')           # tronqué
+    out = _lancer_det(tmp_path, monkeypatch, capsys, construire)
+    assert rm.FICHIER_ILLISIBLE in out and rm.ABSENT not in out
+    assert f"rm -f {tmp_path / 'scores' / 'soccer'}/{jour.isoformat()}.json" in out
+
+
+def test_un_fichier_lisible_mais_mal_forme_est_illisible(tmp_path):
+    """Une liste au lieu d'un objet : `parse_apifootball_results` lève, la
+    production aussi. La sonde rejoue exactement sa lecture."""
+    j = date(2026, 9, 24)
+    f = tmp_path / f"{j.isoformat()}.json"
+    f.write_text("[]")
+    t = datetime(2026, 9, 25, 12, 0, tzinfo=timezone.utc).timestamp()
+    os.utime(f, (t, t))
+    assert rm.etat_journee(j, tmp_path, MAINTENANT, 7, FINAL) == rm.FICHIER_ILLISIBLE
+
+
+def test_le_memo_distingue_les_journees(tmp_path):
+    """Deux journées dans le même passage : l'une complète, l'autre jamais
+    récupérée. Un mémo qui garderait un seul état les confondrait toutes."""
+    _complet(tmp_path, date(2026, 9, 23), [])
+    rows = [_det(event_key="k1", start_time="2026-09-23T15:00:00+00:00"),
+            _det(event_key="k2", home="c", away="d",
+                 start_time="2026-09-24T15:00:00+00:00")]
+    res = rm.analyser_detections(rows, MAINTENANT, tmp_path, 7, FINAL, True, True,
+                                 {}, {})
+    assert res["comptes"][rm.FOOT_ABSENT] == 1
+    assert res["comptes"][rm.JAMAIS_DEMANDEE] == 1
+
+
+def test_la_grace_de_deux_heures(tmp_path):
+    """Un match commencé il y a une heure n'est pas encore réclamé par
+    results-update (`until = maintenant - 2 h`) : ce n'est pas un manque."""
+    assert _classer_det(tmp_path, sport="tennis",
+                        start_time="2026-09-26T11:00:00+00:00") == rm.A_VENIR
+    assert _classer_det(tmp_path, sport="tennis",
+                        start_time="2026-09-26T09:30:00+00:00") == rm.TENNIS_SIMPLE
+
+
+def test_la_couverture_compte_les_detections_reglables(tmp_path, capsys):
+    """Un résultat sans score règle les 1X2 du match, jamais ses totaux ; un
+    match à venir n'entre pas dans les « finis »."""
+    rows = [_det(event_key="k1", has_result=1, has_scores=0, n_det=5, n_h2h=2),
+            _det(event_key="k2", home="c", away="d", n_det=3, n_h2h=3),
+            _det(event_key="k3", home="e", away="f", n_det=4, n_h2h=4,
+                 start_time="2026-09-27T15:00:00+00:00")]
+    res = rm.analyser_detections(rows, MAINTENANT, tmp_path, 7, FINAL, True, True,
+                                 {}, {})
+    rm.imprimer_detections(res, date(2026, 9, 20), tmp_path, 7, "t", MAINTENANT,
+                           False, "v.db", True, True)
+    ligne = next(l for l in capsys.readouterr().out.splitlines()
+                 if l.strip().startswith("soccer"))
+    assert "1 / 2" in ligne and "2 / 8" in ligne, ligne
+
+
+def test_les_mi_temps_ne_comptent_pas_dans_les_detections(tmp_path):
+    p = _base_detections(tmp_path)
+    c = sqlite3.connect(str(p))
+    _ev(c, "k1", "2026-09-20T15:00:00+00:00", n_vb=2)
+    c.execute("INSERT INTO value_bets (event_key, book, market, outcome_label,"
+              " odd_taken, fair_prob, fair_odd, ev_pct, kelly_pct, detected_at)"
+              " VALUES ('k1','u','h2h_h1','home',2.1,.5,2.0,5,1,'x')")
+    c.execute("INSERT INTO value_bets (event_key, book, market, outcome_label,"
+              " odd_taken, fair_prob, fair_odd, ev_pct, kelly_pct, detected_at)"
+              " VALUES ('k1','u','totals','over 2.5',2.1,.5,2.0,5,1,'x')")
+    c.execute("INSERT INTO results VALUES ('k1','home',NULL,NULL,'t','x')")
+    c.commit()
+    c.close()
+    rows, _n, _r = rm.charger_detections(str(p), date(2026, 9, 15))
+    assert (rows[0]["n_det"], rows[0]["n_h2h"]) == (3, 2)
+    assert rows[0]["has_result"] and not rows[0]["has_scores"]
+
+
+def test_la_ligue_de_bet_features_ignore_les_vides(tmp_path):
+    p = _base_detections(tmp_path)
+    c = sqlite3.connect(str(p))
+    _ev(c, "k1", "2026-09-20T15:00:00+00:00", league="")
+    for vb, lg in ((1, ""), (2, "Norway - Toppserien")):
+        c.execute("INSERT INTO bet_features (value_bet_id, detected_at, event_key,"
+                  " sport, league, book, market, outcome_label, odd_taken,"
+                  " fair_odd, ev_pct) VALUES (?,'x','k1','soccer',?,'u','h2h',"
+                  "'home',2.1,2.0,5)", (vb, lg))
+    c.commit()
+    c.close()
+    rows, _n, _r = rm.charger_detections(str(p), date(2026, 9, 15))
+    assert rows[0]["league_bf"] == "Norway - Toppserien"
+    assert rows[0]["sport_bf"] == "soccer"
+
+
+def test_la_ligue_rendue_ne_compte_que_ce_qui_se_lie(tmp_path):
+    """La ligue de `bet_features` ne compte que si elle rend le match
+    appariable — et seulement pour un match SANS ligue dans `events`."""
+    j = date(2026, 9, 24)
+    _complet(tmp_path, j, [_fixture("Vittsjö W", "Växjö W", "2026-09-24T18:00:00+00:00",
+                                    ligue="Damallsvenskan")])
+    rows = [_det(event_key="k1", home="vittsjo", away="vaxjo", league="",
+                 league_bf="Sweden - Women Damallsvenskan"),
+            _det(event_key="k2", home="kontu", away="lps", league="",
+                 league_bf="Sweden - Women Damallsvenskan"),
+            _det(event_key="k3", home="vittsjo", away="vaxjo", league="L1",
+                 league_bf="Sweden - Women Damallsvenskan",
+                 start_time="2026-09-24T18:01:00+00:00")]
+    res = rm.analyser_detections(rows, MAINTENANT, tmp_path, 7, FINAL, True, True,
+                                 {}, {})
+    assert res["ligue_rendue"] == 1
+
+
+def test_la_recherche_trouve_tous_les_candidats_d_une_journee_chargee():
+    """`process.extract` rend 5 noms par défaut : sans `limit=None`, un samedi
+    à dix « Rangers » perdrait des candidats."""
+    choix = [rm._pour_flou(n) for n in (
+        "Rangers", "Rangers U21", "Rangers W", "Queens Park Rangers",
+        "Berwick Rangers", "Carrick Rangers", "Forfar Rangers", "Rangers FC Kuopio",
+        "Bangor Rangers", "Ranger's")]
+    assert len(rm._proches(rm._pour_flou("Rangers"), choix)) == len(set(choix))
+
+
+def test_la_classe_de_ligue_des_deux_cotes_dans_l_explication(tmp_path):
+    """Un match féminin décalé d'une heure : la classe vient de la LIGUE des
+    deux côtés. Sans elle, la sonde dirait « barrière de classe » au lieu
+    d'« horaire »."""
+    d = _verdict(tmp_path, _notre("Houston Dash", "Orlando Pride", Q,
+                                  ligue="USA - National Womens Soccer League"),
+                 [_fixture("Houston Dash", "Orlando Pride",
+                           "2026-09-22T19:45:00+00:00", ligue="NWSL Women")])
+    assert d["verdict"] == rm.HORAIRE, d
+
+
+def test_le_fichier_de_la_veille_est_lu(tmp_path):
+    """00 h 05 chez nous, 23 h 58 la veille chez la source."""
+    _jour_source(tmp_path, "2026-09-21",
+                 [_fixture("Clyde", "Stranraer", "2026-09-21T23:58:00+00:00")])
+    notre = _notre("Clyde", "Stranraer", "2026-09-22T00:05:00+00:00")
+    assert rm.diagnostiquer(notre, {}, tmp_path, {})["verdict"] == rm.APPARIABLE
+    loin = tmp_path / "b"
+    loin.mkdir()
+    _jour_source(loin, "2026-09-21",
+                 [_fixture("Clyde", "Stranraer", "2026-09-21T23:58:00+00:00")])
+    d = rm.diagnostiquer(notre, {}, loin, {}, jours={date(2026, 9, 22)})
+    assert d["verdict"] == rm.VOISIN, d
+
+
+@pytest.mark.parametrize("u, camps, dt, entiers, attendu", [
+    (69.9, (70, 69.8), 0, (100, 100), False),     # sous le plancher
+    (70, (75, 65), 0, (100, 65), True),           # camp identique (ratio 100)
+    (70, (75, 65), 0, (94.9, 65), False),         # presque identique : non
+    (75, (75, 75), 0, (70, 70), True),            # deux camps proches
+    (74.9, (75, 74.8), 0, (70, 70), False),       # un camp sous 75
+    (75, (75, 75), 120, (70, 70), True),          # à 2 h pile, montré
+    (75, (75, 75), 121, (70, 70), False),         # au-delà, non
+    (90, (90, 90), 11, (60, 60), True),           # hors tolérance, 60 en entier
+    (90, (90, 90), 11, (59.9, 100), False),       # un camp sous 60
+    (90, (90, 90), 360, (60, 60), True),          # 6 h pile
+    (90, (90, 90), 361, (89.9, 100), False),      # au-delà de 6 h, il faut 90
+    (90, (90, 90), 361, (90, 90), True),
+])
+def test_les_seuils_de_plausibilite(u, camps, dt, entiers, attendu):
+    assert rm._plausible(u, camps, dt, entiers) is attendu
+
+
+def test_un_aet_n_est_jamais_un_tir_au_but_direct(tmp_path):
+    """Décidé en prolongation, un AET en a joué une — même si la source ne
+    l'a pas chiffrée et que buts = temps réglementaire."""
+    d = _verdict(tmp_path, _notre("Bromley FC", "Reading", Q),
+                 [_prolongation("Bromley", "Reading", Q, "AET", (1, 1),
+                                (None, None), (1, 1))])
+    assert d["cand"]["prolong"] == rm.PROLONG_SANS_DETAIL
+
+
+def _journee_classee(tmp_path, capsys, lignes, jours_pont=7):
+    """Imprime les conseils pour des matchs déjà classés."""
+    classes = [(_det(event_key=f"k{i}", start_time=t), c)
+               for i, (t, c) in enumerate(lignes)]
+    rm._conseils(classes, Counter(c for _r, c in classes), Counter(), tmp_path,
+                 jours_pont, MAINTENANT, "v.db", "match(s)")
+    return capsys.readouterr().out
+
+
+from collections import Counter  # noqa: E402
+
+
+def test_une_seule_commande_de_fenetre_et_jamais_plus_petite(tmp_path, capsys):
+    """Hors fenêtre à 9 jours et refusée à 12 : UNE commande, à 12. Deux
+    `sed` successifs laisseraient le second écraser le premier."""
+    out = _journee_classee(tmp_path, capsys, [
+        ("2026-09-17T15:00:00+00:00", rm.HORS_FENETRE),
+        ("2026-09-14T15:00:00+00:00", rm.REFUSEE)])
+    assert out.count("echo 'SCORES_BRIDGE_DAYS=") == 1
+    assert "echo 'SCORES_BRIDGE_DAYS=12' >> .env" in out
+    assert f"rm -f {tmp_path}/*.refused" in out
+
+
+def test_un_refus_dans_la_fenetre_n_elargit_pas(tmp_path, capsys):
+    """Capturée tôt puis refusée, DANS la fenêtre (14 jours) : effacer le
+    refus suffit ; « élargir » à 3 jours l'aurait RÉTRÉCIE."""
+    out = _journee_classee(tmp_path, capsys, [
+        ("2026-09-23T15:00:00+00:00", rm.TROP_TOT_REFUSEE)], jours_pont=14)
+    assert f"rm -f {tmp_path}/*.refused" in out
+    assert "SCORES_BRIDGE_DAYS=" not in out
+    assert "SORTIES" not in out
+
+
+def test_le_days_ignore_ce_qu_aucune_relance_ne_regle(tmp_path, capsys):
+    """Un match absent de la source il y a 20 jours n'a pas à élargir
+    `--days` : seul le jamais-récupéré d'il y a 2 jours compte."""
+    out = _journee_classee(tmp_path, capsys, [
+        ("2026-09-06T15:00:00+00:00", rm.SANS_SOURCE),
+        ("2026-09-24T15:00:00+00:00", rm.JAMAIS_DEMANDEE)])
+    assert "results-update --days 3 --sport soccer" in out
+
+
+def test_les_conseils_des_nouvelles_causes(tmp_path, capsys):
+    out = _journee_classee(tmp_path, capsys, [
+        ("2026-09-20T15:00:00+00:00", rm.TENNIS_RELIER),
+        ("2026-09-22T15:00:00+00:00", rm.TENNIS_SIMPLE),
+        ("2026-09-22T15:00:00+00:00", rm.DOUBLE),
+        ("2026-09-22T15:00:00+00:00", rm.APPARIABLE)])
+    assert "results-update --days 7 --sport tennis" in out
+    assert "notre lecteur les écarte" in out
+    assert "permettent DÉJÀ de régler" in out
+    assert "results-update --days 5 --sport soccer" in out
+
+
+def test_sans_pont_pas_de_journees_completes(tmp_path, monkeypatch, capsys):
+    """Pont coupé : rien ne dit que les journées sont complètes — la sonde ne
+    doit pas l'affirmer à côté du conseil d'activer le pont."""
+    jour = datetime.now(timezone.utc).date() - timedelta(days=4)
+
+    def construire(c, _d):
+        _ev(c, "k1", f"{jour.isoformat()}T15:00:00+00:00")
+    tmp_path.joinpath("x").mkdir()
+    monkeypatch.setenv("SCORES_FOOTBALL_BRIDGE", "0")
+    scores = tmp_path / "scores"
+    (scores / "soccer").mkdir(parents=True)
+    monkeypatch.setattr(rm, "load_env_file", lambda *a, **k: 0)
+    monkeypatch.setenv("SCORES_INGEST_DIR", str(scores))
+    p = _base_detections(tmp_path)
+    c = sqlite3.connect(str(p))
+    construire(c, None)
+    c.commit()
+    c.close()
+    rm.main(["--db", str(p), "--depuis", (jour - timedelta(days=1)).isoformat()])
+    out = capsys.readouterr().out
+    assert rm.FOOT_SANS_PONT in out and "Toutes complètes" not in out
+
+
+def test_le_sport_inconnu_se_repare_et_la_commande_marche(tmp_path, monkeypatch,
+                                                           capsys):
+    import subprocess
+    from pathlib import Path
+    jour = datetime.now(timezone.utc).date() - timedelta(days=4)
+
+    def construire(c, _d):
+        _ev(c, "k1", f"{jour.isoformat()}T15:00:00+00:00", sport="unknown")
+        _ev(c, "k2", f"{jour.isoformat()}T16:00:00+00:00", sport="unknown",
+            h="x", a="y")                      # aucun sport connu ailleurs
+        c.execute("INSERT INTO bet_features (value_bet_id, detected_at, event_key,"
+                  " sport, league, book, market, outcome_label, odd_taken,"
+                  " fair_odd, ev_pct) VALUES (1,'x','k1','soccer','L','u','h2h',"
+                  "'home',2.1,2.0,5)")
+    out = _lancer_det(tmp_path, monkeypatch, capsys, construire)
+    assert "en connaît le sport pour 1" in out
+    db = str(tmp_path / "v.db")
+    cmd = rm._commande_sport(db, rm.SQL_SPORT_DET)
+    assert cmd in out
+    racine = Path(rm.__file__).resolve().parents[1]
+    r = subprocess.run(cmd, shell=True, cwd=racine, capture_output=True, text=True)
+    assert r.returncode == 0, r.stderr
+    c = sqlite3.connect(db)
+    assert dict(c.execute("SELECT event_key, sport FROM events")) == {
+        "k1": "soccer", "k2": "unknown"}          # rien n'est inventé
+
+
+def test_les_ventilations_imprimees(tmp_path, monkeypatch, capsys):
+    """Les tranches d'horaire et les formes de prolongation : ce sont elles qui
+    chiffreront les règles de production — elles doivent être justes."""
+    jour = datetime.now(timezone.utc).date() - timedelta(days=4)
+    q = f"{jour.isoformat()}T15:00:00+00:00"
+    plus45 = f"{jour.isoformat()}T15:45:00+00:00"
+
+    def construire(c, d):
+        _ev(c, "k1", q, h="clyde", a="stranraer", n_vb=3)
+        _ev(c, "k2", q, h="bromley", a="reading", n_vb=2)
+        _complet(d, jour, [_fixture("Clyde", "Stranraer", plus45),
+                           _prolongation("Bromley", "Reading", q, "PEN", (1, 1),
+                                         (None, None), (1, 1))])
+    out = _lancer_det(tmp_path, monkeypatch, capsys, construire)
+    assert "écart d'horaire : ≤ 60 min : 1" in out
+    assert f"forme : {rm.TAB_DIRECTS} : 1" in out
+    assert f"      1  (    3 dét.)  {rm.HORAIRE}" in out
+    assert f"      1  (    2 dét.)  {rm.PROLONG}" in out
+
+
+def test_joues_le_diagnostic_compte_des_paris(tmp_path, monkeypatch, capsys):
+    """En mode --joues, les verdicts comptent des PARIS : les écrire
+    « match(s) » compterait un match autant de fois qu'il a été parié."""
+    jour = datetime.now(timezone.utc).date() - timedelta(days=4)
+    quand = f"{jour.isoformat()}T15:00:00+00:00"
+    paris = [(_cle(4, 0), "soccer", quand, "h2h", "home", None, None, True)]
+
+    def complet(_c, d):
+        _complet(d, jour, [_fixture("Arsenal", "Chelsea", quand)])
+    out, _ = _lancer(tmp_path, monkeypatch, capsys, paris, "14", retouche=complet)
+    assert "1 pari(s) ABSENTS de la source" in out
+
+
+def test_oublier_libere_tous_les_caches(tmp_path):
+    src = rm.SourceFoot(tmp_path)
+    for n in range(6):
+        j = date(2026, 9, 1) + timedelta(days=n)
+        src.fenetre(j)
+        src.proches("x", j)
+    src.oublier(date(2026, 9, 5))
+    assert all(d >= date(2026, 9, 5) for d in src._res)
+    assert all(d >= date(2026, 9, 5) for d in src._fen)
+    assert all(k[1] >= date(2026, 9, 5) for k in src._proches)
