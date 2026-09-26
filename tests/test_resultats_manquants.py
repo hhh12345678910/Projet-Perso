@@ -907,7 +907,8 @@ def test_la_ligue_perdue_est_chiffree(tmp_path, monkeypatch, capsys):
                                     ligue="Damallsvenskan")])
     out = _lancer_det(tmp_path, monkeypatch, capsys, construire)
     assert "1 de ces matchs n'ont pas de ligue" in out
-    assert "connaît la ligue pour 1" in out
+    assert f"(du {jour.isoformat()} au {jour.isoformat()})" in out
+    assert "ligue pour 1 ;" in out
     assert "rapprocherait 1 de plus" in out
 
 
@@ -992,3 +993,88 @@ def test_les_detections_ne_gardent_qu_une_fenetre(tmp_path, monkeypatch):
     rm.analyser_detections(rows, MAINTENANT, tmp_path, 60, FINAL, True, True,
                            set(), {})
     assert len(ouvertes) == 30 and max(ouvertes) <= 4, ouvertes
+
+
+def test_hors_tolerance_un_fragment_ne_suffit_plus(tmp_path):
+    """Cas réel : « Kossa FC - Marist Fire » tenu pour « Os - Førde » à 11 h
+    d'écart, parce que « os » est un fragment de « kossa » (100 en score de
+    production). Hors tolérance, l'heure ne retient plus ce faux ami."""
+    d = _verdict(tmp_path, _notre("Kossa FC", "Marist Fire", Q),
+                 [_fixture("Os", "Førde", "2026-09-23T05:45:00+00:00")])
+    assert d["verdict"] == rm.ABSENT, d
+
+
+def test_un_fragment_n_est_pas_un_camp_identique(tmp_path):
+    """Cas réel : « SK Brann W - Aalesunds W » et « Bra - Fezzanese » —
+    « bra » vaut 100 contre « brann » en score de production, mais un club
+    renommé garde son autre nom EN ENTIER."""
+    d = _verdict(tmp_path, _notre("SK Brann W", "Aalesunds W", Q),
+                 [_fixture("Bra", "Fezzanese", Q)])
+    assert d["verdict"] == rm.ABSENT, d
+
+
+def test_un_match_decale_de_trois_heures_reste_un_horaire(tmp_path):
+    """Cas réel, amicaux de juillet : mêmes noms, trois heures d'écart."""
+    d = _verdict(tmp_path, _notre("BG Pathum United", "Buriram United", Q),
+                 [_fixture("BG Pathum United", "Buriram United",
+                           "2026-09-22T21:45:00+00:00")])
+    assert d["verdict"] == rm.HORAIRE and round(d["cand"]["dt"]) == 180, d
+
+
+def test_les_tirs_au_but_directs_sont_reconnus(tmp_path):
+    """Pas de prolongation saisie, buts = temps réglementaire : la forme d'un
+    match allé directement aux tirs au but. La sonde le compte à part — c'est
+    une règle de production à trancher sur ce chiffre."""
+    d = _verdict(tmp_path, _notre("Bromley FC", "Reading", Q),
+                 [_prolongation("Bromley", "Reading", Q, "PEN", (1, 1),
+                                (None, None), (1, 1))])
+    assert d["verdict"] == rm.PROLONG, d
+    assert d["cand"]["prolong"] == rm.TAB_DIRECTS
+    d = _verdict(tmp_path / "x" if (tmp_path / "x").mkdir() is None else tmp_path,
+                 _notre("Bromley FC", "Reading", Q),
+                 [_prolongation("Bromley", "Reading", Q, "AET", (2, 2),
+                                (None, None), (3, 2))])
+    assert d["cand"]["prolong"] == rm.PROLONG_SANS_DETAIL
+
+
+def test_le_fragment_est_ecarte_des_la_sortie_de_tolerance(tmp_path):
+    """Même faux ami qu'à 11 h, mais à une heure : le seuil « en entier »
+    s'applique dès que l'heure ne garantit plus rien, pas seulement au loin."""
+    d = _verdict(tmp_path, _notre("Kossa FC", "Marist Fire", Q),
+                 [_fixture("Os", "Førde", "2026-09-22T19:45:00+00:00")])
+    assert d["verdict"] == rm.ABSENT, d
+
+
+def test_au_loin_il_faut_des_noms_quasi_identiques(tmp_path):
+    """« Siegburger 04 » / « Siegburger SV » (87 en entier) passe à trois
+    heures, pas à huit : au-delà de six heures, seul un match reporté garde
+    ses noms à l'identique."""
+    pres = _verdict(tmp_path, _notre("Rot Weiss Koblenz", "Siegburger 04", Q),
+                    [_fixture("Rot Weiss Koblenz", "Siegburger SV",
+                              "2026-09-22T21:45:00+00:00")])
+    assert pres["verdict"] == rm.HORAIRE, pres
+    loin = tmp_path / "loin"
+    loin.mkdir()
+    d = _verdict(loin, _notre("Rot Weiss Koblenz", "Siegburger 04", Q),
+                 [_fixture("Rot Weiss Koblenz", "Siegburger SV",
+                           "2026-09-23T02:45:00+00:00")])
+    assert d["verdict"] == rm.ABSENT, d
+
+
+def test_une_prolongation_chiffree_n_est_pas_un_tab_direct(tmp_path):
+    """Le cas du Schweizer Cup : `fulltime` 3-4 porte DÉJÀ la prolongation
+    (0-1), buts 3-4. Buts = `fulltime`, mais une prolongation est saisie :
+    ce n'est pas un match allé directement aux tirs au but."""
+    d = _verdict(tmp_path, _notre("Bromley FC", "Reading", Q),
+                 [_prolongation("Bromley", "Reading", Q, "AET", (3, 4),
+                                (0, 1), (3, 4))])
+    assert d["verdict"] == rm.PROLONG, d
+    assert d["cand"]["prolong"] == rm.PROLONG_SANS_DETAIL
+
+
+def test_un_club_renomme_se_reconnait_aussi_a_l_envers(tmp_path):
+    """La source inverse domicile et extérieur : le camp identique se juge
+    dans l'orientation retenue, pas dans l'ordre des colonnes."""
+    d = _verdict(tmp_path, _notre("Vancouver FC", "Inter Toronto", Q),
+                 [_fixture("York United", "Vancouver FC", Q)])
+    assert d["verdict"] == rm.NOMS, d

@@ -232,7 +232,7 @@ def classer(r, maintenant: datetime, dossier: Path, jours_pont: int,
 # possibles, et ils appellent quatre gestes différents. Le fichier du pont est
 # sur disque : on y cherche le match le plus proche et on dit lequel.
 
-ABSENT = "absent de la source ce jour-là (trou de catalogue)"
+ABSENT = "absent de la source ce jour-là (aucun candidat plausible)"
 CLASSE = "présent, mais la barrière de CLASSE le rejette (réserve / jeunes / féminin)"
 NOMS = "candidat aux noms proches — à vérifier à l'œil"
 HORAIRE = "présent, mais horaire décalé au-delà de la tolérance"
@@ -266,6 +266,20 @@ SEUIL_APPARIEMENT = 85.0
 FENETRE_NOMS_MIN = 120.0
 COTE_IDENTIQUE = 95.0
 COTES_PROCHES = 75.0
+#: Le score de production (`max(token_set_ratio, partial_ratio)`) juge un nom
+#: sur son meilleur FRAGMENT : « Bra » vaut 100 contre « SK Brann W », « Os »
+#: 100 contre « Kossa FC ». Dans la tolérance horaire, l'heure tient ces faux
+#: amis à distance ; au-delà, plus rien ne les retient. Hors tolérance, la
+#: sonde exige donc que chaque camp ressemble à l'autre EN ENTIER
+#: (`fuzz.ratio`) — et au-delà de six heures, qu'il soit quasi identique :
+#: seul un match reporté garde ses deux noms à l'identique. Le camp
+#: « identique » d'un club renommé se juge de la même façon, en entier.
+#: Constaté sur la sortie réelle du 26/09 : « SK Brann W - Aalesunds W » tenu
+#: pour « Bra - Fezzanese », « Kossa FC - Marist Fire » pour « Os - Førde » à
+#: 11 h d'écart.
+ENTIER_HORS_TOLERANCE = 60.0
+FENETRE_LOINTAINE_MIN = 360.0
+ENTIER_LOINTAIN = 90.0
 
 
 def _sim_sans_classe(a: str, b: str) -> float:
@@ -286,13 +300,22 @@ def _camps(sim, h, a, th, ta) -> tuple:
     return max((sim(h, th), sim(a, ta)), (sim(h, ta), sim(a, th)), key=sum)
 
 
-def _plausible(u: float, camps: tuple, dt: float) -> bool:
-    """Ce candidat peut-il être NOTRE match ? Voir `FENETRE_NOMS_MIN`."""
+def _plausible(u: float, camps: tuple, dt: float,
+               entiers: tuple = (100.0, 100.0)) -> bool:
+    """Ce candidat peut-il être NOTRE match ? Voir `FENETRE_NOMS_MIN` et
+    `ENTIER_HORS_TOLERANCE`. `entiers` : `fuzz.ratio` camp par camp, dans la
+    même orientation que `camps`."""
+    if u < PLANCHER_CANDIDAT:
+        return False
+    if dt > FENETRE_LOINTAINE_MIN and min(entiers) < ENTIER_LOINTAIN:
+        return False
+    if dt > tolerance_for_scores("soccer") and min(entiers) < ENTIER_HORS_TOLERANCE:
+        return False
     if u >= SEUIL_APPARIEMENT:
         return True
-    if u < PLANCHER_CANDIDAT or dt > FENETRE_NOMS_MIN:
+    if dt > FENETRE_NOMS_MIN:
         return False
-    return max(camps) >= COTE_IDENTIQUE or min(camps) >= COTES_PROCHES
+    return max(entiers) >= COTE_IDENTIQUE or min(camps) >= COTES_PROCHES
 
 
 #: Un candidat plausible a une moyenne d'au moins `PLANCHER_CANDIDAT` (70),
@@ -346,7 +369,9 @@ class SourceFoot:
             ta = with_class_marker(((eq.get("away") or {}).get("name") or "").strip(), m2)
             if not th or not ta:
                 continue
-            ft = (m.get("score") or {}).get("fulltime") or {}
+            sc = m.get("score") or {}
+            ft, et = sc.get("fulltime") or {}, sc.get("extratime") or {}
+            buts = m.get("goals") or {}
             out.append({"jour_fichier": d, "th": th, "ta": ta,
                         "sh": _pour_flou(th), "sa": _pour_flou(ta),
                         "t": _instant(fx.get("date")),
@@ -355,7 +380,10 @@ class SourceFoot:
                                    or "?").upper(),
                         "a_90": _score_90_minutes(m) is not None,
                         "a_score": (ft.get("home") is not None
-                                    and ft.get("away") is not None)})
+                                    and ft.get("away") is not None),
+                        # Pour les prolongations NON prouvables : la forme de
+                        # ce que la source a donné, pour chiffrer une règle.
+                        "prolong": _forme_prolongation(ft, et, buts)})
         self._prep[d] = out
 
     def resultats(self, d: date) -> list:
@@ -424,6 +452,27 @@ def _conflits(h: str, a: str, x: dict, droit: bool) -> list:
     paires = ((h, x["th"]), (a, x["ta"])) if droit else ((h, x["ta"]), (a, x["th"]))
     return sorted({(_classe_lisible(n), _classe_lisible(t)) for n, t in paires
                    if _classe_lisible(n) != _classe_lisible(t)})
+
+
+#: Les formes d'une prolongation que `_score_90_minutes` ne sait pas prouver.
+TAB_DIRECTS = "tirs au but directs — pas de prolongation saisie, buts = score réglementaire"
+PROLONG_SANS_DETAIL = "prolongation sans détail exploitable"
+
+
+def _forme_prolongation(ft: dict, et: dict, buts: dict) -> str:
+    """Ce que la source a donné pour un AET/PEN, en une étiquette.
+
+    `TAB_DIRECTS` : aucune prolongation saisie (`extratime` vide) et des buts
+    égaux au temps réglementaire — la forme d'un match allé DIRECTEMENT aux
+    tirs au but (Coupe de la Ligue anglaise, Copa Argentina, MLS Next Pro…).
+    `_score_90_minutes` exige une prolongation chiffrée et l'écarte ; si la
+    source dit vrai, son score à 90 min est `fulltime`. La sonde le COMPTE, elle
+    ne le décide pas : c'est une règle de production à trancher sur ce chiffre."""
+    vals = (ft.get("home"), ft.get("away"), buts.get("home"), buts.get("away"))
+    if (et.get("home") is None and et.get("away") is None
+            and None not in vals and vals[:2] == vals[2:]):
+        return TAB_DIRECTS
+    return PROLONG_SANS_DETAIL
 
 
 def _pour_flou(nom: str) -> str:
@@ -499,11 +548,13 @@ def diagnostiquer(r, noms: dict, dossier: Path, cache: dict) -> dict:
         droit = (_flou(oh, x["sh"]), _flou(oa, x["sa"]))
         croise = (_flou(oh, x["sa"]), _flou(oa, x["sh"]))
         camps = max(droit, croise, key=sum)
+        entiers = ((fuzz.ratio(oh, x["sh"]), fuzz.ratio(oa, x["sa"])) if camps is droit
+                   else (fuzz.ratio(oh, x["sa"]), fuzz.ratio(oa, x["sh"])))
         u = sum(camps) / 2
         dt = abs((x["t"] - depart).total_seconds()) / 60 if x["t"] else float("inf")
         # Un candidat plausible passe devant un bruit mieux noté : sinon un
         # « Juventus - Atalanta » à 80 masquerait le club renommé à 75.
-        plausible = _plausible(u, camps, dt)
+        plausible = _plausible(u, camps, dt, entiers)
         cle = (plausible, u, -dt)
         if meilleur is None or cle > meilleur["_cle"]:
             meilleur = {"_cle": cle, "u": u, "plausible": plausible, "dt": dt,
@@ -516,6 +567,7 @@ def diagnostiquer(r, noms: dict, dossier: Path, cache: dict) -> dict:
                 "nom": f"{x['th']} - {x['ta']}", "ligue": x["ligue"],
                 "statut": x["statut"], "jour_fichier": x["jour_fichier"],
                 "a_90": x["a_90"], "a_score": x["a_score"],
+                "prolong": x["prolong"],
                 # Les classes camp par camp, dans l'orientation retenue : c'est
                 # ce qui dit QUELLE correction lèverait une barrière de classe.
                 "conflits": _conflits(h, a, x, meilleur["droit"])}
@@ -979,10 +1031,12 @@ def imprimer_detections(res: dict, depuis: date, dossier: Path, jours_pont: int,
                 print(f"  {pourquoi[v]:5}  ({pourquoi_d[v]:5} dét.)  {v}")
         if sans_ligue:
             connues = sum(1 for r in sans_ligue if r["league_bf"])
+            dates = sorted(_coup_d_envoi(r).date() for r in sans_ligue)
             print(f"\n  ⚠️ {len(sans_ligue)} de ces matchs n'ont pas de ligue dans "
-                  f"`events` : la classe (féminin,\n  jeunes, réserve) ne peut pas "
-                  f"leur être posée. `bet_features` en connaît la ligue pour "
-                  f"{connues} ;\n  avec elle, la production en rapprocherait "
+                  f"`events` (du {dates[0].isoformat()} au {dates[-1].isoformat()}) : "
+                  f"la classe\n  (féminin, jeunes, réserve) ne peut pas leur être "
+                  f"posée. `bet_features` en connaît la\n  ligue pour {connues} ; "
+                  f"avec elle, la production en rapprocherait "
                   f"{res['ligue_rendue']} de plus.")
         for v in ORDRE_POURQUOI:
             lot = [(r, d) for r, d in diags if d["verdict"] == v]
@@ -998,6 +1052,9 @@ def imprimer_detections(res: dict, depuis: date, dossier: Path, jours_pont: int,
                              for n, t in d["cand"]["conflits"])
                 print("   classes (nous → source) : " + ", ".join(
                     f"{k} : {n}" for k, n in cf.most_common()))
+            if v == PROLONG:
+                fp = Counter(d["cand"]["prolong"] for _r, d in lot)
+                print("   forme : " + ", ".join(f"{k} : {n}" for k, n in fp.most_common()))
             if v == HORAIRE:
                 tr = Counter(_tranche_horaire(d["cand"]["dt"]) for _r, d in lot)
                 print("   écart d'horaire : " + ", ".join(
@@ -1132,10 +1189,12 @@ def _conseils(classes, comptes, pourquoi, dossier: Path, jours_pont: int,
               f"lequel.")
     if pourquoi[CLASSE] or pourquoi[NOMS] or pourquoi[HORAIRE]:
         n = pourquoi[CLASSE] + pourquoi[NOMS] + pourquoi[HORAIRE]
-        print(f"  • {n} match(s) que la source A, mais que le rapprochement "
-              f"rejette (classe, noms ou\n    horaire) : c'est corrigeable dans "
-              f"le code. Envoie la section ci-dessus — chaque\n    candidat est "
-              f"à confirmer à l'œil avant de toucher aux règles.")
+        print(f"  • {n} match(s) que la source a sans doute, mais que le "
+              f"rapprochement rejette —\n    classe {pourquoi[CLASSE]}, horaire "
+              f"{pourquoi[HORAIRE]}, noms proches {pourquoi[NOMS]} (ceux-là "
+              f"contiennent du bruit :\n    un candidat n'est qu'un candidat). "
+              f"Corrigeable dans le code : envoie la section\n    ci-dessus, "
+              f"chaque règle se décide sur ses exemples.")
     if pourquoi[SANS_SCORE_SOURCE]:
         print(f"  • {pourquoi[SANS_SCORE_SOURCE]} match(s) terminés dont la source "
               f"ne donnait pas le score à la capture :\n    la journée est "
@@ -1162,11 +1221,13 @@ def _conseils(classes, comptes, pourquoi, dossier: Path, jours_pont: int,
 
     if comptes[TENNIS_SIMPLE]:
         print(f"  • {comptes[TENNIS_SIMPLE]} match(s) de tennis en SIMPLE sans "
-              f"résultat : relancer\n"
+              f"résultat. Si results-update n'est pas\n    repassé sur le "
+              f"tennis depuis ces matchs :\n"
               f"      .venv/bin/python -m src.main results-update --days "
               f"{n_tennis} --sport tennis\n"
-              f"    Ce qui reste ensuite est surtout des ABANDONS et des forfaits, "
-              f"que la source ne règle pas.")
+              f"    S'il vient de passer, c'est le reste : surtout des ABANDONS et "
+              f"des forfaits, que\n    la source ne règle pas — relancer ne "
+              f"ferait que consommer du quota.")
     if comptes[DOUBLE]:
         print(f"  • {comptes[DOUBLE]} match(s) de DOUBLE : la source tennis n'en "
               f"sert aucun. Rien à relancer —\n    seule une autre source les "
