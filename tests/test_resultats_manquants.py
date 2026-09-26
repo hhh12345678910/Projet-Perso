@@ -202,7 +202,7 @@ def _lancer(tmp_path, monkeypatch, capsys, paris, jours_pont="2", *extra,
         c.commit()
         c.close()
     debut = (datetime.now(timezone.utc).date() - timedelta(days=depuis)).isoformat()
-    rm.main(["--db", str(p), "--depuis", debut, *extra])
+    rm.main(["--db", str(p), "--joues", "--depuis", debut, *extra])
     return capsys.readouterr().out, scores / "soccer"
 
 
@@ -292,14 +292,14 @@ def test_la_fenetre_par_defaut_est_annoncee_comme_telle(tmp_path, monkeypatch, c
     monkeypatch.setenv("SCORES_INGEST_DIR", str(scores))
     monkeypatch.delenv("SCORES_BRIDGE_DAYS", raising=False)
     p = _base(tmp_path, [])
-    rm.main(["--db", str(p)])
+    rm.main(["--db", str(p), "--joues"])
     assert "SCORES_BRIDGE_DAYS = 2 (absent de .env" in capsys.readouterr().out
 
 
 def test_une_date_mal_ecrite_est_refusee(tmp_path, monkeypatch):
     monkeypatch.setattr(rm, "load_env_file", lambda *a, **k: 0)
     with pytest.raises(SystemExit):
-        rm.main(["--db", str(_base(tmp_path, [])), "--depuis", "26/09/2026"])
+        rm.main(["--db", str(_base(tmp_path, [])), "--joues", "--depuis", "26/09/2026"])
 
 
 def test_elargir_passe_avant_cliquer(tmp_path, monkeypatch, capsys):
@@ -323,9 +323,14 @@ import json as _json  # noqa: E402
 
 
 def _fixture(dom, ext, quand, statut="FT", ligue="L"):
+    """Un match tel que le pont le range. Le score est là parce que la
+    production ne rapproche que ce que `parse_apifootball_results` retient."""
     return {"fixture": {"date": quand, "status": {"short": statut}},
             "league": {"name": ligue},
-            "teams": {"home": {"name": dom}, "away": {"name": ext}}}
+            "teams": {"home": {"name": dom}, "away": {"name": ext}},
+            "score": {"fulltime": {"home": 1, "away": 0},
+                      "extratime": {"home": None, "away": None}},
+            "goals": {"home": 1, "away": 0}}
 
 
 def _jour_source(dossier, jour: str, fixtures):
@@ -468,7 +473,7 @@ def test_le_diagnostic_apparait_dans_la_sortie(tmp_path, monkeypatch, capsys):
     capture = datetime.combine(jour + timedelta(days=1), datetime.min.time(),
                                tzinfo=timezone.utc) + timedelta(hours=12)
     os.utime(f, (capture.timestamp(), capture.timestamp()))
-    rm.main(["--db", str(p), "--depuis", (jour - timedelta(days=1)).isoformat()])
+    rm.main(["--db", str(p), "--joues", "--depuis", (jour - timedelta(days=1)).isoformat()])
     out = capsys.readouterr().out
     assert "CE QUE LA SOURCE AVAIT CE JOUR-LÀ" in out
     assert rm.APPARIABLE in out
@@ -665,3 +670,292 @@ def test_le_diagnostic_dit_absent_de_bout_en_bout(tmp_path, monkeypatch, capsys)
         os.utime(f, (t, t))
     out, _ = _lancer(tmp_path, monkeypatch, capsys, paris, "14", retouche=complet)
     assert "ABSENTS de la source" in out
+
+
+# ── TOUTES les détections (le défaut) ────────────────────────────────
+
+def _det(**kw):
+    base = dict(event_key="202609241800::a__vs__b", sport="soccer", league="L1",
+                home="a", away="b", start_time="2026-09-24T18:00:00+00:00",
+                n_det=2, has_result=0, has_scores=0, league_bf=None)
+    base.update(kw)
+    return base
+
+
+def _classer_det(tmp_path, reglees=frozenset(), noms=None, pont=True, cle=True, **kw):
+    return rm.classer_detection(_det(**kw), MAINTENANT, tmp_path, 7, FINAL, pont,
+                                cle, set(reglees), noms or {}, {})
+
+
+def test_detection_reglee_avec_ou_sans_score(tmp_path):
+    assert _classer_det(tmp_path, has_result=1, has_scores=1) == rm.REGLE
+    assert _classer_det(tmp_path, has_result=1, has_scores=0) == rm.REGLE_SANS_SCORE
+
+
+def test_detection_a_venir_puis_les_sports(tmp_path):
+    assert _classer_det(tmp_path, start_time="2026-09-27T18:00:00+00:00") == rm.A_VENIR
+    assert _classer_det(tmp_path, sport="unknown") == rm.SPORT_INCONNU
+    assert _classer_det(tmp_path, sport="basketball") == rm.SANS_SOURCE
+    assert _classer_det(tmp_path, pont=False) == rm.FOOT_SANS_PONT
+    assert _classer_det(tmp_path, start_time="2026-09-26T08:00:00+00:00") == rm.FOOT_DU_JOUR
+    assert _classer_det(tmp_path) == rm.JAMAIS_DEMANDEE
+
+
+def test_detection_reglee_sous_une_autre_cle(tmp_path):
+    """Horaire révisé : la clé neuve a son résultat, l'ancienne non. Même
+    équipes, même jour — dans un sens comme dans l'autre."""
+    assert _classer_det(tmp_path, reglees={("a", "b", "2026-09-24")}) == rm.AUTRE_CLE
+    assert _classer_det(tmp_path, reglees={("b", "a", "2026-09-24")}) == rm.AUTRE_CLE
+    assert _classer_det(tmp_path, reglees={("a", "b", "2026-09-23")}) != rm.AUTRE_CLE
+
+
+def test_un_double_se_lit_sur_le_nom_affiche(tmp_path):
+    noms = {"bolellisvavassoria": "Bolelli S / Vavassori A"}
+    assert _classer_det(tmp_path, sport="tennis", home="bolellisvavassoria",
+                        noms=noms) == rm.DOUBLE
+    assert _classer_det(tmp_path, sport="tennis", home="sinnerj") == rm.TENNIS_SIMPLE
+    assert _classer_det(tmp_path, sport="tennis", cle=False) == rm.TENNIS_SANS_CLE
+
+
+def _base_detections(tmp_path):
+    """Une base au VRAI schéma (`Storage`) : la sonde lit la même base que la
+    production, pas un schéma recopié."""
+    from src.storage import Storage
+    p = tmp_path / "v.db"
+    Storage(str(p))
+    return p
+
+
+def _ev(c, k, t, sport="soccer", league="L1", h="a", a="b", n_vb=1):
+    c.execute("INSERT INTO events (event_key, sport, league, home, away, start_time)"
+              " VALUES (?,?,?,?,?,?)", (k, sport, league, h, a, t))
+    for _ in range(n_vb):
+        c.execute("INSERT INTO value_bets (event_key, book, market, outcome_label,"
+                  " odd_taken, fair_prob, fair_odd, ev_pct, kelly_pct, detected_at)"
+                  " VALUES (?,?,?,?,?,?,?,?,?,?)",
+                  (k, "unibet_be", "h2h", "home", 2.1, .5, 2.0, 5, 1, t))
+
+
+def test_la_population_est_celle_de_la_production(tmp_path):
+    """Les matchs finis sans résultat de la sonde sont EXACTEMENT ceux que
+    `results-update` réclame (`Storage.events_awaiting_result`)."""
+    from src.storage import Storage
+    p = _base_detections(tmp_path)
+    c = sqlite3.connect(str(p))
+    _ev(c, "k1", "2026-09-20T15:00:00+00:00", n_vb=3)
+    _ev(c, "k2", "2026-09-21T15:00:00+00:00", h="c", a="d")
+    _ev(c, "k3", "2026-09-22T15:00:00+00:00", h="e", a="f", n_vb=0)   # sans value bet
+    _ev(c, "k4", "2026-09-10T15:00:00+00:00", h="g", a="h")           # avant --depuis
+    _ev(c, "k5", "2026-09-23T15:00:00+00:00", h="i", a="j")
+    c.execute("INSERT INTO results VALUES ('k5','home',1,0,'t','2026-09-24')")
+    c.commit()
+    c.close()
+    rows, _noms, reglees = rm.charger_detections(str(p), date(2026, 9, 15))
+    depuis = datetime(2026, 9, 15, tzinfo=timezone.utc)
+    attendu = {r["event_key"] for r in Storage(str(p)).events_awaiting_result(
+        depuis, MAINTENANT - rm.GRACE)}
+    sonde = {r["event_key"] for r in rows if not r["has_result"]}
+    assert sonde == attendu == {"k1", "k2"}
+    assert {r["event_key"]: r["n_det"] for r in rows}["k1"] == 3
+    assert ("i", "j", "2026-09-23") in reglees
+
+
+def test_la_ligue_de_bet_features_est_lue(tmp_path):
+    p = _base_detections(tmp_path)
+    c = sqlite3.connect(str(p))
+    _ev(c, "k1", "2026-09-20T15:00:00+00:00", league="")
+    c.execute("INSERT INTO bet_features (value_bet_id, detected_at, event_key, sport,"
+              " league, book, market, outcome_label, odd_taken, fair_odd, ev_pct)"
+              " VALUES (1,'x','k1','soccer','Sweden - Damallsvenskan','u','h2h',"
+              "'home',2.1,2.0,5)")
+    c.commit()
+    c.close()
+    rows, _n, _r = rm.charger_detections(str(p), date(2026, 9, 15))
+    assert rows[0]["league_bf"] == "Sweden - Damallsvenskan"
+
+
+def test_une_base_sans_bet_features_se_lit_quand_meme(tmp_path):
+    p = tmp_path / "v.db"
+    c = sqlite3.connect(str(p))
+    c.executescript("""
+        CREATE TABLE events (event_key TEXT PRIMARY KEY, sport TEXT, league TEXT,
+            home TEXT, away TEXT, start_time TEXT);
+        CREATE TABLE value_bets (id INTEGER PRIMARY KEY, event_key TEXT);
+        CREATE TABLE results (event_key TEXT PRIMARY KEY, winner TEXT,
+            home_score REAL, away_score REAL, source TEXT, settled_at TEXT);
+        INSERT INTO events VALUES ('k1','soccer','L','a','b','2026-09-20T15:00:00+00:00');
+        INSERT INTO value_bets (event_key) VALUES ('k1');
+    """)
+    c.commit()
+    c.close()
+    rows, noms, _r = rm.charger_detections(str(p), date(2026, 9, 15))
+    assert len(rows) == 1 and rows[0]["league_bf"] is None and noms == {}
+
+
+def test_une_ambiguite_est_nommee(tmp_path):
+    """Deux matchs de la source quasi identiques à 10 min près : `match_event`
+    refuse de choisir. La sonde doit le dire, pas crier « appariable »."""
+    d = _verdict(tmp_path, _notre("Clyde", "Stranraer", Q),
+                 [_fixture("Clyde", "Stranraer", Q),
+                  _fixture("Clyde FC", "Stranraer", "2026-09-22T18:50:00+00:00")])
+    assert d["verdict"] == rm.AMBIGU, d
+
+
+def test_un_match_termine_sans_score_n_est_pas_une_contradiction(tmp_path):
+    f = _fixture("Clyde", "Stranraer", Q)
+    f["score"]["fulltime"] = {"home": None, "away": None}
+    d = _verdict(tmp_path, _notre("Clyde", "Stranraer", Q), [f])
+    assert d["verdict"] == rm.SANS_SCORE_SOURCE, d
+
+
+def test_la_barriere_de_classe_dit_quelle_classe(tmp_path):
+    """« Rangers B » (réserve) contre « Rangers U21 » (jeunes) : le conflit
+    nommé dit quelle correction le lèverait."""
+    d = _verdict(tmp_path, _notre("rangersxreserve", "clyde", Q),
+                 [_fixture("Clyde", "Rangers U21", Q)],
+                 noms={"rangersxreserve": "Rangers B", "clyde": "Clyde"})
+    assert d["verdict"] == rm.CLASSE, d
+    assert d["cand"]["conflits"] == [("réserve", "jeunes")], d
+
+
+def test_la_recherche_rapide_ne_perd_aucun_candidat_plausible():
+    """`_proches` (élagué à 70) et `_flou` (plancher 40) contre la référence
+    `_sim_sans_classe`, sur des noms réels : aucun nom à 70 n'est perdu, et
+    toute valeur à 40 ou plus est exacte."""
+    noms = ["Vittsjö W", "Växjö W", "Deportivo La Coruña II", "Deportivo Fabril",
+            "Athletic Club II", "Rangers U21", "Clyde", "Vancouver FC",
+            "York United", "Inter Toronto", "Juventus", "Atalanta", "Amatitlan",
+            "Juventud Copalera", "Dep. Maipu", "Deportivo Maipu", "Os", "AZ W",
+            "Shijiazhuang Gongfu", "Yokohama FC", "YSCC Yokohama", "Masar",
+            "MPS", "Proxy", "SexyPöxyt", "Carrick Rangers", "Ballymacash Rangers"]
+    formes = [rm._pour_flou(n) for n in noms]
+    for q in formes:
+        proches = rm._proches(q, formes)
+        for f in formes:
+            ref = max(rm.fuzz.token_set_ratio(q, f), rm.fuzz.partial_ratio(q, f))
+            assert (ref >= rm.SEUIL_BRUT) == (f in proches), (q, f, ref)
+            if ref >= rm.PLANCHER_CAMP:
+                assert rm._flou(q, f) == ref, (q, f)
+
+
+def _lancer_det(tmp_path, monkeypatch, capsys, construire, *extra, depuis=10):
+    scores = tmp_path / "scores"
+    (scores / "soccer").mkdir(parents=True)
+    monkeypatch.setattr(rm, "load_env_file", lambda *a, **k: 0)
+    monkeypatch.setenv("SCORES_INGEST_DIR", str(scores))
+    monkeypatch.setenv("SCORES_BRIDGE_DAYS", "14")
+    monkeypatch.setenv("SCORES_FOOTBALL_BRIDGE", "1")
+    monkeypatch.setenv("SCORES_TENNIS_KEY", "cle")
+    p = _base_detections(tmp_path)
+    c = sqlite3.connect(str(p))
+    construire(c, scores / "soccer")
+    c.commit()
+    c.close()
+    debut = (datetime.now(timezone.utc).date() - timedelta(days=depuis)).isoformat()
+    rm.main(["--db", str(p), "--depuis", debut, *extra])
+    return capsys.readouterr().out
+
+
+def _complet(dossier, jour, fixtures):
+    f = dossier / f"{jour.isoformat()}.json"
+    f.write_text(_json.dumps({"response": fixtures}))
+    t = (datetime.combine(jour + timedelta(days=1), datetime.min.time(),
+                          tzinfo=timezone.utc) + timedelta(hours=12)).timestamp()
+    os.utime(f, (t, t))
+
+
+def test_les_detections_de_bout_en_bout(tmp_path, monkeypatch, capsys):
+    jour = datetime.now(timezone.utc).date() - timedelta(days=4)
+    quand = f"{jour.isoformat()}T15:00:00+00:00"
+    plus_tard = f"{jour.isoformat()}T15:45:00+00:00"
+
+    def construire(c, d):
+        _ev(c, "k1", quand, h="arsenal", a="chelsea", n_vb=3)
+        c.execute("INSERT INTO results VALUES ('k1','home',1,0,'t','x')")
+        _ev(c, "k2", plus_tard, h="arsenal", a="chelsea", n_vb=2)      # autre clé
+        _ev(c, "k3", quand, h="kontu", a="lps")                         # absent
+        _ev(c, "k4", quand, league="Sweden - Damallsvenskan", h="vittsjo",
+            a="vaxjo", n_vb=4)                                          # classe
+        _ev(c, "k5", quand, sport="basketball", h="lakers", a="celtics")
+        _complet(d, jour, [_fixture("Arsenal", "Chelsea", quand),
+                           _fixture("Vittsjö W", "Växjö W", quand,
+                                    ligue="Damallsvenskan")])
+    out = _lancer_det(tmp_path, monkeypatch, capsys, construire)
+    assert "DÉTECTIONS SANS RÉSULTAT" in out
+    assert "Sur 5 matchs détectés (11 détections)" in out
+    assert "→ 4 match(s) FINIS sans résultat, portant 8 détections" in out
+    assert "COUVERTURE DES MATCHS FINIS, PAR SPORT" in out
+    assert "basketball" in out and "aucune source" in out
+    assert rm.AUTRE_CLE in out and "clé orpheline" in out
+    assert "classes (nous → source) : aucune → féminin : 1" in out
+    assert "ABSENTS de la source" in out
+
+
+def test_la_ligue_perdue_est_chiffree(tmp_path, monkeypatch, capsys):
+    """`events.league` vide, `bet_features` connaît la ligue féminine : la
+    sonde dit combien la production rapprocherait de plus avec elle."""
+    jour = datetime.now(timezone.utc).date() - timedelta(days=4)
+    quand = f"{jour.isoformat()}T15:00:00+00:00"
+
+    def construire(c, d):
+        _ev(c, "k1", quand, league="", h="vittsjo", a="vaxjo")
+        c.execute("INSERT INTO bet_features (value_bet_id, detected_at, event_key,"
+                  " sport, league, book, market, outcome_label, odd_taken,"
+                  " fair_odd, ev_pct) VALUES (1,'x','k1','soccer',"
+                  "'Sweden - Women Damallsvenskan','u','h2h','home',2.1,2.0,5)")
+        _complet(d, jour, [_fixture("Vittsjö W", "Växjö W", quand,
+                                    ligue="Damallsvenskan")])
+    out = _lancer_det(tmp_path, monkeypatch, capsys, construire)
+    assert "1 de ces matchs n'ont pas de ligue" in out
+    assert "connaît la ligue pour 1" in out
+    assert "rapprocherait 1 de plus" in out
+
+
+def test_les_exemples_sont_bornes_sauf_avec_lister(tmp_path, monkeypatch, capsys):
+    jour = datetime.now(timezone.utc).date() - timedelta(days=4)
+    quand = f"{jour.isoformat()}T15:00:00+00:00"
+
+    def construire(c, d):
+        for i in range(rm.EXEMPLES + 3):
+            _ev(c, f"k{i}", quand, h=f"absent{i}", a=f"nulle{i}")
+        _complet(d, jour, [_fixture("Arsenal", "Chelsea", quand)])
+    out = _lancer_det(tmp_path, monkeypatch, capsys, construire)
+    assert "… et 3 autres (--lister pour tout voir)" in out
+    tmp2 = tmp_path / "b"
+    tmp2.mkdir()
+    out = _lancer_det(tmp2, monkeypatch, capsys, construire, "--lister")
+    assert "autres (--lister" not in out
+    assert all(f"Absent{i}" in out for i in range(rm.EXEMPLES + 3))
+
+
+def test_les_exemples_montres_sont_les_plus_lourds(tmp_path, monkeypatch, capsys):
+    """Un match qui porte beaucoup de détections pèse plus sur le ROI : c'est
+    lui qu'on montre, pas le premier venu."""
+    jour = datetime.now(timezone.utc).date() - timedelta(days=4)
+    quand = f"{jour.isoformat()}T15:00:00+00:00"
+
+    def construire(c, d):
+        for i in range(rm.EXEMPLES + 3):
+            _ev(c, f"k{i}", quand, h=f"absent{i}", a=f"nulle{i}",
+                n_vb=9 if i == rm.EXEMPLES + 2 else 1)
+        _complet(d, jour, [_fixture("Arsenal", "Chelsea", quand)])
+    out = _lancer_det(tmp_path, monkeypatch, capsys, construire)
+    bloc = out.split(f"── {rm.ABSENT}", 1)[1].split("… et", 1)[0]
+    assert bloc.count(" dét.\n") == rm.EXEMPLES
+    assert f"Absent{rm.EXEMPLES + 2} - Nulle{rm.EXEMPLES + 2}" in bloc
+
+
+def test_la_couverture_ignore_le_foot_du_jour(tmp_path, capsys):
+    """Un match d'aujourd'hui n'a pas encore pu être capturé : le compter
+    dans les « finis » ferait baisser la couverture à tort."""
+    rows = [_det(event_key="k1", has_result=1, has_scores=1),
+            _det(event_key="k2", home="psg", away="om",
+                 start_time="2026-09-26T08:00:00+00:00")]
+    res = rm.analyser_detections(rows, MAINTENANT, tmp_path, 7, FINAL, True, True,
+                                 set(), {})
+    assert res["comptes"][rm.FOOT_DU_JOUR] == 1
+    rm.imprimer_detections(res, date(2026, 9, 20), tmp_path, 7, "t", MAINTENANT,
+                           False, "v.db", True, True)
+    ligne = next(l for l in capsys.readouterr().out.splitlines()
+                 if l.strip().startswith("soccer"))
+    assert "1 / 1" in ligne, ligne
