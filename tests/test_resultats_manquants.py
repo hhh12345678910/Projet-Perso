@@ -959,3 +959,36 @@ def test_la_couverture_ignore_le_foot_du_jour(tmp_path, capsys):
     ligne = next(l for l in capsys.readouterr().out.splitlines()
                  if l.strip().startswith("soccer"))
     assert "1 / 1" in ligne, ligne
+
+
+def test_la_source_oublie_les_journees_depassees(tmp_path):
+    """Quatre mois de fichiers ouverts à la fois pèseraient plus d'un Go sur
+    la VM du daemon : on n'en garde que la fenêtre utile."""
+    src = rm.SourceFoot(tmp_path)
+    for n in range(10):
+        src.fenetre(date(2026, 9, 1) + timedelta(days=n))
+    src.oublier(date(2026, 9, 9))
+    assert src.journees_ouvertes() == 3          # le 9, le 10 et le 11
+    assert all(d >= date(2026, 9, 9) for d in src._fen)
+
+
+def test_les_detections_ne_gardent_qu_une_fenetre(tmp_path, monkeypatch):
+    """De bout en bout : trente journées diagnostiquées, jamais plus de
+    quatre ouvertes à la fois."""
+    ouvertes = []
+    vrai = rm.diagnostiquer
+
+    def espion(r, noms, dossier, cache):
+        d = vrai(r, noms, dossier, cache)
+        ouvertes.append(cache[dossier].journees_ouvertes())
+        return d
+    monkeypatch.setattr(rm, "diagnostiquer", espion)
+    for n in range(30):
+        j = date(2026, 8, 20) + timedelta(days=n)
+        _complet(tmp_path, j, [_fixture("Arsenal", "Chelsea", f"{j}T15:00:00+00:00")])
+    rows = [_det(event_key=f"k{n}", home=f"x{n}", away=f"y{n}",
+                 start_time=f"{date(2026, 8, 20) + timedelta(days=n)}T15:00:00+00:00")
+            for n in range(30)]
+    rm.analyser_detections(rows, MAINTENANT, tmp_path, 60, FINAL, True, True,
+                           set(), {})
+    assert len(ouvertes) == 30 and max(ouvertes) <= 4, ouvertes

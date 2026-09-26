@@ -304,7 +304,8 @@ SEUIL_BRUT = PLANCHER_CANDIDAT
 
 
 class SourceFoot:
-    """Les fichiers du pont football, lus une fois et préparés une fois.
+    """Les fichiers du pont football, lus une fois, préparés une fois — et
+    OUBLIÉS dès qu'on a fini avec eux.
 
     Deux lectures d'un même fichier, pour deux questions différentes :
 
@@ -312,48 +313,59 @@ class SourceFoot:
       par `parse_apifootball_results` : seulement les matchs terminés (FT, ou
       prolongation au score à 90 min prouvé), classe de la ligue reportée ;
     * `fenetre(j)` — tous les matchs servis la veille, le jour et le lendemain,
-      terminés ou non, pour dire POURQUOI un match n'a pas été rapproché."""
+      terminés ou non, pour dire POURQUOI un match n'a pas été rapproché.
+
+    ⚠️ LA MÉMOIRE. Une journée d'API-Football, c'est 1 000 à 2 000 matchs
+    d'environ 1 Ko de JSON chacun, soit une dizaine de Mo une fois en objets
+    Python. Garder quatre mois ouverts à la fois pèserait plus d'un Go, sur la
+    VM qui fait tourner le daemon. Le JSON brut n'est donc jamais gardé (on en
+    tire les résultats et les champs utiles, puis on le lâche), et `oublier`
+    libère les journées qu'on a dépassées — la sonde parcourt les matchs dans
+    l'ordre chronologique, trois journées suffisent à chaque instant."""
 
     def __init__(self, dossier: Path):
         self.dossier = dossier
-        self._brut: dict = {}
         self._res: dict = {}
         self._prep: dict = {}
         self._fen: dict = {}
         self._proches: dict = {}
 
-    def brut(self, d: date) -> list:
-        if d not in self._brut:
-            f = self.dossier / f"{d.isoformat()}.json"
-            try:
-                self._brut[d] = json.loads(f.read_text()).get("response") or []
-            except (OSError, ValueError, AttributeError):
-                self._brut[d] = []
-        return self._brut[d]
+    def _charger(self, d: date) -> None:
+        f = self.dossier / f"{d.isoformat()}.json"
+        try:
+            brut = json.loads(f.read_text()).get("response") or []
+        except (OSError, ValueError, AttributeError):
+            brut = []
+        self._res[d] = parse_apifootball_results({"response": brut})[0]
+        out = []
+        for m in brut:
+            fx, eq, lg = (m.get("fixture") or {}, m.get("teams") or {},
+                          m.get("league") or {})
+            m2 = class_marker_from_league(lg.get("name") or "")
+            th = with_class_marker(((eq.get("home") or {}).get("name") or "").strip(), m2)
+            ta = with_class_marker(((eq.get("away") or {}).get("name") or "").strip(), m2)
+            if not th or not ta:
+                continue
+            ft = (m.get("score") or {}).get("fulltime") or {}
+            out.append({"jour_fichier": d, "th": th, "ta": ta,
+                        "sh": _pour_flou(th), "sa": _pour_flou(ta),
+                        "t": _instant(fx.get("date")),
+                        "ligue": lg.get("name") or "?",
+                        "statut": ((fx.get("status") or {}).get("short")
+                                   or "?").upper(),
+                        "a_90": _score_90_minutes(m) is not None,
+                        "a_score": (ft.get("home") is not None
+                                    and ft.get("away") is not None)})
+        self._prep[d] = out
 
     def resultats(self, d: date) -> list:
         if d not in self._res:
-            self._res[d] = parse_apifootball_results({"response": self.brut(d)})[0]
+            self._charger(d)
         return self._res[d]
 
     def _prepares(self, d: date) -> list:
         if d not in self._prep:
-            out = []
-            for f in self.brut(d):
-                fx, eq, lg = (f.get("fixture") or {}, f.get("teams") or {},
-                              f.get("league") or {})
-                m2 = class_marker_from_league(lg.get("name") or "")
-                th = with_class_marker(((eq.get("home") or {}).get("name") or "").strip(), m2)
-                ta = with_class_marker(((eq.get("away") or {}).get("name") or "").strip(), m2)
-                if not th or not ta:
-                    continue
-                out.append({"jour_fichier": d, "f": f, "th": th, "ta": ta,
-                            "sh": _pour_flou(th), "sa": _pour_flou(ta),
-                            "t": _instant(fx.get("date")),
-                            "ligue": lg.get("name") or "?",
-                            "statut": ((fx.get("status") or {}).get("short")
-                                       or "?").upper()})
-            self._prep[d] = out
+            self._charger(d)
         return self._prep[d]
 
     def fenetre(self, jour: date) -> tuple:
@@ -382,6 +394,17 @@ class SourceFoot:
         if cle not in self._proches:
             self._proches[cle] = _proches(nom, self.fenetre(jour)[1])
         return self._proches[cle]
+
+    def oublier(self, avant: date) -> None:
+        """Lâcher tout ce qui concerne les journées antérieures à `avant`."""
+        for cache in (self._res, self._prep, self._fen):
+            for d in [d for d in cache if d < avant]:
+                del cache[d]
+        for cle in [c for c in self._proches if c[1] < avant]:
+            del self._proches[cle]
+
+    def journees_ouvertes(self) -> int:
+        return len(self._prep)
 
 
 #: Les classes du matcher, en mots.
@@ -492,10 +515,7 @@ def diagnostiquer(r, noms: dict, dossier: Path, cache: dict) -> dict:
                 "dt": meilleur["dt"], "g": _paire(team_similarity, h, a, x["th"], x["ta"]),
                 "nom": f"{x['th']} - {x['ta']}", "ligue": x["ligue"],
                 "statut": x["statut"], "jour_fichier": x["jour_fichier"],
-                "a_90": _score_90_minutes(x["f"]) is not None,
-                "a_score": all(v is not None for v in (
-                    ((x["f"].get("score") or {}).get("fulltime") or {}).get(k)
-                    for k in ("home", "away"))),
+                "a_90": x["a_90"], "a_score": x["a_score"],
                 # Les classes camp par camp, dans l'orientation retenue : c'est
                 # ce qui dit QUELLE correction lèverait une barrière de classe.
                 "conflits": _conflits(h, a, x, meilleur["droit"])}
@@ -674,9 +694,12 @@ def imprimer(res: dict, depuis: date, dossier: Path, jours_pont: int,
     pourquoi = Counter()
     absents_foot = [r for r, c in classes if c == FOOT_ABSENT]
     if absents_foot:
-        cache: dict = {}
-        diags = [(r, diagnostiquer(r, noms or {}, dossier, cache))
-                 for r in sorted(absents_foot, key=_coup_d_envoi)]
+        source = SourceFoot(dossier)
+        cache: dict = {dossier: source}
+        diags = []
+        for r in sorted(absents_foot, key=_coup_d_envoi):
+            source.oublier(_coup_d_envoi(r).date() - timedelta(days=1))
+            diags.append((r, diagnostiquer(r, noms or {}, dossier, cache)))
         pourquoi = Counter(d["verdict"] for _r, d in diags)
         print("\nFOOTBALL — CE QUE LA SOURCE AVAIT CE JOUR-LÀ, match par match")
         print("(le candidat le plus proche dans le fichier du pont, veille et "
@@ -849,24 +872,25 @@ def analyser_detections(rows: list, maintenant: datetime, dossier: Path,
         dets[c] += r["n_det"] or 0
     a_diagnostiquer = sorted((r for r, c in classes if c == FOOT_ABSENT),
                              key=_coup_d_envoi)
-    cache: dict = {}
+    source = SourceFoot(dossier)
+    cache: dict = {dossier: source}
     diags = []
+    ligue_rendue = 0
     for i, r in enumerate(a_diagnostiquer, 1):
-        diags.append((r, diagnostiquer(r, noms, dossier, cache)))
+        # Chronologique : les journées d'avant-hier ne serviront plus.
+        source.oublier(_coup_d_envoi(r).date() - timedelta(days=1))
+        d = diagnostiquer(r, noms, dossier, cache)
+        diags.append((r, d))
+        # Ce que rapporterait la ligue de `bet_features` là où `events` n'en a
+        # pas : même rapprochement, seule la ligue change. Une mesure, pas un
+        # verdict — la production, elle, ne lit que `events`.
+        if d["verdict"] != APPARIABLE and not (r["league"] or "") and r["league_bf"]:
+            ev = replace(_notre_evenement(r, noms), league=r["league_bf"])
+            if bind_results([ev], source.resultats(ev.start_time.date()),
+                            sport="soccer")[0]:
+                ligue_rendue += 1
         if progres and i % 250 == 0:
             progres(i, len(a_diagnostiquer))
-    # Ce que rapporterait la ligue de `bet_features` là où `events` n'en a
-    # pas : même rapprochement, seule la ligue change. Une mesure, pas un
-    # verdict — la production, elle, ne lit que `events`.
-    ligue_rendue = 0
-    source = cache.get(dossier) or SourceFoot(dossier)
-    for r, d in diags:
-        if d["verdict"] == APPARIABLE or (r["league"] or "") or not r["league_bf"]:
-            continue
-        ev = replace(_notre_evenement(r, noms), league=r["league_bf"])
-        if bind_results([ev], source.resultats(ev.start_time.date()),
-                        sport="soccer")[0]:
-            ligue_rendue += 1
     return {"classes": classes, "comptes": comptes, "dets": dets,
             "diags": diags, "ligue_rendue": ligue_rendue}
 
