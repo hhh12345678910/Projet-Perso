@@ -1484,3 +1484,12 @@ def test_oublier_libere_tous_les_caches(tmp_path):
     assert all(d >= date(2026, 9, 5) for d in src._res)
     assert all(d >= date(2026, 9, 5) for d in src._fen)
     assert all(k[1] >= date(2026, 9, 5) for k in src._proches)
+
+
+def test_un_sens_indecidable_n_est_pas_une_ambiguite(tmp_path):
+    """« Dundee Utd v Dundee » : la source n'a qu'UN match, mais la nouvelle
+    règle d'orientation ne sait pas dans quel sens le lire. Ce n'est pas « deux
+    matchs de la source qui se ressemblent » — c'est un choix volontaire."""
+    d = _verdict(tmp_path, _notre("Dundee Utd", "Dundee", Q),
+                 [_fixture("Dundee United", "Dundee", Q)])
+    assert d["verdict"] == rm.ORIENTATION, d

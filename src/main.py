@@ -3289,6 +3289,7 @@ def results_update(
         table.add_column(col, justify="right" if col != "Sport" else "left")
 
     total_written = 0
+    indecis: dict[str, int] = {}
     for sp in sports:
         events = by_sport.get(sp, [])
         if not events:
@@ -3319,6 +3320,8 @@ def results_update(
             continue
 
         bindings, match_counters = bind_results(events, fetched, sport=sp)
+        if match_counters.get("orientation_indecidable"):
+            indecis[sp] = match_counters["orientation_indecidable"]
         if dry_run:
             manques[sp] = _coverage_by_league(events, bindings, league_of)
             apparie[sp] = dict(match_counters)
@@ -3343,6 +3346,15 @@ def results_update(
         )
 
     console.print(table)
+    # Hors dry-run aussi : un match apparié puis laissé sans résultat faute de
+    # savoir dans quel sens le lire (`scores._orientation`) sortirait sinon de
+    # la fenêtre sans que rien ne l'ait jamais dit.
+    for sp, n in indecis.items():
+        console.print(
+            f"[yellow]{sp} : {n} match(s) apparié(s) mais laissé(s) SANS résultat — "
+            f"sens des camps indécidable (clubs aux noms emboîtés). Plutôt un trou "
+            f"qu'un score à l'envers ; `scripts.resultats_manquants` les liste."
+            f"[/yellow]")
     if dry_run:
         # ⚠️ Les compteurs de l'APPARIEMENT, et pas seulement ceux de la source.
         # La colonne « Écartés source » ne montre que ce que le fournisseur a

@@ -12,22 +12,27 @@ silence. La production est corrigée (`scores._orientation`) ; cette sonde
 retrouve les résultats DÉJÀ stockés par l'ancienne règle.
 
 Pour chaque résultat de football en base, elle rejoue le rapprochement sur
-les fichiers du pont (qui sont toujours là) et compare l'orientation que
-l'ancienne règle a prise à celle de la nouvelle :
+les fichiers du pont (qui sont toujours là), lit dans quel sens le score a
+été STOCKÉ — dans l'ordre de la source, ou retourné — et le compare au sens
+que donne la nouvelle règle. Elle ne suppose pas quelle version de la
+production l'a écrit : avant le 18/08 rien n'était retourné, du 18 au 21/08
+le rapprochement se faisait sur les noms compactés, et une règle rejouée
+aujourd'hui ne dirait pas ce qu'elles ont fait.
 
-* d'accord ........................................ rien à faire ;
+* même sens que la nouvelle règle ............... rien à faire ;
 * nul symétrique (1-1) ............................ l'orientation ne change rien ;
-* INVERSÉ PROBABLE — les deux règles s'opposent ... le score est sans doute
+* INVERSÉ PROBABLE — sens contraire ............... le score est sans doute
   à l'envers ;
 * INDÉCIDABLE — la nouvelle règle ne sait pas ..... une chance sur deux ;
-* score différent de ce que le pont donnait ....... d'une autre origine
+* score qui ne vaut la source dans AUCUN sens ..... d'une autre origine
   (import CSV, saisie) : non audité ;
 * non retrouvé dans les fichiers .................. non audité.
 
-Elle signale aussi la CLASSE INCERTAINE : un match sans ligue (juin-juillet,
-la ligue n'est collectée que depuis le 01/08) rapproché alors que la source
-avait, au même horaire, un jumeau féminin ou de jeunes des mêmes clubs — rien
-ne dit lequel des deux était le nôtre.
+Elle signale aussi la CLASSE INCERTAINE : un match dont la ligue ne porte
+aucune classe, rapproché alors que la source avait, au même horaire, un
+jumeau féminin ou de jeunes des mêmes clubs — rien ne dit lequel des deux
+était le nôtre. (Pas seulement les matchs SANS ligue : `repair_leagues
+--apply` remplit la ligue avec celle du match même qu'on met en doute.)
 
 ⚠️ LECTURE SEULE. Rien n'est écrit en base. `--sortie FICHIER` écrit la liste
 des résultats suspects, valeurs comprises : c'est à la fois la liste à
@@ -38,7 +43,8 @@ ce qu'elle a répondu.
 
 Usage :
     .venv/bin/python -m scripts.verif_resultats --depuis 2026-06-01
-    .venv/bin/python -m scripts.verif_resultats --depuis 2026-06-01 --sortie /tmp/suspects.jsonl
+    .venv/bin/python -m scripts.verif_resultats --depuis 2026-06-01 \
+        --sortie data/verif_resultats-$(date +%Y%m%d-%H%M).jsonl
 """
 from __future__ import annotations
 
@@ -61,14 +67,15 @@ from scripts.resultats_manquants import (SourceFoot, _coup_d_envoi,  # noqa: E40
 from src.config import load_env_file  # noqa: E402
 from src.matcher import (class_marker_from_league, match_event,  # noqa: E402
                          normalize_team, team_class, with_class_marker)
-from src.scores import (_is_swapped, _nom_entier, _orientation,  # noqa: E402
-                        _sans_cote, tolerance_for_scores)
+from src.scores import (_nom_entier, _orientation, _sans_cote,  # noqa: E402
+                        tolerance_for_scores)
 
-OK = "orientation confirmée par la nouvelle règle"
+OK = "stocké dans le sens que donne la nouvelle règle"
 SYMETRIQUE = "nul symétrique — l'orientation n'y change rien"
-INVERSE = "INVERSÉ PROBABLE — les deux règles s'opposent"
+INVERSE = "INVERSÉ PROBABLE — stocké dans le sens contraire de la nouvelle règle"
 INDECIDABLE = "INDÉCIDABLE — la nouvelle règle ne sait pas dans quel sens le lire"
-AUTRE_ORIGINE = "score différent de ce que le pont donnait — autre origine, non audité"
+AUTRE_ORIGINE = ("score qui ne vaut la source dans aucun sens — autre origine, "
+                 "non audité")
 INTROUVABLE = "non retrouvé dans les fichiers du pont — non audité"
 
 ORDRE = [OK, SYMETRIQUE, INVERSE, INDECIDABLE, AUTRE_ORIGINE, INTROUVABLE]
@@ -139,6 +146,22 @@ def _jumeau_de_classe(evm, best, lot, tol: int) -> "str | None":
     return None
 
 
+def _apparier(evm, source: SourceFoot, tol: int):
+    """Le résultat source retenu, comme la production l'a fait.
+
+    D'abord le lot veille + jour + lendemain. Mais un results-update quotidien
+    tourne AVANT que le fichier du lendemain existe (le pont ne demande une
+    journée qu'une fois finie) : si le lendemain ajoute un rival qui rend le
+    lot ambigu, on rejoue sans lui, comme la production l'a vu."""
+    jour = evm.start_time.date()
+    for jours in (None, {jour - timedelta(days=1), jour}):
+        lot = _resultats_production(source, jour, jours)
+        best = match_event(evm, lot, time_tolerance_minutes=tol, min_score=85.0)
+        if best is not None:
+            return best, lot
+    return None, []
+
+
 def auditer(r, noms: dict, source: SourceFoot) -> dict:
     """Le verdict pour UN résultat stocké."""
     ev = _notre_evenement(r, noms)
@@ -148,26 +171,33 @@ def auditer(r, noms: dict, source: SourceFoot) -> dict:
     evm = replace(ev, home=with_class_marker(ev.home, marque),
                   away=with_class_marker(ev.away, marque))
     tol = tolerance_for_scores("soccer")
-    lot = _resultats_production(source, ev.start_time.date(), None)
-    best = match_event(evm, lot, time_tolerance_minutes=tol, min_score=85.0)
+    best, lot = _apparier(evm, source, tol)
     if best is None:
         return {"verdict": INTROUVABLE}
-    ancien = _is_swapped(evm, best)
     stocke = (r["home_score"], r["away_score"])
     out = {"source": f"{best.home} - {best.away}",
            "score_source": (best.home_score, best.away_score),
            "stocke": stocke,
-           "jumeau": None if (r["league"] or "") else _jumeau_de_classe(evm, best, lot, tol)}
-    if not _meme_score(stocke, _oriente(best, ancien)):
-        out["verdict"] = AUTRE_ORIGINE
-        return out
-    if _sans_cote(best):
+           # Une ligue sans classe ne dit rien de la classe du match : c'est le
+           # cas des matchs sans ligue ET de ceux que `repair_leagues` a
+           # remplis avec la ligue du match même qu'on met en doute.
+           "jumeau": (None if class_marker_from_league(r["league"] or "")
+                      else _jumeau_de_classe(evm, best, lot, tol))}
+    if _sans_cote(best) and _meme_score(stocke, _oriente(best, False)):
         out["verdict"] = SYMETRIQUE
+        return out
+    # Le sens dans lequel le score a été STOCKÉ, lu sur le score lui-même.
+    if _meme_score(stocke, _oriente(best, False)):
+        stocke_inverse = False
+    elif _meme_score(stocke, _oriente(best, True)):
+        stocke_inverse = True
+    else:
+        out["verdict"] = AUTRE_ORIGINE
         return out
     nouveau = _orientation(evm, best)
     if nouveau is None:
         out["verdict"] = INDECIDABLE
-    elif (nouveau == "inverse") != ancien:
+    elif (nouveau == "inverse") != stocke_inverse:
         out["verdict"] = INVERSE
         out["corrige"] = _oriente(best, nouveau == "inverse")
     else:
@@ -188,6 +218,11 @@ def analyser(rows: list, noms: dict, dossier: Path, progres=None) -> list:
     return out
 
 
+def _f(x) -> str:
+    """Un score, ou « ? » : `settle --from` accepte un CSV sans score."""
+    return "?" if x is None else f"{x:g}"
+
+
 def _pari(p) -> str:
     lib = p["outcome_label"] or "?"
     if p["line"] is not None and f"{p['line']:g}" not in lib:
@@ -200,7 +235,7 @@ def _pari(p) -> str:
 CMD_RETIRER = (
     ".venv/bin/python -c \"import json, sqlite3; "
     "L = [json.loads(l) for l in open('{f}') if l.strip()]; "
-    "c = sqlite3.connect('{db}'); "
+    "c = sqlite3.connect('{db}', timeout=60); "
     "n = sum(c.execute('DELETE FROM results WHERE event_key = ? AND winner IS ? "
     "AND home_score IS ? AND away_score IS ?', (d['event_key'], d['winner'], "
     "d['home_score'], d['away_score'])).rowcount for d in L); "
@@ -210,7 +245,7 @@ CMD_RETIRER = (
 CMD_ANNULER = (
     ".venv/bin/python -c \"import json, sqlite3; "
     "L = [json.loads(l) for l in open('{f}') if l.strip()]; "
-    "c = sqlite3.connect('{db}'); "
+    "c = sqlite3.connect('{db}', timeout=60); "
     "n = sum(c.execute('INSERT OR IGNORE INTO results (event_key, winner, "
     "home_score, away_score, source, settled_at) VALUES (?, ?, ?, ?, ?, ?)', "
     "(d['event_key'], d['winner'], d['home_score'], d['away_score'], "
@@ -239,7 +274,9 @@ def imprimer(res: list, joues: dict, depuis: date, db: str,
               f"  {len(jumeaux):6}")
 
     suspects = [(r, d) for r, d in res if d["verdict"] in SUSPECTS]
-    touches = [(r, d, p) for r, d in suspects + jumeaux for p in joues.get(r["event_key"], [])]
+    uniques = {r["event_key"]: (r, d) for r, d in suspects + jumeaux}
+    touches = [(r, d, p) for r, d in uniques.values()
+               for p in joues.get(r["event_key"], [])]
     for titre, lot in (("INVERSÉS PROBABLES", [x for x in suspects if x[1]["verdict"] == INVERSE]),
                        ("INDÉCIDABLES", [x for x in suspects if x[1]["verdict"] == INDECIDABLE]),
                        ("CLASSE INCERTAINE", jumeaux)):
@@ -251,9 +288,9 @@ def imprimer(res: list, joues: dict, depuis: date, db: str,
             print(f"  {t.strftime('%Y-%m-%d %H:%M') if t else '?':16}  "
                   f"{r['home']} - {r['away']}  [{(r['league'] or '?')[:28]}]  "
                   f"{r['n_det']} dét., {len(joues.get(r['event_key'], []))} joué(s)")
-            print(f"      en base : {d['stocke'][0]:g}-{d['stocke'][1]:g} · source : "
-                  f"{d['source']} {d['score_source'][0]:g}-{d['score_source'][1]:g}"
-                  + (f" · corrigé : {d['corrige'][0]:g}-{d['corrige'][1]:g}"
+            print(f"      en base : {_f(d['stocke'][0])}-{_f(d['stocke'][1])} · source : "
+                  f"{d['source']} {_f(d['score_source'][0])}-{_f(d['score_source'][1])}"
+                  + (f" · corrigé : {_f(d['corrige'][0])}-{_f(d['corrige'][1])}"
                      if d.get("corrige") else "")
                   + (f" · jumeau : {d['jumeau']}" if d.get("jumeau") else ""))
     if touches:
@@ -263,9 +300,11 @@ def imprimer(res: list, joues: dict, depuis: date, db: str,
                   f"  → {d['verdict'] if d['verdict'] in SUSPECTS else 'classe incertaine'}")
 
     print("\nQUE FAIRE")
+    non_audites = comptes[AUTRE_ORIGINE] + comptes[INTROUVABLE]
     if not suspects and not jumeaux:
-        print("  • Rien : aucun résultat de football en base n'a été mal orienté "
-              "par l'ancienne règle.")
+        print(f"  • Rien parmi les {len(res) - non_audites} résultats audités : "
+              f"aucun n'est stocké à l'envers.\n    ({non_audites} n'ont pas pu "
+              f"être audités — voir les lignes « non audité » ci-dessus.)")
         return
     if suspects:
         if sortie:
@@ -274,20 +313,22 @@ def imprimer(res: list, joues: dict, depuis: date, db: str,
                   f"    Pour les retirer (seulement s'ils valent encore ce que la "
                   f"sonde a lu) :\n"
                   f"      {CMD_RETIRER.format(f=sortie, db=db)}\n"
-                  f"    puis, pour que la nouvelle règle les relise — elle règle "
-                  f"les inversés dans le bon\n    sens et laisse les indécidables "
-                  f"sans résultat :\n"
+                  f"    ⚠️ Pour annuler, AVANT l'étape suivante (après, seuls les "
+                  f"indécidables reviendraient) :\n"
+                  f"      {CMD_ANNULER.format(f=sortie, db=db)}\n"
+                  f"    Puis, LE JOUR MÊME, pour que la nouvelle règle les relise — "
+                  f"elle règle les inversés\n    dans le bon sens et laisse les "
+                  f"indécidables sans résultat :\n"
                   f"      .venv/bin/python -m src.main results-update --days "
                   f"{_jours(suspects)} --sport soccer\n"
                   f"      .venv/bin/python -m src.main track-update\n"
                   f"    ⚠️ `track-update` TOUT DE SUITE : un `settle --from` sur un "
-                  f"ancien paris_track.csv\n    réécrirait les scores retirés.\n"
-                  f"    Pour annuler :\n"
-                  f"      {CMD_ANNULER.format(f=sortie, db=db)}")
+                  f"ancien paris_track.csv\n    réécrirait les scores retirés.")
         else:
-            print(f"  • {len(suspects)} résultat(s) suspect(s). Relance avec "
-                  f"`--sortie /tmp/suspects.jsonl` pour obtenir\n    la liste, "
-                  f"sa sauvegarde et les commandes de correction.")
+            print(f"  • {len(suspects)} résultat(s) suspect(s). Relance avec\n"
+                  f"      --sortie data/verif_resultats-$(date +%Y%m%d-%H%M).jsonl\n"
+                  f"    pour obtenir la liste, sa sauvegarde et les commandes de "
+                  f"correction.")
     if jumeaux:
         print(f"  • {len(jumeaux)} match(s) à la classe incertaine : rien ne dit "
               f"si c'était le match des\n    seniors ou son jumeau. À vérifier à "
@@ -295,15 +336,24 @@ def imprimer(res: list, joues: dict, depuis: date, db: str,
 
 
 def _jours(lot) -> int:
+    """Le `--days` qui fera relire les résultats retirés. Une semaine de marge :
+    `since = maintenant - days` se décale d'heure en heure, et un results-update
+    lancé demain ne reprendrait plus le plus vieux — il resterait retiré, en
+    silence. Une fenêtre plus large ne fait que relire des matchs en attente."""
     ts = [t for r, _d in lot for t in [_coup_d_envoi(r)] if t]
     if not ts:
-        return 3
-    return max(3, (datetime.now(timezone.utc).date() - min(ts).date()).days + 1)
+        return 7
+    return (datetime.now(timezone.utc).date() - min(ts).date()).days + 7
 
 
 def ecrire_sortie(chemin: str, res: list) -> int:
+    """La liste ET la sauvegarde. Jamais écrasée (mode "x") : relancer la sonde
+    après une correction réécrirait sinon un fichier sans les lignes retirées,
+    et l'annulation n'aurait plus rien à remettre."""
+    if not any(d["verdict"] in SUSPECTS for _r, d in res):
+        return 0
     n = 0
-    with open(chemin, "w", encoding="utf-8") as f:
+    with open(chemin, "x", encoding="utf-8") as f:
         for r, d in res:
             if d["verdict"] in SUSPECTS:
                 f.write(json.dumps({k: r[k] for k in (
@@ -324,6 +374,9 @@ def main(argv=None) -> None:
                     help="Écrire les résultats suspects (JSON par ligne) : la "
                          "liste à corriger et la sauvegarde pour annuler.")
     a = ap.parse_args(argv)
+    if a.sortie and Path(a.sortie).exists():
+        ap.error(f"{a.sortie} existe déjà : c'est peut-être la sauvegarde d'une "
+                 "correction. Choisis un autre nom — la sonde ne l'écrase jamais.")
     try:
         depuis = date.fromisoformat(a.depuis)
     except ValueError:

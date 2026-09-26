@@ -109,13 +109,23 @@ def test_un_match_sans_ligue_a_jumeau_feminin_est_signale(tmp_path):
                [_fixture("Rosengard", "Djurgardens"),
                 _fixture("Rosengård W", "Djurgården W", ligue="Damallsvenskan")])
     assert d["k"]["jumeau"] == "Rosengård W - Djurgården W"
-    # Avec une ligue, la classe est connue : pas de soupçon.
+    # Une ligue SANS classe ne tranche rien : `repair_leagues --apply` la
+    # remplit avec celle du match même qu'on met en doute. Le soupçon reste.
     autre = tmp_path / "b"
     autre.mkdir()
     d = _audit(autre, [("k", "Rosengard", "Djurgardens", "Sweden - Allsvenskan",
                         2, 1, "home")],
                [_fixture("Rosengard", "Djurgardens"),
                 _fixture("Rosengård W", "Djurgården W", ligue="Damallsvenskan")])
+    assert d["k"]["jumeau"] == "Rosengård W - Djurgården W"
+    # Une ligue qui PORTE la classe, elle, la dit.
+    feminin = tmp_path / "c"
+    feminin.mkdir()
+    d = _audit(feminin, [("k", "Rosengard", "Djurgardens", "Sweden - Women League",
+                          0, 3, "away")],
+               [_fixture("Rosengard", "Djurgardens"),
+                _fixture("Rosengård W", "Djurgården W", hs=0, as_=3,
+                         ligue="Damallsvenskan")])
     assert d["k"]["jumeau"] is None
 
 
@@ -180,5 +190,113 @@ def test_rien_a_corriger(tmp_path, capsys):
                          [_fixture("Arsenal", "Chelsea")])
     rows, noms, joues = vr.charger(str(db), J.date())
     vr.imprimer(vr.analyser(rows, noms, dossier), joues, J.date(), str(db), None)
-    assert "Rien : aucun résultat" in capsys.readouterr().out
+    out = capsys.readouterr().out
+    assert "Rien parmi les 1 résultats audités" in out
+    assert "(0 n'ont pas pu être audités" in out
 
+
+
+def test_un_score_stocke_par_une_ancienne_version_est_juge(tmp_path):
+    """Avant le 18/08, rien n'était retourné : « Arsenal v Chelsea » contre la
+    source « Chelsea - Arsenal » 2-1 était stocké 2-1, à l'envers. La sonde
+    juge le sens STOCKÉ, pas celui qu'une règle d'aujourd'hui aurait pris :
+    elle doit le voir, et non le ranger en « autre origine »."""
+    d = _audit(tmp_path, [("k", "Arsenal", "Chelsea", "L", 2, 1, "home")],
+               [_fixture("Chelsea", "Arsenal", hs=2, as_=1)])
+    assert d["k"]["verdict"] == vr.INVERSE, d
+    assert d["k"]["corrige"] == (1, 2)
+
+
+def test_le_lendemain_absent_a_l_epoque_ne_cache_pas_le_resultat(tmp_path):
+    """Un results-update quotidien lie le match de 23 h 55 AVANT que le
+    fichier du lendemain existe. Si ce fichier ajoute depuis un rival qui rend
+    le lot ambigu, la sonde rejoue sans lui, comme la production l'a vu."""
+    db, dossier = _monde(tmp_path, [("k", "Inter", "Inter Miami", "L", 3, 0, "home")],
+                         [])
+    c = sqlite3.connect(str(db))
+    c.execute("UPDATE events SET start_time = '2026-09-20T23:55:00+00:00'")
+    c.commit()
+    c.close()
+    (dossier / "2026-09-20.json").write_text(json.dumps({"response": [
+        _fixture("Inter Miami", "Inter", quand="2026-09-20T23:55:00+00:00", hs=3, as_=0)]}))
+    (dossier / "2026-09-21.json").write_text(json.dumps({"response": [
+        _fixture("Inter Miami", "Inter", quand="2026-09-21T00:03:00+00:00", hs=1, as_=1)]}))
+    rows, noms, _j = vr.charger(str(db), J.date())
+    d = dict((r["event_key"], dd) for r, dd in vr.analyser(rows, noms, dossier))
+    assert d["k"]["verdict"] != vr.INTROUVABLE, d
+
+
+def test_la_sauvegarde_n_est_jamais_ecrasee(tmp_path):
+    """Relancer la sonde après une correction réécrirait un fichier SANS les
+    lignes retirées : l'annulation n'aurait plus rien à remettre."""
+    import pytest as _pt
+    db, dossier = _monde(tmp_path, [("k", "Inter", "Inter Miami", "L", 3, 0, "home")],
+                         [_fixture("Inter Miami", "Inter", hs=3, as_=0)])
+    sortie = tmp_path / "sauvegarde.jsonl"
+    sortie.write_text('{"event_key": "precieux"}\n')
+    os.environ["SCORES_INGEST_DIR"] = str(tmp_path)
+    try:
+        with _pt.raises(SystemExit):
+            vr.main(["--db", str(db), "--depuis", "2026-09-19", "--sortie", str(sortie)])
+    finally:
+        del os.environ["SCORES_INGEST_DIR"]
+    assert "precieux" in sortie.read_text()
+
+
+def test_sans_suspect_aucun_fichier(tmp_path):
+    db, dossier = _monde(tmp_path, [("k", "Arsenal", "Chelsea", "L", 2, 1, "home")],
+                         [_fixture("Arsenal", "Chelsea")])
+    rows, noms, _j = vr.charger(str(db), J.date())
+    assert vr.ecrire_sortie(str(tmp_path / "s.jsonl"), vr.analyser(rows, noms, dossier)) == 0
+    assert not (tmp_path / "s.jsonl").exists()
+
+
+def test_un_score_nul_ne_fait_pas_planter(tmp_path, capsys):
+    """`settle --from` accepte un CSV sans score : un jumeau de classe au score
+    NULL doit s'afficher, pas lever."""
+    db, dossier = _monde(tmp_path, [("k", "Rosengard", "Djurgardens", "", None, None, "home")],
+                         [_fixture("Rosengard", "Djurgardens"),
+                          _fixture("Rosengård W", "Djurgården W", ligue="Damallsvenskan")])
+    rows, noms, joues = vr.charger(str(db), J.date())
+    vr.imprimer(vr.analyser(rows, noms, dossier), joues, J.date(), str(db), None)
+    assert "en base : ?-?" in capsys.readouterr().out
+
+
+def test_un_pari_n_est_liste_qu_une_fois(tmp_path, capsys):
+    """Suspect ET jumeau de classe : le même pari ne doit pas compter deux fois."""
+    db, dossier = _monde(tmp_path, [("k", "Arsenal", "Chelsea", "", 2, 1, "home")],
+                         [_fixture("Chelsea", "Arsenal", hs=2, as_=1),
+                          _fixture("Chelsea W", "Arsenal W", ligue="WSL Women")])
+    c = sqlite3.connect(str(db))
+    c.execute("INSERT INTO played_bets (dedup_key, played_at, event_key, sport, market,"
+              " outcome_label, odd_taken, stake) VALUES ('d','x','k','soccer','h2h',"
+              "'home',2.4,45)")
+    c.commit()
+    c.close()
+    rows, noms, joues = vr.charger(str(db), J.date())
+    vr.imprimer(vr.analyser(rows, noms, dossier), joues, J.date(), str(db), None)
+    assert "TES PARIS JOUÉS SUR CES MATCHS (1)" in capsys.readouterr().out
+
+
+def test_ecrire_sortie_refuse_un_fichier_existant(tmp_path):
+    import pytest as _pt
+    db, dossier = _monde(tmp_path, [("k", "Arsenal", "Chelsea", "L", 2, 1, "home")],
+                         [_fixture("Chelsea", "Arsenal", hs=2, as_=1)])
+    rows, noms, _j = vr.charger(str(db), J.date())
+    sortie = tmp_path / "s.jsonl"
+    sortie.write_text("sauvegarde\n")
+    with _pt.raises(FileExistsError):
+        vr.ecrire_sortie(str(sortie), vr.analyser(rows, noms, dossier))
+    assert sortie.read_text() == "sauvegarde\n"
+
+
+def test_la_fenetre_de_relecture_garde_une_semaine_de_marge():
+    """Un results-update lancé demain doit encore reprendre le plus vieux."""
+    il_y_a_10 = (datetime.now(timezone.utc) - timedelta(days=10)).replace(hour=0, minute=30)
+    assert vr._jours([({"start_time": il_y_a_10.isoformat(), "event_key": "k"}, {})]) == 17
+
+
+def test_les_commandes_attendent_le_verrou_60_s():
+    """Le daemon écrit en continu ; 5 s (le défaut) échouent, le projet en
+    exige 60 (SQLITE_BUSY_TIMEOUT_SEC)."""
+    assert "timeout=60" in vr.CMD_RETIRER and "timeout=60" in vr.CMD_ANNULER

@@ -425,3 +425,35 @@ def test_le_diagnostic_football_garde_son_inventaire_de_fichier(
     sortie = _compact(r.output)
     assert "data/scores/soccer" in sortie
     assert "ENDIRECT" not in sortie
+
+
+def test_un_sens_indecidable_est_annonce_hors_dry_run(tmp_path, monkeypatch):
+    """Un match apparié puis laissé sans résultat faute de savoir dans quel
+    sens le lire ne doit pas disparaître en silence d'un passage normal."""
+    import json
+    d = datetime.now(timezone.utc).date() - timedelta(days=2)
+    db = _db_path(tmp_path)
+    st = Storage(db)
+    ek = "evd::dundeeutd__vs__dundee"
+    st.upsert_event(ek, "soccer", "Scotland - Premiership", "Dundee Utd", "Dundee",
+                    datetime(d.year, d.month, d.day, 15, tzinfo=timezone.utc))
+    st.insert_value_bet(ValueBet(
+        event_key=ek, book=Book.UNIBET_BE, market=MarketType.H2H,
+        outcome=Outcome(label="home"), odd_taken=2.0, fair_prob=0.5,
+        fair_odd=1.9, ev_pct=10.0, kelly_stake_pct=1.0,
+        detected_at=datetime(d.year, d.month, d.day, 9, tzinfo=timezone.utc)))
+    dossier = tmp_path / "scores" / "soccer"
+    dossier.mkdir(parents=True)
+    (dossier / f"{d.isoformat()}.json").write_text(json.dumps({"response": [{
+        "fixture": {"date": f"{d.isoformat()}T15:00:00+00:00", "status": {"short": "FT"}},
+        "league": {"name": "Premiership"},
+        "teams": {"home": {"name": "Dundee United"}, "away": {"name": "Dundee"}},
+        "score": {"fulltime": {"home": 2, "away": 1}}, "goals": {"home": 2, "away": 1}}]}))
+    monkeypatch.setenv("SCORES_FOOTBALL_BRIDGE", "1")
+    monkeypatch.setenv("SCORES_INGEST_DIR", str(tmp_path / "scores"))
+    monkeypatch.chdir(tmp_path)
+    r = runner.invoke(app, ["results-update", "--days", "5", "--sport", "soccer"])
+    assert r.exit_code == 0, r.output
+    assert "laissé(s) SANS résultat" in r.output
+    assert Storage(db).events_awaiting_result(
+        datetime.now(timezone.utc) - timedelta(days=5), datetime.now(timezone.utc))

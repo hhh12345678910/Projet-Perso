@@ -360,3 +360,62 @@ def test_un_tennis_a_jeux_egaux_n_est_pas_sans_cote():
                 winner="home", hs=18, aws=18)]
     bindings, counters = bind_results(ours, res, sport="tennis")
     assert bindings == [] and counters["orientation_indecidable"] == 1
+
+
+# Les derbies de famille et les cas que la revue adverse du 27/09 a construits
+# pour faire tomber la première version (sans marge) : dans les deux ordres,
+# jamais faux — au pire, non réglé.
+DERBIES = [
+    (("Man Utd", "Man City"), ("Manchester United", "Manchester City"), True),
+    (("Sheffield Utd", "Sheffield Wed"), ("Sheffield United", "Sheffield Wednesday"), False),
+    (("Paris FC", "Paris Saint-Germain"), ("Paris FC", "Paris Saint Germain"), True),
+    (("Dundee United", "Dundee"), ("Dundee United", "Dundee"), True),
+    (("Inter", "Inter Miami"), ("Inter", "Inter Miami"), True),
+    (("Real Madrid", "Atletico Madrid"), ("Real Madrid", "Atlético Madrid"), True),
+    (("Bristol City", "Bristol Rovers"), ("Bristol City", "Bristol Rovers"), True),
+    (("Club Brugge", "Cercle Brugge"), ("Club Brugge KV", "Cercle Brugge"), True),
+    (("Liege", "Standard Liege"), ("RFC Liege", "Standard Liege"), True),
+    (("Gimnasia LP", "Gimnasia Mendoza"), ("Gimnasia L.P.", "Gimnasia Mendoza"), True),
+    (("River", "River Plate"), ("River Plate", "River Plate Montevideo"), False),
+    (("Gimnasia y Esgrima", "Gimnasia Mendoza"), ("Gimnasia La Plata", "Gimnasia y Esgrima de Mendoza"), False),
+    (("S. Tsitsipas", "Tsitsipas P"), ("Stefanos Tsitsipas", "Petros Tsitsipas"), False),
+    (("Wang X", "Y. Wang"), ("Xiyu Wang", "Yafan Wang"), False),
+]
+
+
+@pytest.mark.parametrize("nous, source, doit_regler", DERBIES)
+def test_les_derbies_ne_sont_jamais_regles_a_l_envers(nous, source, doit_regler):
+    ev = _ours(*nous, T)
+    direct = _orientation(ev, _res(*source, T))
+    inverse = _orientation(ev, _res(source[1], source[0], T))
+    assert direct in ("direct", None) and inverse in ("inverse", None)
+    # Les grands derbies aux noms nets doivent rester RÉGLÉS : la prudence
+    # ne doit pas coûter un Manchester ou un Paris.
+    if doit_regler:
+        assert (direct, inverse) == ("direct", "inverse")
+
+
+def test_un_ecart_minuscule_ne_tranche_plus():
+    """« River v River Plate » contre « River Plate v River Plate Montevideo » :
+    la première version tranchait sur 8 points de `fuzz.ratio`, qui ne
+    mesuraient que des longueurs de chaîne — et se trompait."""
+    ours = [_ours("River", "River Plate", T)]
+    res = [_res("River Plate", "River Plate Montevideo", T, winner="home", hs=2, aws=1)]
+    bindings, counters = bind_results(ours, res, sport="soccer")
+    assert bindings == [] and counters["orientation_indecidable"] == 1
+
+
+@pytest.mark.parametrize("nous, source", [
+    # Les fragments communs (« y Esgrima ») tirent vers le mauvais club : les
+    # deux avis penchent à tort, l'un faiblement. Tirés du corpus de
+    # calibration (appariement 23,6 / noms 28,8 ; 13,0 / 41,4).
+    (("Gimnasia La Plata", "Gimnasia y Esgrima Mendoza"), ("Gimnasia y Esgrima LP", "Gimnasia M.")),
+    (("Gimnasia L.P.", "Gimnasia y Esgrima Mendoza"), ("Gimnasia y Esgrima", "Gimnasia M.")),
+    (("Gimnasia LP", "Gimnasia y Esgrima Mendoza"), ("Gimnasia y Esgrima", "Gimnasia M.")),
+])
+def test_une_famille_exige_deux_avis_nets(nous, source):
+    """Entre clubs de la même famille, un avis faible ne suffit pas, même
+    confirmé par l'autre : ces cas-là restent sans résultat."""
+    ev = _ours(*nous, T)
+    assert _orientation(ev, _res(*source, T)) in ("direct", None)
+    assert _orientation(ev, _res(source[1], source[0], T)) in ("inverse", None)

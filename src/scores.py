@@ -184,6 +184,41 @@ def _nom_entier(nom: str) -> str:
     return _strip_class_tag(normalize_team(nom))
 
 
+#: Deux avis ne décident que s'ils sont NETS. Calibré le 27/09 sur 1,85 million
+#: de cas appariés (350 clubs et leurs graphies, 190 joueurs sous 7 formats,
+#: et un corpus hostile de noms mélangés) : sans marge, un écart de 1 point de
+#: `fuzz.ratio` — qui ne mesure alors que des longueurs de chaîne — tranchait,
+#: et se trompait (« Tsitsipas S v Tsitsipas P », « River v River Plate »).
+TRANCHE_ENTIER = 8.0          # noms entiers seuls, quand l'appariement hésite
+TRANCHE_APPARIEMENT = 15.0    # appariement seul, quand les noms entiers hésitent
+CONFIRME_ENTIER = 4.0         # noms entiers qui confirment un appariement faible
+#: Deux équipes de la MÊME famille (« Dundee » / « Dundee United », « Liège » /
+#: « Standard Liège », « Gimnasia y Esgrima » qui nomme les DEUX clubs de La
+#: Plata et de Mendoza) : les fragments y trompent l'appariement à coup sûr.
+#: Une famille, c'est deux noms que le matcher juge proches (`SEUIL_FAMILLE`),
+#: OU qui commencent par le même mot d'au moins `MOT_FAMILLE` lettres :
+#: « Gimnasia La Plata » / « Gimnasia y Esgrima Mendoza » ne valent que 71,
+#: et le fragment « y Esgrima » les inversait.
+#: On n'y oriente que si les deux avis s'accordent nettement — ou, quand
+#: l'appariement fait jeu égal (il le fait toujours entre noms emboîtés), si
+#: les noms entiers tranchent de très loin : « Paris FC v Paris Saint Germain »
+#: dans l'ordre de la source, c'est 100 d'écart.
+SEUIL_FAMILLE = 85.0
+MOT_FAMILLE = 4
+FAMILLE_ENTIER = 30.0
+FAMILLE_APPARIEMENT = 15.0
+FAMILLE_ENTIER_SEUL = 50.0
+
+
+def _famille(a: str, b: str) -> bool:
+    """Deux équipes que les chaînes ne savent pas séparer : voir
+    `SEUIL_FAMILLE`."""
+    if team_similarity(a, b) >= SEUIL_FAMILLE:
+        return True
+    ma, mb = _nom_entier(a).split(), _nom_entier(b).split()
+    return bool(ma and mb and ma[0] == mb[0] and len(ma[0]) >= MOT_FAMILLE)
+
+
 def _orientation(ev: "OurEvent", res: MatchResult) -> str | None:
     """"direct", "inverse", ou None quand on ne peut pas le savoir.
 
@@ -193,18 +228,25 @@ def _orientation(ev: "OurEvent", res: MatchResult) -> str | None:
     aux noms emboîtés, les deux orientations font jeu égal — ou pire, la
     mauvaise l'emporte : « Dundee Utd v Dundee » contre la source « Dundee
     United v Dundee », DANS LE MÊME ORDRE, était retourné (200 contre 187).
-    Mesuré le 27/09 : l'ancienne règle stockait le score À L'ENVERS sur
-    Dundee, Inter/Inter Miami, Paris FC/PSG et Zverev A/M, sans rien lever.
 
     D'où deux avis indépendants :
     * le score d'appariement (celui de `match_event`) ;
     * la ressemblance des noms EN ENTIER (`fuzz.ratio`, classe retirée), qui
       ne se laisse pas prendre à un fragment.
-    S'ils s'accordent, on suit. Si l'appariement hésite (égalité), les noms
-    entiers tranchent — et l'inverse. S'ils se CONTREDISENT, ou hésitent tous
-    deux, on ne sait pas : None, et le match reste sans résultat. Un pari non
-    réglé est un trou visible ; un pari réglé à l'envers empoisonne le ROI sans
-    jamais se signaler."""
+    Ils ne décident qu'avec une marge (voir `TRANCHE_ENTIER`), et entre deux
+    clubs de la même famille, qu'ensemble (voir `SEUIL_FAMILLE`). S'ils se
+    contredisent, ou n'ont rien de net à dire : None, et le match reste sans
+    résultat. Un pari non réglé est un trou visible ; un pari réglé à l'envers
+    empoisonne le ROI sans jamais se signaler.
+
+    Mesuré sur le corpus de calibration (27/09) : l'ancienne règle se trompait
+    271 fois sur 147 648 matchs de football et 162 fois sur 1,7 million de
+    tennis ; celle-ci, zéro fois — au prix de 0,40 % de matchs laissés sans
+    résultat en football (des derbies de famille, presque tous) et 0,07 % au
+    tennis. Sur un corpus HOSTILE de noms mélangés à dessein, 20 erreurs contre
+    761 : toutes sur un nom réellement ambigu (« Gimnasia y Esgrima », le nom
+    des deux clubs) ou mal étiqueté dans le corpus — une chaîne ne peut pas les
+    trancher, seul un identifiant de club le pourrait."""
     appariement = ((team_similarity(ev.home, res.away) + team_similarity(ev.away, res.home))
                    - (team_similarity(ev.home, res.home) + team_similarity(ev.away, res.away)))
     h, a = _nom_entier(ev.home), _nom_entier(ev.away)
@@ -215,7 +257,21 @@ def _orientation(ev: "OurEvent", res: MatchResult) -> str | None:
     e = (entier > 0) - (entier < 0)
     if p and e and p != e:
         return None
-    sens = p or e
+    if _famille(ev.home, ev.away):
+        if p and e:
+            sens = p if (abs(entier) >= FAMILLE_ENTIER
+                         and abs(appariement) >= FAMILLE_APPARIEMENT) else 0
+        elif not p:
+            sens = e if abs(entier) >= FAMILLE_ENTIER_SEUL else 0
+        else:
+            sens = 0
+    elif not p:
+        sens = e if abs(entier) >= TRANCHE_ENTIER else 0
+    elif not e:
+        sens = p if abs(appariement) >= TRANCHE_APPARIEMENT else 0
+    else:
+        sens = p if (abs(entier) >= CONFIRME_ENTIER
+                     or abs(appariement) >= TRANCHE_APPARIEMENT) else 0
     if not sens:
         return None
     return "inverse" if sens > 0 else "direct"

@@ -287,11 +287,14 @@ VOISIN = ("présent dans le fichier de la veille ou du lendemain, que "
 AMBIGU = ("présent, mais un autre match de la source lui ressemble trop — "
           "le rapprochement refuse de choisir")
 SANS_SCORE_SOURCE = "présent et terminé, mais la source ne donne pas son score"
+ORIENTATION = ("présent et apparié, mais le sens des camps est indécidable "
+               "(noms emboîtés) — laissé sans résultat, volontairement")
 INEXPLIQUE = ("présent et appariable selon la sonde, pourtant la production "
               "ne le lie pas — à signaler")
 
 ORDRE_POURQUOI = [ABSENT, CLASSE, NOMS, HORAIRE, STATUT, PROLONG,
-                  SANS_SCORE_SOURCE, VOISIN, AMBIGU, INEXPLIQUE, APPARIABLE]
+                  SANS_SCORE_SOURCE, VOISIN, AMBIGU, ORIENTATION, INEXPLIQUE,
+                  APPARIABLE]
 
 #: En dessous, aucun candidat n'est retenu comme « le même match ». Le score
 #: flou est large : « Sporting Lisbon » contre « Porto » vaut 80. Au-dessus de
@@ -582,15 +585,19 @@ def _resultats_production(source: "SourceFoot", jour: date,
 def lie_en_production(r, noms: dict, source: "SourceFoot",
                       jours: "set | None" = None) -> "str | None":
     """Ce que `results-update` ferait de CE match avec les fichiers présents :
-    "lie" s'il le rapproche, "ambigu" si seule sa garde d'ambiguïté l'en
-    empêche, None sinon. Même construction du match (`_notre_evenement`),
+    "lie" s'il le rapproche, "orientation" s'il l'apparie mais ne sait pas
+    dans quel sens le lire (`scores._orientation`), "ambigu" si seule sa garde
+    d'ambiguïté l'en empêche, None sinon. Même construction du match (`_notre_evenement`),
     même lot de résultats (`_resultats_production`), même `bind_results`."""
     ev = _notre_evenement(r, noms)
     if ev.start_time is None:
         return None
     lot = _resultats_production(source, ev.start_time.date(), jours)
-    if bind_results([ev], lot, sport="soccer")[0]:
+    liens, compteurs = bind_results([ev], lot, sport="soccer")
+    if liens:
         return "lie"
+    if compteurs.get("orientation_indecidable"):
+        return "orientation"
     # La garde d'ambiguïté de `match_event` : deux résultats presque aussi
     # bons, et la production refuse de choisir. Sans marge, elle aurait lié.
     marque = class_marker_from_league(ev.league)
@@ -666,6 +673,8 @@ def diagnostiquer(r, noms: dict, dossier: Path, cache: dict,
         return {"verdict": APPARIABLE, "nous": nous, "cand": cand}
     if production == "ambigu":
         return {"verdict": AMBIGU, "nous": nous, "cand": cand}
+    if production == "orientation":
+        return {"verdict": ORIENTATION, "nous": nous, "cand": cand}
 
     if cand is None or not cand["plausible"]:
         return {"verdict": ABSENT, "nous": nous, "cand": cand}
@@ -1423,6 +1432,11 @@ def _conseils(classes, comptes, pourquoi, dossier: Path, jours_pont: int,
               f"revendiquent presque à égalité : le\n    rapprochement refuse de "
               f"choisir, et c'est voulu — un mauvais choix réglerait des paris "
               f"faux.")
+    if pourquoi[ORIENTATION]:
+        print(f"  • {pourquoi[ORIENTATION]} {u} appariés, mais dont le sens des "
+              f"camps est indécidable (deux clubs\n    aux noms emboîtés) : "
+              f"laissés sans résultat plutôt que réglés peut-être à l'envers.\n"
+              f"    À noter à la main si tu veux le P&L exact.")
     if pourquoi[INEXPLIQUE]:
         print(f"  • {pourquoi[INEXPLIQUE]} {u} où la sonde et la production "
               f"se contredisent : envoie la section\n    ci-dessus — c'est un "
