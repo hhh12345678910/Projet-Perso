@@ -364,6 +364,51 @@ def test_des_noms_seulement_proches_sont_montres_pas_declares(tmp_path):
     assert d["verdict"] == rm.NOMS
 
 
+def test_un_bruit_proche_dans_l_heure_reste_absent(tmp_path):
+    """Cas réel : un match guatémaltèque, et la source sert « Juventus -
+    Atalanta » à 60 min. Moyenne 80, mais aucun camp n'est le même club et
+    un seul est proche : c'est du bruit, le match est absent."""
+    d = _verdict(tmp_path, _notre("Amatitlan", "Juventud Copalera", Q),
+                 [_fixture("Juventus", "Atalanta", "2026-09-22T19:45:00+00:00")])
+    assert rm.PLANCHER_CANDIDAT <= d["cand"]["u"] < rm.SEUIL_APPARIEMENT, d
+    assert d["verdict"] == rm.ABSENT, d
+
+
+def test_un_candidat_a_des_heures_de_distance_reste_absent(tmp_path):
+    """Cas réel : « YSCC Yokohama » contre « Yokohama FC », 22 h plus tard.
+    Un camp identique ne suffit pas quand l'horaire n'a rien à voir."""
+    _jour_source(tmp_path, "2026-09-23",
+                 [_fixture("Yokohama FC", "Imabari", "2026-09-23T16:45:00+00:00")])
+    d = rm.diagnostiquer(_notre("YSCC Yokohama", "Briobecca Urayasu SC", Q),
+                         {}, tmp_path, {})
+    assert d["cand"]["u"] >= rm.PLANCHER_CANDIDAT, d
+    assert d["verdict"] == rm.ABSENT, d
+
+
+def test_un_club_renomme_est_montre(tmp_path):
+    """Cas réel : « York United » est devenu « Inter Toronto ». Un camp
+    identique, même heure : c'est un candidat à regarder, pas un absent."""
+    d = _verdict(tmp_path, _notre("Vancouver FC", "Inter Toronto", Q),
+                 [_fixture("Vancouver FC", "York United", Q)])
+    assert d["verdict"] == rm.NOMS, d
+    assert "York United" in d["cand"]["nom"]
+
+
+def test_le_bruit_mieux_note_ne_masque_pas_le_candidat_plausible(tmp_path):
+    """Le bruit (83, quinze heures plus tard) est devant le club renommé (75)
+    au score brut ; c'est pourtant le second qu'il faut montrer."""
+    bruit = _fixture("Valencia", "Toronto", "2026-09-23T10:00:00+00:00")
+    _jour_source(tmp_path, "2026-09-23", [bruit])
+    d = _verdict(tmp_path, _notre("Vancouver FC", "Inter Toronto", Q),
+                 [_fixture("Vancouver FC", "York United", Q)])
+    # Le jeu d'essai doit vraiment mettre le bruit devant au score brut.
+    brut = rm._paire(rm._sim_sans_classe, "Vancouver FC", "Inter Toronto",
+                     "Valencia", "Toronto")
+    assert brut > d["cand"]["u"], (brut, d)
+    assert d["verdict"] == rm.NOMS, d
+    assert "York United" in d["cand"]["nom"], d
+
+
 def test_le_fichier_du_lendemain_est_aussi_lu(tmp_path):
     """Un match à 23 h 50 chez nous, daté de 00 h 05 le lendemain chez la
     source : le chercher dans un seul fichier le déclarerait absent à tort."""

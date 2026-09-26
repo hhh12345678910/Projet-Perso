@@ -183,6 +183,16 @@ ORDRE_POURQUOI = [ABSENT, CLASSE, NOMS, HORAIRE, STATUT, PROLONG, APPARIABLE]
 PLANCHER_CANDIDAT = 70.0
 #: Le seuil du vrai rapprochement (`bind_results`, `match_event`).
 SEUIL_APPARIEMENT = 85.0
+#: Entre le plancher et le seuil, le flou seul ne suffit pas : sur une journée
+#: de mille matchs, « Juventus - Atalanta » vaut 80 contre « Amatitlan -
+#: Juventud Copalera ». Un candidat de la zone grise n'est montré que s'il a la
+#: forme d'un vrai même-match — un camp identique (club renommé : « York
+#: United » devenu « Inter Toronto ») ou deux camps proches (abréviations :
+#: « Dep. Maipu », « Atl. Tucuman ») — ET qu'il se joue à moins de deux heures
+#: du nôtre. Sinon le match est absent, et la sonde le dit.
+FENETRE_NOMS_MIN = 120.0
+COTE_IDENTIQUE = 95.0
+COTES_PROCHES = 75.0
 
 
 def _sim_sans_classe(a: str, b: str) -> float:
@@ -195,6 +205,21 @@ def _paire(sim, h, a, th, ta) -> float:
     """Même règle que `match_event` : moyenne des deux camps, meilleure des
     deux orientations."""
     return max((sim(h, th) + sim(a, ta)) / 2, (sim(h, ta) + sim(a, th)) / 2)
+
+
+def _camps(sim, h, a, th, ta) -> tuple:
+    """Les deux similarités camp par camp, dans l'orientation retenue par
+    `_paire` (la meilleure moyenne)."""
+    return max((sim(h, th), sim(a, ta)), (sim(h, ta), sim(a, th)), key=sum)
+
+
+def _plausible(u: float, camps: tuple, dt: float) -> bool:
+    """Ce candidat peut-il être NOTRE match ? Voir `FENETRE_NOMS_MIN`."""
+    if u >= SEUIL_APPARIEMENT:
+        return True
+    if u < PLANCHER_CANDIDAT or dt > FENETRE_NOMS_MIN:
+        return False
+    return max(camps) >= COTE_IDENTIQUE or min(camps) >= COTES_PROCHES
 
 
 def _fixtures_autour(dossier: Path, jour: date, cache: dict) -> list:
@@ -235,19 +260,24 @@ def diagnostiquer(r, noms: dict, dossier: Path, cache: dict) -> dict:
         ta = with_class_marker(((eq.get("away") or {}).get("name") or "").strip(), m2)
         if not th or not ta:
             continue
-        u = _paire(_sim_sans_classe, h, a, th, ta)
+        camps = _camps(_sim_sans_classe, h, a, th, ta)
+        u = sum(camps) / 2
         t = _instant(fx.get("date"))
         dt = abs((t - depart).total_seconds()) / 60 if t else float("inf")
-        cle = (u, -dt)
+        # Un candidat plausible passe devant un bruit mieux noté : sinon un
+        # « Juventus - Atalanta » à 80 masquerait le club renommé à 75.
+        plausible = _plausible(u, camps, dt)
+        cle = (plausible, u, -dt)
         if meilleur is None or cle > meilleur["_cle"]:
-            meilleur = {"_cle": cle, "u": u, "g": _paire(team_similarity, h, a, th, ta),
+            meilleur = {"_cle": cle, "u": u, "plausible": plausible,
+                        "g": _paire(team_similarity, h, a, th, ta),
                         "dt": dt, "nom": f"{th} - {ta}",
                         "ligue": lg.get("name") or "?",
                         "statut": ((fx.get("status") or {}).get("short") or "?").upper(),
                         "classes": (team_class(normalize_team(h)),
                                     team_class(normalize_team(th)))}
     nous = f"{h} - {a}"
-    if meilleur is None or meilleur["u"] < PLANCHER_CANDIDAT:
+    if meilleur is None or not meilleur["plausible"]:
         return {"verdict": ABSENT, "nous": nous, "cand": meilleur}
     if meilleur["g"] < SEUIL_APPARIEMENT <= meilleur["u"]:
         verdict = CLASSE
