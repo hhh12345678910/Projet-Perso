@@ -419,3 +419,62 @@ def test_une_famille_exige_deux_avis_nets(nous, source):
     ev = _ours(*nous, T)
     assert _orientation(ev, _res(*source, T)) in ("direct", None)
     assert _orientation(ev, _res(source[1], source[0], T)) in ("inverse", None)
+
+
+# ----------------------------------------------- doubles et noms identiques ---
+
+T2 = T.replace(hour=10)
+
+
+def _double(home, away, league="ITF W50 Incheon"):
+    return OurEvent(event_key="d", home=home, away=away, start_time=T, league=league)
+
+
+def test_un_double_ne_recoit_jamais_le_score_d_un_simple():
+    """Revue du 27/09 : la source n'a AUCUN double, et « Sohyun Park / Lanlan
+    Tang » vaut 100 contre « Sohyun Park » (sous-ensemble de mots). Le simple
+    Park v Shnaider du matin (Shnaider 12-7) était attribué au double."""
+    res = [_res("Sohyun Park", "Diana Shnaider", T2, sport="tennis",
+                winner="away", hs=7, aws=12)]
+    bindings, counters = bind_results(
+        [_double("Sohyun Park / Lanlan Tang", "Diana Shnaider / Dahyun Kim")],
+        res, sport="tennis")
+    assert bindings == [] and counters["double_sans_source"] == 1
+
+
+def test_un_double_se_reconnait_a_sa_ligue():
+    res = [_res("Marcelo Arevalo", "Joe Salisbury", T2, sport="tennis",
+                winner="home", hs=12, aws=9)]
+    bindings, counters = bind_results(
+        [_double("Marcelo Arevalo", "Joe Salisbury", league="ATP Cincinnati - Doubles")],
+        res, sport="tennis")
+    assert bindings == [] and counters["double_sans_source"] == 1
+
+
+def test_un_double_compacte_se_reconnait_a_sa_longueur():
+    """Sans nom au registre, la clé compactée a perdu son « / » : c'est la
+    longueur — deux joueurs contre un — qui le trahit."""
+    res = [_res("Sohyun Park", "Diana Shnaider", T2, sport="tennis",
+                winner="away", hs=7, aws=12)]
+    bindings, counters = bind_results(
+        [_double("Sohyunparklanlantang", "Dianashnaiderdahyunkim")], res, sport="tennis")
+    assert bindings == [] and counters["double_sans_source"] == 1
+
+
+def test_un_simple_compacte_reste_rapproche():
+    res = [_res("Jannik Sinner", "Carlos Alcaraz", T2, sport="tennis",
+                winner="home", hs=13, aws=9)]
+    bindings, counters = bind_results(
+        [_double("Janniksinner", "Carlosalcaraz", league="ATP Beijing")], res, sport="tennis")
+    assert len(bindings) == 1 and counters["double_sans_source"] == 0
+
+
+@pytest.mark.parametrize("nous", [("Svetlana Kuznetsova", "Alina Kuznetsova"),
+                                  ("Feirense", "Oliveirense"),
+                                  ("Yu Zhang", "Siyu Zhang")])
+def test_des_noms_identiques_s_orientent_sans_hesiter(nous):
+    """Repris mot pour mot par la source : l'égalité exacte tranche, là où la
+    famille exigeait des marges que deux noms si proches ne donnent pas."""
+    ev = _ours(*nous, T)
+    assert _orientation(ev, _res(*nous, T)) == "direct"
+    assert _orientation(ev, _res(nous[1], nous[0], T)) == "inverse"

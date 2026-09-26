@@ -30,6 +30,7 @@ silence, sans lever la moindre erreur :
 """
 from __future__ import annotations
 
+import re
 from dataclasses import dataclass, replace
 from datetime import date, datetime
 from typing import Iterable, Protocol
@@ -253,6 +254,15 @@ def _orientation(ev: "OurEvent", res: MatchResult) -> str | None:
     rh, ra = _nom_entier(res.home), _nom_entier(res.away)
     entier = ((fuzz.ratio(h, ra) + fuzz.ratio(a, rh))
               - (fuzz.ratio(h, rh) + fuzz.ratio(a, ra)))
+    # Des noms IDENTIQUES dans un sens et pas dans l'autre : rien à peser.
+    # Sans ce court-circuit, « Svetlana Kuznetsova v Alina Kuznetsova » ou
+    # « Feirense v Oliveirense », repris mot pour mot par la source, restaient
+    # sans résultat : la famille exige des marges que deux noms si proches ne
+    # donnent jamais. L'égalité exacte, elle, ne se trompe pas.
+    if (h, a) == (rh, ra) and (h, a) != (ra, rh):
+        return "direct"
+    if (h, a) == (ra, rh) and (h, a) != (rh, ra):
+        return "inverse"
     p = (appariement > 0) - (appariement < 0)
     e = (entier > 0) - (entier < 0)
     if p and e and p != e:
@@ -275,6 +285,31 @@ def _orientation(ev: "OurEvent", res: MatchResult) -> str | None:
     if not sens:
         return None
     return "inverse" if sens > 0 else "direct"
+
+
+_DOUBLES = re.compile(r"\bdoubles?\b", re.IGNORECASE)
+#: Un double compacté (« Sohyunparklanlantang », repli du registre sans nom)
+#: fait environ deux fois la longueur d'un simple. Au-delà de ce rapport, on
+#: ne rapproche pas : ce n'est pas le même match.
+RAPPORT_DOUBLE = 1.5
+
+
+def _est_double(ev: "OurEvent") -> bool:
+    """Un match de DOUBLE : « A / B » dans un nom, ou « Doubles » dans la
+    ligue."""
+    return "/" in ev.home or "/" in ev.away or bool(_DOUBLES.search(ev.league or ""))
+
+
+def _longueur(nom: str) -> int:
+    return len(_nom_entier(nom).replace(" ", ""))
+
+
+def _double_contre_simple(ev: "OurEvent", res: MatchResult) -> bool:
+    """Nos noms font-ils deux fois ceux de la source ? Le repli compacté d'un
+    double a perdu son « / » : c'est la longueur qui le trahit."""
+    nous = _longueur(ev.home) + _longueur(ev.away)
+    eux = _longueur(res.home) + _longueur(res.away)
+    return eux > 0 and nous >= RAPPORT_DOUBLE * eux
 
 
 def _sans_cote(res: MatchResult) -> bool:
@@ -362,6 +397,9 @@ def bind_results(
         # Apparié, mais impossible de dire dans quel sens (noms emboîtés qui
         # se contredisent) : laissé sans résultat plutôt que réglé à l'envers.
         "orientation_indecidable": 0,
+        # Un double de tennis : la source n'en fournit aucun, et un simple des
+        # mêmes joueurs n'est PAS son résultat.
+        "double_sans_source": 0,
         "classe_posee": 0,           # féminin/jeunes : classe reprise de la ligue
         # Événements dont la ligue porte une classe que la source de CE sport
         # ne sait pas porter. Compté plutôt que tu : sans ce chiffre, « la
@@ -373,6 +411,16 @@ def bind_results(
     bindings: list[tuple[str, MatchResult]] = []
 
     for ev in events:
+        # ⚠️ LE TENNIS N'A AUCUN RÉSULTAT DE DOUBLE : `parse_livetennis_results`
+        # les écarte tous. Un double ne peut donc être rapproché que d'un
+        # SIMPLE — et `team_similarity` le permet, un sous-ensemble de mots
+        # valant 100 : « Sohyun Park / Lanlan Tang » contre « Sohyun Park ».
+        # Si les mêmes joueuses ont disputé un simple dans les 12 h (courant en
+        # ITF et en Challenger), son score était attribué au double. Constaté
+        # par la revue du 27/09 ; aucun garde n'existait.
+        if sport == "tennis" and _est_double(ev):
+            counters["double_sans_source"] += 1
+            continue
         # Remettre la classe sur NOS noms avant de comparer. Pinnacle la laisse
         # dans la ligue (« USA - National Womens Soccer League » / « Houston
         # Dash »), les sources de scores la posent sur l'équipe (« Houston Dash
@@ -398,6 +446,9 @@ def bind_results(
             continue
         if not best.gradable:
             counters["resultat_inutilisable"] += 1
+            continue
+        if sport == "tennis" and _double_contre_simple(ev, best):
+            counters["double_sans_source"] += 1
             continue
         # ⚠️ `match_event` apparie les deux orientations — « A vs B » et
         # « B vs A » — ce qui est indispensable au tennis, où la notion de

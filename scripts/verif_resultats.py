@@ -38,8 +38,15 @@ jumeau féminin ou de jeunes des mêmes clubs — rien ne dit lequel des deux
 des résultats suspects, valeurs comprises : c'est à la fois la liste à
 corriger et la sauvegarde qui permet d'annuler.
 
-⚠️ Le tennis n'est pas audité : sa source est une API, aucun fichier ne garde
-ce qu'elle a répondu.
+⚠️ Le tennis n'est audité que sur un point, qui ne demande aucun fichier : un
+DOUBLE réglé par la source tennis est faux à coup sûr — elle ne sert aucun
+double, et ce résultat est celui d'un simple des mêmes joueurs (revue du
+27/09). Pour le reste, sa source est une API : aucun fichier ne garde ce
+qu'elle a répondu.
+
+⚠️ Seuls les résultats venus de la SOURCE (api-football, livetennisapi) sont
+proposés au retrait. Un résultat saisi ou importé (`settle --from`) est
+listé, jamais retiré : la sonde ne sait pas s'il a été corrigé à la main.
 
 Usage :
     .venv/bin/python -m scripts.verif_resultats --depuis 2026-06-01
@@ -64,7 +71,7 @@ from rapidfuzz import fuzz  # noqa: E402
 
 from scripts.resultats_manquants import (SourceFoot, _coup_d_envoi,  # noqa: E402
                                          _notre_evenement, _resultats_production)
-from src.config import load_env_file  # noqa: E402
+from src.config import ScanConfig, load_env_file  # noqa: E402
 from src.matcher import (class_marker_from_league, match_event,  # noqa: E402
                          normalize_team, team_class, with_class_marker)
 from src.scores import (_nom_entier, _orientation, _sans_cote,  # noqa: E402
@@ -78,8 +85,20 @@ AUTRE_ORIGINE = ("score qui ne vaut la source dans aucun sens — autre origine,
                  "non audité")
 INTROUVABLE = "non retrouvé dans les fichiers du pont — non audité"
 
-ORDRE = [OK, SYMETRIQUE, INVERSE, INDECIDABLE, AUTRE_ORIGINE, INTROUVABLE]
-SUSPECTS = (INVERSE, INDECIDABLE)
+DOUBLE_FAUX = ("DOUBLE de tennis réglé par le score d'un SIMPLE — faux à coup "
+               "sûr (la source n'a aucun double)")
+
+ORDRE = [OK, SYMETRIQUE, INVERSE, INDECIDABLE, DOUBLE_FAUX, AUTRE_ORIGINE,
+         INTROUVABLE]
+SUSPECTS = (INVERSE, INDECIDABLE, DOUBLE_FAUX)
+#: Les sources dont la sonde sait qu'elles ont écrit ce qu'elles ont lu.
+SOURCES_API = ("api-football", "livetennisapi")
+
+
+def a_retirer(r, d) -> bool:
+    """Suspect ET venu de la source : les seuls que la sonde propose de
+    retirer. Un score saisi ou importé peut être une correction à la main."""
+    return d["verdict"] in SUSPECTS and str(r["source"] or "").startswith(SOURCES_API)
 
 #: Deux noms sont « les mêmes clubs » pour la recherche de jumeaux quand ils se
 #: ressemblent EN ENTIER, classe retirée — pas par un fragment.
@@ -115,6 +134,31 @@ def charger(db: str, depuis: date) -> tuple:
         pass
     con.close()
     return rows, noms, joues
+
+
+def charger_doubles(db: str, depuis: date, noms: dict) -> list:
+    """Les résultats de tennis que la SOURCE a écrits sur un match de double.
+    Elle n'en sert aucun : chacun est le score d'un simple, attribué à tort."""
+    from src.scores import _DOUBLES
+    con = sqlite3.connect(f"file:{db}?mode=ro", uri=True)
+    con.row_factory = sqlite3.Row
+    borne = datetime.combine(depuis, datetime.min.time(), tzinfo=timezone.utc).isoformat()
+    try:
+        rows = [dict(r) for r in con.execute("""
+            SELECT e.event_key, e.league, e.home, e.away, e.start_time,
+                   r.winner, r.home_score, r.away_score, r.source, r.settled_at,
+                   (SELECT COUNT(*) FROM value_bets v WHERE v.event_key = e.event_key)
+                       AS n_det
+            FROM results r JOIN events e ON e.event_key = r.event_key
+            WHERE e.sport = 'tennis' AND e.start_time >= ?
+              AND r.source LIKE 'livetennisapi%'""", (borne,))]
+    except sqlite3.OperationalError:
+        rows = []
+    finally:
+        con.close()
+    return [r for r in rows
+            if "/" in (noms.get(r["home"]) or "") or "/" in (noms.get(r["away"]) or "")
+            or _DOUBLES.search(r["league"] or "")]
 
 
 def _oriente(res, inverse: bool) -> tuple:
@@ -254,31 +298,44 @@ CMD_ANNULER = (
 
 
 def imprimer(res: list, joues: dict, depuis: date, db: str,
-             sortie: "str | None") -> None:
-    print(f"RÉSULTATS DE FOOTBALL EN BASE — orientation et classe, matchs à "
+             sortie: "str | None", noms: "dict | None" = None,
+             production: bool = True) -> None:
+    noms = noms or {}
+
+    def nom(r) -> str:
+        """Le nom AFFICHÉ, pour la vérification à l'œil — pas la clé compactée."""
+        return (f"{noms.get(r['home']) or r['home']} - "
+                f"{noms.get(r['away']) or r['away']}")
+    print(f"RÉSULTATS EN BASE — orientation, classe et doubles, matchs à "
           f"partir du {depuis.isoformat()} (UTC)")
-    print("(chaque résultat est rejoué sur les fichiers du pont : l'orientation "
-          "prise par l'ancienne\nrègle contre celle de la nouvelle)\n")
+    print("(chaque résultat de football est rejoué sur les fichiers du pont : "
+          "le sens dans lequel il\na été stocké contre celui de la nouvelle "
+          "règle)\n")
     if not res:
-        print("Aucun résultat de football sur cette fenêtre.")
+        print("Aucun résultat sur cette fenêtre.")
         return
     comptes = Counter(d["verdict"] for _r, d in res)
     larg = max(len(v) for v in ORDRE)
-    print(f"Sur {len(res)} résultats de football en base :")
+    print(f"Sur {len(res)} résultats audités :")
     for v in ORDRE:
         if comptes[v]:
             print(f"  {'❗' if v in SUSPECTS else '  '} {v:{larg}}  {comptes[v]:6}")
     jumeaux = [(r, d) for r, d in res if d.get("jumeau")]
     if jumeaux:
-        print(f"  ❗ {'CLASSE INCERTAINE — match sans ligue, jumeau d’une autre classe':{larg}}"
+        print(f"  ❗ {'CLASSE INCERTAINE — ligue sans classe, jumeau d’une autre classe':{larg}}"
               f"  {len(jumeaux):6}")
 
-    suspects = [(r, d) for r, d in res if d["verdict"] in SUSPECTS]
-    uniques = {r["event_key"]: (r, d) for r, d in suspects + jumeaux}
+    suspects = [(r, d) for r, d in res if a_retirer(r, d)]
+    a_la_main = [(r, d) for r, d in res
+                 if d["verdict"] in SUSPECTS and not a_retirer(r, d)]
+    uniques = {r["event_key"]: (r, d) for r, d in suspects + a_la_main + jumeaux}
     touches = [(r, d, p) for r, d in uniques.values()
                for p in joues.get(r["event_key"], [])]
     for titre, lot in (("INVERSÉS PROBABLES", [x for x in suspects if x[1]["verdict"] == INVERSE]),
                        ("INDÉCIDABLES", [x for x in suspects if x[1]["verdict"] == INDECIDABLE]),
+                       ("DOUBLES RÉGLÉS PAR UN SIMPLE", [x for x in suspects
+                                                         if x[1]["verdict"] == DOUBLE_FAUX]),
+                       ("SAISIS OU IMPORTÉS — à vérifier à la main, jamais retirés", a_la_main),
                        ("CLASSE INCERTAINE", jumeaux)):
         if not lot:
             continue
@@ -286,27 +343,39 @@ def imprimer(res: list, joues: dict, depuis: date, db: str,
         for r, d in lot:
             t = _coup_d_envoi(r)
             print(f"  {t.strftime('%Y-%m-%d %H:%M') if t else '?':16}  "
-                  f"{r['home']} - {r['away']}  [{(r['league'] or '?')[:28]}]  "
+                  f"{nom(r)}  [{(r['league'] or '?')[:28]}]  "
                   f"{r['n_det']} dét., {len(joues.get(r['event_key'], []))} joué(s)")
+            if d["verdict"] == DOUBLE_FAUX:
+                print(f"      en base : {_f(r['home_score'])}-{_f(r['away_score'])} "
+                      f"({r['winner']}) — le score d'un simple des mêmes joueurs")
+                continue
             print(f"      en base : {_f(d['stocke'][0])}-{_f(d['stocke'][1])} · source : "
                   f"{d['source']} {_f(d['score_source'][0])}-{_f(d['score_source'][1])}"
                   + (f" · corrigé : {_f(d['corrige'][0])}-{_f(d['corrige'][1])}"
                      if d.get("corrige") else "")
-                  + (f" · jumeau : {d['jumeau']}" if d.get("jumeau") else ""))
+                  + (f" · jumeau : {d['jumeau']}" if d.get("jumeau") else "")
+                  + (f" · origine : {r['source']}" if not a_retirer(r, d) else ""))
     if touches:
         print(f"\nTES PARIS JOUÉS SUR CES MATCHS ({len(touches)}) — leur P&L en dépend")
         for r, d, p in touches:
-            print(f"  {r['home']} - {r['away']}  {_pari(p)}  mise {p['stake'] or '?'}"
+            print(f"  {nom(r)}  {_pari(p)}  mise {p['stake'] or '?'}"
                   f"  → {d['verdict'] if d['verdict'] in SUSPECTS else 'classe incertaine'}")
 
     print("\nQUE FAIRE")
     non_audites = comptes[AUTRE_ORIGINE] + comptes[INTROUVABLE]
-    if not suspects and not jumeaux:
+    if not suspects and not a_la_main and not jumeaux:
         print(f"  • Rien parmi les {len(res) - non_audites} résultats audités : "
-              f"aucun n'est stocké à l'envers.\n    ({non_audites} n'ont pas pu "
+              f"aucun n'est faux.\n    ({non_audites} n'ont pas pu "
               f"être audités — voir les lignes « non audité » ci-dessus.)")
         return
-    if suspects:
+    if suspects and not production:
+        print(f"  • {len(suspects)} résultat(s) suspect(s) dans {db}. ⚠️ Ce n'est "
+              f"pas data/valuebet.db : results-update\n    et track-update agissent "
+              f"sur la base de PRODUCTION, pas sur cette copie. Les commandes de\n"
+              f"    correction ne sont pas imprimées — relance la sonde sur "
+              f"data/valuebet.db pour les avoir.")
+    elif suspects:
+        foot = [x for x in suspects if x[1]["verdict"] != DOUBLE_FAUX]
         if sortie:
             print(f"  • {len(suspects)} résultat(s) suspect(s) écrit(s) dans "
                   f"{sortie} — la liste ET la sauvegarde.\n"
@@ -316,12 +385,14 @@ def imprimer(res: list, joues: dict, depuis: date, db: str,
                   f"    ⚠️ Pour annuler, AVANT l'étape suivante (après, seuls les "
                   f"indécidables reviendraient) :\n"
                   f"      {CMD_ANNULER.format(f=sortie, db=db)}\n"
-                  f"    Puis, LE JOUR MÊME, pour que la nouvelle règle les relise — "
-                  f"elle règle les inversés\n    dans le bon sens et laisse les "
-                  f"indécidables sans résultat :\n"
-                  f"      .venv/bin/python -m src.main results-update --days "
-                  f"{_jours(suspects)} --sport soccer\n"
-                  f"      .venv/bin/python -m src.main track-update\n"
+                  + (f"    Puis, LE JOUR MÊME, pour que la nouvelle règle les relise — "
+                     f"elle règle les inversés\n    dans le bon sens et laisse les "
+                     f"indécidables sans résultat :\n"
+                     f"      .venv/bin/python -m src.main results-update --days "
+                     f"{_jours(foot)} --sport soccer\n" if foot else
+                     "    Puis (les doubles restent sans résultat : la source n'en a "
+                     "aucun) :\n")
+                  + f"      .venv/bin/python -m src.main track-update\n"
                   f"    ⚠️ `track-update` TOUT DE SUITE : un `settle --from` sur un "
                   f"ancien paris_track.csv\n    réécrirait les scores retirés.")
         else:
@@ -329,6 +400,10 @@ def imprimer(res: list, joues: dict, depuis: date, db: str,
                   f"      --sortie data/verif_resultats-$(date +%Y%m%d-%H%M).jsonl\n"
                   f"    pour obtenir la liste, sa sauvegarde et les commandes de "
                   f"correction.")
+    if a_la_main:
+        print(f"  • {len(a_la_main)} résultat(s) suspect(s) SAISIS OU IMPORTÉS : "
+              f"la sonde ne sait pas s'ils ont été\n    corrigés à la main. À "
+              f"vérifier toi-même — elle ne propose pas de les retirer.")
     if jumeaux:
         print(f"  • {len(jumeaux)} match(s) à la classe incertaine : rien ne dit "
               f"si c'était le match des\n    seniors ou son jumeau. À vérifier à "
@@ -350,12 +425,12 @@ def ecrire_sortie(chemin: str, res: list) -> int:
     """La liste ET la sauvegarde. Jamais écrasée (mode "x") : relancer la sonde
     après une correction réécrirait sinon un fichier sans les lignes retirées,
     et l'annulation n'aurait plus rien à remettre."""
-    if not any(d["verdict"] in SUSPECTS for _r, d in res):
+    if not any(a_retirer(r, d) for r, d in res):
         return 0
     n = 0
     with open(chemin, "x", encoding="utf-8") as f:
         for r, d in res:
-            if d["verdict"] in SUSPECTS:
+            if a_retirer(r, d):
                 f.write(json.dumps({k: r[k] for k in (
                     "event_key", "winner", "home_score", "away_score", "source",
                     "settled_at")}, ensure_ascii=False) + "\n")
@@ -365,9 +440,9 @@ def ecrire_sortie(chemin: str, res: list) -> int:
 
 def main(argv=None) -> None:
     ap = argparse.ArgumentParser(
-        description="Les résultats de football EN BASE : score à l'envers "
-                    "(ancienne règle d'orientation) ou classe incertaine. "
-                    "Lecture seule.")
+        description="Les résultats EN BASE : score de football à l'envers "
+                    "(ancienne règle d'orientation), classe incertaine, double "
+                    "de tennis réglé par un simple. Lecture seule.")
     ap.add_argument("--db", default="data/valuebet.db")
     ap.add_argument("--depuis", default="2026-06-01", metavar="AAAA-MM-JJ")
     ap.add_argument("--sortie", default=None, metavar="FICHIER",
@@ -377,6 +452,9 @@ def main(argv=None) -> None:
     if a.sortie and Path(a.sortie).exists():
         ap.error(f"{a.sortie} existe déjà : c'est peut-être la sauvegarde d'une "
                  "correction. Choisis un autre nom — la sonde ne l'écrase jamais.")
+    if a.sortie and not Path(a.sortie).resolve().parent.is_dir():
+        ap.error(f"le dossier de {a.sortie} n'existe pas — à vérifier AVANT de "
+                 "rejouer quatre mois de résultats.")
     try:
         depuis = date.fromisoformat(a.depuis)
     except ValueError:
@@ -390,9 +468,15 @@ def main(argv=None) -> None:
     def progres(i, n):
         print(f"  … {i}/{n} résultats rejoués", file=sys.stderr)
     res = analyser(rows, noms, dossier, progres)
-    if a.sortie:
+    res += [(r, {"verdict": DOUBLE_FAUX}) for r in charger_doubles(a.db, depuis, noms)]
+    # results-update et track-update ouvrent TOUJOURS la base de production
+    # (`ScanConfig.db_path`, relative au répertoire courant) : corriger une
+    # copie laisserait l'erreur là où le P&L la lit.
+    production = (Path(a.db).resolve() == Path(ScanConfig().db_path).resolve())
+    if a.sortie and production:
         ecrire_sortie(a.sortie, res)
-    imprimer(res, joues, depuis, a.db, a.sortie)
+    imprimer(res, joues, depuis, a.db, a.sortie if production else None, noms,
+             production)
 
 
 if __name__ == "__main__":

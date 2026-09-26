@@ -129,44 +129,119 @@ def test_un_match_sans_ligue_a_jumeau_feminin_est_signale(tmp_path):
     assert d["k"]["jumeau"] is None
 
 
-def test_la_sortie_et_les_commandes_corrigent_et_s_annulent(tmp_path, capsys):
+def _en_production(tmp_path, monkeypatch, matchs, fixtures):
+    """Un monde où la base est À SA PLACE de production (data/valuebet.db,
+    relative au répertoire courant) : seul cas où la sonde imprime les
+    commandes de correction. `.venv` y est relié pour que les commandes
+    imprimées s'exécutent telles quelles."""
+    db, dossier = _monde(tmp_path, matchs, fixtures)
+    (tmp_path / "data").mkdir()
+    db.rename(tmp_path / "data" / "valuebet.db")
+    (tmp_path / ".venv").symlink_to(Path(vr.__file__).resolve().parents[1] / ".venv")
+    monkeypatch.chdir(tmp_path)
+    monkeypatch.setenv("SCORES_INGEST_DIR", str(tmp_path))
+    return "data/valuebet.db", dossier
+
+
+def test_la_sortie_et_les_commandes_corrigent_et_s_annulent(tmp_path, monkeypatch, capsys):
     """De bout en bout : la sonde liste, la commande retire SEULEMENT ce qui
     vaut encore ce qu'elle a lu, l'annulation remet tout."""
-    db, dossier = _monde(tmp_path, [
+    db, dossier = _en_production(tmp_path, monkeypatch, [
         ("k1", "Inter", "Inter Miami", "L", 3, 0, "home"),       # inversé
         ("k2", "Arsenal", "Chelsea", "L", 2, 1, "home"),         # juste
         ("k3", "Dundee Utd", "Dundee", "L", 1, 2, "away")],      # indécidable
         [_fixture("Inter Miami", "Inter", hs=3, as_=0),
          _fixture("Arsenal", "Chelsea"),
          _fixture("Dundee United", "Dundee", hs=2, as_=1)])
-    os.environ["SCORES_INGEST_DIR"] = str(tmp_path)
-    try:
-        sortie = tmp_path / "suspects.jsonl"
-        vr.main(["--db", str(db), "--depuis", "2026-09-19", "--sortie", str(sortie)])
-    finally:
-        del os.environ["SCORES_INGEST_DIR"]
+    sortie = "suspects.jsonl"
+    vr.main(["--db", db, "--depuis", "2026-09-19", "--sortie", sortie])
     out = capsys.readouterr().out
-    assert {json.loads(l)["event_key"] for l in sortie.read_text().splitlines()} == {"k1", "k3"}
+    lignes = (tmp_path / sortie).read_text().splitlines()
+    assert {json.loads(l)["event_key"] for l in lignes} == {"k1", "k3"}
     retirer = vr.CMD_RETIRER.format(f=sortie, db=db)
     annuler = vr.CMD_ANNULER.format(f=sortie, db=db)
     assert retirer in out and annuler in out
 
     # Une ligne corrigée entre-temps ne doit PAS être retirée.
-    c = sqlite3.connect(str(db))
+    c = sqlite3.connect(db)
     c.execute("UPDATE results SET home_score = 0, away_score = 3, winner = 'away' "
               "WHERE event_key = 'k1'")
     c.commit()
-    racine = Path(vr.__file__).resolve().parents[1]
-    r = subprocess.run(retirer, shell=True, cwd=racine, capture_output=True, text=True)
+    r = subprocess.run(retirer, shell=True, cwd=tmp_path, capture_output=True, text=True)
     assert r.returncode == 0, r.stderr
     assert {k for (k,) in c.execute("SELECT event_key FROM results")} == {"k1", "k2"}
 
-    r = subprocess.run(annuler, shell=True, cwd=racine, capture_output=True, text=True)
+    r = subprocess.run(annuler, shell=True, cwd=tmp_path, capture_output=True, text=True)
     assert r.returncode == 0, r.stderr
     lignes = dict((k, (w, h, a)) for k, w, h, a in c.execute(
         "SELECT event_key, winner, home_score, away_score FROM results"))
     assert lignes["k3"] == ("away", 1, 2)              # remis tel quel
     assert lignes["k1"] == ("away", 0, 3)              # réécrit depuis : intact
+
+
+def test_une_copie_de_la_base_n_a_pas_de_commandes(tmp_path, capsys):
+    """results-update et track-update agissent sur data/valuebet.db : corriger
+    une copie laisserait l'erreur là où le P&L la lit."""
+    db, dossier = _monde(tmp_path, [("k", "Inter", "Inter Miami", "L", 3, 0, "home")],
+                         [_fixture("Inter Miami", "Inter", hs=3, as_=0)])
+    os.environ["SCORES_INGEST_DIR"] = str(tmp_path)
+    try:
+        vr.main(["--db", str(db), "--depuis", "2026-09-19",
+                 "--sortie", str(tmp_path / "s.jsonl")])
+    finally:
+        del os.environ["SCORES_INGEST_DIR"]
+    out = capsys.readouterr().out
+    assert "Ce n'est pas data/valuebet.db" in out
+    assert "DELETE FROM results" not in out
+    assert not (tmp_path / "s.jsonl").exists()
+
+
+def test_un_double_regle_par_un_simple_est_faux_a_coup_sur(tmp_path, monkeypatch, capsys):
+    """La source tennis n'a aucun double : un résultat qu'elle a écrit sur un
+    double est le score d'un simple. La sonde le liste et le propose au
+    retrait — sans relecture, il restera sans résultat."""
+    db, dossier = _en_production(tmp_path, monkeypatch, [], [])
+    c = sqlite3.connect(db)
+    for k, h, a, lg in (("d1", "parkslang", "shnaiderkim", "ITF W50 Incheon"),
+                        ("d2", "arevalopavic", "ramsalisbury", "ATP Cincinnati - Doubles"),
+                        ("s1", "sinnerj", "alcarazc", "ATP Beijing")):
+        c.execute("INSERT INTO events (event_key, sport, league, home, away, start_time)"
+                  " VALUES (?,?,?,?,?,?)", (k, "tennis", lg, h, a, Q))
+        c.execute("INSERT INTO results VALUES (?,?,?,?,?,?)",
+                  (k, "away", 7, 12, "livetennisapi", "x"))
+    c.execute("INSERT INTO teams VALUES ('parkslang', 'Sohyun Park / Lanlan Tang', 'x')")
+    c.commit()
+    c.close()
+    vr.main(["--db", db, "--depuis", "2026-09-19", "--sortie", "s.jsonl"])
+    out = capsys.readouterr().out
+    assert "DOUBLES RÉGLÉS PAR UN SIMPLE (2)" in out
+    assert "Sohyun Park / Lanlan Tang" in out
+    cles = {json.loads(l)["event_key"] for l in (tmp_path / "s.jsonl").read_text().splitlines()}
+    assert cles == {"d1", "d2"}
+    assert "results-update" not in out.split("QUE FAIRE", 1)[1]
+
+
+def test_un_resultat_importe_est_liste_jamais_retire(tmp_path, monkeypatch, capsys):
+    """Un score saisi ou importé (`settle --from`) peut être une correction à
+    la main : suspect, il est listé — jamais proposé au retrait."""
+    db, dossier = _en_production(tmp_path, monkeypatch,
+                                 [("k", "Dundee Utd", "Dundee", "L", 1, 2, "away")],
+                                 [_fixture("Dundee United", "Dundee", hs=2, as_=1)])
+    c = sqlite3.connect(db)
+    c.execute("UPDATE results SET source = 'paris_track.csv'")
+    c.commit()
+    c.close()
+    vr.main(["--db", db, "--depuis", "2026-09-19", "--sortie", "s.jsonl"])
+    out = capsys.readouterr().out
+    assert "SAISIS OU IMPORTÉS" in out and "origine : paris_track.csv" in out
+    assert not (tmp_path / "s.jsonl").exists()
+
+
+def test_un_dossier_de_sortie_absent_est_refuse_avant_le_rejeu(tmp_path):
+    import pytest as _pt
+    with _pt.raises(SystemExit):
+        vr.main(["--db", str(tmp_path / "v.db"), "--sortie",
+                 str(tmp_path / "absent" / "s.jsonl")])
 
 
 def test_les_paris_joues_touches_sont_listes(tmp_path, capsys):
