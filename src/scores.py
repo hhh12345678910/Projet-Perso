@@ -185,6 +185,30 @@ def _nom_entier(nom: str) -> str:
     return _strip_class_tag(normalize_team(nom))
 
 
+#: Deux écritures d'une même chose, pour l'ÉGALITÉ EXACTE de `_orientation`
+#: seulement : le reste du matcher, et les marges calibrées, n'en voient rien.
+#: Trouvé par `verif_resultats` le 27/09 : « Dundee United v Dundee FC » contre
+#: la source « Dundee Utd v Dundee », dans le même ordre, restait indécidable
+#: — et c'était un pari joué.
+_ABREVIATIONS = {"utd": "united", "wed": "wednesday"}
+#: Les formes juridiques que `normalize_team` ne retire pas : « AD San Carlos »
+#: est « San Carlos » chez API-Football, « RCD Mallorca » y est « Mallorca ».
+_FORMES_JURIDIQUES = frozenset({"ad", "afc", "ca", "cs", "if", "ik", "rc", "rcd",
+                                "sd", "ud"})
+
+
+def _nom_canonique(nom: str) -> str:
+    """`_nom_entier`, abréviations développées et formes juridiques retirées.
+
+    Sans risque pour l'égalité EXACTE : pour qu'elle désigne le mauvais sens,
+    il faudrait que NOTRE nom de chaque club soit, mot pour mot, celui que la
+    source donne à L'AUTRE — et deux clubs au même nom canonique rendent les
+    deux sens égaux, que `_orientation` refuse. Pas pour un score flou : un
+    mot retiré change toutes les distances."""
+    mots = [_ABREVIATIONS.get(m, m) for m in _nom_entier(nom).split()]
+    return " ".join([m for m in mots if m not in _FORMES_JURIDIQUES] or mots)
+
+
 #: Deux avis ne décident que s'ils sont NETS. Calibré le 27/09 sur 1,85 million
 #: de cas appariés (350 clubs et leurs graphies, 190 joueurs sous 7 formats,
 #: et un corpus hostile de noms mélangés) : sans marge, un écart de 1 point de
@@ -258,11 +282,14 @@ def _orientation(ev: "OurEvent", res: MatchResult) -> str | None:
     # Sans ce court-circuit, « Svetlana Kuznetsova v Alina Kuznetsova » ou
     # « Feirense v Oliveirense », repris mot pour mot par la source, restaient
     # sans résultat : la famille exige des marges que deux noms si proches ne
-    # donnent jamais. L'égalité exacte, elle, ne se trompe pas.
-    if (h, a) == (rh, ra) and (h, a) != (ra, rh):
-        return "direct"
-    if (h, a) == (ra, rh) and (h, a) != (rh, ra):
-        return "inverse"
+    # donnent jamais. L'égalité exacte, elle, ne se trompe pas — y compris
+    # sur les noms canoniques (« Utd » = « United », voir `_nom_canonique`).
+    for x, y, rx, ry in ((h, a, rh, ra),
+                         tuple(map(_nom_canonique, (ev.home, ev.away, res.home, res.away)))):
+        if (x, y) == (rx, ry) and (x, y) != (ry, rx):
+            return "direct"
+        if (x, y) == (ry, rx) and (x, y) != (rx, ry):
+            return "inverse"
     p = (appariement > 0) - (appariement < 0)
     e = (entier > 0) - (entier < 0)
     if p and e and p != e:

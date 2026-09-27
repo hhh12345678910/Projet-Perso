@@ -1487,9 +1487,9 @@ def test_oublier_libere_tous_les_caches(tmp_path):
 
 
 def test_un_sens_indecidable_n_est_pas_une_ambiguite(tmp_path):
-    """« Dundee Utd v Dundee » : la source n'a qu'UN match, mais la nouvelle
+    """« River v River Plate » : la source n'a qu'UN match, mais la nouvelle
     règle d'orientation ne sait pas dans quel sens le lire. Ce n'est pas « deux
     matchs de la source qui se ressemblent » — c'est un choix volontaire."""
-    d = _verdict(tmp_path, _notre("Dundee Utd", "Dundee", Q),
-                 [_fixture("Dundee United", "Dundee", Q)])
+    d = _verdict(tmp_path, _notre("River", "River Plate", Q),
+                 [_fixture("River Plate", "River Plate Montevideo", Q)])
     assert d["verdict"] == rm.ORIENTATION, d

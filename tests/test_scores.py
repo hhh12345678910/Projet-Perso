@@ -310,13 +310,35 @@ def test_l_ancienne_regle_retournait_ces_matchs():
 
 def test_dundee_utd_n_est_plus_regle_a_l_envers():
     """Même ordre, abréviation « Utd » : l'ancienne règle retournait le score
-    (Dundee United vainqueur 2-1 stocké comme Dundee vainqueur). La nouvelle,
-    faute de pouvoir trancher, laisse le match sans résultat."""
+    (Dundee United vainqueur 2-1 stocké comme Dundee vainqueur). La nouvelle
+    le lit dans l'ordre de la source : « Utd » est « United »."""
     ours = [_ours("Dundee Utd", "Dundee", T)]
     res = [_res("Dundee United", "Dundee", T, winner="home", hs=2, aws=1)]
     bindings, counters = bind_results(ours, res, sport="soccer")
-    assert bindings == []
-    assert counters["orientation_indecidable"] == 1
+    _, r = bindings[0]
+    assert (r.home_score, r.away_score, r.winner) == (2, 1, "home")
+    assert counters["orientation_indecidable"] == 0
+    assert counters["orientation_corrigee"] == 0
+
+
+def test_le_derby_de_dundee_du_22_08_est_lu_dans_le_bon_sens():
+    """Le cas réel trouvé par `verif_resultats` (27/09) : stocké 2-0 par
+    l'ancienne règle, alors que la source disait « Dundee Utd 0-2 Dundee »
+    dans le même ordre que nous. Indécidable pour la première version de la
+    nouvelle règle (l'appariement penchait à tort, les noms entiers
+    s'y opposaient) ; « Utd » = « United » et « FC » retiré, les deux noms
+    sont identiques."""
+    ours = [_ours("Dundee United", "Dundee FC", T)]
+    res = [_res("Dundee Utd", "Dundee", T, winner="away", hs=0, aws=2)]
+    bindings, counters = bind_results(ours, res, sport="soccer")
+    _, r = bindings[0]
+    assert (r.home_score, r.away_score, r.winner) == (0, 2, "away")
+    assert counters["orientation_corrigee"] == 0
+    inverse = [_res("Dundee", "Dundee Utd", T, winner="home", hs=2, aws=0)]
+    bindings, counters = bind_results(ours, inverse, sport="soccer")
+    _, r = bindings[0]
+    assert (r.home_score, r.away_score, r.winner) == (0, 2, "away")
+    assert counters["orientation_corrigee"] == 1
 
 
 def test_un_derby_a_l_envers_est_remis_d_aplomb():
@@ -367,7 +389,9 @@ def test_un_tennis_a_jeux_egaux_n_est_pas_sans_cote():
 # jamais faux — au pire, non réglé.
 DERBIES = [
     (("Man Utd", "Man City"), ("Manchester United", "Manchester City"), True),
-    (("Sheffield Utd", "Sheffield Wed"), ("Sheffield United", "Sheffield Wednesday"), False),
+    (("Sheffield Utd", "Sheffield Wed"), ("Sheffield United", "Sheffield Wednesday"), True),
+    (("Dundee United", "Dundee FC"), ("Dundee Utd", "Dundee"), True),
+    (("Inter San Carlos", "AD San Carlos"), ("Inter San Carlos", "San Carlos"), True),
     (("Paris FC", "Paris Saint-Germain"), ("Paris FC", "Paris Saint Germain"), True),
     (("Dundee United", "Dundee"), ("Dundee United", "Dundee"), True),
     (("Inter", "Inter Miami"), ("Inter", "Inter Miami"), True),
@@ -478,3 +502,31 @@ def test_des_noms_identiques_s_orientent_sans_hesiter(nous):
     ev = _ours(*nous, T)
     assert _orientation(ev, _res(*nous, T)) == "direct"
     assert _orientation(ev, _res(nous[1], nous[0], T)) == "inverse"
+
+
+@pytest.mark.parametrize("nous, source", [
+    (("Rcd Mallorca", "Ud Las Palmas"), ("Mallorca", "Las Palmas")),
+    (("Man Utd", "Sheffield Utd"), ("Man United", "Sheffield United")),
+    (("Ik Sirius", "If Elfsborg"), ("Sirius", "Elfsborg")),
+])
+def test_les_noms_canoniques_identiques_s_orientent(nous, source):
+    ev = _ours(*nous, T)
+    assert _orientation(ev, _res(*source, T)) == "direct"
+    assert _orientation(ev, _res(source[1], source[0], T)) == "inverse"
+
+
+@pytest.mark.parametrize("nous, source", [
+    # Deux clubs au même nom canonique : les deux sens sont égaux, rien
+    # ne tranche par l'égalité.
+    (("AD San Carlos", "San Carlos"), ("San Carlos", "CA San Carlos")),
+    # Un seul camp identique ne suffit JAMAIS à l'égalité (Gimnasia : la
+    # source peut donner à l'un le nom que nous donnons à l'autre).
+    (("Gimnasia", "Gimnasia Mendoza"), ("Gimnasia", "Gimnasia LP")),
+])
+def test_l_egalite_canonique_ne_tranche_pas_seule_un_cas_ambigu(nous, source):
+    from src.scores import _nom_canonique
+    ev = _ours(*nous, T)
+    x = tuple(map(_nom_canonique, nous + source))
+    assert not ((x[0], x[1]) == (x[2], x[3]) and (x[0], x[1]) != (x[3], x[2]))
+    assert not ((x[0], x[1]) == (x[3], x[2]) and (x[0], x[1]) != (x[2], x[3]))
+    assert _orientation(ev, _res(*source, T)) in ("direct", None)

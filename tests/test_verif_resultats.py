@@ -66,10 +66,30 @@ def test_un_resultat_bien_oriente_est_confirme(tmp_path):
 
 def test_dundee_utd_retourne_par_l_ancienne_regle_est_signale(tmp_path):
     """Même ordre, « Utd » : l'ancienne règle a retourné le score (2-1 de la
-    source stocké 1-2). La nouvelle ne sait pas trancher : INDÉCIDABLE — et
-    c'est bien un résultat faux en base."""
+    source stocké 1-2). La nouvelle le lit dans l'ordre de la source (« Utd »
+    = « United ») : INVERSÉ, et la correction est connue."""
     d = _audit(tmp_path, [("k", "Dundee Utd", "Dundee", "L", 1, 2, "away")],
                [_fixture("Dundee United", "Dundee", hs=2, as_=1)])
+    assert d["k"]["verdict"] == vr.INVERSE, d
+    assert d["k"]["corrige"] == (2, 1)
+
+
+def test_le_derby_de_dundee_du_22_08_est_un_inverse_probable(tmp_path):
+    """Le cas réel de la VM (27/09) : « Dundee United v Dundee FC » stocké
+    2-0, la source « Dundee Utd 0-2 Dundee » dans le même ordre. Indécidable
+    avant `_nom_canonique` — désormais INVERSÉ, corrigé 0-2."""
+    d = _audit(tmp_path, [("k", "Dundee United", "Dundee FC", "L", 2, 0, "home")],
+               [_fixture("Dundee Utd", "Dundee", hs=0, as_=2)])
+    assert d["k"]["verdict"] == vr.INVERSE, d
+    assert d["k"]["corrige"] == (0, 2)
+
+
+def test_un_sens_que_rien_ne_tranche_est_indecidable(tmp_path):
+    """« River v River Plate » contre « River Plate v River Plate
+    Montevideo » : les deux avis sont trop faibles, le résultat stocké est
+    peut-être à l'envers — INDÉCIDABLE, proposé au retrait."""
+    d = _audit(tmp_path, [("k", "River", "River Plate", "L", 1, 2, "away")],
+               [_fixture("River Plate", "River Plate Montevideo", hs=2, as_=1)])
     assert d["k"]["verdict"] == vr.INDECIDABLE, d
 
 

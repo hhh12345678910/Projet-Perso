@@ -434,8 +434,8 @@ def test_un_sens_indecidable_est_annonce_hors_dry_run(tmp_path, monkeypatch):
     d = datetime.now(timezone.utc).date() - timedelta(days=2)
     db = _db_path(tmp_path)
     st = Storage(db)
-    ek = "evd::dundeeutd__vs__dundee"
-    st.upsert_event(ek, "soccer", "Scotland - Premiership", "Dundee Utd", "Dundee",
+    ek = "evd::river__vs__riverplate"
+    st.upsert_event(ek, "soccer", "Uruguay - Primera Division", "River", "River Plate",
                     datetime(d.year, d.month, d.day, 15, tzinfo=timezone.utc))
     st.insert_value_bet(ValueBet(
         event_key=ek, book=Book.UNIBET_BE, market=MarketType.H2H,
@@ -447,7 +447,7 @@ def test_un_sens_indecidable_est_annonce_hors_dry_run(tmp_path, monkeypatch):
     (dossier / f"{d.isoformat()}.json").write_text(json.dumps({"response": [{
         "fixture": {"date": f"{d.isoformat()}T15:00:00+00:00", "status": {"short": "FT"}},
         "league": {"name": "Premiership"},
-        "teams": {"home": {"name": "Dundee United"}, "away": {"name": "Dundee"}},
+        "teams": {"home": {"name": "River Plate"}, "away": {"name": "River Plate Montevideo"}},
         "score": {"fulltime": {"home": 2, "away": 1}}, "goals": {"home": 2, "away": 1}}]}))
     monkeypatch.setenv("SCORES_FOOTBALL_BRIDGE", "1")
     monkeypatch.setenv("SCORES_INGEST_DIR", str(tmp_path / "scores"))
