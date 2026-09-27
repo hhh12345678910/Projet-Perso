@@ -154,13 +154,27 @@ def test_un_resultat_introuvable_n_entre_pas_dans_l_epreuve(tmp_path):
 
 
 def test_un_doublon_exact_n_est_pas_un_sosie(tmp_path):
-    """Le même match servi deux fois (le second non terminé) : caché avec le
-    vrai, jamais compté comme une erreur."""
+    """Le même match servi deux fois, terminé les deux fois : nous à 15 h, le
+    vrai à 15 h 08, son doublon à 15 h 15 (hors de NOTRE créneau, dans celui
+    du vrai). Caché avec le vrai : sans `_doublons`, les règles H le
+    comptaient comme une erreur (revue du 27/09 : ce test ne prouvait rien
+    avec un doublon non terminé)."""
     b = _banc(tmp_path,
               reglees=[("k", "Arsenal", "Chelsea", "L", 2, 1, "home", "api-football")],
-              fixtures=[_fx(1, "Arsenal", "Chelsea"),
-                        _fx(2, "Arsenal", "Chelsea", statut="NS")])
+              fixtures=[_fx(1, "Arsenal", "Chelsea", quand="2026-09-20T15:08:00+00:00"),
+                        _fx(2, "Arsenal", "Chelsea", quand="2026-09-20T15:15:00+00:00")])
     assert b.epreuves == 1 and _codes(b.erreurs) == {}
+
+
+def test_la_production_qui_prend_toujours_un_sosie_ne_fait_pas_planter(tmp_path, capsys):
+    """Une seule épreuve, et la production y prend le sosie : p = 1."""
+    b = _banc(tmp_path,
+              reglees=[("k", "Deportivo Cuenca", "Macara", "L", 2, 1, "home",
+                        "api-football")],
+              fixtures=[_fx(1, "Deportivo Cuenca", "Macara"),
+                        _fx(2, "Deportivo Quito", "Macara", hs=0, as_=3)])
+    br.imprimer(b, J.date())
+    assert "tous les pour au plus" in capsys.readouterr().out
 
 
 # ------------------------------------------------------------- récupère ---
@@ -329,6 +343,85 @@ def test_ce_que_la_production_regle_deja_vient_avec_sa_commande(tmp_path, capsys
     b.maintenant = datetime(2026, 9, 27, 12, tzinfo=timezone.utc)
     br.imprimer(b, J.date())
     assert "results-update --days 8 --sport soccer" in capsys.readouterr().out
+
+
+# ---------------------------------------------------- les gardes des règles ---
+#
+# Revue du 27/09 : retirer la marge, le plancher par camp ou le garde de sens
+# ne faisait tomber AUCUN test. Ce sont pourtant eux qui rendent une règle
+# activable.
+
+def test_la_classe_ne_se_lit_pas_a_l_envers(tmp_path):
+    """« Union Santa Fe v Colon » (sans ligue) contre le seul match féminin
+    « Union W 2-1 Colon Santa Fe W » : avec la classe de chaque côté,
+    l'appariement valait 0 et seuls les noms entiers jugeaient — C écrivait
+    1-2. Sans la classe, les deux avis se contredisent : rien n'est écrit."""
+    b = _banc(tmp_path, manquants=[("m", "Union Santa Fe", "Colon", "")],
+              fixtures=[_fx(1, "Union", "Colon Santa Fe", hs=2, as_=1,
+                            ligue="Liga Profesional Women")])
+    assert _codes(b.recup) == {}
+
+
+def test_le_sens_se_lit_sans_la_classe_des_deux_cotes():
+    """`_sens` lui-même : avec la classe d'un seul côté, `_orientation` rend
+    « inverse » sur « Union Santa Fe v Colon » / « Union W v Colon Santa Fe W »
+    (appariement à 0, garde de contradiction muet) ; sans la classe, les deux
+    avis se contredisent : None."""
+    from src.scores import MatchResult, OurEvent, _orientation
+    t = datetime(2026, 9, 20, 15, tzinfo=timezone.utc)
+    c = {"evm": OurEvent("m", "Union Santa Fe", "Colon", t),
+         "res": MatchResult("soccer", "Union W", "Colon Santa Fe W", t, "home", 2, 1, "t")}
+    assert _orientation(c["evm"], c["res"]) == "inverse"
+    assert br._sens(c) is None
+
+
+def test_hors_de_la_zone_calibree_le_sens_doit_etre_net(tmp_path):
+    """« Sheffield United v Sheff Wed » contre « Sheff Utd 2-1 Sheffield
+    Wednesday » : 74,9 dans l'ordre, 81,4 croisé. N80 ne l'admettait que
+    croisé et l'écrivait 1-2."""
+    b = _banc(tmp_path,
+              manquants=[("m", "Sheffield United", "Sheff Wed", "England - Championship")],
+              fixtures=[_fx(1, "Sheff Utd", "Sheffield Wednesday", hs=2, as_=1)])
+    assert b.par_production == 0 and _codes(b.recup) == {}
+
+
+def test_un_rival_a_moins_de_dix_points_bloque_les_regles_n(tmp_path):
+    """« Atl. Tucuman - Dep. Maipu » (82,1) et, au même horaire, « Atl.
+    Tucuman - Dep. Moron » (77,8), non terminé : moins de 10 points d'écart,
+    N refuse — sans la marge, elle prenait le premier."""
+    b = _banc(tmp_path,
+              manquants=[("m", "Atletico Tucuman", "Deportivo Maipu", "L")],
+              fixtures=[_fx(1, "Atl. Tucuman", "Dep. Maipu", hs=1, as_=0),
+                        _fx(2, "Atl. Tucuman", "Dep. Moron", statut="NS")])
+    assert not {"N80", "N75", "N70"} & set(_codes(b.recup))
+
+
+def test_un_camp_sous_60_bloque_les_regles_n():
+    """Un camp à 100, l'autre à 50 : la moyenne passe 75, pas le plancher."""
+    c = {"dt": 0.0, "g": 75.0, "g_cotes": (100.0, 50.0), "u": 75.0, "entier": 50.0,
+         "res": None, "x": {}, "ident": ("id", "1")}
+    regle = next(g for g in br.REGLES if g.code == "N75")
+    assert br.choisir(regle, [c]) == (None, "rien")
+
+
+def test_un_sens_indecidable_n_est_jamais_ecrit(tmp_path):
+    """« River v River Plate » contre « River Plate v River Plate Montevideo » :
+    la production l'apparie et ne sait pas le lire ; aucune règle ne le
+    règle à sa place."""
+    b = _banc(tmp_path, manquants=[("m", "River", "River Plate", "L")],
+              fixtures=[_fx(1, "River Plate", "River Plate Montevideo", hs=2, as_=1)])
+    assert b.par_production == 0 and _codes(b.recup) == {}
+
+
+def test_l_exemple_dit_le_score_tel_qu_il_serait_ecrit(tmp_path, capsys):
+    b = _banc(tmp_path,
+              reglees=[("k", "Arsenal", "Chelsea", "L", 2, 1, "home", "api-football")],
+              manquants=[("m", "Deportivo Maipu", "Atletico Tucuman", "L")],
+              fixtures=[_fx(1, "Atl. Tucuman", "Dep. Maipu", hs=1, as_=0),
+                        _fx(2, "Arsenal", "Chelsea")])
+    br.imprimer(b, J.date())
+    out = capsys.readouterr().out
+    assert "écrit chez nous : 0-1 (source 1-0, sens inverse)" in out
 
 
 def test_un_match_non_termine_ne_se_recupere_jamais(tmp_path):

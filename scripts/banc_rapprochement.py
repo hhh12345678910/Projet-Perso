@@ -96,8 +96,8 @@ from scripts.verif_resultats import charger as charger_regles  # noqa: E402
 from src.config import load_env_file  # noqa: E402
 from src.matcher import (class_marker_from_league, team_similarity,  # noqa: E402
                          with_class_marker)
-from src.scores import (_orientation, _sans_cote, bind_results,  # noqa: E402
-                        tolerance_for_scores)
+from src.scores import (TRANCHE_APPARIEMENT, _nom_entier, _orientation,  # noqa: E402
+                        _sans_cote, bind_results, tolerance_for_scores)
 
 
 @dataclass(frozen=True)
@@ -264,10 +264,11 @@ def _decrire(evm, oh: str, oa: str, x: dict, resultats: dict, pays: str) -> dict
     """Ce qu'une règle regarde d'un candidat. Le sens de lecture et le pays ne
     sont calculés que pour le candidat retenu (`_sens`, `_pays_ok`)."""
     h, a = evm.home, evm.away
-    g_cotes = max((team_similarity(h, x["th"]), team_similarity(a, x["ta"])),
-                  (team_similarity(h, x["ta"]), team_similarity(a, x["th"])), key=sum)
-    u_cotes = max((_flou(oh, x["sh"]), _flou(oa, x["sa"])),
-                  (_flou(oh, x["sa"]), _flou(oa, x["sh"])), key=sum)
+    g_dir = (team_similarity(h, x["th"]), team_similarity(a, x["ta"]))
+    g_inv = (team_similarity(h, x["ta"]), team_similarity(a, x["th"]))
+    u_dir = (_flou(oh, x["sh"]), _flou(oa, x["sa"]))
+    u_inv = (_flou(oh, x["sa"]), _flou(oa, x["sh"]))
+    g_cotes = max(g_dir, g_inv, key=sum)
     entier = max(min(fuzz.ratio(oh, x["sh"]), fuzz.ratio(oa, x["sa"])),
                  min(fuzz.ratio(oh, x["sa"]), fuzz.ratio(oa, x["sh"])))
     ident = ident_match(x)
@@ -275,19 +276,59 @@ def _decrire(evm, oh: str, oa: str, x: dict, resultats: dict, pays: str) -> dict
         "x": x, "ident": ident, "evm": evm, "pays": pays,
         "dt": abs((x["t"] - evm.start_time).total_seconds()) / 60,
         "g": sum(g_cotes) / 2, "g_cotes": g_cotes,
-        "u": sum(u_cotes) / 2, "entier": entier,
+        "u": max(sum(u_dir), sum(u_inv)) / 2, "entier": entier,
+        # Le sens que DIT l'appariement, et de combien : avec la classe (N,
+        # H) ou sans (C). Voir `_sens_sur`.
+        "sens_g": "direct" if sum(g_dir) >= sum(g_inv) else "inverse",
+        "ecart_g": abs(sum(g_dir) - sum(g_inv)) / 2,
+        "sens_u": "direct" if sum(u_dir) >= sum(u_inv) else "inverse",
+        "ecart_u": abs(sum(u_dir) - sum(u_inv)) / 2,
         "res": resultats.get((ident, x["t"])),
     }
 
 
 def _sens(c: dict) -> "str | None":
-    """"direct", "inverse", ou None — `scores._orientation`, comme la
-    production ; un nul symétrique se lit dans les deux sens."""
+    """"direct", "inverse", ou None — `scores._orientation`, lue sur les noms
+    SANS leur classe des deux côtés ; un nul symétrique se lit dans les deux
+    sens.
+
+    ⚠️ La classe est retirée des deux côtés pour la règle C (revue du 27/09).
+    Nos noms et ceux du candidat n'y ont pas la même classe : `team_similarity`
+    rend 0 sur les quatre paires, l'avis d'appariement de `_orientation` vaut
+    toujours 0, et son garde « les deux avis se contredisent → None » ne peut
+    plus jouer. « Union Santa Fe v Colon » contre « Union W 2-1 Colon Santa Fe
+    W » se lisait alors à l'envers (1-2). Pour N et H, les classes sont les
+    mêmes : les retirer ne change rien."""
     if c["res"] is None:
         return None
-    sens = _orientation(c["evm"], c["res"])
-    if sens is None and _sans_cote(c["res"]):
+    ev, res = c["evm"], c["res"]
+    sens = _orientation(replace(ev, home=_nom_entier(ev.home), away=_nom_entier(ev.away)),
+                        replace(res, home=_nom_entier(res.home),
+                                away=_nom_entier(res.away)))
+    if sens is None and _sans_cote(res):
         return "direct"
+    return sens
+
+
+def _sens_sur(regle: Regle, c: dict) -> "str | None":
+    """Le sens de lecture, seulement s'il est SÛR pour cette règle.
+
+    `_orientation` a été calibrée sur des paires appariées à 85 et plus. Les
+    règles N et C l'appliquent plus bas, où le meilleur appariement peut être
+    le croisé : « Sheffield United v Sheff Wed » contre « Sheff Utd 2-1
+    Sheffield Wednesday » vaut 74,9 dans l'ordre et 81,4 croisé — N80 ne
+    l'admettait QUE croisé, et l'écrivait 1-2 (revue du 27/09). Hors de la
+    zone calibrée, on exige donc que l'appariement dise lui-même le sens avec
+    une marge nette (`TRANCHE_APPARIEMENT`, 15 points) ET que `_orientation`
+    dise le même. Un nul symétrique se lit dans les deux sens."""
+    sens = _sens(c)
+    if sens is None or regle.critere == "horaire":
+        return sens
+    if c["res"] is not None and _sans_cote(c["res"]):
+        return sens
+    cle = "u" if regle.critere == "classe" else "g"
+    if c[f"ecart_{cle}"] < TRANCHE_APPARIEMENT or c[f"sens_{cle}"] != sens:
+        return None
     return sens
 
 
@@ -329,9 +370,10 @@ def choisir(regle: Regle, cands: list) -> tuple:
         return None, "pays"
     if best["res"] is None:
         return None, "pas réglable"
-    if _sens(best) is None:
+    sens = _sens_sur(regle, best)
+    if sens is None:
         return None, "sens"
-    return best, "ok"
+    return {**best, "sens": sens}, "ok"
 
 
 def _doublons(vrai: dict, cands: list) -> set:
@@ -372,11 +414,17 @@ class Bilan:
 
 
 def _exemple(ev, r, c) -> dict:
-    x = c["x"]
+    x, res, sens = c["x"], c.get("res"), c.get("sens")
+    ecrit = None
+    if res is not None and sens is not None:
+        ecrit = ((res.away_score, res.home_score) if sens == "inverse"
+                 else (res.home_score, res.away_score))
     return {"t": ev.start_time, "nous": f"{ev.home} - {ev.away}",
             "ligue": r["league"] or "?", "source": f"{x['th']} - {x['ta']}",
             "source_ligue": x["ligue"], "dt": c["dt"], "g": c["g"], "u": c["u"],
-            "entier": c["entier"], "event_key": r["event_key"]}
+            "entier": c["entier"], "event_key": r["event_key"],
+            "score_source": (None if res is None else (res.home_score, res.away_score)),
+            "sens": sens, "ecrit": ecrit}
 
 
 def analyser(reglees: list, manquants: list, noms: dict, joues: dict,
@@ -500,12 +548,23 @@ def _pct(n: int, d: int) -> str:
     return f"{100 * n / d:.2f} %".replace(".", ",") if d else "—"
 
 
+def _score(s) -> str:
+    return "?" if s is None or None in s else f"{s[0]:g}-{s[1]:g}"
+
+
 def _ligne_exemple(e: dict) -> str:
+    """Deux lignes : notre match, puis le match de la source — et, quand la
+    règle l'écrirait, le score TEL QU'IL SERAIT ÉCRIT chez nous et le sens
+    retenu. Sans lui, un score lu à l'envers passe inaperçu à l'œil : les
+    noms, eux, ont l'air justes."""
     t = e["t"].strftime("%Y-%m-%d %H:%M") if e.get("t") else "?"
+    ecrit = (f"\n      écrit chez nous : {_score(e['ecrit'])} (source "
+             f"{_score(e['score_source'])}, sens {e['sens']})"
+             if e.get("ecrit") else "")
     return (f"  {t}  {e['nous']}  [{str(e['ligue'])[:26]}]\n"
             f"      → {e['source']}  [{str(e['source_ligue'])[:26]}]  "
             f"écart {e['dt']:.0f} min · noms {e['g']:.0f} · sans classe {e['u']:.0f} "
-            f"· en entier {e['entier']:.0f}")
+            f"· en entier {e['entier']:.0f}{ecrit}")
 
 
 def sures(bilan: Bilan, regles=REGLES) -> list:
@@ -614,11 +673,12 @@ def imprimer(bilan: Bilan, depuis: date, regles=REGLES) -> None:
           f"pire, la valeur affichée.")
     if prod:
         p = prod / n
+        grandeur = (f"≈ {_nombre(p / (1 - p) * m)}" if p < 1 else "tous les")
         print(f"\n  ⚠️ La PRODUCTION ACTUELLE, quand le vrai match manque à la source, "
               f"prend un sosie dans\n  {prod} cas sur {n} ({_nombre(100 * p)} %). Ces "
               f"résultats faux-là sont DÉJÀ en base, parmi les matchs\n  réglés — le "
-              f"banc ne peut pas les désigner. Ordre de grandeur : ≈ "
-              f"{_nombre(p / (1 - p) * m)} pour au plus\n  {m} matchs absents non liés. Les cas "
+              f"banc ne peut pas les désigner. Ordre de grandeur : {grandeur} pour "
+              f"au plus\n  {m} matchs absents non liés. Les cas "
               f"listés plus bas sont des SIMULATIONS : leur résultat en base est juste.")
 
     utiles = [g for g in sures(bilan, regles) if bilan.recup[g.code] and nr]

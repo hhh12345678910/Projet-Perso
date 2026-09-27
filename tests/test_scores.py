@@ -505,14 +505,22 @@ def test_des_noms_identiques_s_orientent_sans_hesiter(nous):
 
 
 @pytest.mark.parametrize("nous, source", [
-    (("Rcd Mallorca", "Ud Las Palmas"), ("Mallorca", "Las Palmas")),
-    (("Man Utd", "Sheffield Utd"), ("Man United", "Sheffield United")),
-    (("Ik Sirius", "If Elfsborg"), ("Sirius", "Elfsborg")),
+    # Chacune de ces paires reste SANS sens pour les marges calibrées (revue du
+    # 27/09 : les cas d'avant, Mallorca ou Sirius, s'orientaient déjà sans
+    # `_nom_canonique` — le test ne passait jamais par elle).
+    (("Dundee United", "Dundee FC"), ("Dundee Utd", "Dundee")),
+    (("Hartlepool Utd", "Hartlepool Town"), ("Hartlepool United", "Hartlepool Town")),
+    (("CA Independiente", "Independiente Rivadavia"), ("Independiente", "Independiente Rivadavia")),
+    (("Sandvikens IF", "Sandviken"), ("Sandvikens", "IF Sandviken")),
 ])
-def test_les_noms_canoniques_identiques_s_orientent(nous, source):
+def test_les_noms_canoniques_identiques_s_orientent(nous, source, monkeypatch):
     ev = _ours(*nous, T)
     assert _orientation(ev, _res(*source, T)) == "direct"
     assert _orientation(ev, _res(source[1], source[0], T)) == "inverse"
+    # La preuve que c'est bien l'égalité canonique qui tranche.
+    import src.scores as sc
+    monkeypatch.setattr(sc, "_nom_canonique", sc._nom_entier)
+    assert _orientation(ev, _res(*source, T)) is None
 
 
 @pytest.mark.parametrize("nous, source", [
