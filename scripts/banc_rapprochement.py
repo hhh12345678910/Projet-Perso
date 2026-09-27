@@ -18,16 +18,23 @@ connue), le banc retrouve le match de la source que la production a retenu,
 le CACHE, et rejoue : la production d'abord, puis chaque règle assouplie.
 Tout ce qu'une règle trouve alors est une erreur qu'elle aurait écrite.
 
-Trois mesures par règle :
-* À L'AVEUGLE — le vrai match caché : combien de fois elle en prend un autre ;
-* AUTRE CHOIX — le vrai match présent : combien de fois elle en choisit un
-  autre ;
-* RÉCUPÈRE — les matchs aujourd'hui sans résultat qu'elle réglerait, APRÈS la
-  production (jamais à sa place), dont tes paris joués.
+Deux mesures par règle :
+* À L'AVEUGLE — le vrai match caché : combien de fois elle en prend un autre.
+  Une règle ne tourne qu'APRÈS la production : elle n'est éprouvée que là où
+  la production, elle, n'a rien pris. Un match de la source sous plusieurs de
+  nos clés (horaire révisé) ne fait qu'une épreuve ;
+* RÉCUPÈRE — les matchs aujourd'hui sans résultat qu'elle réglerait, dont tes
+  paris joués.
 
-Une règle n'est SÛRE qu'à 0 erreur à l'aveugle et 0 autre choix. Zéro erreur
-sur N épreuves ne prouve pas un taux nul : au seuil de 95 %, il reste sous
-3/N (la « règle de trois »).
+Une règle n'est SÛRE qu'à 0 erreur à l'aveugle. Zéro erreur sur N épreuves ne
+prouve pas un taux nul : au seuil de 95 %, il reste sous 3/N (la « règle de
+trois »). Et plusieurs règles sûres ensemble REFUSENT un match pour lequel
+elles choisissent deux matchs différents de la source (`ensemble`) : l'une des
+deux écrirait un score faux.
+
+(Pas de mesure « le vrai match présent, la règle en choisit un autre » : sur
+un match que la production a lié, le vrai match est le meilleur du créneau et
+un rival de chaque règle — elle vaut 0 par construction.)
 
 Les règles essayées, chacune seule (l'ordre de tes points de contrôle :
 l'horaire, les noms, la classe) :
@@ -322,15 +329,25 @@ def _doublons(vrai: dict, cands: list) -> set:
 
 class Bilan:
     def __init__(self):
-        self.epreuves = 0
+        self.epreuves = 0              # matchs de la source éprouvés (un par match)
+        self.epreuves_regles = 0       # … où la production n'a pas pris de sosie
         self.hors_epreuve = 0          # saisis/importés, ou non retrouvés
+        self.cles_en_double = 0        # autre clé d'un match déjà éprouvé
         self.manquants = 0
         self.par_production = 0        # manquants que la production lierait déjà
+        self.sans_fichier = 0          # manquants dont la journée n'a pas de fichier
         self.reglees = 0               # résultats de football en base
         self.erreurs = defaultdict(list)    # code → [exemple]
-        self.autres = defaultdict(list)     # code → [exemple]
         self.recup = defaultdict(list)      # code → [(exemple, paris joués)]
-        self.recup_par_match: dict = {}     # event_key → {codes}
+        self.choix: dict = {}               # event_key → {code: (identité, exemple)}
+        self.joues: dict = {}               # event_key → paris joués
+        self._vus: set = set()
+
+    @property
+    def tournent(self) -> int:
+        """Les manquants sur lesquels une règle assouplie tournerait : pas liés
+        par la production, et dont la journée a un fichier du pont."""
+        return self.manquants - self.par_production - self.sans_fichier
 
 
 def _exemple(ev, r, c) -> dict:
@@ -360,6 +377,7 @@ def analyser(reglees: list, manquants: list, noms: dict, joues: dict,
                 bilan.hors_epreuve += 1
             else:
                 bilan.manquants += 1
+                bilan.sans_fichier += 1
     tous.sort(key=lambda z: (z[0], z[1]))
     for n, (t, manquant, r) in enumerate(tous, 1):
         fen.oublier(t.date() - timedelta(days=1))
@@ -367,6 +385,12 @@ def analyser(reglees: list, manquants: list, noms: dict, joues: dict,
         marque = class_marker_from_league(ev.league)
         evm = replace(ev, home=with_class_marker(ev.home, marque),
                       away=with_class_marker(ev.away, marque))
+        if manquant and not (dossier / f"{t.date().isoformat()}.json").exists():
+            # Journée jamais récupérée, ou pas encore : aucune règle n'y
+            # tourne. Hors des « faux attendus », pas hors de la couverture.
+            bilan.manquants += 1
+            bilan.sans_fichier += 1
+            continue
         cands = fen.candidats(evm)
         lot = fen.lot(t, tol)
         if manquant:
@@ -384,12 +408,14 @@ def _manquant(bilan, r, ev, cands, lot, joues, regles) -> None:
     if liens:
         bilan.par_production += 1
         return
+    k = r["event_key"]
     for regle in regles:
         best, _raison = choisir(regle, cands)
         if best is not None:
-            bilan.recup[regle.code].append(
-                (_exemple(ev, r, best), len(joues.get(r["event_key"], []))))
-            bilan.recup_par_match.setdefault(r["event_key"], set()).add(regle.code)
+            ex = _exemple(ev, r, best)
+            bilan.recup[regle.code].append((ex, len(joues.get(k, []))))
+            bilan.choix.setdefault(k, {})[regle.code] = (best["ident"], ex)
+            bilan.joues[k] = len(joues.get(k, []))
 
 
 def _epreuve(bilan, r, ev, evm, cands, lot, source, tol, regles) -> None:
@@ -402,12 +428,14 @@ def _epreuve(bilan, r, ev, evm, cands, lot, source, tol, regles) -> None:
     if vrai is None:
         bilan.hors_epreuve += 1
         return
+    # Un match sous plusieurs clés (horaire révisé) : une seule épreuve. Deux
+    # épreuves sur les mêmes candidats ne sont pas indépendantes, et la borne
+    # « 3 sur N » le suppose.
+    if vrai["ident"] in bilan._vus:
+        bilan.cles_en_double += 1
+        return
+    bilan._vus.add(vrai["ident"])
     bilan.epreuves += 1
-    # Le vrai match présent : la règle, seule, en choisit-elle un autre ?
-    for regle in regles:
-        best, _raison = choisir(regle, cands)
-        if best is not None and best["ident"] != vrai["ident"]:
-            bilan.autres[regle.code].append(_exemple(ev, r, best))
     # Le vrai match CACHÉ : la production d'abord, puis chaque règle.
     caches = _doublons(vrai, cands)
     reste = [c for c in cands if c["ident"] not in caches]
@@ -422,7 +450,10 @@ def _epreuve(bilan, r, ev, evm, cands, lot, source, tol, regles) -> None:
              "source": f"{liens[0][1].home} - {liens[0][1].away}",
              "source_ligue": "?", "dt": 0.0, "g": 0.0, "u": 0.0, "entier": 0.0,
              "event_key": r["event_key"]})
+        # La production aurait écrit ce sosie : une règle assouplie, qui ne
+        # tourne qu'APRÈS elle, n'aurait jamais été consultée.
         return
+    bilan.epreuves_regles += 1
     for regle in regles:
         best, _raison = choisir(regle, reste)
         if best is not None:
@@ -444,9 +475,27 @@ def _ligne_exemple(e: dict) -> str:
 
 
 def sures(bilan: Bilan, regles=REGLES) -> list:
-    """Les règles à 0 erreur à l'aveugle et 0 autre choix."""
-    return [g for g in regles
-            if not bilan.erreurs[g.code] and not bilan.autres[g.code]]
+    """Les règles à 0 erreur à l'aveugle."""
+    return [g for g in regles if not bilan.erreurs[g.code]]
+
+
+def ensemble(bilan: Bilan, regles) -> tuple:
+    """(matchs récupérés, désaccords) quand ces règles tournent ensemble.
+
+    Deux règles qui choisissent deux matchs DIFFÉRENTS de la source pour un
+    même match : l'une des deux écrirait un score faux, et rien ne dit
+    laquelle. Ensemble, elles refusent — c'est ce que ferait la production."""
+    codes = {g.code for g in regles}
+    pris, desaccords = [], []
+    for k, choix in bilan.choix.items():
+        vus = {c: v for c, v in choix.items() if c in codes}
+        if not vus:
+            continue
+        if len({ident for ident, _ex in vus.values()}) == 1:
+            pris.append(k)
+        else:
+            desaccords.append((k, vus))
+    return pris, desaccords
 
 
 def _nombre(x: float) -> str:
@@ -454,65 +503,84 @@ def _nombre(x: float) -> str:
 
 
 def imprimer(bilan: Bilan, depuis: date, regles=REGLES) -> None:
-    n = bilan.epreuves
+    n, nr = bilan.epreuves, bilan.epreuves_regles
     print(f"BANC D'ESSAI — règles de rapprochement assouplies, football, matchs à "
           f"partir du {depuis.isoformat()} (UTC)\n")
-    print(f"Épreuve à l'aveugle : {n} matchs déjà réglés par la source, le vrai "
-          f"match CACHÉ.\nTout ce qu'une règle trouve alors est une erreur "
-          f"qu'elle aurait écrite.")
-    if bilan.hors_epreuve:
-        print(f"({bilan.hors_epreuve} match(s) hors épreuve : saisis ou importés, "
-              f"ou non retrouvés dans les fichiers.)")
+    print(f"Épreuve à l'aveugle : {n} matchs de la source déjà réglés, le vrai match "
+          f"CACHÉ.\nTout ce qu'une règle trouve alors est une erreur qu'elle aurait "
+          f"écrite.")
+    if bilan.hors_epreuve or bilan.cles_en_double:
+        print(f"({bilan.hors_epreuve} hors épreuve : saisis ou importés, ou non "
+              f"retrouvés dans les fichiers ; {bilan.cles_en_double} autre(s) clé(s) "
+              f"d'un match déjà éprouvé.)")
+    m = bilan.tournent
     print(f"\nMatchs finis sans résultat : {bilan.manquants}"
           + (f" — dont {bilan.par_production} que la production réglerait déjà "
-             f"(relancer results-update)" if bilan.par_production else ""))
+             f"(relancer results-update)" if bilan.par_production else "")
+          + (f", {bilan.sans_fichier} sans fichier du pont" if bilan.sans_fichier else "")
+          + f".\nUne règle assouplie tournerait sur les {m} autres.")
     if not n:
         print("\nAucune épreuve possible : aucun résultat de la source retrouvé "
               "dans les fichiers du pont.")
         return
-    # Les matchs sur lesquels une règle assouplie tournerait : les manquants
-    # que la production ne lie pas. Son taux à l'aveugle s'y applique.
-    m = bilan.manquants - bilan.par_production
     prod = len(bilan.erreurs["production"])
     larg = max(len(g.titre) for g in regles) + 6
-    print(f"\n  {'':{larg}}  RÉCUPÈRE    À L'AVEUGLE       AUTRE   FAUX ATTENDUS")
-    print(f"  {'':{larg}}   (joués)   erreurs/épreuves  CHOIX   sur {m:<6}      VERDICT")
-    print(f"  {'production actuelle (référence)':{larg}}  {'—':>9}   {prod:>6} / {n:<7}  "
-          f"{'—':>5}   {'—':<13} —")
+    print(f"\n  {'':{larg}}  RÉCUPÈRE   À L'AVEUGLE         FAUX ATTENDUS")
+    print(f"  {'':{larg}}   (joués)   erreurs / épreuves  sur {m:<9} VERDICT")
+    print(f"  {'production actuelle (référence)':{larg}}  {'—':>9}   {prod:>6} / {n:<9}  "
+          f"{'—':<13} —")
     for g in regles:
         rec = bilan.recup[g.code]
         joues = sum(1 for _e, j in rec if j)
-        err, aut = len(bilan.erreurs[g.code]), len(bilan.autres[g.code])
-        if err or aut:
-            verdict = "à écarter"
-            attendus = f"≈ {_nombre(err / n * m)}"
+        err = len(bilan.erreurs[g.code])
+        if not nr:
+            attendus, verdict = "?", "non éprouvée"
+        elif err:
+            attendus, verdict = f"≈ {_nombre(err / nr * m)}", "à écarter"
         else:
+            attendus = f"< {_nombre(3 / nr * m)}"
             verdict = "SÛRE" if rec else "sûre, inutile"
-            attendus = f"< {_nombre(3 / n * m)}"
         print(f"  {g.code:4} {g.titre:{larg - 5}}  {len(rec):>4} ({joues:>3})"
-              f"   {err:>6} / {n:<7}  {aut:>5}   {attendus:<13} {verdict}")
-    print(f"\n  FAUX ATTENDUS : les résultats faux que la règle écrirait sur les {m} "
-          f"matchs où elle tournerait,\n  à son taux mesuré à l'aveugle. À 0 erreur, "
-          f"la borne à 95 % : moins de 3 sur {n} épreuves.")
+              f"   {err:>6} / {nr:<9}  {attendus:<13} {verdict}")
+    print(f"\n  Les règles ne tournent qu'APRÈS la production : elles sont éprouvées "
+          f"sur les {nr} matchs où,\n  le vrai match caché, la production n'a rien "
+          f"pris. FAUX ATTENDUS : les résultats faux qu'une\n  règle écrirait sur les "
+          f"{m} matchs où elle tournerait, à son taux mesuré. À 0 erreur, la borne\n"
+          f"  à 95 % : moins de 3 sur {nr}. SÛRE ne veut donc pas dire « zéro » : au "
+          f"pire, la valeur affichée.")
     if prod:
-        print(f"\n  ⚠️ La PRODUCTION ACTUELLE prend un sosie dans {prod} cas sur {n} "
-              f"quand le vrai match manque\n  à la source : c'est le taux auquel elle "
-              f"écrit DÉJÀ des résultats faux sur les matchs absents\n  (de l'ordre "
-              f"de {_nombre(prod / n * m)} sur {m}). Ses cas sont listés plus bas.")
+        p = prod / n
+        print(f"\n  ⚠️ La PRODUCTION ACTUELLE, quand le vrai match manque à la source, "
+              f"prend un sosie dans\n  {prod} cas sur {n} ({_nombre(100 * p)} %). Ces "
+              f"résultats faux-là sont DÉJÀ en base, parmi les matchs\n  réglés — le "
+              f"banc ne peut pas les désigner. Ordre de grandeur : ≈ "
+              f"{_nombre(p / (1 - p) * m)} pour {m} matchs\n  absents non liés. Les cas "
+              f"listés plus bas sont des SIMULATIONS : leur résultat en base est juste.")
 
-    utiles = [g for g in sures(bilan, regles) if bilan.recup[g.code]]
+    utiles = [g for g in sures(bilan, regles) if bilan.recup[g.code] and nr]
     if utiles:
-        codes = {g.code for g in utiles}
-        ensemble = [k for k, v in bilan.recup_par_match.items() if v & codes]
+        pris, desaccords = ensemble(bilan, utiles)
         print(f"\n  Les règles SÛRES ensemble ({', '.join(g.code for g in utiles)}) : "
-              f"{len(ensemble)} match(s) récupéré(s).")
+              f"{len(pris)} match(s) récupéré(s)"
+              + (f", dont {sum(1 for k in pris if bilan.joues.get(k))} avec un pari "
+                 f"joué" if pris else "") + ".")
+        if desaccords:
+            print(f"  {len(desaccords)} match(s) où elles choisissent des matchs "
+                  f"DIFFÉRENTS de la source : refusés (listés plus bas).")
         total = bilan.reglees + bilan.manquants
         if total:
             print(f"  Couverture football (matchs finis) : "
                   f"{_nombre(100 * bilan.reglees / total)} % → "
-                  f"{_nombre(100 * (bilan.reglees + len(ensemble)) / total)} %")
+                  f"{_nombre(100 * (bilan.reglees + len(pris)) / total)} %")
+        if desaccords:
+            print(f"\n── DÉSACCORDS entre règles sûres ({len(desaccords)}) : l'une des "
+                  f"deux écrirait un score faux")
+            for _k, vus in desaccords[:EXEMPLES]:
+                for code, (_ident, ex) in sorted(vus.items()):
+                    print(f"  [{code}]" + _ligne_exemple(ex)[1:])
 
-    fautes = [("production", "production actuelle")] + [(g.code, g.titre) for g in regles]
+    fautes = [("production", "production actuelle — SIMULATION")] + [
+        (g.code, g.titre) for g in regles]
     for code, titre in fautes:
         err = bilan.erreurs[code]
         if not err:
@@ -520,14 +588,6 @@ def imprimer(bilan: Bilan, depuis: date, regles=REGLES) -> None:
         print(f"\n── ERREURS À L'AVEUGLE — {titre} ({len(err)}) : le vrai match caché, "
               f"ce qu'elle a pris à sa place")
         for e in sorted(err, key=lambda e: e["g"])[:EXEMPLES]:
-            print(_ligne_exemple(e))
-    for g in regles:
-        aut = bilan.autres[g.code]
-        if not aut:
-            continue
-        print(f"\n── AUTRE CHOIX — {g.code} {g.titre} ({len(aut)}) : le vrai match "
-              f"était là, elle en a pris un autre")
-        for e in aut[:EXEMPLES]:
             print(_ligne_exemple(e))
     for g in regles:
         rec = bilan.recup[g.code]

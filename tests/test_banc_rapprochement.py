@@ -79,7 +79,7 @@ def test_un_match_sans_sosie_ne_fait_aucune_erreur(tmp_path):
               reglees=[("k", "Arsenal", "Chelsea", "L", 2, 1, "home", "api-football")],
               fixtures=[_fx(1, "Arsenal", "Chelsea")])
     assert b.epreuves == 1 and b.hors_epreuve == 0
-    assert _codes(b.erreurs) == {} and _codes(b.autres) == {}
+    assert _codes(b.erreurs) == {}
     assert [g.code for g in br.sures(b)] == [g.code for g in br.REGLES]
 
 
@@ -94,8 +94,7 @@ def test_un_sosie_au_meme_horaire_trahit_les_regles_trop_souples(tmp_path):
                         _fx(2, "Sporting Braga", "Racing Ferrol", hs=0, as_=0)])
     assert b.epreuves == 1
     assert _codes(b.erreurs) == {"N75": 1, "N70": 1}
-    # Le vrai match présent, elles le choisissent bien : 23 points d'avance.
-    assert _codes(b.autres) == {}
+    assert b.epreuves_regles == 1
     assert "N75" not in {g.code for g in br.sures(b)}
     assert "N80" in {g.code for g in br.sures(b)}
 
@@ -112,6 +111,31 @@ def test_la_production_elle_meme_est_mesuree(tmp_path):
     assert b.epreuves == 1
     assert _codes(b.erreurs) == {"production": 1}
     assert b.erreurs["production"][0]["source"] == "Deportivo Quito - Macara"
+
+
+def test_les_regles_ne_sont_pas_eprouvees_ou_la_production_a_deja_pris(tmp_path):
+    """Là où la production prend un sosie, une règle assouplie — qui ne
+    tourne qu'après elle — n'est jamais consultée : cette épreuve ne compte
+    pas dans son dénominateur."""
+    b = _banc(tmp_path,
+              reglees=[("k", "Deportivo Cuenca", "Macara", "L", 2, 1, "home",
+                        "api-football"),
+                       ("k2", "Arsenal", "Chelsea", "L", 2, 1, "home", "api-football")],
+              fixtures=[_fx(1, "Deportivo Cuenca", "Macara"),
+                        _fx(2, "Deportivo Quito", "Macara", hs=0, as_=3),
+                        _fx(3, "Arsenal", "Chelsea")])
+    assert (b.epreuves, b.epreuves_regles) == (2, 1)
+
+
+def test_un_match_sous_deux_cles_n_est_eprouve_qu_une_fois(tmp_path):
+    """Horaire révisé : deux clés, un seul match de la source. Deux épreuves
+    sur les mêmes candidats ne sont pas indépendantes."""
+    b = _banc(tmp_path,
+              reglees=[("k", "Arsenal", "Chelsea", "L", 2, 1, "home", "api-football"),
+                       ("k2", "Arsenal FC", "Chelsea", "L", 2, 1, "home",
+                        "api-football")],
+              fixtures=[_fx(1, "Arsenal", "Chelsea")])
+    assert (b.epreuves, b.cles_en_double) == (1, 1)
 
 
 def test_un_resultat_saisi_n_entre_pas_dans_l_epreuve(tmp_path):
@@ -214,6 +238,34 @@ def test_la_classe_se_leve_seulement_sans_jumeau(tmp_path):
     assert _codes(b.recup) == {}
 
 
+def test_deux_regles_en_desaccord_refusent_ensemble(tmp_path, capsys):
+    """Le cas de la revue : N80 prend « Atl. Tucuman - Dep. Maipu » à 15 h
+    (1-0), H3 le même duel écrit en entier à 17 h (0-2). Chacune seule est
+    « sûre » ; ensemble, l'une écrirait un score faux — refusé, et dit."""
+    b = _banc(tmp_path,
+              manquants=[("m", "Atletico Tucuman", "Deportivo Maipu", "L")],
+              fixtures=[_fx(1, "Atl. Tucuman", "Dep. Maipu", hs=1, as_=0),
+                        _fx(2, "Atletico Tucuman", "Deportivo Maipu", hs=0, as_=2,
+                            quand="2026-09-20T17:00:00+00:00")])
+    assert {"N80", "H3"} <= set(_codes(b.recup))
+    regles = [g for g in br.REGLES if g.code in ("N80", "H3")]
+    pris, desaccords = br.ensemble(b, regles)
+    assert pris == [] and len(desaccords) == 1
+    pris, desaccords = br.ensemble(b, [g for g in br.REGLES if g.code == "N80"])
+    assert pris == ["m"] and desaccords == []
+
+
+def test_une_journee_sans_fichier_ne_compte_pas_dans_les_faux_attendus(tmp_path):
+    db, dossier = _monde(tmp_path, manquants=[
+        ("m", "Arsenal", "Chelsea", "L"),
+        ("m2", "Everton", "Fulham", "L", "2026-09-22T15:00:00+00:00")],
+        fixtures=[_fx(1, "Kontu", "LPS")])
+    manquants, noms = br.charger_manquants(str(db), J.date(),
+                                           datetime(2026, 9, 27, tzinfo=timezone.utc))
+    b = br.analyser([], manquants, noms, {}, dossier)
+    assert (b.manquants, b.sans_fichier, b.tournent) == (2, 1, 1)
+
+
 def test_un_match_non_termine_ne_se_recupere_jamais(tmp_path):
     b = _banc(tmp_path,
               manquants=[("m", "Atletico Tucuman", "Deportivo Maipu", "L")],
@@ -266,7 +318,7 @@ def test_la_sonde_complete_tourne_sur_une_base(tmp_path, capsys, monkeypatch):
     monkeypatch.setenv("SCORES_INGEST_DIR", str(tmp_path))
     br.main(["--db", str(db), "--depuis", "2026-09-01"])
     out = capsys.readouterr().out
-    assert "BANC D'ESSAI" in out and "1 matchs déjà réglés" in out
+    assert "BANC D'ESSAI" in out and "1 matchs de la source déjà réglés" in out
 
 
 def test_la_sonde_est_en_lecture_seule(tmp_path, monkeypatch):
