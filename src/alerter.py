@@ -293,6 +293,19 @@ def _equipe(nom: str, feminin: bool, sport: "str | None" = None) -> str:
     return f"{s or nom} (f)"
 
 
+def _equipe_du_pari(label: str, market, home: str, away: str) -> str:
+    """« — RSC Anderlecht » : l'équipe sur laquelle porte un pari h2h, nommée.
+
+    Avec les noms du book dans SON ordre, « home » change d'équipe d'une
+    alerte à l'autre selon qu'elle suit le book (value bet, marché en retard)
+    ou Pinnacle (CLV, relue en base). Nommer l'équipe rend chaque message
+    juste tout seul, quel que soit l'ordre (revue du 27/09)."""
+    if market in TOTALS_LIKE:
+        return ""
+    nom = {"home": home, "away": away}.get(label)
+    return f" — {_ht(nom)}" if nom else ""
+
+
 def _fragments(*cles) -> list:
     out = []
     for k in cles:
@@ -721,11 +734,17 @@ def format_clv_alert(
         # quand il les a écrits sous la même clé, dans l'ordre de Pinnacle —
         # celui du label, lui aussi relu dans ce repère.
         feminin = _est_feminin((home_norm, away_norm), (ligue_ref,), sport)
-        matchup = _matchup(_nom_pour_book(bet["book"], home_norm),
-                           _nom_pour_book(bet["book"], away_norm), feminin, sport)
+        dom, ext = (_nom_pour_book(bet["book"], home_norm),
+                    _nom_pour_book(bet["book"], away_norm))
+        matchup = _matchup(dom, ext, feminin, sport)
+        try:
+            qui = _equipe_du_pari(bet["outcome_label"], MarketType(bet["market"]), dom, ext)
+        except (KeyError, IndexError, ValueError):
+            qui = ""
         when_line = f"📅 {_format_kickoff(start)} (dans {mins_to_kickoff} min)\n"
     else:
         matchup = _ht(bet["event_key"])
+        qui = ""
         when_line = f"📅 Dans {mins_to_kickoff} min\n"
 
     try:
@@ -748,7 +767,7 @@ def format_clv_alert(
         f"{header}\n"
         f"{_sport_prefix(sport)}{matchup}\n"
         f"{when_line}"
-        f"Pari : <b>{_ht(bet['outcome_label'])}{line_suffix}</b> @ "
+        f"Pari : <b>{_ht(bet['outcome_label'])}{line_suffix}</b>{qui} @ "
         f"{float(bet['odd_taken']):.2f}\n"
         f"Ligne juste actuelle : {current_pin_odd:.2f}"
         f"{stake_line}"
@@ -775,6 +794,8 @@ def format_value_bet(bet: ValueBet, sport: str | None = None,
     # Try to extract a readable home/away + kickoff from the event_key.
     parsed = parse_event_key(bet.event_key)
     noms = _noms_du_book(bet.event_key, bet.book, bet.book_event_key)
+    label = _label_du_book(bet.outcome.label, bet.market, bet.book_swapped)
+    qui = _equipe_du_pari(label, bet.market, *noms) if noms is not None else ""
     if parsed is not None and noms is not None:
         start = parsed[0]
         feminin = _est_feminin(_fragments(bet.event_key, bet.book_event_key),
@@ -786,7 +807,6 @@ def format_value_bet(bet: ValueBet, sport: str | None = None,
         matchup = _ht(bet.event_key)
         when_line = ""
 
-    label = _label_du_book(bet.outcome.label, bet.market, bet.book_swapped)
     line_suffix = f" {bet.outcome.line}" if bet.outcome.line is not None else ""
     # Only some sources carry a competition name, so this line is conditional
     # rather than showing an empty placeholder.
@@ -841,7 +861,7 @@ def format_value_bet(bet: ValueBet, sport: str | None = None,
         f"{_sport_prefix(sport)}{matchup}\n"
         f"{league_line}"
         f"{when_line}"
-        f"Pari : <b>{_ht(label)}{line_suffix}</b> @ {bet.odd_taken:.2f} "
+        f"Pari : <b>{_ht(label)}{line_suffix}</b>{qui} @ {bet.odd_taken:.2f} "
         f"(fair {bet.fair_odd:.2f}{ref_suffix})\n"
         f"{ref_line}"
         f"{_advised_stake_line(bet.ev_pct, bet.kelly_stake_pct, bankroll)}"
@@ -1558,7 +1578,8 @@ def _edge_key(q) -> tuple:
 def format_late_market(event_key: str, book: Book, quotes: list,
                        minutes_late: float, sport: str | None = None,
                        score: tuple | None = None, is_goal: bool = False,
-                       edges: dict | None = None, ligue_ref: str | None = None) -> str:
+                       edges: dict | None = None, ligue_ref: str | None = None,
+                       swapped: bool = False) -> str:
     """Message d'un marché prématch resté ouvert sur un match commencé.
 
     `edges` donne l'écart mesuré, par cote, contre le consensus des books qui
@@ -1576,6 +1597,7 @@ def format_late_market(event_key: str, book: Book, quotes: list,
         matchup = _matchup(*noms, feminin, sport)
     else:
         matchup = _ht(event_key)
+    dom, ext = noms if noms is not None else ("", "")
     edges = edges or {}
     # Une ligne par issue retenue, la plus grosse d'abord : c'est celle-là
     # qu'on joue. Le marché seul (« totals 2.5 ») ne dit ni de quel côté ni
@@ -1586,7 +1608,8 @@ def format_late_market(event_key: str, book: Book, quotes: list,
                                    if q.outcome.line is not None else "")
         gap = edges.get(_edge_key(q))
         gap_txt = f"  <b>+{gap:.0f}%</b> vs live" if gap is not None else ""
-        lines.append(f"• {_ht(q.market.value)} <b>{_ht(label)}</b> "
+        qui = _equipe_du_pari(q.outcome.label, q.market, dom, ext) if noms else ""
+        lines.append(f"• {_ht(q.market.value)} <b>{_ht(label)}</b>{qui} "
                      f"@ {q.decimal_odd:.2f}{gap_txt}")
     best = max(edges.values(), default=None)
     # Le score change tout : « les deux équipes marquent » sur un 1-1 est déjà
@@ -1595,6 +1618,11 @@ def format_late_market(event_key: str, book: Book, quotes: list,
     # à un 0-0.
     if score is not None:
         h, a, minute = score
+        # Le score est dans l'ordre de la RÉFÉRENCE ; les noms, dans celui du
+        # book. À l'envers, « Anderlecht 2-0 » se lisait alors que Brugge
+        # menait (revue du 27/09).
+        if swapped:
+            h, a = a, h
         score_line = f"⚽ <b>Score : {_ht(h)}-{_ht(a)}</b>  ({_ht(minute)}')\n"
     else:
         score_line = "❔ Score inconnu — vérifie avant de jouer.\n"
@@ -1641,9 +1669,10 @@ def send_late_market_alerts(
             score = item[4] if len(item) > 4 else None
             is_goal = bool(item[5]) if len(item) > 5 else False
             edges = item[6] if len(item) > 6 else None
+            swapped = bool(item[7]) if len(item) > 7 else False
             text = format_late_market(ek, book, quotes, late, sport=sport,
                                       score=score, is_goal=is_goal, edges=edges,
-                                      ligue_ref=_ligue_reference(ek))
+                                      ligue_ref=_ligue_reference(ek), swapped=swapped)
             if alerter._send(text, chat_id=chat):
                 sent.append(item)
     return sent

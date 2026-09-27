@@ -145,7 +145,7 @@ def test_un_book_a_l_envers_garde_le_pari_sur_la_bonne_equipe():
     assert vb.book_swapped and vb.outcome.label == "away"
     msg = format_value_bet(vb)
     assert "RSC Anderlecht vs Club Brugge KV" in msg
-    assert "Pari : <b>home</b> @ 3.50" in msg
+    assert "Pari : <b>home</b> — RSC Anderlecht @ 3.50" in msg
 
 
 def test_les_totaux_ne_se_retournent_pas():
@@ -285,7 +285,7 @@ def test_le_marche_en_retard_montre_le_book_dans_son_ordre():
 def test_l_alerte_clv_prend_les_noms_du_book_et_le_f():
     teams.record_pair("Houston Dash W", "Orlando Pride W", Book.MERIDIAN_BE)
     ek = event_key("Houston Dash W", "Orlando Pride W", T)
-    row = {"event_key": ek, "book": "meridian_be", "line": None,
+    row = {"event_key": ek, "book": "meridian_be", "line": None, "market": "h2h",
            "outcome_label": "home", "odd_taken": 2.1, "ev_pct": 5.0,
            "kelly_pct": 1.0}
 
@@ -294,6 +294,9 @@ def test_l_alerte_clv_prend_les_noms_du_book_et_le_f():
             return super().keys()
     msg = format_clv_alert(_Row(row), 4.0, 1.9, 30)
     assert "Houston Dash (f) vs Orlando Pride (f)" in msg
+    # L'équipe est nommée : l'alerte CLV suit l'ordre de Pinnacle, le value
+    # bet celui du book — le nom rend chacune juste toute seule.
+    assert "Pari : <b>home</b> — Houston Dash W @ 2.10" in msg
 
 
 def test_le_surebet_porte_le_f():
@@ -305,3 +308,69 @@ def test_le_surebet_porte_le_f():
                  margin=0.02)
     msg = format_surebet(sb, ligue_ref="USA - National Womens Soccer League")
     assert "Houston Dash (f) vs Orlando Pride (f)" in msg
+
+
+# ------------------------------------------ marchés en retard à l'envers ---
+#
+# Revue du 27/09 : Pinnacle et Betano listent « Club Brugge – Anderlecht »,
+# Brugge mène 2-0 ; Ladbrokes liste « RSC Anderlecht – Club Brugge KV » et n'a
+# pas bougé son prématch (Anderlecht 2.80, Brugge 2.40). Le consensus mêlait
+# les repères : le « home » de Ladbrokes (Anderlecht) était comparé au « home »
+# des autres (Brugge) — alerte à +109 % sur l'équipe menée, et le score
+# s'affichait à l'envers des noms.
+
+KO = datetime(2026, 9, 1, 20, 41, tzinfo=timezone.utc)
+MAINTENANT = datetime(2026, 9, 1, 21, 11, tzinfo=timezone.utc)
+REF = event_key("Club Brugge", "Anderlecht", KO)
+LAD = event_key("RSC Anderlecht", "Club Brugge KV", KO)
+
+
+def _cote(book, ek, label, odd, live=False):
+    return OddQuote(event_key=ek, book=book, market=MarketType.H2H,
+                    outcome=Outcome(label=label), decimal_odd=odd, fetched_at=MAINTENANT,
+                    source_event_id="s", from_live_feed=live)
+
+
+def _figees(ek, book, _avant):
+    # Sous la clé de la référence : cotes stockées APRÈS réalignement, donc
+    # dans le repère de Pinnacle (home = Brugge).
+    if ek == REF and book == Book.LADBROKES_BE:
+        return {("h2h", "home", None): 2.40, ("h2h", "draw", None): 3.40,
+                ("h2h", "away", None): 2.80}
+    return {}
+
+
+def _retard():
+    from src.late_markets import find_late_markets
+    pin_ailleurs = [OddQuote(event_key=event_key("Genk", "Gand", MAINTENANT),
+                             book=Book.PINNACLE, market=MarketType.H2H,
+                             outcome=Outcome(label="home"), decimal_odd=2.0,
+                             fetched_at=MAINTENANT, source_event_id="p")]
+    soft = [_cote(Book.LADBROKES_BE, LAD, "home", 2.80),
+            _cote(Book.LADBROKES_BE, LAD, "draw", 3.40),
+            _cote(Book.LADBROKES_BE, LAD, "away", 2.40)]
+    for b in (Book.BETANO_BE, Book.STARCASINO_SPORT):
+        soft += [_cote(b, REF, "home", 1.30, True), _cote(b, REF, "draw", 5.0, True),
+                 _cote(b, REF, "away", 12.0, True)]
+    return find_late_markets(pin_ailleurs, soft, "soccer", MAINTENANT,
+                             prior_odds=_figees, recent={REF: 0.0})
+
+
+def test_le_consensus_du_marche_en_retard_compare_la_meme_equipe():
+    from src.late_markets import late_market_swapped
+    late = _retard()
+    retenues = late[(REF, Book.LADBROKES_BE)]
+    # La vraie occasion : Brugge (« away » chez Ladbrokes) figé à 2.40 alors
+    # qu'il mène 2-0 ; jamais Anderlecht, mené.
+    assert [(q.outcome.label, q.decimal_odd) for q in retenues] == [("away", 2.40)]
+    assert late_market_swapped(REF, Book.LADBROKES_BE)
+
+
+def test_le_marche_en_retard_a_l_envers_montre_le_score_et_l_equipe_justes():
+    teams.record_pair("RSC Anderlecht", "Club Brugge KV", Book.LADBROKES_BE)
+    retenues = _retard()[(REF, Book.LADBROKES_BE)]
+    msg = format_late_market(REF, Book.LADBROKES_BE, retenues, 30.0, sport="soccer",
+                             score=(2, 0, 30), swapped=True)
+    assert "RSC Anderlecht vs Club Brugge KV" in msg
+    assert "Score : 0-2" in msg                      # Anderlecht 0 – 2 Brugge
+    assert "<b>away</b> — Club Brugge KV @ 2.40" in msg

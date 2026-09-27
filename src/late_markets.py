@@ -30,7 +30,7 @@ from typing import Callable
 from .alerter import send_late_market_alerts
 from .live_consensus import consensus_probs, edge_pct
 from .matcher import parse_event_key, reconcile_event_keys, tolerance_for
-from .models import Book, OddQuote
+from .models import TOTALS_LIKE, Book, OddQuote
 from .scrapers.betano import parse_live_scores as betano_parse_live_scores
 from .ui import console
 
@@ -185,7 +185,18 @@ def find_late_markets(
         match = mapping.get(q.event_key)
         if match is None:
             continue
-        ref_key = match[0]
+        ref_key, swap = match
+        # ⚠️ LE REPÈRE. Un book qui liste les équipes à l'envers de la
+        # référence a son « home » sur l'AUTRE équipe. Le consensus mélange
+        # plusieurs books : chaque label y entre dans le repère de la
+        # référence, sinon le « home » d'un book est comparé au « home » d'un
+        # autre, qui n'est pas la même équipe (revue du 27/09 : Ladbrokes à
+        # l'envers, figé sur Anderlecht mené 0-2, alerté à +109 % — la vraie
+        # occasion, Brugge, classée « écart faible »). La cote retenue garde
+        # son label d'origine : l'alerte l'affiche dans l'ordre du book.
+        lab_book = q.outcome.label
+        lab_ref = _label_reference(lab_book, q.market, swap)
+        _LATE_SWAP[(ref_key, q.book)] = swap
         # L'heure du book compte aussi : au tennis, le rapprochement tolère
         # trois heures d'écart. Si le book annonce un coup d'envoi encore à
         # venir, c'est peut-être lui qui a raison.
@@ -198,7 +209,7 @@ def find_late_markets(
         # Une cote issue d'un flux live est vivante par construction : c'est le
         # book lui-même qui la déclare en direct.
         if q.from_live_feed:
-            live[mkey][q.book][q.outcome.label] = q.decimal_odd
+            live[mkey][q.book][lab_ref] = q.decimal_odd
             continue
 
         hkey = (ref_key, q.book)
@@ -208,20 +219,26 @@ def find_late_markets(
             # Avant le coup d'envoi la cote est rangée sous la clé de la
             # référence ; une fois Pinnacle parti, plus rien ne la réaligne et
             # elle repasse sous celle du book. On interroge donc les deux.
+            # Sous la clé de la référence, la cote a été stockée APRÈS
+            # réalignement (label dans le repère de la référence) ; sous
+            # celle du book, telle que le book l'a donnée.
             past = prior_odds(ref_key, q.book, kickoff)
+            repere = "ref"
             if not past and q.event_key != ref_key:
                 past = prior_odds(q.event_key, q.book, kickoff)
-            history[hkey] = past or {}
-        before = history[hkey].get(
-            (q.market.value, q.outcome.label, q.outcome.line))
+                repere = "book"
+            history[hkey] = (past or {}, repere)
+        past, repere = history[hkey]
+        before = past.get((q.market.value, lab_ref if repere == "ref" else lab_book,
+                           q.outcome.line))
         if before is None:
             stats["sans_historique"] += 1
             continue
         if abs(before - q.decimal_odd) > 1e-9:
             stats["cote_bougée"] += 1
-            live[mkey][q.book][q.outcome.label] = q.decimal_odd
+            live[mkey][q.book][lab_ref] = q.decimal_odd
             continue
-        frozen.append((ref_key, q))
+        frozen.append((ref_key, q, lab_ref))
 
     if not frozen:
         return {}
@@ -232,7 +249,7 @@ def find_late_markets(
     # le second n'offre rien à gagner, et c'est lui qui noyait le canal.
     out: dict[tuple[str, Book], list[OddQuote]] = defaultdict(list)
     consensus: dict[tuple, dict[str, float] | None] = {}
-    for ref_key, q in frozen:
+    for ref_key, q, lab_ref in frozen:
         mkey = (ref_key, q.market.value, q.outcome.line)
         if mkey not in consensus:
             others = {b: o for b, o in live.get(mkey, {}).items() if b != q.book}
@@ -243,7 +260,7 @@ def find_late_markets(
             # savoir si le prix figé est devenu absurde. On se tait.
             stats["sans_consensus"] += 1
             continue
-        fair = probs.get(q.outcome.label)
+        fair = probs.get(lab_ref)
         if fair is None:
             stats["sans_consensus"] += 1
             continue
@@ -257,6 +274,25 @@ def find_late_markets(
                      q.outcome.line)] = edge
         out[(ref_key, q.book)].append(q)
     return dict(out)
+
+
+def _label_reference(label: str, market, swap: bool) -> str:
+    """Le label dans le repère de la référence (voir `reference.
+    _flip_outcome_for_swap`) : home↔away si le book est à l'envers, sauf aux
+    totaux, dont les labels ne dépendent pas de qui reçoit."""
+    if not swap or market in TOTALS_LIKE:
+        return label
+    return {"home": "away", "away": "home"}.get(label, label)
+
+
+#: (clé de référence, book) → le book liste-t-il les équipes à l'envers ?
+#: Relu par l'alerte : ses noms suivent l'ordre du BOOK, le score celui de la
+#: référence — sans ce drapeau, le score s'affichait à l'envers des noms.
+_LATE_SWAP: dict[tuple, bool] = {}
+
+
+def late_market_swapped(ref_key: str, book: Book) -> bool:
+    return _LATE_SWAP.get((ref_key, book), False)
 
 
 # Écart mesuré par cote retenue, relu au moment de formater l'alerte. Un
@@ -292,6 +328,10 @@ def forget_old_edges(now: datetime, max_age_h: float = 6.0) -> int:
             vieux.append(cle)
     for cle in vieux:
         del _LATE_EDGES[cle]
+    for cle in [c for c in _LATE_SWAP
+                if (p := parse_event_key(c[0])) is None
+                or (now - p[0]).total_seconds() > max_age_h * 3600]:
+        del _LATE_SWAP[cle]
     return len(vieux)
 
 
@@ -390,7 +430,8 @@ def _report_late_markets(late: dict, sport: str, tg_cfg,
                  for q in quotes
                  if (e := late_market_edge(ek, book, q)) is not None}
         fresh.append((ek, book, quotes, (now - parsed[0]).total_seconds() / 60.0,
-                      _LIVE_SCORES.get(ek), ek in goals, edges))
+                      _LIVE_SCORES.get(ek), ek in goals, edges,
+                      late_market_swapped(ek, book)))
     if not fresh:
         return
     console.print(
