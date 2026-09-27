@@ -522,11 +522,23 @@ def test_les_noms_canoniques_identiques_s_orientent(nous, source):
     # Un seul camp identique ne suffit JAMAIS à l'égalité (Gimnasia : la
     # source peut donner à l'un le nom que nous donnons à l'autre).
     (("Gimnasia", "Gimnasia Mendoza"), ("Gimnasia", "Gimnasia LP")),
+    # Revue du 27/09 : les QUATRE noms valent « logrones » une fois canonisés.
+    # Sans le garde « les deux sens égaux → refus » de `_orientation`, la
+    # lecture naïve répondait « direct » — or le vrai sens est l'inverse.
+    (("UD Logrones", "SD Logrones"), ("SD Logroñés", "Logroñés")),
 ])
 def test_l_egalite_canonique_ne_tranche_pas_seule_un_cas_ambigu(nous, source):
-    from src.scores import _nom_canonique
+    """Dans les deux ordres de la source : rien — ni « direct », ni
+    « inverse ». C'est `_orientation` elle-même qui est vérifiée, pas une
+    recopie de sa condition."""
     ev = _ours(*nous, T)
-    x = tuple(map(_nom_canonique, nous + source))
-    assert not ((x[0], x[1]) == (x[2], x[3]) and (x[0], x[1]) != (x[3], x[2]))
-    assert not ((x[0], x[1]) == (x[3], x[2]) and (x[0], x[1]) != (x[2], x[3]))
-    assert _orientation(ev, _res(*source, T)) in ("direct", None)
+    assert _orientation(ev, _res(*source, T)) is None
+    assert _orientation(ev, _res(source[1], source[0], T)) is None
+
+
+def test_un_nom_fait_de_formes_juridiques_ne_devient_pas_vide():
+    """Le repli de `_nom_canonique` : un nom qui n'est QUE formes juridiques
+    reste lui-même — la chaîne vide rendrait égaux deux clubs distincts."""
+    from src.scores import _nom_canonique
+    assert _nom_canonique("IF") == "if"
+    assert _nom_canonique("AD CA") == "ad ca"
