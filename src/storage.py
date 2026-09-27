@@ -125,17 +125,6 @@ CREATE TABLE IF NOT EXISTS teams (
     last_seen_at     TEXT NOT NULL
 );
 
--- Le nom d'une équipe tel que CHAQUE book l'écrit. `teams` ne garde que le
--- dernier nom vu, tous books confondus : l'alerte d'un book doit montrer les
--- noms de CE book (voir `teams.display_for_book`).
-CREATE TABLE IF NOT EXISTS team_names_by_book (
-    book             TEXT NOT NULL,
-    normalized_name  TEXT NOT NULL,
-    display_name     TEXT NOT NULL,
-    last_seen_at     TEXT NOT NULL,
-    PRIMARY KEY (book, normalized_name)
-);
-
 -- One row per tap on "Jouer". dedup_key stays the primary key because the
 -- alert-suppression path keys on it; everything else is what turns a click
 -- into a measurable bet (which value_bet it was, at what price, for what EV).
@@ -1775,46 +1764,6 @@ class Storage:
     def all_teams(self) -> list[sqlite3.Row]:
         with self._conn() as c:
             return list(c.execute("SELECT * FROM teams"))
-
-    def record_team_for_book(self, book: str, normalized_name: str,
-                             display_name: str) -> None:
-        """Le nom d'une équipe tel que `book` l'écrit (voir `teams.record`)."""
-        with self._conn() as c:
-            c.execute(
-                "INSERT INTO team_names_by_book(book, normalized_name, display_name, "
-                "last_seen_at) VALUES (?, ?, ?, ?) "
-                "ON CONFLICT(book, normalized_name) DO UPDATE SET "
-                "  display_name = excluded.display_name, "
-                "  last_seen_at = excluded.last_seen_at",
-                (book, normalized_name, display_name, datetime.utcnow().isoformat()),
-            )
-
-    def record_teams_for_book(self, rows: Iterable[tuple[str, str, str]]) -> None:
-        """Plusieurs (book, clé, nom) en UNE transaction : au premier cycle
-        après un déploiement, chaque (book, équipe) est neuf, et une
-        transaction par nom coûtait ~2 ms — une minute d'écritures au milieu
-        du parsing des scrapers."""
-        maintenant = datetime.utcnow().isoformat()
-        with self._conn() as c:
-            c.executemany(
-                "INSERT INTO team_names_by_book(book, normalized_name, display_name, "
-                "last_seen_at) VALUES (?, ?, ?, ?) "
-                "ON CONFLICT(book, normalized_name) DO UPDATE SET "
-                "  display_name = excluded.display_name, "
-                "  last_seen_at = excluded.last_seen_at",
-                [(b, k, n, maintenant) for b, k, n in rows],
-            )
-
-    def get_team_for_book(self, book: str, normalized_name: str) -> Optional[sqlite3.Row]:
-        with self._conn() as c:
-            return c.execute(
-                "SELECT * FROM team_names_by_book WHERE book=? AND normalized_name=?",
-                (book, normalized_name),
-            ).fetchone()
-
-    def all_team_names_by_book(self) -> list[sqlite3.Row]:
-        with self._conn() as c:
-            return list(c.execute("SELECT * FROM team_names_by_book"))
 
     def latest_pinnacle_quote_before(
         self, event_key: str, market: str, outcome_label: str,

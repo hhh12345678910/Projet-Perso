@@ -197,25 +197,30 @@ def _prettify_team_name(normalized: str) -> str:
 # Ladbrokes les écrit — c'est là qu'il faut les retrouver — et non comme
 # Pinnacle, ni comme le dernier book vu (`teams.display`, tous books confondus).
 
-def _nom_pour_book(book, fragment: str) -> str:
-    """Le nom tel que `book` l'écrit ; à défaut, le registre commun."""
-    return teams.display_for_book(book, fragment) or _prettify_team_name(fragment)
-
-
 def _noms_du_book(event_key: str, book, book_event_key: "str | None" = None
                   ) -> "tuple[str, str] | None":
-    """(domicile, extérieur) tels que `book` les écrit, DANS SON ORDRE.
+    """(domicile, extérieur) tels que `book` les a écrits POUR CE MATCH, dans
+    SON ordre.
 
     `book_event_key` est la clé d'origine du book quand elle diffère de la
     référence (`remap_to_reference`) ; absente, les deux clés sont les mêmes,
-    ordre compris. ⚠️ Si le book liste les équipes à l'envers de Pinnacle, le
-    label du pari doit être retourné avec (`_label_du_book`) : sinon « home »
-    désignerait l'autre équipe."""
-    parsed = parse_event_key(book_event_key or event_key)
+    ordre compris. Les noms viennent de `teams.noms_du_match`, indexé par
+    cette clé d'ÉVÉNEMENT : jamais d'une clé d'équipe, qui confond « Club
+    Olimpia » et « CD Olimpia » (revue du 27/09). À défaut — scraper qui ne
+    l'a pas enregistré —, le registre commun, sur les mêmes fragments.
+
+    ⚠️ Si le book liste les équipes à l'envers de Pinnacle, le label du pari
+    doit être retourné avec (`_label_du_book`) : sinon « home » désignerait
+    l'autre équipe."""
+    cle = book_event_key or event_key
+    noms = teams.noms_du_match(book, cle)
+    if noms is not None:
+        return noms
+    parsed = parse_event_key(cle)
     if parsed is None:
         return None
     _, h, a = parsed
-    return _nom_pour_book(book, h), _nom_pour_book(book, a)
+    return _prettify_team_name(h), _prettify_team_name(a)
 
 
 def _label_du_book(label: str, market, swapped: bool) -> str:
@@ -730,12 +735,14 @@ def format_clv_alert(
     parsed = parse_event_key(bet["event_key"])
     if parsed is not None:
         start, home_norm, away_norm = parsed
-        # Le pari relu en base n'a plus la clé du book : les noms de CE book
-        # quand il les a écrits sous la même clé, dans l'ordre de Pinnacle —
-        # celui du label, lui aussi relu dans ce repère.
+        # Le pari relu en base n'a plus la clé du BOOK (value_bets ne la
+        # garde pas) : les noms du registre commun, dans l'ordre de Pinnacle
+        # — celui du label, relu dans ce même repère. Jamais le registre
+        # d'un book interrogé avec la clé de Pinnacle : il rendrait un club
+        # homonyme de ce book (« CD Olimpia » pour Olimpia Asunción, revue
+        # du 27/09). L'équipe est nommée dans la ligne « Pari ».
         feminin = _est_feminin((home_norm, away_norm), (ligue_ref,), sport)
-        dom, ext = (_nom_pour_book(bet["book"], home_norm),
-                    _nom_pour_book(bet["book"], away_norm))
+        dom, ext = _prettify_team_name(home_norm), _prettify_team_name(away_norm)
         matchup = _matchup(dom, ext, feminin, sport)
         try:
             qui = _equipe_du_pari(bet["outcome_label"], MarketType(bet["market"]), dom, ext)
@@ -1502,8 +1509,10 @@ def format_live_observation(o, sport: "str | None" = None) -> str:
     # jamais en direct (revue du 27/09).
     sport_o = sport or getattr(o, "sport", None)
     feminin = _est_feminin((o.home, o.away), (getattr(o, "league", None),), sport_o)
-    match = (f"{_equipe(_nom_pour_book(o.book, o.home), feminin, sport_o)} vs "
-             f"{_equipe(_nom_pour_book(o.book, o.away), feminin, sport_o)}")
+    # `o.home`/`o.away` sont les fragments de NOTRE clé (events) : registre
+    # commun, jamais celui du book avec une clé d'un autre repère.
+    match = (f"{_equipe(_prettify_team_name(o.home), feminin, sport_o)} vs "
+             f"{_equipe(_prettify_team_name(o.away), feminin, sport_o)}")
     score = (o.feed_score or "").replace(":", "-") or "N/A"
     ligne = "" if o.line is None else f" {o.line:g}"
     minute = ("" if o.minute_ecoulee is None

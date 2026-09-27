@@ -293,7 +293,7 @@ def parse_prematch(
             continue
         if is_noise_event(home, away, ei.get("meetingDescription", "")):
             continue
-        record_pair(home, away, Book.LADBROKES_BE)
+        record_pair(home, away, Book.LADBROKES_BE, start)
         ek = event_key(home, away, start)
         source_id = str(ei.get("eventCode") or ei.get("programCode") or "")
 

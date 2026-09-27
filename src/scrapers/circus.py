@@ -171,7 +171,7 @@ def parse_prematch(
             # encore mais ne sont pas jouables.
             if event.get("IsBlocked"):
                 continue
-            record_pair(home, away, Book.CIRCUS_BE)
+            record_pair(home, away, Book.CIRCUS_BE, start)
             ek = event_key(home, away, start)
 
             for market in event.get("Markets") or []:

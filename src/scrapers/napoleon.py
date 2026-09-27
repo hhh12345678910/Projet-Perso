@@ -144,7 +144,7 @@ def parse_by_date(payload: dict, sport: str = "soccer") -> Iterator[OddQuote]:
             continue
         if is_noise_event(home, away, ev.get("tournamentName", "")):
             continue
-        record_pair(home, away, Book.NAPOLEON_BE)
+        record_pair(home, away, Book.NAPOLEON_BE, start)
         ek = event_key(home, away, start)
         source_id = str(ev.get("eventId", ""))
 

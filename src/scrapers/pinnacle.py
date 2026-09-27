@@ -450,7 +450,7 @@ class PinnacleScraper:
             league_name = matchup.league
             if is_noise_event(home, away, league_name):
                 continue
-            record_pair(home, away, Book.PINNACLE)
+            record_pair(home, away, Book.PINNACLE, matchup.start_time)
             ek = event_key(home, away, matchup.start_time)
 
             for p in market.get("prices") or []:

@@ -282,7 +282,7 @@ def parse_events(payload: Any, *, expect_sport: str | None = None,
         # polluerait la table des équipes avec des libellés qui ne
         # correspondent à aucun match.
         if produced:
-            record_pair(home, away, Book.MAGICBETTING)
+            record_pair(home, away, Book.MAGICBETTING, start)
             yield from produced
 
 

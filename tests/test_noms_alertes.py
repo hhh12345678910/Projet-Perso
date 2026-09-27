@@ -51,75 +51,58 @@ def _vb(**kw) -> ValueBet:
 
 # ------------------------------------------------------------ le registre ---
 
-def test_chaque_book_garde_sa_graphie():
-    """Le registre commun ne garde que le DERNIER nom vu, tous books
-    confondus ; le registre par book, celui de chaque book."""
-    teams.record_pair("Club Brugge", "Anderlecht", Book.PINNACLE)
-    teams.record_pair("Club Brugge KV", "RSC Anderlecht", Book.LADBROKES_BE)
-    teams.record_pair("Club Brugge", "Anderlecht", Book.PINNACLE)
-    assert teams.display_for_book(Book.LADBROKES_BE, "brugge") == "Club Brugge KV"
-    assert teams.display_for_book("ladbrokes_be", "anderlecht") == "RSC Anderlecht"
-    assert teams.display_for_book(Book.PINNACLE, "brugge") == "Club Brugge"
-    assert teams.display_for_book(Book.UNIBET_BE, "brugge") is None
+def test_chaque_book_garde_ses_noms_pour_chaque_match():
+    """Les noms d'un book, par MATCH : sa clé d'événement (équipes et minute
+    du coup d'envoi), celle de ses cotes."""
+    teams.record_pair("Club Brugge", "Anderlecht", Book.PINNACLE, T)
+    teams.record_pair("Club Brugge KV", "RSC Anderlecht", Book.LADBROKES_BE, T)
+    teams.record_pair("Club Brugge", "Anderlecht", Book.PINNACLE, T)
+    ek = event_key("Club Brugge", "Anderlecht", T)
+    assert teams.noms_du_match(Book.LADBROKES_BE, ek) == ("Club Brugge KV", "RSC Anderlecht")
+    assert teams.noms_du_match("pinnacle", ek) == ("Club Brugge", "Anderlecht")
+    assert teams.noms_du_match(Book.UNIBET_BE, ek) is None
 
 
-def test_le_registre_par_book_survit_a_un_redemarrage(tmp_path):
-    from src.storage import Storage
-    st = Storage(str(tmp_path / "v.db"))
-    teams.init(st)
-    teams.record("Club Brugge KV", Book.LADBROKES_BE)
-    teams.clear_cache()
-    teams.init(st)
-    assert teams.display_for_book(Book.LADBROKES_BE, "brugge") == "Club Brugge KV"
+def test_deux_clubs_homonymes_d_un_meme_book_ne_se_confondent_pas():
+    """Revue du 27/09 : « Club Olimpia » (Paraguay) et « CD Olimpia »
+    (Honduras) donnent la même clé d'ÉQUIPE, `olimpia` ; un registre par
+    équipe nommait l'un pour l'autre. Par match, jamais."""
+    demain = T.replace(day=2)
+    teams.record_pair("Club Olimpia", "Club Libertad", Book.UNIBET_BE, T)
+    teams.record_pair("CD Olimpia", "FC Motagua", Book.UNIBET_BE, demain)
+    vb = _vb(book=Book.UNIBET_BE, event_key=event_key("Olimpia", "Libertad", T))
+    msg = format_value_bet(vb)
+    assert "Club Olimpia vs Club Libertad" in msg
+    assert "CD Olimpia" not in msg
 
 
-def test_les_noms_par_book_s_ecrivent_par_lots(tmp_path, monkeypatch):
-    """Une transaction par lot, pas par nom ; le reste part au `vider`
-    suivant, et un lot refusé (base verrouillée) n'est pas perdu."""
-    from src.storage import Storage
-    st = Storage(str(tmp_path / "v.db"))
-    teams.init(st)
-    monkeypatch.setattr(teams, "LOT_ECRITURE", 3)
-    monkeypatch.setattr(teams, "DELAI_ECRITURE_S", 3600.0)
-    appels = []
-    vrai = st.record_teams_for_book
-    monkeypatch.setattr(st, "record_teams_for_book",
-                        lambda rows: (appels.append(len(list(rows))), vrai(rows)))
-    teams.vider()                                  # remet l'horloge à zéro
-    for n in ("Arsenal", "Chelsea", "Everton", "Fulham"):
-        teams.record(n, Book.LADBROKES_BE)
-    assert appels == [3]
-    teams.vider()
-    assert appels == [3, 1]
-    assert len(st.all_team_names_by_book()) == 4
-
-    def refus(rows):
-        raise RuntimeError("database is locked")
-    monkeypatch.setattr(st, "record_teams_for_book", refus)
-    teams.record("Brentford", Book.LADBROKES_BE)
-    teams.vider()
-    monkeypatch.setattr(st, "record_teams_for_book", vrai)
-    teams.vider()
-    assert len(st.all_team_names_by_book()) == 5
+def test_les_matchs_passes_sont_oublies(monkeypatch):
+    monkeypatch.setattr(teams, "MAX_NOMS_MATCH", 1)
+    vieux = datetime(2026, 9, 20, 15, tzinfo=timezone.utc)
+    teams.record_pair("Arsenal", "Chelsea", Book.UNIBET_BE, vieux)
+    teams.record_pair("Everton", "Fulham", Book.UNIBET_BE, T)
+    assert teams.noms_du_match(Book.UNIBET_BE, event_key("Arsenal", "Chelsea", vieux)) is None
+    assert teams.noms_du_match(Book.UNIBET_BE, event_key("Everton", "Fulham", T))
 
 
-def test_sans_book_rien_ne_change():
+def test_sans_book_ni_heure_rien_ne_change():
     teams.record_pair("Club Brugge", "Anderlecht")
-    assert teams.display("brugge") == "Club Brugge"
-    assert teams.display_for_book(Book.PINNACLE, "brugge") is None
+    teams.record_pair("Club Brugge KV", "RSC Anderlecht", Book.LADBROKES_BE)
+    assert teams.display("brugge") == "Club Brugge KV"
+    assert teams._NOMS_MATCH == {}
 
 
 # ---------------------------------------------------------- value bet ---
 
 def test_l_alerte_montre_les_noms_du_book():
-    teams.record_pair("Club Brugge", "Anderlecht", Book.PINNACLE)
-    teams.record_pair("Club Brugge KV", "RSC Anderlecht", Book.LADBROKES_BE)
+    teams.record_pair("Club Brugge", "Anderlecht", Book.PINNACLE, T)
+    teams.record_pair("Club Brugge KV", "RSC Anderlecht", Book.LADBROKES_BE, T)
     msg = format_value_bet(_vb())
     assert "Club Brugge KV vs RSC Anderlecht" in msg
 
 
 def test_sans_nom_du_book_on_retombe_sur_le_registre_commun():
-    teams.record_pair("Club Brugge", "Anderlecht", Book.PINNACLE)
+    teams.record_pair("Club Brugge", "Anderlecht")
     assert "Club Brugge vs Anderlecht" in format_value_bet(_vb())
 
 
@@ -129,8 +112,8 @@ def test_un_book_a_l_envers_garde_le_pari_sur_la_bonne_equipe():
     Après réalignement, le label devient « away » (repère Pinnacle) ; le
     message, lui, montre l'ordre de Ladbrokes et doit donc dire « home » —
     l'équipe citée en premier, Anderlecht."""
-    teams.record_pair("Club Brugge", "Anderlecht", Book.PINNACLE)
-    teams.record_pair("RSC Anderlecht", "Club Brugge KV", Book.LADBROKES_BE)
+    teams.record_pair("Club Brugge", "Anderlecht", Book.PINNACLE, T)
+    teams.record_pair("RSC Anderlecht", "Club Brugge KV", Book.LADBROKES_BE, T)
     ref = event_key("Club Brugge", "Anderlecht", T)
     soft = [_q(Book.LADBROKES_BE, "RSC Anderlecht", "Club Brugge KV", lab, odd)
             for lab, odd in (("home", 3.5), ("draw", 3.6), ("away", 2.2))]
@@ -149,7 +132,7 @@ def test_un_book_a_l_envers_garde_le_pari_sur_la_bonne_equipe():
 
 
 def test_les_totaux_ne_se_retournent_pas():
-    teams.record_pair("RSC Anderlecht", "Club Brugge KV", Book.LADBROKES_BE)
+    teams.record_pair("RSC Anderlecht", "Club Brugge KV", Book.LADBROKES_BE, T)
     vb = _vb(market=MarketType.TOTALS, outcome=Outcome(label="over", line=2.5),
              book_event_key=event_key("RSC Anderlecht", "Club Brugge KV", T),
              book_swapped=True)
@@ -164,7 +147,7 @@ def test_le_nul_ne_se_retourne_pas():
 
 
 def test_meme_ordre_le_label_ne_bouge_pas():
-    teams.record_pair("Club Brugge KV", "RSC Anderlecht", Book.LADBROKES_BE)
+    teams.record_pair("Club Brugge KV", "RSC Anderlecht", Book.LADBROKES_BE, T)
     vb = _vb(outcome=Outcome(label="away"),
              book_event_key=event_key("Club Brugge KV", "RSC Anderlecht", T))
     msg = format_value_bet(vb)
@@ -177,28 +160,28 @@ def test_un_match_feminin_se_lit_dans_la_ligue_pinnacle():
     """Pinnacle écrit « Houston Dash » dans « USA - National Womens Soccer
     League » : rien dans les noms."""
     ek = event_key("Houston Dash", "Orlando Pride", T)
-    teams.record_pair("Houston Dash", "Orlando Pride", Book.LADBROKES_BE)
+    teams.record_pair("Houston Dash", "Orlando Pride", Book.LADBROKES_BE, T)
     msg = format_value_bet(_vb(event_key=ek),
                            ligue_ref="USA - National Womens Soccer League")
     assert "Houston Dash (f) vs Orlando Pride (f)" in msg
 
 
 def test_un_match_masculin_n_a_pas_de_f():
-    teams.record_pair("Club Brugge KV", "RSC Anderlecht", Book.LADBROKES_BE)
+    teams.record_pair("Club Brugge KV", "RSC Anderlecht", Book.LADBROKES_BE, T)
     msg = format_value_bet(_vb(), ligue_ref="Belgium - Pro League")
     assert "(f)" not in msg
 
 
 def test_l_abreviation_du_book_suffit():
     """Ladbrokes : noms nus, « FÉM. » dans sa ligue."""
-    teams.record_pair("CD Real Santander", "Once Caldas SA", Book.LADBROKES_BE)
+    teams.record_pair("CD Real Santander", "Once Caldas SA", Book.LADBROKES_BE, T)
     ek = event_key("CD Real Santander", "Once Caldas SA", T)
     msg = format_value_bet(_vb(event_key=ek, league="COLOMBIE - 1ère DIVISION FÉM."))
     assert "CD Real Santander (f) vs Once Caldas SA (f)" in msg
 
 
 def test_le_marqueur_du_book_est_remplace_par_f():
-    teams.record_pair("Heips (W)", "Coritiba FC PR (W)", Book.UNIBET_BE)
+    teams.record_pair("Heips (W)", "Coritiba FC PR (W)", Book.UNIBET_BE, T)
     ek = event_key("Heips (W)", "Coritiba FC PR (W)", T)
     msg = format_value_bet(_vb(event_key=ek, book=Book.UNIBET_BE))
     assert "Heips (f) vs Coritiba FC PR (f)" in msg
@@ -242,7 +225,7 @@ def test_les_ligues_masculines(ligue):
 def test_w_connection_n_est_pas_un_match_feminin():
     """« W Connection » (Trinidad, un club d'hommes) devient `xwomen` à lui
     seul : un seul camp marqué ne fait pas un match féminin."""
-    teams.record_pair("W Connection", "Defence Force", Book.LADBROKES_BE)
+    teams.record_pair("W Connection", "Defence Force", Book.LADBROKES_BE, T)
     ek = event_key("W Connection", "Defence Force", T)
     assert "xwomen" in ek
     msg = format_value_bet(_vb(event_key=ek),
@@ -254,7 +237,7 @@ def test_au_tennis_les_initiales_restent():
     """« Hsieh S-W », « Falkowska W » : un W final y est une initiale."""
     ek = event_key("Ostapenko J / Hsieh S-W", "Kawa K / Falkowska W", T)
     teams.record_pair("Ostapenko J / Hsieh S-W", "Kawa K / Falkowska W",
-                      Book.LADBROKES_BE)
+                      Book.LADBROKES_BE, T)
     msg = format_value_bet(_vb(event_key=ek), sport="tennis",
                            ligue_ref="WTA Beijing - Doubles")
     assert "Ostapenko J / Hsieh S-W (f) vs Kawa K / Falkowska W (f)" in msg
@@ -275,15 +258,15 @@ def test_au_tennis_seule_la_ligue_compte():
 def test_le_marche_en_retard_montre_le_book_dans_son_ordre():
     """Ses cotes gardent la clé du book et ses labels sont dans son repère :
     les noms doivent suivre, sinon « home » désigne l'autre équipe."""
-    teams.record_pair("RSC Anderlecht", "Club Brugge KV", Book.LADBROKES_BE)
+    teams.record_pair("RSC Anderlecht", "Club Brugge KV", Book.LADBROKES_BE, T)
     ref = event_key("Club Brugge", "Anderlecht", T)
     q = _q(Book.LADBROKES_BE, "RSC Anderlecht", "Club Brugge KV", "home", 3.5)
     msg = format_late_market(ref, Book.LADBROKES_BE, [q], 12.0, sport="soccer")
     assert "RSC Anderlecht vs Club Brugge KV" in msg
 
 
-def test_l_alerte_clv_prend_les_noms_du_book_et_le_f():
-    teams.record_pair("Houston Dash W", "Orlando Pride W", Book.MERIDIAN_BE)
+def test_l_alerte_clv_nomme_l_equipe_et_porte_le_f():
+    teams.record_pair("Houston Dash W", "Orlando Pride W", Book.MERIDIAN_BE, T)
     ek = event_key("Houston Dash W", "Orlando Pride W", T)
     row = {"event_key": ek, "book": "meridian_be", "line": None, "market": "h2h",
            "outcome_label": "home", "odd_taken": 2.1, "ev_pct": 5.0,
@@ -301,7 +284,7 @@ def test_l_alerte_clv_prend_les_noms_du_book_et_le_f():
 
 def test_le_surebet_porte_le_f():
     ek = event_key("Houston Dash", "Orlando Pride", T)
-    teams.record_pair("Houston Dash", "Orlando Pride", Book.PINNACLE)
+    teams.record_pair("Houston Dash", "Orlando Pride", Book.PINNACLE, T)
     sb = Surebet(event_key=ek, market=MarketType.H2H, line=None,
                  legs={"home": (2.1, Book.UNIBET_BE), "draw": (3.8, Book.LADBROKES_BE),
                        "away": (4.2, Book.BETANO_BE)},
@@ -367,7 +350,7 @@ def test_le_consensus_du_marche_en_retard_compare_la_meme_equipe():
 
 
 def test_le_marche_en_retard_a_l_envers_montre_le_score_et_l_equipe_justes():
-    teams.record_pair("RSC Anderlecht", "Club Brugge KV", Book.LADBROKES_BE)
+    teams.record_pair("RSC Anderlecht", "Club Brugge KV", Book.LADBROKES_BE, KO)
     retenues = _retard()[(REF, Book.LADBROKES_BE)]
     msg = format_late_market(REF, Book.LADBROKES_BE, retenues, 30.0, sport="soccer",
                              score=(2, 0, 30), swapped=True)

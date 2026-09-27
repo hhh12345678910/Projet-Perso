@@ -13,44 +13,41 @@ Two-tier cache:
   cache from previous scans' data — critical if the scan that detected a
   value bet ran hours before the one rendering it.
 
-Scrapers call `record(name, book)` for every original team string they see.
+Scrapers call `record(name)` for every original team string they see.
 Format helpers call `display(normalised)` to recover the human form.
 Both are no-ops if init() was never called or with empty input, so unit
 tests on the parsers don't need to wire up a database.
 
-⚠️ `display` rend le DERNIER nom vu, tous books confondus — les scrapers
-tournent en parallèle, donc n'importe lequel. Une alerte Ladbrokes doit
-montrer les noms de Ladbrokes : c'est `display_for_book`, alimenté par le
-même `record` quand le scraper dit quel book il est (demande du 27/09).
+⚠️ `display` rend le DERNIER nom vu sous une clé d'ÉQUIPE, tous books
+confondus — et une clé d'équipe confond des clubs distincts (« Club Olimpia »
+et « CD Olimpia » donnent tous deux `olimpia`). Une alerte doit montrer les
+noms que le BOOK de l'alerte a écrits pour CE match (demande du 27/09) :
+c'est `noms_du_match`, indexé par la clé d'ÉVÉNEMENT du book (équipes et
+minute du coup d'envoi), qui ne confond rien. Voir `record_pair`.
 """
 from __future__ import annotations
 
 import threading
-import time
+from datetime import datetime, timedelta, timezone
 from typing import Optional, TYPE_CHECKING
 
-from .matcher import normalize_team
+from .matcher import event_key, normalize_team
 
 if TYPE_CHECKING:
     from .storage import Storage
 
 
 _DISPLAY: dict[str, str] = {}
-#: (book, clé normalisée) → le nom tel que CE book l'écrit.
-_PAR_BOOK: dict[tuple[str, str], str] = {}
 _STORAGE: Optional["Storage"] = None
 
-#: Les noms par book pas encore écrits en base, vidés PAR LOTS (une
-#: transaction) : au premier cycle après un déploiement, chaque (book,
-#: équipe) est neuf — une transaction par nom, c'était ~2 ms chacune, une
-#: minute d'écritures en plein parsing, disputées au daemon. Un lot perdu à
-#: l'arrêt se réécrit tout seul : absent de la base, le nom redevient neuf
-#: au redémarrage.
-_EN_ATTENTE: dict[tuple[str, str], str] = {}
+#: (book, clé d'événement du book) → (domicile, extérieur) tels que CE book
+#: les a écrits pour CE match. En mémoire seulement : les alertes qui s'en
+#: servent (value bet, marché en retard) partent du cycle même où le scraper
+#: les a lus. Purgé des matchs passés depuis `GARDE_NOMS_MATCH_H`.
+_NOMS_MATCH: dict[tuple[str, str], tuple[str, str]] = {}
 _VERROU = threading.Lock()
-_DERNIER_VIDAGE = 0.0
-LOT_ECRITURE = 500
-DELAI_ECRITURE_S = 30.0
+MAX_NOMS_MATCH = 200_000
+GARDE_NOMS_MATCH_H = 36
 
 
 def _normalised_key(name: str) -> str:
@@ -68,19 +65,9 @@ def init(storage: "Storage | None") -> None:
         return
     for row in storage.all_teams():
         _DISPLAY[row["normalized_name"]] = row["display_name"]
-    try:
-        for row in storage.all_team_names_by_book():
-            _PAR_BOOK[(row["book"], row["normalized_name"])] = row["display_name"]
-    except Exception:                                           # noqa: BLE001
-        pass
 
 
-def _book_id(book) -> str:
-    """`Book.LADBROKES_BE` ou "ladbrokes_be" → "ladbrokes_be"."""
-    return str(getattr(book, "value", book) or "")
-
-
-def record(name: str, book=None) -> None:
+def record(name: str) -> None:
     """Remember an original team name so display() can recover it later.
     Idempotent — only writes to disk on a new or changed entry.
 
@@ -98,26 +85,12 @@ def record(name: str, book=None) -> None:
     et cherchait un problème là où il n'y en avait pas.
 
     Le nom reste dans le cache mémoire : la prochaine occasion le réécrira,
-    et en attendant l'affichage est déjà correct.
-
-    `book` : le book qui écrit ce nom. Il alimente en plus le registre PAR
-    BOOK (`display_for_book`), avec la même discrétion en cas de base
-    verrouillée."""
+    et en attendant l'affichage est déjà correct."""
     if not name:
         return
     key = _normalised_key(name)
     if not key:
         return
-    b = _book_id(book)
-    if b and _PAR_BOOK.get((b, key)) != name:
-        _PAR_BOOK[(b, key)] = name
-        if _STORAGE is not None:
-            with _VERROU:
-                _EN_ATTENTE[(b, key)] = name
-                pret = (len(_EN_ATTENTE) >= LOT_ECRITURE
-                        or time.monotonic() - _DERNIER_VIDAGE >= DELAI_ECRITURE_S)
-            if pret:
-                vider()
     previous = _DISPLAY.get(key)
     if previous == name:
         return
@@ -132,54 +105,55 @@ def record(name: str, book=None) -> None:
             pass
 
 
-def record_pair(home: str | None, away: str | None, book=None) -> None:
+def _book_id(book) -> str:
+    """`Book.LADBROKES_BE` ou "ladbrokes_be" → "ladbrokes_be"."""
+    return str(getattr(book, "value", book) or "")
+
+
+def record_pair(home: str | None, away: str | None, book=None,
+                start: "datetime | None" = None) -> None:
     """Convenience used at the scraper sites where home and away both
-    appear together — one call instead of two."""
+    appear together — one call instead of two.
+
+    `book` et `start` : le book qui écrit ces noms, et le coup d'envoi qu'il
+    annonce — assez pour retrouver ses noms À LUI pour CE match
+    (`noms_du_match`), sous la clé même de ses cotes (`event_key(home, away,
+    start)`, calculée comme par le scraper)."""
     if home:
-        record(home, book)
+        record(home)
     if away:
-        record(away, book)
-
-
-def vider() -> None:
-    """Écrire en base les noms par book en attente, en une transaction.
-    Jamais d'exception : comme `record`, c'est du confort de lecture ; un lot
-    refusé (base verrouillée) reste en attente pour le suivant."""
-    global _DERNIER_VIDAGE
-    with _VERROU:
-        lot = list(_EN_ATTENTE.items())
-        _EN_ATTENTE.clear()
-        _DERNIER_VIDAGE = time.monotonic()
-    if not lot or _STORAGE is None:
+        record(away)
+    if not (home and away and book is not None and start is not None):
         return
     try:
-        _STORAGE.record_teams_for_book([(b, k, n) for (b, k), n in lot])
+        cle = event_key(home, away, start)
     except Exception:                                           # noqa: BLE001
-        with _VERROU:
-            for cle, nom in lot:
-                _EN_ATTENTE.setdefault(cle, nom)
+        return
+    _NOMS_MATCH[(_book_id(book), cle)] = (home, away)
+    if len(_NOMS_MATCH) > MAX_NOMS_MATCH:
+        _purger_noms_match()
 
 
-def display_for_book(book, normalised: str) -> Optional[str]:
-    """Le nom tel que `book` l'écrit, ou None si ce book ne l'a jamais
-    enregistré (l'appelant retombe alors sur `display`)."""
-    if not normalised:
+def noms_du_match(book, cle: str | None) -> "tuple[str, str] | None":
+    """(domicile, extérieur) tels que `book` les a écrits pour le match de
+    clé `cle` (SA clé d'événement), ou None s'il ne l'a pas enregistré."""
+    if not cle:
         return None
-    b = _book_id(book)
-    if not b:
-        return None
-    hit = _PAR_BOOK.get((b, normalised))
-    if hit:
-        return hit
-    if _STORAGE is not None:
-        try:
-            row = _STORAGE.get_team_for_book(b, normalised)
-        except Exception:                                       # noqa: BLE001
-            row = None
-        if row:
-            _PAR_BOOK[(b, normalised)] = row["display_name"]
-            return row["display_name"]
-    return None
+    return _NOMS_MATCH.get((_book_id(book), cle))
+
+
+def _purger_noms_match(maintenant: "datetime | None" = None) -> None:
+    """Oublier les matchs commencés depuis plus de `GARDE_NOMS_MATCH_H`. La
+    clé commence par la minute du coup d'envoi (AAAAMMJJHHMM) : une
+    comparaison de chaînes suffit. Si tout est récent, on repart de zéro —
+    le prochain cycle réécrit ce qui sert."""
+    seuil = ((maintenant or datetime.now(timezone.utc))
+             - timedelta(hours=GARDE_NOMS_MATCH_H)).strftime("%Y%m%d%H%M")
+    with _VERROU:
+        for k in [k for k in list(_NOMS_MATCH) if k[1][:12] < seuil]:
+            _NOMS_MATCH.pop(k, None)
+        if len(_NOMS_MATCH) > MAX_NOMS_MATCH:
+            _NOMS_MATCH.clear()
 
 
 def display(normalised: str) -> str:
@@ -203,9 +177,7 @@ def display(normalised: str) -> str:
 
 def clear_cache() -> None:
     """Test helper — drops the in-memory cache so a fresh test starts clean."""
-    global _STORAGE, _DERNIER_VIDAGE
+    global _STORAGE
     _DISPLAY.clear()
-    _PAR_BOOK.clear()
-    _EN_ATTENTE.clear()
-    _DERNIER_VIDAGE = 0.0
+    _NOMS_MATCH.clear()
     _STORAGE = None
