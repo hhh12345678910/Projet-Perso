@@ -153,7 +153,7 @@ def parse_listview(data: dict) -> Iterator[OddQuote]:
             continue
         if is_noise_event(home, away, ev.get("group", "")):
             continue
-        record_pair(home, away)
+        record_pair(home, away, Book.BINGOAL_BE)
         ek = event_key(home, away, start)
         source_id = str(ev.get("id", ""))
 

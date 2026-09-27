@@ -191,7 +191,7 @@ def parse_get_events(payload: dict, book: Book = Book.GOLDEN_PALACE) -> Iterator
             continue
         if is_noise_event(home, away, ev.get("name", "")):
             continue
-        record_pair(home, away)
+        record_pair(home, away, book)
         ek = event_key(home, away, start)
         source_id = str(ev.get("id") or ev.get("code") or "")
 

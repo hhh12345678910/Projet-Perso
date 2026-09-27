@@ -262,7 +262,7 @@ def parse_offer(data: dict) -> Iterator[OddQuote]:
             start = datetime.fromtimestamp(start_ms / 1000, tz=timezone.utc)
             if is_noise_event(home, away, league_name):
                 continue
-            record_pair(home, away)
+            record_pair(home, away, Book.MERIDIAN_BE)
             ek = event_key(home, away, start)
             source_id = str(header.get("eventId", ""))
 

@@ -414,7 +414,7 @@ def parse_overview(data: dict) -> Iterator[OddQuote]:
         except (TypeError, ValueError):
             line_val = None
 
-        record_pair(home, away)
+        record_pair(home, away, Book.BETANO_BE)
         yield OddQuote(
             event_key=event_key(home, away, start),
             book=Book.BETANO_BE,
@@ -561,7 +561,7 @@ def parse_prematch(data: dict, unknown_types: set[str] | None = None) -> Iterato
                     if market_type == MarketType.H2H:
                         line_val = None
 
-                    record_pair(home, away)
+                    record_pair(home, away, Book.BETANO_BE)
                     yield OddQuote(
                         event_key=event_key(home, away, start),
                         book=Book.BETANO_BE,

@@ -137,6 +137,12 @@ class OddQuote:
     # de suspendre son marché prématch — or le premier cas est normal et le
     # second est une erreur exploitable.
     from_live_feed: bool = False
+    # Le book liste-t-il les équipes dans l'ORDRE INVERSE de la référence ?
+    # Après réalignement, `event_key` et le label home/away sont dans le repère
+    # de Pinnacle, `book_event_key` dans celui du book. Sans ce drapeau, une
+    # alerte qui affiche les noms du book dans son ordre ne peut pas savoir
+    # s'il faut retourner le « home » du pari — et désignerait l'autre équipe.
+    book_swapped: bool = False
 
 
 @dataclass
@@ -177,3 +183,5 @@ class ValueBet:
     also_books: tuple[Book, ...] = ()
     # Voir OddQuote.match_score.
     match_score: Optional[float] = None
+    # Voir OddQuote.book_swapped.
+    book_swapped: bool = False

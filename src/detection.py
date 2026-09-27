@@ -269,5 +269,6 @@ def find_value_bets(
             reference_book=fl.reference_book,
             book_event_key=q.book_event_key,
             match_score=q.match_score,
+            book_swapped=q.book_swapped,
         ))
     return out

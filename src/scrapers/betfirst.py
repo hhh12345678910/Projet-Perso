@@ -326,7 +326,7 @@ def parse_events_table(payload: dict) -> Iterator[OddQuote]:
             continue
         if is_noise_event(home, away, ev.get("competitionName", "")):
             continue
-        record_pair(home, away)
+        record_pair(home, away, Book.BETFIRST)
         event_index[eid] = (event_key(home, away, start), eid)
 
     # marketId -> (event_key, MarketType, line, source_event_id)

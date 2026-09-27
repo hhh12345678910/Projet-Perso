@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import os
+import re
 import sqlite3
 from pathlib import Path
 import threading
@@ -16,8 +17,8 @@ except ImportError:  # Python < 3.9 fallback — sandbox is 3.11 so this is safe
     ZoneInfo = None  # type: ignore[assignment]
 
 from .config import SQLITE_BUSY_TIMEOUT_SEC
-from .matcher import parse_event_key
-from .models import Book, ValueBet, is_half_time
+from .matcher import class_marker_from_league, parse_event_key
+from .models import TOTALS_LIKE, Book, MarketType, ValueBet, is_half_time
 from .surebet import Surebet
 from .middle import Middle
 from . import teams
@@ -188,6 +189,132 @@ def _prettify_team_name(normalized: str) -> str:
     the registry doesn't know the team yet — typically only on the very
     first scan of an event before a scraper records it."""
     return teams.display(normalized)
+
+
+# ─── Les noms d'une alerte : ceux du BOOK, et « (f) » au féminin ─────────────
+#
+# Demande du 27/09 : une alerte Ladbrokes doit montrer les équipes comme
+# Ladbrokes les écrit — c'est là qu'il faut les retrouver — et non comme
+# Pinnacle, ni comme le dernier book vu (`teams.display`, tous books confondus).
+
+def _nom_pour_book(book, fragment: str) -> str:
+    """Le nom tel que `book` l'écrit ; à défaut, le registre commun."""
+    return teams.display_for_book(book, fragment) or _prettify_team_name(fragment)
+
+
+def _noms_du_book(event_key: str, book, book_event_key: "str | None" = None
+                  ) -> "tuple[str, str] | None":
+    """(domicile, extérieur) tels que `book` les écrit, DANS SON ORDRE.
+
+    `book_event_key` est la clé d'origine du book quand elle diffère de la
+    référence (`remap_to_reference`) ; absente, les deux clés sont les mêmes,
+    ordre compris. ⚠️ Si le book liste les équipes à l'envers de Pinnacle, le
+    label du pari doit être retourné avec (`_label_du_book`) : sinon « home »
+    désignerait l'autre équipe."""
+    parsed = parse_event_key(book_event_key or event_key)
+    if parsed is None:
+        return None
+    _, h, a = parsed
+    return _nom_pour_book(book, h), _nom_pour_book(book, a)
+
+
+def _label_du_book(label: str, market, swapped: bool) -> str:
+    """Le label du pari dans le repère du BOOK. Le pipeline le tient dans
+    celui de Pinnacle (retourné par `remap_to_reference` quand le book liste
+    les équipes à l'envers) ; les totaux n'ont pas de sens à retourner."""
+    if not swapped or market in TOTALS_LIKE:
+        return label
+    return {"home": "away", "away": "home"}.get(label, label)
+
+
+#: Un match féminin se lit d'abord dans la LIGUE : Pinnacle écrit « Houston
+#: Dash » dans « USA - National Womens Soccer League », Ladbrokes « CD Real
+#: Santander » dans « COLOMBIE - 1ère DIVISION FÉM. ». `class_marker_from_league`
+#: couvre les formes longues ; ce motif, les abréviations des books et le
+#: tennis (WTA).
+_LIGUE_FEMININE = re.compile(r"\bf[ée]m\b\.?|\(\s*[fw]\s*\)|\bwta\b", re.IGNORECASE)
+
+#: Les marqueurs féminins EN FIN de nom, tels que les books les écrivent
+#: (« Arsenal W », « Lyon (F) », « Standard Fém. », « Bayern Frauen ») :
+#: retirés de l'affichage, puisque « (f) » les remplace.
+_MARQUE_FEMININE = re.compile(
+    r"[\s\-]*[\(\[]?\b(?:w|women|womens|women's|woman|ladies|dames|damen|frauen|"
+    r"f|fem|fém|feminin[ea]?s?|féminin[ea]?s?|femenin[oa]|femenil|femminile|"
+    r"vrouwen|kvinner|kvinnor)\b\.?[\)\]]?\s*$", re.IGNORECASE)
+
+
+def _est_feminin(fragments, ligues, sport: "str | None" = None) -> bool:
+    """Le match est-il féminin ? La ligue d'abord (celle de Pinnacle, celle du
+    book), puis le tag `xwomen` que `normalize_team` pose dans la clé.
+
+    ⚠️ Pas le tag au tennis : un « W » isolé y est une initiale (« Koolhof W
+    / Skupski N » devient `xwomen`) — seule la ligue compte."""
+    for ligue in ligues:
+        if ligue and (class_marker_from_league(ligue) == "W"
+                      or _LIGUE_FEMININE.search(ligue)):
+            return True
+    if (sport or "").lower() == "tennis":
+        return False
+    return any("xwomen" in (f or "") for f in fragments)
+
+
+def _equipe(nom: str, feminin: bool) -> str:
+    """Le nom affiché ; au féminin, sans le marqueur du book et suivi de
+    « (f) »."""
+    if not feminin:
+        return nom
+    s = nom.strip()
+    while True:
+        t = _MARQUE_FEMININE.sub("", s).strip()
+        if t.lower().endswith("xwomen"):          # repli du registre : « Houstondashxwomen »
+            t = t[:-len("xwomen")].strip()
+        if not t or t == s:
+            break
+        s = t
+    return f"{s or nom} (f)"
+
+
+def _fragments(*cles) -> list:
+    out = []
+    for k in cles:
+        p = parse_event_key(k) if k else None
+        if p is not None:
+            out.extend(p[1:])
+    return out
+
+
+def _matchup(home: str, away: str, feminin: bool) -> str:
+    return f"{_ht(_equipe(home, feminin))} vs {_ht(_equipe(away, feminin))}"
+
+
+_LIGUES_REF: dict = {}
+
+
+def _ligue_reference(event_key: str) -> "str | None":
+    """La ligue de PINNACLE pour ce match (`events.league`, écrite par le
+    daemon avant l'envoi du même cycle). `ValueBet.league` est celle du book,
+    vide pour la plupart. Lecture seule, jamais bloquante : sans base, None."""
+    if not event_key:
+        return None
+    if event_key in _LIGUES_REF:
+        return _LIGUES_REF[event_key]
+    ligue = None
+    try:
+        con = sqlite3.connect(f"file:{_PLAYS_DB}?mode=ro", uri=True,
+                              timeout=SQLITE_BUSY_TIMEOUT_SEC)
+        try:
+            row = con.execute("SELECT league FROM events WHERE event_key = ?",
+                              (event_key,)).fetchone()
+            ligue = row[0] if row and row[0] else None
+        finally:
+            con.close()
+    except sqlite3.Error:
+        return None
+    if ligue:
+        if len(_LIGUES_REF) > 20_000:
+            _LIGUES_REF.clear()
+        _LIGUES_REF[event_key] = ligue
+    return ligue
 
 
 def _time_to_kickoff(start: datetime, now: datetime | None = None) -> str:
@@ -441,7 +568,8 @@ class TelegramConfig:
         return self.premium_chat_id
 
 
-def format_surebet(sb: Surebet, sport: str | None = None, is_live: bool = False) -> str:
+def format_surebet(sb: Surebet, sport: str | None = None, is_live: bool = False,
+                   ligue_ref: str | None = None) -> str:
     """Surebet messages need to list every leg with its book — that's the
     whole point — so the format is taller than a value bet alert. Visually
     distinct (💰 vs 🎯) so the user can tell them apart in the chat preview.
@@ -451,8 +579,11 @@ def format_surebet(sb: Surebet, sport: str | None = None, is_live: bool = False)
     parsed = parse_event_key(sb.event_key)
     if parsed is not None:
         start, home_norm, away_norm = parsed
-        matchup = (f"{_ht(_prettify_team_name(home_norm))} vs "
-                   f"{_ht(_prettify_team_name(away_norm))}")
+        # Plusieurs books, un par jambe : pas de « book de l'alerte », les
+        # noms restent ceux du registre commun.
+        feminin = _est_feminin((home_norm, away_norm), (ligue_ref,), sport)
+        matchup = _matchup(_prettify_team_name(home_norm),
+                           _prettify_team_name(away_norm), feminin)
         when_line = f"📅 {_format_kickoff(start)}\n"
     else:
         matchup = _ht(sb.event_key)
@@ -484,7 +615,8 @@ def format_surebet(sb: Surebet, sport: str | None = None, is_live: bool = False)
     )
 
 
-def format_middle(m: Middle, sport: str | None = None, total_stake: float = 100.0) -> str:
+def format_middle(m: Middle, sport: str | None = None, total_stake: float = 100.0,
+                  ligue_ref: str | None = None) -> str:
     """Totals middle alert: both legs with their book and a balanced € stake,
     the gap value(s) that win both, the Pinnacle-priced gap probability and the
     resulting EV. `total_stake` is the TOTAL € spread across the two legs (not
@@ -493,8 +625,9 @@ def format_middle(m: Middle, sport: str | None = None, total_stake: float = 100.
     parsed = parse_event_key(m.event_key)
     if parsed is not None:
         start, home_norm, away_norm = parsed
-        matchup = (f"{_ht(_prettify_team_name(home_norm))} vs "
-                   f"{_ht(_prettify_team_name(away_norm))}")
+        feminin = _est_feminin((home_norm, away_norm), (ligue_ref,), sport)
+        matchup = _matchup(_prettify_team_name(home_norm),
+                           _prettify_team_name(away_norm), feminin)
         when_line = f"📅 {_format_kickoff(start)}\n"
     else:
         matchup = _ht(m.event_key)
@@ -551,6 +684,7 @@ def format_clv_alert(
     sport: str | None = None,
     is_high: bool = False,
     bankroll: float = 1000.0,
+    ligue_ref: str | None = None,
 ) -> str:
     """Message envoyé peu avant le coup d'envoi quand la CLV est confirmée positive.
     is_high=True → header 🔥 et libellé différent pour le groupe prioritaire.
@@ -563,8 +697,12 @@ def format_clv_alert(
     parsed = parse_event_key(bet["event_key"])
     if parsed is not None:
         start, home_norm, away_norm = parsed
-        matchup = (f"{_ht(_prettify_team_name(home_norm))} vs "
-                   f"{_ht(_prettify_team_name(away_norm))}")
+        # Le pari relu en base n'a plus la clé du book : les noms de CE book
+        # quand il les a écrits sous la même clé, dans l'ordre de Pinnacle —
+        # celui du label, lui aussi relu dans ce repère.
+        feminin = _est_feminin((home_norm, away_norm), (ligue_ref,), sport)
+        matchup = _matchup(_nom_pour_book(bet["book"], home_norm),
+                           _nom_pour_book(bet["book"], away_norm), feminin)
         when_line = f"📅 {_format_kickoff(start)} (dans {mins_to_kickoff} min)\n"
     else:
         matchup = _ht(bet["event_key"])
@@ -598,28 +736,37 @@ def format_clv_alert(
 
 
 def format_value_bet(bet: ValueBet, sport: str | None = None,
-                     bankroll: float = 1000.0) -> str:
+                     bankroll: float = 1000.0, ligue_ref: str | None = None) -> str:
     """Human-readable single message per bet — kept compact so a phone
     notification preview shows EV%, opponent and kickoff before the user
     needs to expand the chat. Dates are localised to Brussels time.
     Optionally takes the sport string to surface a per-sport emoji.
-    bankroll converts the stored quarter-Kelly% into a concrete € stake."""
+    bankroll converts the stored quarter-Kelly% into a concrete € stake.
+
+    Les équipes sont celles du BOOK de l'alerte, écrites comme lui et dans
+    son ordre — c'est chez lui qu'il faut les retrouver ; le label du pari
+    suit ce même ordre (`_label_du_book`). « (f) » suit chaque nom d'un match
+    féminin, lu dans `ligue_ref` (la ligue Pinnacle), la ligue du book ou les
+    noms."""
     book_name = " / ".join(
         _nom_book(b) for b in (bet.book, *bet.also_books)
     )
 
     # Try to extract a readable home/away + kickoff from the event_key.
     parsed = parse_event_key(bet.event_key)
-    if parsed is not None:
-        start, home_norm, away_norm = parsed
-        matchup = (f"{_ht(_prettify_team_name(home_norm))} vs "
-                   f"{_ht(_prettify_team_name(away_norm))}")
+    noms = _noms_du_book(bet.event_key, bet.book, bet.book_event_key)
+    if parsed is not None and noms is not None:
+        start = parsed[0]
+        feminin = _est_feminin(_fragments(bet.event_key, bet.book_event_key),
+                               (ligue_ref, bet.league), sport)
+        matchup = _matchup(*noms, feminin)
         when_line = f"📅 {_format_kickoff(start)}{_time_to_kickoff(start)}\n"
     else:
         # Fall back to the raw key if it doesn't parse — better than crashing.
         matchup = _ht(bet.event_key)
         when_line = ""
 
+    label = _label_du_book(bet.outcome.label, bet.market, bet.book_swapped)
     line_suffix = f" {bet.outcome.line}" if bet.outcome.line is not None else ""
     # Only some sources carry a competition name, so this line is conditional
     # rather than showing an empty placeholder.
@@ -674,7 +821,7 @@ def format_value_bet(bet: ValueBet, sport: str | None = None,
         f"{_sport_prefix(sport)}{matchup}\n"
         f"{league_line}"
         f"{when_line}"
-        f"Pari : <b>{_ht(bet.outcome.label)}{line_suffix}</b> @ {bet.odd_taken:.2f} "
+        f"Pari : <b>{_ht(label)}{line_suffix}</b> @ {bet.odd_taken:.2f} "
         f"(fair {bet.fair_odd:.2f}{ref_suffix})\n"
         f"{ref_line}"
         f"{_advised_stake_line(bet.ev_pct, bet.kelly_stake_pct, bankroll)}"
@@ -965,7 +1112,8 @@ class TelegramAlerter:
         if is_half_time(bet.market):
             return False
         ev = bet.ev_pct
-        text = format_value_bet(bet, sport=sport, bankroll=cfg.bankroll)
+        text = format_value_bet(bet, sport=sport, bankroll=cfg.bankroll,
+                                ligue_ref=_ligue_reference(bet.event_key))
         delivered = False
 
         # Premium is a prematch-only channel: a value bet whose kickoff has
@@ -1157,7 +1305,8 @@ class TelegramAlerter:
         cfg = self.config
         is_high = clv_pct >= cfg.min_high_clv_pct
         text = format_clv_alert(bet, clv_pct, current_pin_odd, mins_to_kickoff,
-                                sport=sport, is_high=is_high, bankroll=cfg.bankroll)
+                                sport=sport, is_high=is_high, bankroll=cfg.bankroll,
+                                ligue_ref=_ligue_reference(bet["event_key"]))
         delivered = self._send(text, chat_id=cfg.effective_clv_chat_id)
         # CLV n'est jamais copiee sur le canal critique (choix utilisateur).
         return delivered
@@ -1176,7 +1325,8 @@ class TelegramAlerter:
             if is_live
             else cfg.effective_surebet_chat_id
         )
-        text = format_surebet(sb, sport=sport, is_live=is_live)
+        text = format_surebet(sb, sport=sport, is_live=is_live,
+                              ligue_ref=_ligue_reference(sb.event_key))
         margin_pct = sb.margin * 100
         delivered = self._send(text, chat_id=chat)
         # Premium and critical are curated channels: a suspicious (phantom)
@@ -1202,7 +1352,8 @@ class TelegramAlerter:
         """Send a totals-middle alert to the CLV channel (per user choice).
         Best-effort like the others: a rate-limited send returns False and the
         daemon retries next cycle."""
-        text = format_middle(m, sport=sport, total_stake=self.config.middle_stake_eur)
+        text = format_middle(m, sport=sport, total_stake=self.config.middle_stake_eur,
+                             ligue_ref=_ligue_reference(m.event_key))
         return self._send(text, chat_id=self.config.effective_clv_chat_id)
 
     @staticmethod
@@ -1306,7 +1457,10 @@ def format_live_observation(o) -> str:
     lecteur de s'en apercevoir.
     """
     from html import escape
-    match = f"{_prettify_team_name(o.home)} vs {_prettify_team_name(o.away)}"
+    feminin = _est_feminin((o.home, o.away), (getattr(o, "league", None),),
+                           getattr(o, "sport", None))
+    match = (f"{_equipe(_nom_pour_book(o.book, o.home), feminin)} vs "
+             f"{_equipe(_nom_pour_book(o.book, o.away), feminin)}")
     score = (o.feed_score or "").replace(":", "-") or "N/A"
     ligne = "" if o.line is None else f" {o.line:g}"
     minute = ("" if o.minute_ecoulee is None
@@ -1383,17 +1537,22 @@ def _edge_key(q) -> tuple:
 def format_late_market(event_key: str, book: Book, quotes: list,
                        minutes_late: float, sport: str | None = None,
                        score: tuple | None = None, is_goal: bool = False,
-                       edges: dict | None = None) -> str:
+                       edges: dict | None = None, ligue_ref: str | None = None) -> str:
     """Message d'un marché prématch resté ouvert sur un match commencé.
 
     `edges` donne l'écart mesuré, par cote, contre le consensus des books qui
     pricent déjà en direct. C'est la seule chose qui distingue une occasion
-    d'un book simplement lent, donc elle passe en tête du message."""
-    parsed = parse_event_key(event_key)
-    if parsed is not None:
-        _, home_norm, away_norm = parsed
-        matchup = (f"{_ht(_prettify_team_name(home_norm))} vs "
-                   f"{_ht(_prettify_team_name(away_norm))}")
+    d'un book simplement lent, donc elle passe en tête du message.
+
+    Les équipes sont celles du BOOK, dans SON ordre : ses cotes gardent sa
+    propre clé (jamais réalignée) et leurs labels sont dans son repère. Les
+    noms de Pinnacle, dans l'ordre de Pinnacle, désignaient l'autre équipe
+    quand le book liste les équipes à l'envers (cartographie du 27/09)."""
+    cle_book = next((q.event_key for q in quotes if getattr(q, "event_key", None)), None)
+    noms = _noms_du_book(event_key, book, cle_book)
+    if noms is not None:
+        feminin = _est_feminin(_fragments(event_key, cle_book), (ligue_ref,), sport)
+        matchup = _matchup(*noms, feminin)
     else:
         matchup = _ht(event_key)
     edges = edges or {}
@@ -1462,7 +1621,8 @@ def send_late_market_alerts(
             is_goal = bool(item[5]) if len(item) > 5 else False
             edges = item[6] if len(item) > 6 else None
             text = format_late_market(ek, book, quotes, late, sport=sport,
-                                      score=score, is_goal=is_goal, edges=edges)
+                                      score=score, is_goal=is_goal, edges=edges,
+                                      ligue_ref=_ligue_reference(ek))
             if alerter._send(text, chat_id=chat):
                 sent.append(item)
     return sent

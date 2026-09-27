@@ -204,7 +204,7 @@ def parse_games(
         league_name = (game.get("leagueInfo") or {}).get("name", "")
         if is_noise_event(home, away, league_name):
             continue
-        record_pair(home, away)
+        record_pair(home, away, book)
         ek = event_key(home, away, start)
         source_id = str(game.get("id") or "")
 

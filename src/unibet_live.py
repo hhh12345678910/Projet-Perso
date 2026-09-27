@@ -288,7 +288,8 @@ def apparier(instantane: Instantane, storage, maintenant: datetime,
                 r = _permuter_h2h(q) if inverse else q
                 out.quotes.append(replace(r, event_key=cible.event_key,
                                           book_event_key=q.event_key,
-                                          from_live_feed=True))
+                                          from_live_feed=True,
+                                          book_swapped=bool(inverse)))
     return out
 
 

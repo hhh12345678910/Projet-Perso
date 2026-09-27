@@ -126,7 +126,7 @@ def remap_to_reference(
             # être postérieure de plusieurs heures au tennis.
             out.append(replace(q, event_key=ref_key, outcome=flipped_outcome,
                                book_event_key=q.book_event_key or q.event_key,
-                               match_score=score))
+                               match_score=score, book_swapped=swap))
     return out
 
 

@@ -333,7 +333,7 @@ def iter_quotes_for_event(
     start = _parse_event_time(event.get("start_datetime"))
     if not (home and away and start):
         return
-    record_pair(home, away)
+    record_pair(home, away, Book.SMARKETS)
     ek = event_key(home, away, start)
     source_id = str(event.get("id") or "")
 
@@ -464,7 +464,7 @@ def iter_all_quotes_fast(
     now = datetime.now(timezone.utc)
     for eid, markets in usable.items():
         home, away, start, source_id = meta[eid]
-        record_pair(home, away)
+        record_pair(home, away, Book.SMARKETS)
         ek = event_key(home, away, start)
         for m in markets:
             market_type = _MARKET_TYPE_MAP[(m["market_type"])["name"]]

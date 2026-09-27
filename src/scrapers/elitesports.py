@@ -207,7 +207,7 @@ def parse_prematch(payload: dict, book: Book = Book.ELITESPORTS) -> Iterator[Odd
             home, away = noms
             if is_noise_event(home, away, league_name):
                 continue
-            record_pair(home, away)
+            record_pair(home, away, book)
             ek = event_key(home, away, start)
             source_id = str(event.get("eventId") or "")
 
