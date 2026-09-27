@@ -48,8 +48,18 @@ l'horaire, les noms, la classe) :
 * C — barrière de classe levée (hommes / femmes / jeunes / réserve) : même
   horaire, noms à 85, et AUCUN autre match du créneau qui ressemble (70) —
   le jumeau d'une autre classe compris.
-Toutes exigent un match réglable (terminé, score à 90 min prouvé) et un sens
-de lecture sûr (`scores._orientation`).
+Toutes exigent un match réglable (terminé, score à 90 min prouvé, à la même
+heure que le candidat — un match reporté puis rejoué garde son identifiant)
+et un sens de lecture sûr (`scores._orientation`).
+
+⚠️ Les règles voient TOUS les matchs du pont, quel que soit leur statut
+(reporté, non commencé…), et leur pays : un match reporté au même horaire est
+un rival, un match retour pas encore joué aussi. Une règle SÛRE ici ne l'est
+en production que si elle y voit la même chose — pas seulement les matchs
+terminés (`parse_apifootball_results`) que results-update reçoit aujourd'hui,
+sans ligue ni pays. Mesuré par la revue du 27/09 : bâtie sur ces seuls
+matchs terminés, la règle C réglait les hommes avec le score des femmes quand
+le match des hommes était reporté.
 
 ⚠️ LIMITE. L'épreuve à l'aveugle porte sur les matchs que la source CONNAÎT
 (ceux qu'on a réglés) ; les ligues qu'elle ne sert pas ont peut-être plus de
@@ -79,7 +89,8 @@ from rapidfuzz import fuzz, process  # noqa: E402
 
 from scripts.resultats_manquants import (GRACE, SEUIL_BRUT, SourceFoot,  # noqa: E402
                                          _coup_d_envoi, _flou, _notre_evenement,
-                                         _pour_flou, charger_detections)
+                                         _pour_flou, charger_detections,
+                                         jours_a_couvrir, jours_reclames_detections)
 from scripts.verif_resultats import SOURCES_API, _apparier  # noqa: E402
 from scripts.verif_resultats import charger as charger_regles  # noqa: E402
 from src.config import load_env_file  # noqa: E402
@@ -169,15 +180,19 @@ class Fenetres:
         if jour not in self._cache:
             fx, _noms, index = self.source.fenetre(jour)
             par_heure = sorted((x["t"], i) for i, x in enumerate(fx) if x["t"])
-            res = [r for d in (jour - timedelta(days=1), jour, jour + timedelta(days=1))
-                   for r in self.source.resultats(d)]
-            res.sort(key=lambda r: r.start_time)
+            res = sorted(((r.start_time, n, d, r) for n, (d, r) in enumerate(
+                (d, r) for d in (jour - timedelta(days=1), jour, jour + timedelta(days=1))
+                for r in self.source.resultats(d))), key=lambda z: (z[0], z[1]))
             self._cache[jour] = {
                 "fx": fx, "index": index,
                 "heures": [t for t, _i in par_heure],
                 "ordre": [i for _t, i in par_heure],
-                "resultats": {ident_resultat(r): r for r in res},
-                "res": res, "res_heures": [r.start_time for r in res]}
+                # Un match reporté puis rejoué garde son identifiant : le
+                # résultat d'un candidat est celui du même identifiant À LA
+                # MÊME HEURE, jamais celui du match rejoué le lendemain.
+                "resultats": {(ident_resultat(r), r.start_time): r for _t, _n, _d, r in res},
+                "res": [(d, r) for _t, _n, d, r in res],
+                "res_heures": [t for t, _n, _d, _r in res]}
         return self._cache[jour]
 
     def oublier(self, avant: date) -> None:
@@ -187,16 +202,19 @@ class Fenetres:
         for cle in [c for c in self._cache_entiers if c[1] < avant]:
             del self._cache_entiers[cle]
 
-    def lot(self, t: datetime, tol: int) -> list:
+    def lot(self, t: datetime, tol: int, jours: "set | None" = None) -> list:
         """Les résultats contre lesquels `results-update` rapproche un match
-        de l'instant `t` — le lot des trois journées (`_resultats_production`),
-        réduit d'emblée à la tolérance horaire, que `match_event` appliquerait
-        de toute façon : même liaison, sans parcourir quatre mille résultats
-        par match."""
-        p = self._prep(t.date())
+        de l'instant `t` — le lot de `_resultats_production` : la journée du
+        match, plus la veille et le lendemain s'ils sont chargés (`jours`,
+        `days_needed` ; None = toutes). Réduit d'emblée à la tolérance
+        horaire, que `match_event` appliquerait de toute façon : même liaison,
+        sans parcourir quatre mille résultats par match."""
+        jour = t.date()
+        p = self._prep(jour)
         pas = timedelta(minutes=tol)
-        return p["res"][bisect_left(p["res_heures"], t - pas):
-                        bisect_right(p["res_heures"], t + pas)]
+        return [r for d, r in p["res"][bisect_left(p["res_heures"], t - pas):
+                                       bisect_right(p["res_heures"], t + pas)]
+                if d == jour or jours is None or d in jours]
 
     def _entiers(self, nom: str, jour: date) -> set:
         """Les noms de la fenêtre à `MEMES_CLUBS` et plus EN ENTIER face à
@@ -258,7 +276,7 @@ def _decrire(evm, oh: str, oa: str, x: dict, resultats: dict, pays: str) -> dict
         "dt": abs((x["t"] - evm.start_time).total_seconds()) / 60,
         "g": sum(g_cotes) / 2, "g_cotes": g_cotes,
         "u": sum(u_cotes) / 2, "entier": entier,
-        "res": resultats.get(ident),
+        "res": resultats.get((ident, x["t"])),
     }
 
 
@@ -341,6 +359,9 @@ class Bilan:
         self.recup = defaultdict(list)      # code → [(exemple, paris joués)]
         self.choix: dict = {}               # event_key → {code: (identité, exemple)}
         self.joues: dict = {}               # event_key → paris joués
+        self.departs_production: list = []  # coups d'envoi des « réglerait déjà »
+        self.illisibles: list = []          # journées au fichier illisible
+        self.maintenant = datetime.now(timezone.utc)
         self._vus: set = set()
 
     @property
@@ -359,9 +380,16 @@ def _exemple(ev, r, c) -> dict:
 
 
 def analyser(reglees: list, manquants: list, noms: dict, joues: dict,
-             dossier: Path, regles=REGLES, progres=None) -> Bilan:
+             dossier: Path, regles=REGLES, progres=None,
+             jours: "set | None" = None) -> Bilan:
     """Rejoue chaque match dans l'ordre chronologique : trois journées de la
-    source en mémoire à la fois, comme `resultats_manquants`."""
+    source en mémoire à la fois, comme `resultats_manquants`.
+
+    `jours` : les journées que `results-update` chargera pour les manquants
+    (`days_needed`) — la veille ou le lendemain d'un match n'entrent dans son
+    lot que s'ils en sont. None = toutes. Les épreuves, elles, supposent
+    toutes les journées chargées : c'est le cas de la production, où chaque
+    journée a au moins un match en attente."""
     bilan = Bilan()
     bilan.reglees = len(reglees)
     source = SourceFoot(dossier)
@@ -385,20 +413,24 @@ def analyser(reglees: list, manquants: list, noms: dict, joues: dict,
         marque = class_marker_from_league(ev.league)
         evm = replace(ev, home=with_class_marker(ev.home, marque),
                       away=with_class_marker(ev.away, marque))
-        if manquant and not (dossier / f"{t.date().isoformat()}.json").exists():
-            # Journée jamais récupérée, ou pas encore : aucune règle n'y
+        if manquant and not any(
+                (dossier / f"{d.isoformat()}.json").exists()
+                for d in (t.date() - timedelta(days=1), t.date(), t.date() + timedelta(days=1))
+                if d == t.date() or jours is None or d in jours):
+            # Aucun fichier que results-update chargerait pour ce match
+            # (journée jamais récupérée, ou pas encore) : aucune règle n'y
             # tourne. Hors des « faux attendus », pas hors de la couverture.
             bilan.manquants += 1
             bilan.sans_fichier += 1
             continue
         cands = fen.candidats(evm)
-        lot = fen.lot(t, tol)
         if manquant:
-            _manquant(bilan, r, ev, cands, lot, joues, regles)
+            _manquant(bilan, r, ev, cands, fen.lot(t, tol, jours), joues, regles)
         else:
-            _epreuve(bilan, r, ev, evm, cands, lot, source, tol, regles)
+            _epreuve(bilan, r, ev, evm, cands, fen.lot(t, tol), source, tol, regles)
         if progres and n % 1000 == 0:
             progres(n, len(tous))
+    bilan.illisibles = sorted(source.illisibles)
     return bilan
 
 
@@ -407,6 +439,7 @@ def _manquant(bilan, r, ev, cands, lot, joues, regles) -> None:
     liens, _c = bind_results([ev], lot, sport="soccer")
     if liens:
         bilan.par_production += 1
+        bilan.departs_production.append(ev.start_time)
         return
     k = r["event_key"]
     for regle in regles:
@@ -424,7 +457,8 @@ def _epreuve(bilan, r, ev, evm, cands, lot, source, tol, regles) -> None:
         return
     vrai_res, _lot = _apparier(evm, source, tol)
     ident = ident_resultat(vrai_res) if vrai_res is not None else None
-    vrai = next((c for c in cands if c["ident"] == ident), None)
+    vrai = next((c for c in cands if c["ident"] == ident
+                 and c["x"]["t"] == vrai_res.start_time), None)
     if vrai is None:
         bilan.hors_epreuve += 1
         return
@@ -513,12 +547,24 @@ def imprimer(bilan: Bilan, depuis: date, regles=REGLES) -> None:
         print(f"({bilan.hors_epreuve} hors épreuve : saisis ou importés, ou non "
               f"retrouvés dans les fichiers ; {bilan.cles_en_double} autre(s) clé(s) "
               f"d'un match déjà éprouvé.)")
+    if bilan.illisibles:
+        print(f"\n⚠️ Fichier(s) du pont ILLISIBLE(S) : "
+              f"{', '.join(d.isoformat() for d in bilan.illisibles)}. results-update "
+              f"tombe alors en panne sur\n   TOUT le football : les « réglerait déjà » "
+              f"ci-dessous ne valent qu'une fois le fichier réparé\n   (voir "
+              f"scripts.resultats_manquants).")
     m = bilan.tournent
     print(f"\nMatchs finis sans résultat : {bilan.manquants}"
-          + (f" — dont {bilan.par_production} que la production réglerait déjà "
-             f"(relancer results-update)" if bilan.par_production else "")
+          + (f" — dont {bilan.par_production} que la production réglerait déjà"
+             if bilan.par_production else "")
           + (f", {bilan.sans_fichier} sans fichier du pont" if bilan.sans_fichier else "")
           + f".\nUne règle assouplie tournerait sur les {m} autres.")
+    if bilan.par_production:
+        print(f"Pour régler les {bilan.par_production} premiers (une relance sans "
+              f"--days ne remonte que 3 jours) :\n  .venv/bin/python -m src.main "
+              f"results-update --days "
+              f"{jours_a_couvrir(bilan.maintenant, bilan.departs_production)} "
+              f"--sport soccer")
     if not n:
         print("\nAucune épreuve possible : aucun résultat de la source retrouvé "
               "dans les fichiers du pont.")
@@ -608,12 +654,15 @@ def imprimer(bilan: Bilan, depuis: date, regles=REGLES) -> None:
     print("  • Envoie cette sortie. Rien n'est activé : une règle SÛRE ne passe en "
           "production qu'après\n    lecture de ses exemples, avec une étiquette à "
           "part (source « api-football/souple »)\n    pour pouvoir la retrouver et "
-          "la retirer d'un coup.")
+          "la retirer d'un coup.\n  • Une règle n'est sûre que telle que le banc "
+          "l'a jouée : elle voit TOUS les matchs du pont\n    (reportés et non "
+          "commencés compris, ce sont ses rivaux) et leur pays — pas seulement\n"
+          "    les matchs terminés que results-update reçoit aujourd'hui.")
 
 
 def charger_manquants(db: str, depuis: date, maintenant: datetime) -> tuple:
     """(matchs de football finis, sans résultat, portant une détection ;
-    noms affichés)."""
+    noms affichés ; journées que `results-update` chargera)."""
     rows, noms, _reglees = charger_detections(db, depuis)
     fin = maintenant - GRACE
     out = []
@@ -621,7 +670,7 @@ def charger_manquants(db: str, depuis: date, maintenant: datetime) -> tuple:
         t = _coup_d_envoi(r)
         if r["sport"] == "soccer" and not r["has_result"] and t is not None and t <= fin:
             out.append(r)
-    return out, noms
+    return out, noms, jours_reclames_detections(rows, maintenant)
 
 
 def main(argv=None) -> None:
@@ -640,13 +689,16 @@ def main(argv=None) -> None:
     racine = Path(__file__).resolve().parents[1]
     dossier = Path(os.getenv("SCORES_INGEST_DIR",
                              str(racine / "data" / "scores"))) / "soccer"
+    maintenant = datetime.now(timezone.utc)
     reglees, noms, joues = charger_regles(a.db, depuis)
-    manquants, noms_det = charger_manquants(a.db, depuis, datetime.now(timezone.utc))
+    manquants, noms_det, jours = charger_manquants(a.db, depuis, maintenant)
     noms = {**noms_det, **noms}
 
     def progres(i, n):
         print(f"  … {i}/{n} matchs rejoués", file=sys.stderr)
-    bilan = analyser(reglees, manquants, noms, joues, dossier, progres=progres)
+    bilan = analyser(reglees, manquants, noms, joues, dossier, progres=progres,
+                     jours=jours)
+    bilan.maintenant = maintenant
     imprimer(bilan, depuis)
 
 

@@ -63,9 +63,10 @@ def _monde(tmp_path, reglees=(), manquants=(), fixtures=(), joues=()):
 def _banc(tmp_path, **kw):
     db, dossier = _monde(tmp_path, **kw)
     reglees, noms, joues = br.charger_regles(str(db), J.date())
-    manquants, noms2 = br.charger_manquants(str(db), J.date(),
-                                            datetime(2026, 9, 27, tzinfo=timezone.utc))
-    return br.analyser(reglees, manquants, {**noms2, **noms}, joues, dossier)
+    manquants, noms2, jours = br.charger_manquants(
+        str(db), J.date(), datetime(2026, 9, 27, tzinfo=timezone.utc))
+    return br.analyser(reglees, manquants, {**noms2, **noms}, joues, dossier,
+                       jours=jours)
 
 
 def _codes(d) -> dict:
@@ -260,10 +261,66 @@ def test_une_journee_sans_fichier_ne_compte_pas_dans_les_faux_attendus(tmp_path)
         ("m", "Arsenal", "Chelsea", "L"),
         ("m2", "Everton", "Fulham", "L", "2026-09-22T15:00:00+00:00")],
         fixtures=[_fx(1, "Kontu", "LPS")])
-    manquants, noms = br.charger_manquants(str(db), J.date(),
-                                           datetime(2026, 9, 27, tzinfo=timezone.utc))
-    b = br.analyser([], manquants, noms, {}, dossier)
+    manquants, noms, jours = br.charger_manquants(
+        str(db), J.date(), datetime(2026, 9, 27, tzinfo=timezone.utc))
+    b = br.analyser([], manquants, noms, {}, dossier, jours=jours)
     assert (b.manquants, b.sans_fichier, b.tournent) == (2, 1, 1)
+
+
+def test_un_match_reporte_ne_prend_pas_le_score_de_son_match_rejoue(tmp_path):
+    """Revue du 27/09 : le match 777, reporté (PST) le 20 à 15 h, rejoué le 21
+    à 13 h (FT 0-3), garde son identifiant. Notre match du 20 ne doit pas
+    recevoir ce score, affiché « écart 0 min » : le pari a pu être annulé."""
+    db, dossier = _monde(tmp_path, manquants=[("m", "Kalmar FF", "Varbergs BoIS", "L")],
+                         fixtures=[_fx(777, "Kalmar FF", "Varbergs BoIS", statut="PST")])
+    (dossier / "2026-09-21.json").write_text(json.dumps({"response": [
+        _fx(777, "Kalmar FF", "Varbergs BoIS", hs=0, as_=3,
+            quand="2026-09-21T13:00:00+00:00")]}))
+    manquants, noms, jours = br.charger_manquants(
+        str(db), J.date(), datetime(2026, 9, 27, tzinfo=timezone.utc))
+    b = br.analyser([], manquants, noms, {}, dossier, jours=jours)
+    assert _codes(b.recup) == {}
+
+
+def test_la_veille_et_le_lendemain_ne_comptent_que_charges(tmp_path):
+    """Un match à 23 h 58 dont le résultat (00 h 05) est dans le fichier du
+    lendemain : results-update ne charge ce fichier que si le lendemain a un
+    match en attente. Sinon, la production ne le réglerait PAS."""
+    db, dossier = _monde(tmp_path, manquants=[
+        ("m", "Arsenal", "Chelsea", "L", "2026-09-20T23:58:00+00:00")],
+        fixtures=[_fx(1, "Kontu", "LPS")])
+    (dossier / "2026-09-21.json").write_text(json.dumps({"response": [
+        _fx(2, "Arsenal", "Chelsea", quand="2026-09-21T00:05:00+00:00")]}))
+    manquants, noms, jours = br.charger_manquants(
+        str(db), J.date(), datetime(2026, 9, 27, tzinfo=timezone.utc))
+    assert jours == {J.date()}
+    b = br.analyser([], manquants, noms, {}, dossier, jours=jours)
+    assert b.par_production == 0
+    b = br.analyser([], manquants, noms, {}, dossier, jours=None)
+    assert b.par_production == 1
+
+
+def test_un_fichier_illisible_est_signale(tmp_path, capsys):
+    db, dossier = _monde(tmp_path,
+                         reglees=[("k", "Arsenal", "Chelsea", "L", 2, 1, "home",
+                                   "api-football")],
+                         fixtures=[_fx(1, "Arsenal", "Chelsea")])
+    (dossier / "2026-09-21.json").write_text('{"response": [')
+    reglees, noms, joues = br.charger_regles(str(db), J.date())
+    b = br.analyser(reglees, [], noms, joues, dossier)
+    assert b.illisibles == [datetime(2026, 9, 21).date()]
+    br.imprimer(b, J.date())
+    assert "ILLISIBLE" in capsys.readouterr().out
+
+
+def test_ce_que_la_production_regle_deja_vient_avec_sa_commande(tmp_path, capsys):
+    b = _banc(tmp_path,
+              reglees=[("k", "Everton", "Fulham", "L", 2, 1, "home", "api-football")],
+              manquants=[("m", "Arsenal", "Chelsea", "L")],
+              fixtures=[_fx(1, "Arsenal", "Chelsea"), _fx(2, "Everton", "Fulham")])
+    b.maintenant = datetime(2026, 9, 27, 12, tzinfo=timezone.utc)
+    br.imprimer(b, J.date())
+    assert "results-update --days 8 --sport soccer" in capsys.readouterr().out
 
 
 def test_un_match_non_termine_ne_se_recupere_jamais(tmp_path):

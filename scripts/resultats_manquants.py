@@ -398,6 +398,7 @@ class SourceFoot:
         self._prep: dict = {}
         self._fen: dict = {}
         self._proches: dict = {}
+        self.illisibles: set = set()
 
     def _charger(self, d: date) -> None:
         f = self.dossier / f"{d.isoformat()}.json"
@@ -405,6 +406,10 @@ class SourceFoot:
             brut = json.loads(f.read_text()).get("response") or []
         except (OSError, ValueError, AttributeError):
             brut = []
+            # Présent mais illisible : la production, elle, tombe en panne
+            # sur TOUT le football (`lisible`). Noté pour qui veut le dire.
+            if f.exists():
+                self.illisibles.add(d)
         self._res[d] = parse_apifootball_results({"response": brut})[0]
         out = []
         for m in brut:
