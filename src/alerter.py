@@ -230,9 +230,17 @@ def _label_du_book(label: str, market, swapped: bool) -> str:
 #: Un match féminin se lit d'abord dans la LIGUE : Pinnacle écrit « Houston
 #: Dash » dans « USA - National Womens Soccer League », Ladbrokes « CD Real
 #: Santander » dans « COLOMBIE - 1ère DIVISION FÉM. ». `class_marker_from_league`
-#: couvre les formes longues ; ce motif, les abréviations des books et le
-#: tennis (WTA).
-_LIGUE_FEMININE = re.compile(r"\bf[ée]m\b\.?|\(\s*[fw]\s*\)|\bwta\b", re.IGNORECASE)
+#: couvre les formes longues (women, feminin…) ; ce motif, les abréviations des
+#: books et les compétitions féminines dont le NOM ne le dit pas (revue du
+#: 27/09 : « Sweden - Damallsvenskan », « Norway - Toppserien », « Spain -
+#: Liga F »… sortaient sans « (f) », alors qu'hommes et femmes d'un même club
+#: jouent parfois le même soir) — et le tennis (WTA, ITF W15/W50…).
+_LIGUE_FEMININE = re.compile(
+    r"\bf[ée]m\b\.?|\(\s*[fw]\s*\)|\bdamallsvenskan\b|\btoppserien\b|\bkvinde\w*|"
+    r"\bkvinn\w*|\bvrouwen\w*|\bnaisten\b|\bliga\s+f\b|\barkema\b|\bn?wsl\b|"
+    r"\bwe\s+league\b|\bnadeshiko\b|\bfemenil\b|\bw-league\b|\bwnba\b|\bpwhl\b|"
+    r"\bwta\s*\d*\b|\bw\d{2,3}\b",
+    re.IGNORECASE)
 
 #: Les marqueurs féminins EN FIN de nom, tels que les books les écrivent
 #: (« Arsenal W », « Lyon (F) », « Standard Fém. », « Bayern Frauen ») :
@@ -245,7 +253,13 @@ _MARQUE_FEMININE = re.compile(
 
 def _est_feminin(fragments, ligues, sport: "str | None" = None) -> bool:
     """Le match est-il féminin ? La ligue d'abord (celle de Pinnacle, celle du
-    book), puis le tag `xwomen` que `normalize_team` pose dans la clé.
+    book), puis le tag `xwomen` que `normalize_team` pose dans la clé — sur
+    les DEUX équipes d'une même clé : un book qui marque un match féminin
+    marque les deux, alors que « W Connection » (Trinidad, un club
+    d'hommes) devient `xwomen` à lui seul (revue du 27/09).
+
+    `fragments` : les noms normalisés, par paires (domicile, extérieur) dans
+    l'ordre de `_fragments`.
 
     ⚠️ Pas le tag au tennis : un « W » isolé y est une initiale (« Koolhof W
     / Skupski N » devient `xwomen`) — seule la ligue compte."""
@@ -255,14 +269,19 @@ def _est_feminin(fragments, ligues, sport: "str | None" = None) -> bool:
             return True
     if (sport or "").lower() == "tennis":
         return False
-    return any("xwomen" in (f or "") for f in fragments)
+    f = list(fragments)
+    return any("xwomen" in (f[i] or "") and "xwomen" in (f[i + 1] or "")
+               for i in range(0, len(f) - 1, 2))
 
 
-def _equipe(nom: str, feminin: bool) -> str:
+def _equipe(nom: str, feminin: bool, sport: "str | None" = None) -> str:
     """Le nom affiché ; au féminin, sans le marqueur du book et suivi de
-    « (f) »."""
+    « (f) ». Au tennis, rien n'est retiré : un « W » ou un « F » final y est
+    l'initiale d'une joueuse (« Hsieh S-W », « Falkowska W »)."""
     if not feminin:
         return nom
+    if (sport or "").lower() == "tennis":
+        return f"{nom.strip()} (f)"
     s = nom.strip()
     while True:
         t = _MARQUE_FEMININE.sub("", s).strip()
@@ -283,8 +302,9 @@ def _fragments(*cles) -> list:
     return out
 
 
-def _matchup(home: str, away: str, feminin: bool) -> str:
-    return f"{_ht(_equipe(home, feminin))} vs {_ht(_equipe(away, feminin))}"
+def _matchup(home: str, away: str, feminin: bool, sport: "str | None" = None) -> str:
+    return (f"{_ht(_equipe(home, feminin, sport))} vs "
+            f"{_ht(_equipe(away, feminin, sport))}")
 
 
 _LIGUES_REF: dict = {}
@@ -583,7 +603,7 @@ def format_surebet(sb: Surebet, sport: str | None = None, is_live: bool = False,
         # noms restent ceux du registre commun.
         feminin = _est_feminin((home_norm, away_norm), (ligue_ref,), sport)
         matchup = _matchup(_prettify_team_name(home_norm),
-                           _prettify_team_name(away_norm), feminin)
+                           _prettify_team_name(away_norm), feminin, sport)
         when_line = f"📅 {_format_kickoff(start)}\n"
     else:
         matchup = _ht(sb.event_key)
@@ -627,7 +647,7 @@ def format_middle(m: Middle, sport: str | None = None, total_stake: float = 100.
         start, home_norm, away_norm = parsed
         feminin = _est_feminin((home_norm, away_norm), (ligue_ref,), sport)
         matchup = _matchup(_prettify_team_name(home_norm),
-                           _prettify_team_name(away_norm), feminin)
+                           _prettify_team_name(away_norm), feminin, sport)
         when_line = f"📅 {_format_kickoff(start)}\n"
     else:
         matchup = _ht(m.event_key)
@@ -702,7 +722,7 @@ def format_clv_alert(
         # celui du label, lui aussi relu dans ce repère.
         feminin = _est_feminin((home_norm, away_norm), (ligue_ref,), sport)
         matchup = _matchup(_nom_pour_book(bet["book"], home_norm),
-                           _nom_pour_book(bet["book"], away_norm), feminin)
+                           _nom_pour_book(bet["book"], away_norm), feminin, sport)
         when_line = f"📅 {_format_kickoff(start)} (dans {mins_to_kickoff} min)\n"
     else:
         matchup = _ht(bet["event_key"])
@@ -759,7 +779,7 @@ def format_value_bet(bet: ValueBet, sport: str | None = None,
         start = parsed[0]
         feminin = _est_feminin(_fragments(bet.event_key, bet.book_event_key),
                                (ligue_ref, bet.league), sport)
-        matchup = _matchup(*noms, feminin)
+        matchup = _matchup(*noms, feminin, sport)
         when_line = f"📅 {_format_kickoff(start)}{_time_to_kickoff(start)}\n"
     else:
         # Fall back to the raw key if it doesn't parse — better than crashing.
@@ -1459,8 +1479,9 @@ def format_live_observation(o) -> str:
     from html import escape
     feminin = _est_feminin((o.home, o.away), (getattr(o, "league", None),),
                            getattr(o, "sport", None))
-    match = (f"{_equipe(_nom_pour_book(o.book, o.home), feminin)} vs "
-             f"{_equipe(_nom_pour_book(o.book, o.away), feminin)}")
+    sport_o = getattr(o, "sport", None)
+    match = (f"{_equipe(_nom_pour_book(o.book, o.home), feminin, sport_o)} vs "
+             f"{_equipe(_nom_pour_book(o.book, o.away), feminin, sport_o)}")
     score = (o.feed_score or "").replace(":", "-") or "N/A"
     ligne = "" if o.line is None else f" {o.line:g}"
     minute = ("" if o.minute_ecoulee is None
@@ -1552,7 +1573,7 @@ def format_late_market(event_key: str, book: Book, quotes: list,
     noms = _noms_du_book(event_key, book, cle_book)
     if noms is not None:
         feminin = _est_feminin(_fragments(event_key, cle_book), (ligue_ref,), sport)
-        matchup = _matchup(*noms, feminin)
+        matchup = _matchup(*noms, feminin, sport)
     else:
         matchup = _ht(event_key)
     edges = edges or {}

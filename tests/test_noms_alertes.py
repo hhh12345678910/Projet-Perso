@@ -217,6 +217,49 @@ def test_le_nom_feminin_affiche(nom, attendu):
     assert _equipe(nom, False) == nom
 
 
+@pytest.mark.parametrize("ligue", [
+    # Revue du 27/09 : ces compétitions ne disent pas « Women » dans leur nom.
+    "Sweden - Damallsvenskan", "Norway - Toppserien", "Spain - Liga F",
+    "France - D1 Arkema", "USA - NWSL", "England - Barclays WSL",
+    "Mexico - Liga MX Femenil", "Belgium - Super League Vrouwen",
+    "Denmark - Kvindeliga", "Japan - WE League", "USA - WNBA",
+    "ITF W50 Incheon", "ITF W15 Monastir", "WTA125 Florianopolis",
+    "USA - National Womens Soccer League", "COLOMBIE - 1ère DIVISION FÉM.",
+])
+def test_les_ligues_feminines_reelles(ligue):
+    assert _est_feminin((), (ligue,), "soccer")
+
+
+@pytest.mark.parametrize("ligue", [
+    "Sweden - Allsvenskan", "Belgium - Pro League", "England - Premier League",
+    "ATP Paris - Doubles", "Trinidad and Tobago - TT Premier League",
+    "Spain - LaLiga", "Norway - Eliteserien", "Germany - Bundesliga",
+])
+def test_les_ligues_masculines(ligue):
+    assert not _est_feminin((), (ligue,), "soccer")
+
+
+def test_w_connection_n_est_pas_un_match_feminin():
+    """« W Connection » (Trinidad, un club d'hommes) devient `xwomen` à lui
+    seul : un seul camp marqué ne fait pas un match féminin."""
+    teams.record_pair("W Connection", "Defence Force", Book.LADBROKES_BE)
+    ek = event_key("W Connection", "Defence Force", T)
+    assert "xwomen" in ek
+    msg = format_value_bet(_vb(event_key=ek),
+                           ligue_ref="Trinidad and Tobago - TT Premier League")
+    assert "(f)" not in msg and "W Connection vs Defence Force" in msg
+
+
+def test_au_tennis_les_initiales_restent():
+    """« Hsieh S-W », « Falkowska W » : un W final y est une initiale."""
+    ek = event_key("Ostapenko J / Hsieh S-W", "Kawa K / Falkowska W", T)
+    teams.record_pair("Ostapenko J / Hsieh S-W", "Kawa K / Falkowska W",
+                      Book.LADBROKES_BE)
+    msg = format_value_bet(_vb(event_key=ek), sport="tennis",
+                           ligue_ref="WTA Beijing - Doubles")
+    assert "Ostapenko J / Hsieh S-W (f) vs Kawa K / Falkowska W (f)" in msg
+
+
 def test_au_tennis_seule_la_ligue_compte():
     """« Koolhof W / Skupski N » : le « W » est une initiale, `normalize_team`
     en fait pourtant un `xwomen`."""
