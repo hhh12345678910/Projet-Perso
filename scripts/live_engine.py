@@ -186,11 +186,11 @@ def main() -> int:
                         or not o.statut.value.startswith("REJET_")]
             if alerte is not None and partants:
                 if a.telegram:
-                    envoyes += alerte[1](partants, cfg)
+                    envoyes += alerte[1](partants, cfg, sport=a.sport)
                 else:
                     for o in partants:
                         print("\n--- message Telegram (NON envoyé) ---")
-                        print(alerte[0](o))
+                        print(alerte[0](o, sport=a.sport))
             total["retenus_envoi"] += len(partants)
             total["retenus_muets"] += len(an.nouvelles) - len(partants)
             total.update(an.par_statut)

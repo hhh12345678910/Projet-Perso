@@ -374,3 +374,51 @@ def test_le_marche_en_retard_a_l_envers_montre_le_score_et_l_equipe_justes():
     assert "RSC Anderlecht vs Club Brugge KV" in msg
     assert "Score : 0-2" in msg                      # Anderlecht 0 – 2 Brugge
     assert "<b>away</b> — Club Brugge KV @ 2.40" in msg
+
+
+def test_un_book_a_l_envers_qui_cote_en_direct_ne_fausse_pas_les_autres():
+    """Vérification de la revue : Ladbrokes, à l'envers, reprice en direct
+    (Anderlecht 12.0 / Brugge 1.30) ; Circus, dans l'ordre de Pinnacle, est
+    figé (Brugge 2.45 / Anderlecht 2.90). Mêlés au consensus sans repère,
+    les prix de Ladbrokes faisaient alerter Circus sur Anderlecht, mené."""
+    from src.late_markets import find_late_markets
+
+    def figees(ek, book, _avant):
+        if ek == REF and book == Book.CIRCUS_BE:
+            return {("h2h", "home", None): 2.45, ("h2h", "draw", None): 3.40,
+                    ("h2h", "away", None): 2.90}
+        return {}
+    pin_ailleurs = [OddQuote(event_key=event_key("Genk", "Gand", MAINTENANT),
+                             book=Book.PINNACLE, market=MarketType.H2H,
+                             outcome=Outcome(label="home"), decimal_odd=2.0,
+                             fetched_at=MAINTENANT, source_event_id="p")]
+    soft = [_cote(Book.CIRCUS_BE, REF, "home", 2.45), _cote(Book.CIRCUS_BE, REF, "draw", 3.40),
+            _cote(Book.CIRCUS_BE, REF, "away", 2.90),
+            _cote(Book.LADBROKES_BE, LAD, "home", 12.0, True),
+            _cote(Book.LADBROKES_BE, LAD, "draw", 5.0, True),
+            _cote(Book.LADBROKES_BE, LAD, "away", 1.30, True),
+            # Un second book en direct, dans l'ordre de Pinnacle : le
+            # consensus en exige deux.
+            _cote(Book.BETANO_BE, REF, "home", 1.30, True),
+            _cote(Book.BETANO_BE, REF, "draw", 5.0, True),
+            _cote(Book.BETANO_BE, REF, "away", 12.0, True)]
+    late = find_late_markets(pin_ailleurs, soft, "soccer", MAINTENANT,
+                             prior_odds=figees, recent={REF: 0.0})
+    retenues = late.get((REF, Book.CIRCUS_BE), [])
+    assert [(q.outcome.label, q.decimal_odd) for q in retenues] == [("home", 2.45)]
+
+
+def test_l_observation_live_recoit_le_sport():
+    """Au tennis, la ligue seule compte et les initiales restent — même en
+    direct, où `Opportunite` ne porte pas le sport."""
+    from types import SimpleNamespace
+    from src.alerter import format_live_observation
+    ek = event_key("Koolhof W / Skupski N", "Arevalo M / Pavic M W", T)
+    _t, h, a = ek.split("::")[1].partition("__vs__")
+    o = SimpleNamespace(home=_t, away=a, book=Book.UNIBET_BE, feed_score="0:0",
+                        line=None, minute_ecoulee=None, age_fair_sec=1.0,
+                        market=MarketType.H2H, outcome="home", cote_preneur=2.0,
+                        fair_cote=1.9, ev_pct=5.0, age_preneur_sec=1.0,
+                        delai_calcul_sec=0.1, partiel=False, issues_manquantes=[],
+                        statut=SimpleNamespace(value="OK"), motif="")
+    assert "(f)" not in format_live_observation(o, sport="tennis")

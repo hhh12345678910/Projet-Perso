@@ -1487,7 +1487,7 @@ def _duree(x, unite="s") -> str:
 FRAICHEUR_SUSPECTE_SEC = 30.0
 
 
-def format_live_observation(o) -> str:
+def format_live_observation(o, sport: "str | None" = None) -> str:
     """Une occasion LIVE, en observation. AUCUN bouton, aucune action.
 
     Le score vient d'AsianOdds et de nulle part ailleurs : c'est le score qui
@@ -1497,9 +1497,11 @@ def format_live_observation(o) -> str:
     lecteur de s'en apercevoir.
     """
     from html import escape
-    feminin = _est_feminin((o.home, o.away), (getattr(o, "league", None),),
-                           getattr(o, "sport", None))
-    sport_o = getattr(o, "sport", None)
+    # `Opportunite` ne porte ni sport ni ligue : le sport vient du lanceur
+    # (`--sport`), sans quoi l'exception tennis de `_est_feminin` ne jouerait
+    # jamais en direct (revue du 27/09).
+    sport_o = sport or getattr(o, "sport", None)
+    feminin = _est_feminin((o.home, o.away), (getattr(o, "league", None),), sport_o)
     match = (f"{_equipe(_nom_pour_book(o.book, o.home), feminin, sport_o)} vs "
              f"{_equipe(_nom_pour_book(o.book, o.away), feminin, sport_o)}")
     score = (o.feed_score or "").replace(":", "-") or "N/A"
@@ -1542,7 +1544,7 @@ def format_live_observation(o) -> str:
 
 
 def send_live_observation(opportunites, config: "TelegramConfig | None",
-                          *, alerter=None, log=print) -> int:
+                          *, alerter=None, log=print, sport: "str | None" = None) -> int:
     """Envoyer les observations LIVE. Renvoie le nombre de messages partis.
 
     ⚠️ REFUSE D'ENVOYER si aucun canal LIVE dedie n'est configure. Ce n'est
@@ -1565,7 +1567,7 @@ def send_live_observation(opportunites, config: "TelegramConfig | None",
     envoi = alerter or TelegramAlerter(config)
     n = 0
     for o in opportunites:
-        if envoi._send(format_live_observation(o), chat):
+        if envoi._send(format_live_observation(o, sport=sport), chat):
             n += 1
     return n
 
