@@ -73,6 +73,36 @@ def test_le_registre_par_book_survit_a_un_redemarrage(tmp_path):
     assert teams.display_for_book(Book.LADBROKES_BE, "brugge") == "Club Brugge KV"
 
 
+def test_les_noms_par_book_s_ecrivent_par_lots(tmp_path, monkeypatch):
+    """Une transaction par lot, pas par nom ; le reste part au `vider`
+    suivant, et un lot refusé (base verrouillée) n'est pas perdu."""
+    from src.storage import Storage
+    st = Storage(str(tmp_path / "v.db"))
+    teams.init(st)
+    monkeypatch.setattr(teams, "LOT_ECRITURE", 3)
+    monkeypatch.setattr(teams, "DELAI_ECRITURE_S", 3600.0)
+    appels = []
+    vrai = st.record_teams_for_book
+    monkeypatch.setattr(st, "record_teams_for_book",
+                        lambda rows: (appels.append(len(list(rows))), vrai(rows)))
+    teams.vider()                                  # remet l'horloge à zéro
+    for n in ("Arsenal", "Chelsea", "Everton", "Fulham"):
+        teams.record(n, Book.LADBROKES_BE)
+    assert appels == [3]
+    teams.vider()
+    assert appels == [3, 1]
+    assert len(st.all_team_names_by_book()) == 4
+
+    def refus(rows):
+        raise RuntimeError("database is locked")
+    monkeypatch.setattr(st, "record_teams_for_book", refus)
+    teams.record("Brentford", Book.LADBROKES_BE)
+    teams.vider()
+    monkeypatch.setattr(st, "record_teams_for_book", vrai)
+    teams.vider()
+    assert len(st.all_team_names_by_book()) == 5
+
+
 def test_sans_book_rien_ne_change():
     teams.record_pair("Club Brugge", "Anderlecht")
     assert teams.display("brugge") == "Club Brugge"

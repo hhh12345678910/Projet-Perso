@@ -1789,6 +1789,22 @@ class Storage:
                 (book, normalized_name, display_name, datetime.utcnow().isoformat()),
             )
 
+    def record_teams_for_book(self, rows: Iterable[tuple[str, str, str]]) -> None:
+        """Plusieurs (book, clé, nom) en UNE transaction : au premier cycle
+        après un déploiement, chaque (book, équipe) est neuf, et une
+        transaction par nom coûtait ~2 ms — une minute d'écritures au milieu
+        du parsing des scrapers."""
+        maintenant = datetime.utcnow().isoformat()
+        with self._conn() as c:
+            c.executemany(
+                "INSERT INTO team_names_by_book(book, normalized_name, display_name, "
+                "last_seen_at) VALUES (?, ?, ?, ?) "
+                "ON CONFLICT(book, normalized_name) DO UPDATE SET "
+                "  display_name = excluded.display_name, "
+                "  last_seen_at = excluded.last_seen_at",
+                [(b, k, n, maintenant) for b, k, n in rows],
+            )
+
     def get_team_for_book(self, book: str, normalized_name: str) -> Optional[sqlite3.Row]:
         with self._conn() as c:
             return c.execute(

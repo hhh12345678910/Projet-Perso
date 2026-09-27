@@ -25,6 +25,8 @@ même `record` quand le scraper dit quel book il est (demande du 27/09).
 """
 from __future__ import annotations
 
+import threading
+import time
 from typing import Optional, TYPE_CHECKING
 
 from .matcher import normalize_team
@@ -37,6 +39,18 @@ _DISPLAY: dict[str, str] = {}
 #: (book, clé normalisée) → le nom tel que CE book l'écrit.
 _PAR_BOOK: dict[tuple[str, str], str] = {}
 _STORAGE: Optional["Storage"] = None
+
+#: Les noms par book pas encore écrits en base, vidés PAR LOTS (une
+#: transaction) : au premier cycle après un déploiement, chaque (book,
+#: équipe) est neuf — une transaction par nom, c'était ~2 ms chacune, une
+#: minute d'écritures en plein parsing, disputées au daemon. Un lot perdu à
+#: l'arrêt se réécrit tout seul : absent de la base, le nom redevient neuf
+#: au redémarrage.
+_EN_ATTENTE: dict[tuple[str, str], str] = {}
+_VERROU = threading.Lock()
+_DERNIER_VIDAGE = 0.0
+LOT_ECRITURE = 500
+DELAI_ECRITURE_S = 30.0
 
 
 def _normalised_key(name: str) -> str:
@@ -98,10 +112,12 @@ def record(name: str, book=None) -> None:
     if b and _PAR_BOOK.get((b, key)) != name:
         _PAR_BOOK[(b, key)] = name
         if _STORAGE is not None:
-            try:
-                _STORAGE.record_team_for_book(b, key, name)
-            except Exception:                                   # noqa: BLE001
-                pass
+            with _VERROU:
+                _EN_ATTENTE[(b, key)] = name
+                pret = (len(_EN_ATTENTE) >= LOT_ECRITURE
+                        or time.monotonic() - _DERNIER_VIDAGE >= DELAI_ECRITURE_S)
+            if pret:
+                vider()
     previous = _DISPLAY.get(key)
     if previous == name:
         return
@@ -123,6 +139,25 @@ def record_pair(home: str | None, away: str | None, book=None) -> None:
         record(home, book)
     if away:
         record(away, book)
+
+
+def vider() -> None:
+    """Écrire en base les noms par book en attente, en une transaction.
+    Jamais d'exception : comme `record`, c'est du confort de lecture ; un lot
+    refusé (base verrouillée) reste en attente pour le suivant."""
+    global _DERNIER_VIDAGE
+    with _VERROU:
+        lot = list(_EN_ATTENTE.items())
+        _EN_ATTENTE.clear()
+        _DERNIER_VIDAGE = time.monotonic()
+    if not lot or _STORAGE is None:
+        return
+    try:
+        _STORAGE.record_teams_for_book([(b, k, n) for (b, k), n in lot])
+    except Exception:                                           # noqa: BLE001
+        with _VERROU:
+            for cle, nom in lot:
+                _EN_ATTENTE.setdefault(cle, nom)
 
 
 def display_for_book(book, normalised: str) -> Optional[str]:
@@ -168,7 +203,9 @@ def display(normalised: str) -> str:
 
 def clear_cache() -> None:
     """Test helper — drops the in-memory cache so a fresh test starts clean."""
-    global _STORAGE
+    global _STORAGE, _DERNIER_VIDAGE
     _DISPLAY.clear()
     _PAR_BOOK.clear()
+    _EN_ATTENTE.clear()
+    _DERNIER_VIDAGE = 0.0
     _STORAGE = None
