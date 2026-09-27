@@ -322,6 +322,20 @@ def test_la_veille_et_le_lendemain_ne_comptent_que_charges(tmp_path):
     assert b.par_production == 1
 
 
+def test_sans_fichier_du_jour_le_voisin_charge_suffit(tmp_path):
+    """Pas de fichier pour la journée du match (le 21), mais son résultat est
+    dans le fichier de la veille, chargé : la production le règle — ce match
+    n'est pas « sans fichier »."""
+    db, dossier = _monde(tmp_path, manquants=[
+        ("m", "Arsenal", "Chelsea", "L", "2026-09-21T00:03:00+00:00"),
+        ("m2", "Everton", "Fulham", "L")],
+        fixtures=[_fx(1, "Arsenal", "Chelsea", quand="2026-09-21T00:00:00+00:00")])
+    manquants, noms, jours = br.charger_manquants(
+        str(db), J.date(), datetime(2026, 9, 27, tzinfo=timezone.utc))
+    b = br.analyser([], manquants, noms, {}, dossier, jours=jours)
+    assert (b.par_production, b.sans_fichier) == (1, 0)
+
+
 def test_un_fichier_illisible_est_signale(tmp_path, capsys):
     db, dossier = _monde(tmp_path,
                          reglees=[("k", "Arsenal", "Chelsea", "L", 2, 1, "home",
