@@ -422,6 +422,11 @@ class SourceFoot:
                         "sh": _pour_flou(th), "sa": _pour_flou(ta),
                         "t": _instant(fx.get("date")),
                         "ligue": lg.get("name") or "?",
+                        # L'identifiant du match chez la source, et son pays :
+                        # le banc d'essai (`banc_rapprochement`) cache le vrai
+                        # match par son identifiant, et juge le pays.
+                        "id": str(fx.get("id") or ""),
+                        "pays": lg.get("country") or "",
                         "statut": ((fx.get("status") or {}).get("short")
                                    or "?").upper(),
                         "a_90": _score_90_minutes(m) is not None,
