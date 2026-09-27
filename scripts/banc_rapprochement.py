@@ -532,6 +532,21 @@ def ensemble(bilan: Bilan, regles) -> tuple:
     return pris, desaccords
 
 
+def desaccords_par_regle(bilan: Bilan, regles) -> dict:
+    """code → nombre de matchs où cette règle choisit un autre match de la
+    source qu'une AUTRE de ces règles. Un désaccord sur une donnée réelle
+    prouve que l'une des deux écrirait un faux : une règle « sûre » seule
+    ne l'est plus tout à fait si elle en a."""
+    codes = {g.code for g in regles}
+    out = {c: 0 for c in codes}
+    for choix in bilan.choix.values():
+        vus = {c: ident for c, (ident, _ex) in choix.items() if c in codes}
+        for c, ident in vus.items():
+            if any(i != ident for o, i in vus.items() if o != c):
+                out[c] += 1
+    return out
+
+
 def _nombre(x: float) -> str:
     return f"{x:.1f}".replace(".", ",")
 
@@ -570,6 +585,7 @@ def imprimer(bilan: Bilan, depuis: date, regles=REGLES) -> None:
               "dans les fichiers du pont.")
         return
     prod = len(bilan.erreurs["production"])
+    desaccords = desaccords_par_regle(bilan, sures(bilan, regles))
     larg = max(len(g.titre) for g in regles) + 6
     print(f"\n  {'':{larg}}  RÉCUPÈRE   À L'AVEUGLE         FAUX ATTENDUS")
     print(f"  {'':{larg}}   (joués)   erreurs / épreuves  sur {m:<9} VERDICT")
@@ -586,6 +602,8 @@ def imprimer(bilan: Bilan, depuis: date, regles=REGLES) -> None:
         else:
             attendus = f"< {_nombre(3 / nr * m)}"
             verdict = "SÛRE" if rec else "sûre, inutile"
+            if desaccords.get(g.code):
+                verdict += f", {desaccords[g.code]} désaccord(s)"
         print(f"  {g.code:4} {g.titre:{larg - 5}}  {len(rec):>4} ({joues:>3})"
               f"   {err:>6} / {nr:<9}  {attendus:<13} {verdict}")
     print(f"\n  Les règles ne tournent qu'APRÈS la production : elles sont éprouvées "
@@ -600,28 +618,28 @@ def imprimer(bilan: Bilan, depuis: date, regles=REGLES) -> None:
               f"prend un sosie dans\n  {prod} cas sur {n} ({_nombre(100 * p)} %). Ces "
               f"résultats faux-là sont DÉJÀ en base, parmi les matchs\n  réglés — le "
               f"banc ne peut pas les désigner. Ordre de grandeur : ≈ "
-              f"{_nombre(p / (1 - p) * m)} pour {m} matchs\n  absents non liés. Les cas "
+              f"{_nombre(p / (1 - p) * m)} pour au plus\n  {m} matchs absents non liés. Les cas "
               f"listés plus bas sont des SIMULATIONS : leur résultat en base est juste.")
 
     utiles = [g for g in sures(bilan, regles) if bilan.recup[g.code] and nr]
     if utiles:
-        pris, desaccords = ensemble(bilan, utiles)
+        pris, conflits = ensemble(bilan, utiles)
         print(f"\n  Les règles SÛRES ensemble ({', '.join(g.code for g in utiles)}) : "
               f"{len(pris)} match(s) récupéré(s)"
               + (f", dont {sum(1 for k in pris if bilan.joues.get(k))} avec un pari "
                  f"joué" if pris else "") + ".")
-        if desaccords:
-            print(f"  {len(desaccords)} match(s) où elles choisissent des matchs "
+        if conflits:
+            print(f"  {len(conflits)} match(s) où elles choisissent des matchs "
                   f"DIFFÉRENTS de la source : refusés (listés plus bas).")
         total = bilan.reglees + bilan.manquants
         if total:
             print(f"  Couverture football (matchs finis) : "
                   f"{_nombre(100 * bilan.reglees / total)} % → "
                   f"{_nombre(100 * (bilan.reglees + len(pris)) / total)} %")
-        if desaccords:
-            print(f"\n── DÉSACCORDS entre règles sûres ({len(desaccords)}) : l'une des "
+        if conflits:
+            print(f"\n── DÉSACCORDS entre règles sûres ({len(conflits)}) : l'une des "
                   f"deux écrirait un score faux")
-            for _k, vus in desaccords[:EXEMPLES]:
+            for _k, vus in conflits[:EXEMPLES]:
                 for code, (_ident, ex) in sorted(vus.items()):
                     print(f"  [{code}]" + _ligne_exemple(ex)[1:])
 

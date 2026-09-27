@@ -244,16 +244,24 @@ def test_deux_regles_en_desaccord_refusent_ensemble(tmp_path, capsys):
     (1-0), H3 le même duel écrit en entier à 17 h (0-2). Chacune seule est
     « sûre » ; ensemble, l'une écrirait un score faux — refusé, et dit."""
     b = _banc(tmp_path,
+              reglees=[("k", "Arsenal", "Chelsea", "L", 2, 1, "home", "api-football")],
               manquants=[("m", "Atletico Tucuman", "Deportivo Maipu", "L")],
               fixtures=[_fx(1, "Atl. Tucuman", "Dep. Maipu", hs=1, as_=0),
                         _fx(2, "Atletico Tucuman", "Deportivo Maipu", hs=0, as_=2,
-                            quand="2026-09-20T17:00:00+00:00")])
+                            quand="2026-09-20T17:00:00+00:00"),
+                        _fx(3, "Arsenal", "Chelsea")])
     assert {"N80", "H3"} <= set(_codes(b.recup))
     regles = [g for g in br.REGLES if g.code in ("N80", "H3")]
     pris, desaccords = br.ensemble(b, regles)
     assert pris == [] and len(desaccords) == 1
     pris, desaccords = br.ensemble(b, [g for g in br.REGLES if g.code == "N80"])
     assert pris == ["m"] and desaccords == []
+    # Dans le tableau, chacune porte son désaccord : aucune n'est « SÛRE » tout court.
+    assert br.desaccords_par_regle(b, regles) == {"N80": 1, "H3": 1}
+    br.imprimer(b, J.date())
+    lignes = {ligne.split()[0]: ligne for ligne in capsys.readouterr().out.splitlines()
+              if ligne.strip() and ligne.split()[0] in {"N80", "H3"}}
+    assert "désaccord" in lignes["N80"] and "désaccord" in lignes["H3"]
 
 
 def test_une_journee_sans_fichier_ne_compte_pas_dans_les_faux_attendus(tmp_path):
