@@ -299,6 +299,17 @@ def _equipe(nom: str, feminin: bool, sport: "str | None" = None) -> str:
     return f"{s or nom} (f)"
 
 
+def _pari(label: str, ligne) -> str:
+    """« Home », « Draw », « Over 2.5 » : le pari, capitalisé, sans l'équipe.
+
+    Demande du 28/09 : la ligne « Pari » ne nomme plus l'équipe. Chaque
+    message reste juste tout seul : le « Home/Away » y suit l'ordre des
+    équipes affiché juste au-dessus — celui du book dans une value bet,
+    celui de Pinnacle dans une alerte CLV."""
+    texte = f"{label[:1].upper()}{label[1:]}" if label else ""
+    return f"{texte} {ligne}" if ligne is not None else texte
+
+
 def _equipe_du_pari(label: str, market, home: str, away: str) -> str:
     """« — RSC Anderlecht » : l'équipe sur laquelle porte un pari h2h, nommée.
 
@@ -775,7 +786,7 @@ def format_clv_alert(
         f"{header}\n"
         f"{_sport_prefix(sport)}{matchup}\n"
         f"{when_line}"
-        f"Pari : <b>{_ht(bet['outcome_label'])}{line_suffix}</b>{qui} @ "
+        f"Pari : <b>{_ht(_pari(bet['outcome_label'], bet['line']))}</b> - "
         f"{float(bet['odd_taken']):.2f}\n"
         f"Ligne juste actuelle : {current_pin_odd:.2f}"
         f"{stake_line}"
@@ -869,7 +880,7 @@ def format_value_bet(bet: ValueBet, sport: str | None = None,
         f"{_sport_prefix(sport)}{matchup}\n"
         f"{league_line}"
         f"{when_line}"
-        f"Pari : <b>{_ht(label)}{line_suffix}</b>{qui} @ {bet.odd_taken:.2f} "
+        f"Pari : <b>{_ht(_pari(label, bet.outcome.line))}</b> - {bet.odd_taken:.2f} "
         f"(fair {bet.fair_odd:.2f}{ref_suffix})\n"
         f"{ref_line}"
         f"{_advised_stake_line(bet.ev_pct, bet.kelly_stake_pct, bankroll)}"

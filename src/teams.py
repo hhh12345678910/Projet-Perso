@@ -111,14 +111,20 @@ def _book_id(book) -> str:
 
 
 def record_pair(home: str | None, away: str | None, book=None,
-                start: "datetime | None" = None) -> None:
+                start: "datetime | None" = None,
+                noms_affiches: "tuple[str, str] | None" = None) -> None:
     """Convenience used at the scraper sites where home and away both
     appear together — one call instead of two.
 
     `book` et `start` : le book qui écrit ces noms, et le coup d'envoi qu'il
     annonce — assez pour retrouver ses noms À LUI pour CE match
     (`noms_du_match`), sous la clé même de ses cotes (`event_key(home, away,
-    start)`, calculée comme par le scraper)."""
+    start)`, calculée comme par le scraper).
+
+    `noms_affiches` : quand le book rapproche sur une langue (l'anglais de
+    Vivatbet, celle de Pinnacle) mais AFFICHE dans une autre (le français du
+    site), les noms à montrer dans l'alerte — ceux qu'on retrouve sur le
+    site. La clé, elle, reste calculée sur `home`/`away`."""
     if home:
         record(home)
     if away:
@@ -129,7 +135,8 @@ def record_pair(home: str | None, away: str | None, book=None,
         cle = event_key(home, away, start)
     except Exception:                                           # noqa: BLE001
         return
-    _NOMS_MATCH[(_book_id(book), cle)] = (home, away)
+    affiches = noms_affiches if noms_affiches and all(noms_affiches) else (home, away)
+    _NOMS_MATCH[(_book_id(book), cle)] = affiches
     if len(_NOMS_MATCH) > MAX_NOMS_MATCH:
         _purger_noms_match()
 

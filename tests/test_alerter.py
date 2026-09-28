@@ -77,8 +77,8 @@ def test_format_includes_ev_friendly_book_name_and_odd():
     assert "unibet_be" not in msg
     # Teams come out title-cased from the normalized event-key fragments.
     assert "Boise vs Sarasota" in msg
-    assert "@ 1.86" in msg
-    assert "fair 1.77" in msg
+    # Demande du 28/09 : « Pari : Home - 1.86 (fair 1.77) », sans l'équipe.
+    assert "Pari : <b>Home</b> - 1.86 (fair 1.77)" in msg
     # No more raw event_key dump in the body.
     assert "boise__vs__sarasota" not in msg
 
@@ -107,7 +107,7 @@ def test_format_includes_line_when_present():
     bet = _bet(label="over", line=2.5)
     bet.market = MarketType.TOTALS
     msg = format_value_bet(bet)
-    assert "over 2.5" in msg
+    assert "Pari : <b>Over 2.5</b> - " in msg
 
 
 def test_format_falls_back_when_event_key_is_unparseable():

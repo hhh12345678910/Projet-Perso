@@ -128,7 +128,10 @@ def test_un_book_a_l_envers_garde_le_pari_sur_la_bonne_equipe():
     assert vb.book_swapped and vb.outcome.label == "away"
     msg = format_value_bet(vb)
     assert "RSC Anderlecht vs Club Brugge KV" in msg
-    assert "Pari : <b>home</b> — RSC Anderlecht @ 3.50" in msg
+    # « Home » = l'équipe citée en PREMIER juste au-dessus, Anderlecht. Le nom
+    # n'est plus répété dans la ligne (demande du 28/09).
+    assert "Pari : <b>Home</b> - 3.50 (fair" in msg
+    assert msg.index("RSC Anderlecht") < msg.index("Club Brugge KV")
 
 
 def test_les_totaux_ne_se_retournent_pas():
@@ -136,14 +139,14 @@ def test_les_totaux_ne_se_retournent_pas():
     vb = _vb(market=MarketType.TOTALS, outcome=Outcome(label="over", line=2.5),
              book_event_key=event_key("RSC Anderlecht", "Club Brugge KV", T),
              book_swapped=True)
-    assert "Pari : <b>over 2.5</b>" in format_value_bet(vb)
+    assert "Pari : <b>Over 2.5</b> - " in format_value_bet(vb)
 
 
 def test_le_nul_ne_se_retourne_pas():
     vb = _vb(outcome=Outcome(label="draw"),
              book_event_key=event_key("RSC Anderlecht", "Club Brugge KV", T),
              book_swapped=True)
-    assert "Pari : <b>draw</b>" in format_value_bet(vb)
+    assert "Pari : <b>Draw</b> - " in format_value_bet(vb)
 
 
 def test_meme_ordre_le_label_ne_bouge_pas():
@@ -151,7 +154,7 @@ def test_meme_ordre_le_label_ne_bouge_pas():
     vb = _vb(outcome=Outcome(label="away"),
              book_event_key=event_key("Club Brugge KV", "RSC Anderlecht", T))
     msg = format_value_bet(vb)
-    assert "Club Brugge KV vs RSC Anderlecht" in msg and "Pari : <b>away</b>" in msg
+    assert "Club Brugge KV vs RSC Anderlecht" in msg and "Pari : <b>Away</b> - " in msg
 
 
 # ------------------------------------------------------------- féminin ---
@@ -277,9 +280,11 @@ def test_l_alerte_clv_nomme_l_equipe_et_porte_le_f():
             return super().keys()
     msg = format_clv_alert(_Row(row), 4.0, 1.9, 30)
     assert "Houston Dash (f) vs Orlando Pride (f)" in msg
-    # L'équipe est nommée : l'alerte CLV suit l'ordre de Pinnacle, le value
-    # bet celui du book — le nom rend chacune juste toute seule.
-    assert "Pari : <b>home</b> — Houston Dash W @ 2.10" in msg
+    # L'alerte CLV suit l'ordre de Pinnacle : « Home » est l'équipe citée en
+    # premier juste au-dessus, Houston Dash. Plus de nom dans la ligne
+    # (demande du 28/09).
+    assert "Pari : <b>Home</b> - 2.10" in msg
+    assert "Houston Dash W @" not in msg
 
 
 def test_le_surebet_porte_le_f():

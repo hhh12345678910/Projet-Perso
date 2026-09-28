@@ -268,3 +268,47 @@ def test_les_vedettes_FRAICHES_gagnent_sur_le_cache(cache_vierge, monkeypatch):
 
 def test_vivatbet_ne_couvre_que_le_football_et_le_tennis():
     assert set(orch.VIVATBET_SPORTS) == {"soccer", "tennis"}
+
+
+# ── Le faux rapprochement du 28/09 et les noms de l'alerte ────────────
+
+def test_une_equipe_parfaite_ne_rachete_plus_une_equipe_fausse():
+    """Vivatbet « Faroe Islands vs Slovakia » avait été apparié à Pinnacle
+    « England vs Slovakia », même horaire : Slovakia à 100, « faroeislands »
+    / « england » à 71 (le « lands » des clés sans espaces), moyenne 85,7.
+    L'alerte est partie à +424 % d'EV sur la cote de Féroé comparée à la
+    cote juste de l'Angleterre."""
+    from src.matcher import reconcile_event_keys
+    assert reconcile_event_keys(["202610021845::england__vs__slovakia"],
+                                ["202610021845::faroeislands__vs__slovakia"]) == {}
+
+
+def test_le_plancher_par_equipe_garde_les_vraies_variantes():
+    from src.matcher import reconcile_event_keys
+    for ref, cand in (("atleticomadrid__vs__slovakia", "atlmadrid__vs__slovakia"),
+                      ("nottinghamforest__vs__chelsea", "nottmforest__vs__chelsea"),
+                      ("saintetienne__vs__lyon", "asstetienne__vs__lyon")):
+        assert reconcile_event_keys([f"202610021845::{ref}"], [f"202610021845::{cand}"]), cand
+
+
+def test_lalerte_montre_les_noms_FRANCAIS_du_site():
+    """Le rapprochement se fait en anglais (la langue de Pinnacle) ; l'alerte
+    montre ce que le site affiche, pour qu'on retrouve le match sur
+    vivatbet.be — « Belgique », pas « Belgium »."""
+    from src import teams
+    from src.alerter import format_value_bet
+    from src.models import ValueBet
+
+    # La ValueBet est construite à la main : passer par la détection rendrait
+    # le test dépendant de l'heure (un match commencé n'est plus détecté).
+    q = next(q for q in vb.parse_games(FOOT)
+             if q.source_event_id == "754873915" and q.outcome.label == "home")
+    assert "belgium" in q.event_key
+    assert teams.noms_du_match(Book.VIVATBET, q.event_key) == ("Belgique", "France")
+    bet = ValueBet(event_key=q.event_key, book=Book.VIVATBET, market=q.market,
+                   outcome=q.outcome, odd_taken=q.decimal_odd, fair_prob=0.30,
+                   fair_odd=3.33, ev_pct=19.4, kelly_stake_pct=1.2,
+                   detected_at=datetime.now(timezone.utc), league=q.league)
+    msg = format_value_bet(bet)
+    assert "Belgique vs France" in msg and "Belgium" not in msg
+    assert "Pari : <b>Home</b> - 3.98 (fair 3.33)" in msg

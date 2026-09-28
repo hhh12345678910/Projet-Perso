@@ -106,6 +106,13 @@ def _nom(camp: dict) -> str:
     return ((camp or {}).get("fullNameEng") or (camp or {}).get("fullName") or "").strip()
 
 
+def _nom_affiche(camp: dict) -> str:
+    """Le nom tel que le SITE l'affiche (français) : c'est celui qu'on
+    cherche sur vivatbet.be en lisant l'alerte — « Îles Féroé », pas
+    « Faroe Islands ». Le rapprochement, lui, reste sur l'anglais."""
+    return ((camp or {}).get("fullName") or (camp or {}).get("fullNameEng") or "").strip()
+
+
 def _ligue(jeu: dict) -> str:
     liga = jeu.get("liga") or {}
     return (liga.get("nameEng") or liga.get("name") or "").strip()
@@ -203,7 +210,9 @@ def parse_games(payload: list, book: Book = Book.VIVATBET) -> Iterator[OddQuote]
         ligue = _ligue(jeu)
         if is_noise_event(dom, ext, ligue):
             continue
-        record_pair(dom, ext, book, debut)
+        record_pair(dom, ext, book, debut,
+                    noms_affiches=(_nom_affiche(jeu.get("opponent1")),
+                                   _nom_affiche(jeu.get("opponent2"))))
         ek = event_key(dom, ext, debut)
         source_id = str(jeu.get("id") or "")
 

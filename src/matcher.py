@@ -255,6 +255,20 @@ def wide_tolerance_for(sport: str | None) -> int | None:
     return WIDE_TOLERANCE_BY_SPORT.get(sport or "")
 
 
+def _score_paire(c_home: str, c_away: str, r_home: str, r_away: str,
+                 min_team_score: float) -> "tuple[float | None, bool]":
+    """Le score d'une paire candidate/référence dans sa meilleure orientation,
+    et s'il faut retourner home/away. `None` si l'une des deux équipes reste
+    sous `min_team_score` dans cette orientation : une équipe parfaite ne
+    rachète pas l'autre."""
+    direct = (team_similarity(c_home, r_home), team_similarity(c_away, r_away))
+    inverse = (team_similarity(c_home, r_away), team_similarity(c_away, r_home))
+    paire, swap = (direct, False) if sum(direct) >= sum(inverse) else (inverse, True)
+    if min(paire) < min_team_score:
+        return None, swap
+    return sum(paire) / 2, swap
+
+
 def reconcile_event_keys(
     reference_keys: Iterable[str],
     candidate_keys: Iterable[str],
@@ -265,6 +279,7 @@ def reconcile_event_keys(
     scores: Optional[dict[str, float]] = None,
     wide_tolerance_minutes: Optional[int] = None,
     wide_min_score: float = 98.0,
+    min_team_score: float = 80.0,
 ) -> dict[str, tuple[str, bool]]:
     """Map each candidate (soft-book) event_key onto the best reference
     (Pinnacle) event_key via fuzzy team matching within a time window.
@@ -283,6 +298,16 @@ def reconcile_event_keys(
     soupçonnées de faux positifs, et sans ce chiffre elle est intestable.
     Passé en sortie plutôt qu'en valeur de retour pour ne rien casser chez les
     appelants qui n'en ont pas besoin.
+
+    ⚠️ `min_team_score` : CHAQUE équipe doit ressembler, pas seulement la
+    moyenne. Sans ce plancher, une équipe parfaite compensait une équipe
+    fausse — relevé le 28/09 : Vivatbet « Faroe Islands vs Slovakia » apparié
+    à Pinnacle « England vs Slovakia », même horaire, Slovakia à 100 et
+    « faroeislands »/« england » à 71 (le « lands » des clés sans espaces),
+    moyenne 85,7 ≥ 85. La cote de Féroé (6,44) a été comparée à la cote juste
+    de l'Angleterre (1,23) : alerte à +424 % d'EV. Le plancher ne mord que
+    quand une équipe dépasse 90 et l'autre reste sous 80 — exactement le motif
+    « même équipe, autre adversaire ».
     """
     refs: list[tuple[str, datetime, str, str]] = []
     for k in reference_keys:
@@ -311,14 +336,9 @@ def reconcile_event_keys(
         for rk, r_start, r_home, r_away in refs:
             if abs(r_start - c_start) > tol:
                 continue
-            s_direct = (team_similarity(c_home, r_home) + team_similarity(c_away, r_away)) / 2
-            s_swap = (team_similarity(c_home, r_away) + team_similarity(c_away, r_home)) / 2
-            if s_direct >= s_swap:
-                score = s_direct
-                swap = False
-            else:
-                score = s_swap
-                swap = True
+            score, swap = _score_paire(c_home, c_away, r_home, r_away, min_team_score)
+            if score is None:
+                continue
             if score > best_score:
                 second_score = best_score
                 best_score = score
@@ -368,9 +388,9 @@ def reconcile_event_keys(
         for rk, r_start, r_home, r_away in refs:
             if abs(r_start - c_start) > wide or r_start.date() != c_start.date():
                 continue
-            s_direct = (team_similarity(c_home, r_home) + team_similarity(c_away, r_away)) / 2
-            s_swap = (team_similarity(c_home, r_away) + team_similarity(c_away, r_home)) / 2
-            score, swap = (s_direct, False) if s_direct >= s_swap else (s_swap, True)
+            score, swap = _score_paire(c_home, c_away, r_home, r_away, min_team_score)
+            if score is None:
+                continue
             if score > best_score:
                 second_score, best_score, best_key, best_swap = best_score, score, rk, swap
             elif score > second_score:
