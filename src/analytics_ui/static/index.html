@@ -826,13 +826,43 @@
     </div>
 
     <div class="champ pliable" id="champ-mise">
-      <button class="champ-tete" type="button"><span class="champ-nom">Mise notionnelle</span><span class="resume" id="r-mise"></span></button>
+      <button class="champ-tete" type="button"><span class="champ-nom">Mise</span><span class="resume" id="r-mise"></span></button>
       <div class="champ-corps">
-        <div class="paire paire-unite">
-          <input type="number" id="f-stake" step="5" min="1" value="25" aria-label="Mise notionnelle en euros">
-          <span>€ par pari</span>
+        <div class="segmente" id="mise-mode" role="group" aria-label="Type de mise">
+          <button type="button" data-mode="flat" class="actif">Fixe</button>
+          <button type="button" data-mode="kelly">Kelly</button>
         </div>
-        <span class="aide">Le ROI et le P&amp;L en dépendent.</span>
+        <!-- Le mode vit dans un champ du FORMULAIRE : `form.reset()` le remet
+             à « flat » et « Mes analyses » le sauvegarde avec le reste. -->
+        <input type="hidden" id="f-stake-mode" value="flat">
+        <div id="mise-bloc-fixe">
+          <div class="paire paire-unite">
+            <input type="number" id="f-stake" step="5" min="1" value="25" aria-label="Mise notionnelle en euros">
+            <span>€ par pari</span>
+          </div>
+          <span class="aide">La même mise sur chaque pari. Le ROI n'en dépend pas, le P&amp;L si.</span>
+        </div>
+        <div id="mise-bloc-kelly" hidden>
+          <label class="sous-lib" for="f-kelly-fraction">Fraction de Kelly</label>
+          <select id="f-kelly-fraction">
+            <option value="1">Kelly entier (1/1)</option>
+            <option value="0.5">1/2 Kelly</option>
+            <option value="0.3333333333">1/3 Kelly</option>
+            <option value="0.25" selected>1/4 Kelly — usuel</option>
+            <option value="0.2">1/5 Kelly</option>
+            <option value="0.125">1/8 Kelly</option>
+            <option value="0.1">1/10 Kelly</option>
+          </select>
+          <div class="paire paire-unite">
+            <input type="number" id="f-bankroll" step="100" min="1" value="1000" aria-label="Bankroll en euros">
+            <span>€ de bankroll</span>
+          </div>
+          <div class="paire paire-unite">
+            <input type="number" id="f-kelly-cap" step="0.5" min="0.1" max="100" value="3" aria-label="Plafond par pari en % de la bankroll">
+            <span>% max par pari</span>
+          </div>
+          <span class="aide">Mise = bankroll × fraction × EV ÷ (cote − 1) : l'EV pèse de tout son poids, la cote la tempère. Bankroll fixe, sans capitalisation. Le ROI devient pondéré par la mise.</span>
+        </div>
       </div>
     </div>
 

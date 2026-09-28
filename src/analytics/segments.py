@@ -79,12 +79,14 @@ def _precalculer(rows, stake: float) -> None:
     un résultat identique.
     """
     from ..clv import pnl as clv_pnl
+    from .mise import mise_de
     for r in rows:
         if "_statut" in r:
             continue
         s = statut_de(r)
         r["_statut"] = s
-        r["_pnl"] = clv_pnl(s, float(r["odd_taken"]), stake)
+        r["_mise"] = mise_de(stake, r)
+        r["_pnl"] = clv_pnl(s, float(r["odd_taken"]), r["_mise"])
         r["_clv"] = clv_de(r)
 
 
@@ -102,9 +104,13 @@ def resume_rapide(rows, stake: float) -> dict:
     celles dont un segment a besoin.
     """
     n = len(rows)
+    from .mise import est_variable
     gains = [r["_pnl"] for r in rows if r["_pnl"] is not None]
     clvs = [r["_clv"] for r in rows if r["_clv"] is not None]
-    mise = stake * len(gains)
+    # Même règle que `metriques._cellule` : forme exacte en mise fixe, somme
+    # des mises réelles des réglés en Kelly.
+    mise = (sum(r["_mise"] for r in rows if r["_pnl"] is not None)
+            if est_variable(stake) else stake * len(gains))
     return {
         "opportunities": n,
         "settled": len(gains),

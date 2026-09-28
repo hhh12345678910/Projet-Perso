@@ -844,6 +844,11 @@ td.num { text-align: right; }
 .paire { display: flex; gap: 8px; align-items: center; }
 .paire > span { color: var(--encre-muet); font-size: 12.5px; white-space: nowrap; }
 .paire select { width: auto; }
+/* Mise : le mode Kelly et ses trois réglages. */
+#mise-mode { margin-bottom: 10px; }
+.sous-lib { display: block; font-size: 12px; font-weight: 600; color: var(--encre-2); margin: 2px 0 5px; }
+#mise-bloc-kelly select { width: 100%; }
+#mise-bloc-kelly .paire { margin-top: 8px; }
 .paire-unite input { max-width: 120px; }
 
 .interrupteur { display: inline-flex; align-items: center; gap: 8px; cursor: pointer; font-size: 13px; }

@@ -429,6 +429,16 @@ function parametres(extra) {
   });
   p.set('population', $('f-population').value);
   p.set('played', $('f-played').value);
+  // La mise Kelly ne part QUE si elle est choisie : en mise fixe, la requête
+  // reste celle d'avant, octet pour octet.
+  if ($('f-stake-mode').value === 'kelly') {
+    p.set('stake_mode', 'kelly');
+    [['kelly_fraction', 'f-kelly-fraction'], ['bankroll', 'f-bankroll'],
+     ['kelly_cap_pct', 'f-kelly-cap']].forEach(([nom, id]) => {
+      const v = valOuNull(id);
+      if (v !== null) p.set(nom, v);
+    });
+  }
   Object.entries(extra || {}).forEach(([k, v]) => p.set(k, v));
   return p;
 }
@@ -449,6 +459,8 @@ function filtresDuFormulaire() {
     odds_min: n('odds_min'), odds_max: n('odds_max'),
     delay_min: n('delay_min'), delay_max: n('delay_max'),
     population: p.get('population'), played: p.get('played'), stake: n('stake'),
+    stake_mode: p.get('stake_mode') || 'flat', kelly_fraction: n('kelly_fraction'),
+    bankroll: n('bankroll'), kelly_cap_pct: n('kelly_cap_pct'),
     ev_bands_by_sport: {}, odds_bands_by_sport: {},
     ev_free_by_sport: {}, ev_free_by_odds: {},
   };
@@ -459,6 +471,21 @@ function filtresDuFormulaire() {
     else if (/^ev_(min|max)_/.test(k)) f.ev_free_by_sport[k] = p.get(k);
   });
   return f;
+}
+
+/* La mise, en mots — relue dans des filtres (ceux du serveur ou du
+ * formulaire), jamais recalculée. */
+const FRACTIONS_KELLY = [[1, '1/1'], [0.5, '1/2'], [1 / 3, '1/3'], [0.25, '1/4'],
+  [0.2, '1/5'], [0.125, '1/8'], [0.1, '1/10']];
+function fractionKelly(v) {
+  const x = Number(v);
+  const connue = FRACTIONS_KELLY.find(([f]) => Math.abs(f - x) < 1e-6);
+  return connue ? connue[1] : num(x);
+}
+const estKelly = (f) => !!f && f.stake_mode === 'kelly';
+function texteMise(f) {
+  if (!estKelly(f)) return `${num(f.stake)} € par pari`;
+  return `Kelly ${fractionKelly(f.kelly_fraction)} · bankroll ${num(f.bankroll)} € · max ${num(f.kelly_cap_pct)} %`;
 }
 
 /* ── Infobulle ─────────────────────────────────────────────────────── */
@@ -973,7 +1000,9 @@ function kpis(s) {
   h.appendChild(carteKpi({
     icone: 'euro', titre: 'ROI', valeur: pct(s.roi, 1), signe: signe(s.roi),
     cls: 'kpi-roi' + (s.roi > 0 ? ' pos-bord' : s.roi < 0 ? ' neg-bord' : ''),
-    sous: `notionnel — ${num(f.stake)} € misés sur chaque ${quoi === 'paris joués' ? 'pari joué' : 'opportunité'}`,
+    sous: estKelly(f)
+      ? `Kelly ${fractionKelly(f.kelly_fraction)} — mise selon l'EV et la cote, pondéré par la mise`
+      : `notionnel — ${num(f.stake)} € misés sur chaque ${quoi === 'paris joués' ? 'pari joué' : 'opportunité'}`,
     ligne2: [eur(s.pnl, 0), 'P&L cumulé', signe(s.pnl)],
     details: peuRegles ? `${ent(s.settled)} réglés — indice, pas résultat`
       : `sur ${ent(s.settled)} ${quoi} réglé${quoi === 'paris joués' ? 's' : 'es'}`,
@@ -1111,7 +1140,10 @@ function enteteExport(d) {
   lignes.push(['Population', pop ? pop.libelle : (f.population || '—')]);
   lignes.push(['Joué', f.played === 'oui' ? 'joués (cliqués sur « Jouer »)'
     : f.played === 'non' ? 'non joués' : 'tous']);
-  lignes.push(['Mise notionnelle', `${f.stake} €`]);
+  lignes.push(['Mise', estKelly(f)
+    ? `Kelly ${fractionKelly(f.kelly_fraction)} — bankroll ${f.bankroll} € (fixe), `
+      + `plafond ${f.kelly_cap_pct} % par pari ; ROI pondéré par la mise`
+    : `${f.stake} € par pari (fixe)`]);
   lignes.push(['Exporté le', new Date().toLocaleString('fr-BE')]);
 
   const dl = el('dl', 'export-filtres');
@@ -1203,7 +1235,11 @@ const COLONNES = [
   ['clv', 'CLV', (i) => deuxLignes(pct(i.clv_pct, 1),
     i.closing_fair_odd ? `clôture ${cote(i.closing_fair_odd)}` : 'sans clôture'), 'num'],
   [null, 'Résultat', null],
-  ['pnl', 'P&L', (i) => eur(i.pnl, 2), 'num'],
+  // En mise Kelly, chaque pari a SA mise : elle s'affiche sous le P&L (lue
+  // dans la réponse du serveur, jamais recalculée ici).
+  ['pnl', 'P&L', (i) => (estKelly(ANALYSE && ANALYSE.filters) && i.stake != null
+    ? deuxLignes(eur(i.pnl, 2), `mise ${eur(i.stake, 2).replace('+', '')}`)
+    : eur(i.pnl, 2)), 'num'],
   [null, 'Statut', null],
 ];
 
@@ -1862,10 +1898,11 @@ function grapheFinance(d) {
     .forEach((b) => b.classList.toggle('actif', b.dataset.mode === MODE_FIN));
   $('g-roi-temps').hidden = !roi;
   $('g-pnl-cumul').hidden = roi;
-  const mise = d.filters ? d.filters.stake : null;
-  $('fin-sous').textContent = roi
-    ? `ROI par période, en % — mise notionnelle de ${num(mise)} € par pari réglé.`
-    : 'P&L cumulé, en € — somme des périodes réglées.';
+  const f = d.filters || {};
+  $('fin-sous').textContent = !roi ? 'P&L cumulé, en € — somme des périodes réglées.'
+    : estKelly(f)
+      ? `ROI par période, en % — mise Kelly ${fractionKelly(f.kelly_fraction)} sur ${num(f.bankroll)} €, pondéré par la mise.`
+      : `ROI par période, en % — mise notionnelle de ${num(f.stake)} € par pari réglé.`;
   if (roi) {
     courbe($('g-roi-temps'), d.by_time, 'roi', 'ROI dans le temps');
   } else {
@@ -2339,6 +2376,9 @@ function phrasesFiltres(f) {
   }
   out.push('Population : ' + nomPopulation(f.population));
   if (f.played && f.played !== 'tous') out.push(f.played === 'oui' ? 'Joués' : 'Non joués');
+  // La mise Kelly change le ROI lui-même (pondéré par la mise) : elle se lit
+  // dans la barre, comme un filtre. La mise fixe ne change que le P&L.
+  if (estKelly(f)) out.push(`Mise Kelly ${fractionKelly(f.kelly_fraction)}`);
   return out;
 }
 
@@ -2368,6 +2408,7 @@ function compteAvances() {
   if (f.delay_min != null || f.delay_max != null) n += 1;
   if (f.population !== 'detected') n += 1;
   if (f.played !== 'tous') n += 1;
+  if (estKelly(f)) n += 1;
   return n;
 }
 
@@ -2396,7 +2437,8 @@ function majResumes() {
   pose('r-population', [nomPopulation(f.population), f.population !== 'detected']);
   pose('r-joue', [$('f-played').selectedIndex >= 0
     ? $('f-played').options[$('f-played').selectedIndex].textContent : 'Tous', f.played !== 'tous']);
-  pose('r-mise', [`${num(f.stake)} € par pari`, false]);
+  pose('r-mise', [estKelly(f) ? `Kelly ${fractionKelly(f.kelly_fraction)}`
+    : `${num(f.stake)} € par pari`, estKelly(f)]);
   pose('r-axe', [$('f-gran').options[$('f-gran').selectedIndex].textContent, false]);
 
   // Les quatre raccourcis de la barre.
@@ -2447,6 +2489,18 @@ function appliquerModeCote(mode, vider) {
     if (mode === 'toutes') { $('f-odds-min').value = ''; $('f-odds-max').value = ''; }
     signalerChangement();
   }
+}
+
+/* Fixe ou Kelly : le mode choisit le bloc VISIBLE ; le champ caché
+ * `f-stake-mode` est ce qui part (`parametres`). Rien n'est vidé : les deux
+ * réglages restent prêts, un seul est envoyé. */
+function appliquerModeMise(mode, signaler) {
+  const m = mode === 'kelly' ? 'kelly' : 'flat';
+  $('f-stake-mode').value = m;
+  segActif('mise-mode', 'mode', m);
+  $('mise-bloc-fixe').hidden = m !== 'flat';
+  $('mise-bloc-kelly').hidden = m !== 'kelly';
+  if (signaler) signalerChangement();
 }
 
 function appliquerModeEv(mode, vider) {
@@ -2850,7 +2904,7 @@ function appliquerTheme(choix, anime) {
 const CLE_ANALYSES = 'vb-analyses';
 const CHAMPS_ETAT = ['f-date-from', 'f-date-to', 'f-odds-min', 'f-odds-max', 'f-ev-min',
   'f-ev-max', 'f-delay-min', 'f-delay-max', 'f-delay-unite', 'f-population', 'f-played',
-  'f-stake', 'f-gran'];
+  'f-stake', 'f-stake-mode', 'f-kelly-fraction', 'f-bankroll', 'f-kelly-cap', 'f-gran'];
 
 function lireAnalyses() {
   try { return JSON.parse(stock.lire(CLE_ANALYSES, '[]')) || []; } catch (_) { return []; }
@@ -2882,6 +2936,7 @@ function restaurerEtat(e) {
   Object.entries(e.c || {}).forEach(([id, v]) => cocher(id, v));
   Object.entries(e.b || {}).forEach(([id, v]) => { if ($(id)) $(id).value = v; });
   deduireModes();
+  appliquerModeMise($('f-stake-mode').value);
   majAideDelai();
   majAidePopulation();
   signalerChangement();
@@ -3309,6 +3364,8 @@ async function demarrer() {
     b.addEventListener('click', () => appliquerModeCote(b.dataset.mode, true)));
   document.querySelectorAll('#ev-mode button').forEach((b) =>
     b.addEventListener('click', () => appliquerModeEv(b.dataset.mode, true)));
+  document.querySelectorAll('#mise-mode button').forEach((b) =>
+    b.addEventListener('click', () => appliquerModeMise(b.dataset.mode, true)));
   deduireModes();
 
   // Menus de la barre.
@@ -3392,6 +3449,7 @@ async function demarrer() {
     panneauxEvParCote();
     appliquerModeCote('toutes', false);
     appliquerModeEv('minimum', false);
+    appliquerModeMise('flat', false);
     majAideDelai();
     if (REFS.date_min) $('f-date-from').value = REFS.date_min;
     if (REFS.date_max) $('f-date-to').value = REFS.date_max;

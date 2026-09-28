@@ -471,6 +471,13 @@ class Filtres:
     #: Mise notionnelle par pari. Le ROI en dépend, donc elle voyage AVEC les
     #: filtres : un ROI dont on ignore la mise n'est pas reproductible.
     stake: float = 25.0
+    #: « flat » (la mise ci-dessus sur chaque pari) ou « kelly » (Kelly
+    #: fractionné, tiré de l'EV et de la cote de chaque pari — `mise.py`).
+    #: Mêmes raisons de voyager avec les filtres : le ROI Kelly en dépend.
+    stake_mode: str = "flat"
+    kelly_fraction: float = 0.25
+    bankroll: float = 1000.0
+    kelly_cap_pct: float = 3.0
 
     # ── Validation ───────────────────────────────────────────────────
 
@@ -621,6 +628,25 @@ class Filtres:
         if stake <= 0:
             raise FiltreInvalide(f"stake doit être positive — reçu : {stake}")
 
+        from .mise import MODES as MODES_MISE
+        mode = str(self.stake_mode or "flat").lower()
+        if mode not in MODES_MISE:
+            raise FiltreInvalide(
+                f"stake_mode doit valoir {' | '.join(MODES_MISE)} — reçu : {mode!r}")
+        fraction = _nombre(self.kelly_fraction, "kelly_fraction")
+        if fraction is None or not 0 < fraction <= 1:
+            raise FiltreInvalide(
+                f"kelly_fraction doit être dans ]0 ; 1] (1 = Kelly entier, "
+                f"0.25 = quart de Kelly) — reçu : {fraction}")
+        bankroll = _nombre(self.bankroll, "bankroll")
+        if bankroll is None or bankroll <= 0:
+            raise FiltreInvalide(f"bankroll doit être positive — reçu : {bankroll}")
+        plafond = _nombre(self.kelly_cap_pct, "kelly_cap_pct")
+        if plafond is None or not 0 < plafond <= 100:
+            raise FiltreInvalide(
+                f"kelly_cap_pct doit être dans ]0 ; 100] (% de la bankroll "
+                f"par pari) — reçu : {plafond}")
+
         fm = _nombre(self.fenetre_morte_min, "fenetre_morte_min")
         if fm is not None and fm < 0:
             raise FiltreInvalide(
@@ -635,7 +661,18 @@ class Filtres:
             cote_bandes=bandes_cote, cote_par_sport=cote_par_sport,
             ev_libre_par_sport=ev_libre, ev_libre_par_cote=ev_libre_cote,
             delai_min_h=d_min, delai_max_h=d_max, population=population,
-            stake=stake, fenetre_morte_min=fm)
+            stake=stake, stake_mode=mode, kelly_fraction=fraction,
+            bankroll=bankroll, kelly_cap_pct=plafond, fenetre_morte_min=fm)
+
+    def mise(self):
+        """La mise que les calculs reçoivent : le nombre `stake` en mise fixe
+        (les calculs gardent alors leur forme d'origine), ou la mise Kelly de
+        chaque ligne (`mise.MiseKelly`)."""
+        if self.stake_mode == "kelly":
+            from .mise import MiseKelly
+            return MiseKelly(bankroll=self.bankroll, fraction=self.kelly_fraction,
+                             plafond_pct=self.kelly_cap_pct)
+        return self.stake
 
     # ── Les règles d'EV, résolues ────────────────────────────────────
 
@@ -717,6 +754,10 @@ class Filtres:
             "population": self.population.value, "played": self.joue,
             "canal": self.canal, "dead_window_min": self.fenetre_morte_min,
             "stake": self.stake,
+            "stake_mode": self.stake_mode,
+            "kelly_fraction": self.kelly_fraction,
+            "bankroll": self.bankroll,
+            "kelly_cap_pct": self.kelly_cap_pct,
         }
 
     @classmethod
@@ -756,4 +797,8 @@ class Filtres:
             canal=d.get("canal") or None,
             fenetre_morte_min=d.get("dead_window_min"),
             stake=d.get("stake", 25.0),
+            stake_mode=d.get("stake_mode", "flat"),
+            kelly_fraction=d.get("kelly_fraction", 0.25),
+            bankroll=d.get("bankroll", 1000.0),
+            kelly_cap_pct=d.get("kelly_cap_pct", 3.0),
         )

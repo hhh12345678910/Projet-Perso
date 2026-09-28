@@ -299,7 +299,8 @@ def analyser(db_path=DB_DEFAUT, filtres=None, granularite="semaine") -> dict:
             f"reçu : {granularite!r}")
     lignes, info = _charger(db_path, filtres)
 
-    bloc = resume(lignes, filtres.stake)
+    mise = filtres.mise()
+    bloc = resume(lignes, mise)
     return {
         "filters": filtres.en_dict(),
         "population": {
@@ -311,21 +312,21 @@ def analyser(db_path=DB_DEFAUT, filtres=None, granularite="semaine") -> dict:
         },
         "summary": bloc,
         "warnings": avertissements(bloc, filtres.date_from, filtres.date_to),
-        "by_time": _cumuler(_decouper(lignes, filtres.stake,
+        "by_time": _cumuler(_decouper(lignes, mise,
                                       lambda r: _bande_temps(r, granularite),
                                       ordre=None, tri=True)),
         # Les jumeaux Kambi comptent pour UNE ligne : quatre lignes portant
         # le même prix donneraient quatre échantillons trop petits là où il
         # n'y a qu'une opportunité. `libelle_book` reste employé pour le
         # DÉTAIL, qui doit nommer le book où le prix a vraiment été vu.
-        "by_book": _decouper(lignes, filtres.stake,
+        "by_book": _decouper(lignes, mise,
                              lambda r: canoniser_book(r["book"] or "?"),
                              libelle=libelle_groupe_book),
-        "by_sport": _decouper(lignes, filtres.stake,
+        "by_sport": _decouper(lignes, mise,
                               lambda r: r["sport"] or "?",
                               ordre=list(SPORTS_ANALYTICS),
                               libelle=libelle_sport),
-        "by_market": _decouper(lignes, filtres.stake,
+        "by_market": _decouper(lignes, mise,
                                lambda r: r["market"] or "?",
                                ordre=list(MARCHES_ANALYTICS),
                                libelle=libelle_marche),
@@ -334,7 +335,7 @@ def analyser(db_path=DB_DEFAUT, filtres=None, granularite="semaine") -> dict:
         # `by_market` range les trois ensemble sous « h2h ». Le découpage
         # passe par `pari_de`, la même règle que le filtre et que le
         # règlement — trois lectures d'un même mot, une seule définition.
-        "by_outcome": _decouper(lignes, filtres.stake,
+        "by_outcome": _decouper(lignes, mise,
                                 lambda r: pari_de(r["outcome_label"]),
                                 ordre=list(PARIS_ANALYTICS),
                                 libelle=libelle_pari),
@@ -342,18 +343,18 @@ def analyser(db_path=DB_DEFAUT, filtres=None, granularite="semaine") -> dict:
         # compétition de l'événement. Aucune tranche n'est écartée — même une
         # compétition à une seule opportunité —, sans quoi les tranches ne
         # sommeraient plus au total.
-        "by_league": _decouper(lignes, filtres.stake,
+        "by_league": _decouper(lignes, mise,
                                lambda r: r["league"] or "?"),
-        "by_odds": _decouper(lignes, filtres.stake,
+        "by_odds": _decouper(lignes, mise,
                              lambda r: _bande_cote(float(r["odd_taken"])),
                              ordre=[l for l, _, _ in _bandes_cote()]),
-        "by_ev": _decouper(lignes, filtres.stake,
+        "by_ev": _decouper(lignes, mise,
                            lambda r: _bande_ev(float(r["ev_pct"] or 0.0)),
                            ordre=_ordre_ev()),
-        "by_delay": _decouper(lignes, filtres.stake,
+        "by_delay": _decouper(lignes, mise,
                               lambda r: bande_delai(r["delai_h"]),
                               ordre=ordre_delai()),
-        "matrix": _matrice(lignes, filtres.stake),
+        "matrix": _matrice(lignes, mise),
         # La règle d'EV RÉELLEMENT appliquée, sport par sport — relisible.
         "ev_rules": {
             "global": list(filtres.ev_bandes),
@@ -445,8 +446,9 @@ def meilleurs_segments(db_path=DB_DEFAUT, filtres=None, *, min_n=None,
 
     filtres = (filtres or Filtres()).valider()
     lignes, info = _charger(db_path, filtres)
+    mise = filtres.mise()
     resultat = chercher(
-        lignes, filtres.stake, _bande_cote, _bande_ev,
+        lignes, mise, _bande_cote, _bande_ev,
         min_n=MIN_SEGMENT if min_n is None else min_n,
         trier_par=trier_par, limite=limite, profondeur=profondeur)
     return {
@@ -455,7 +457,7 @@ def meilleurs_segments(db_path=DB_DEFAUT, filtres=None, *, min_n=None,
         # Le total du lot est rendu AVEC les segments : un segment à +12 % de
         # CLV ne veut pas dire la même chose selon que le lot entier est à
         # +2 % ou à +11 %. Sans le repère, le podium se lit comme un exploit.
-        "overall": resume(lignes, filtres.stake),
+        "overall": resume(lignes, mise),
         **resultat,
     }
 
@@ -472,6 +474,8 @@ def detail(db_path=DB_DEFAUT, filtres=None, page=1, par_page=50,
     page = max(1, int(page))
     par_page = max(1, min(int(par_page), 500))
     lignes, _ = _charger(db_path, filtres)
+    from .mise import mise_de
+    mise = filtres.mise()
 
     inverse = str(ordre).lower() != "asc"
     if tri not in ("detected_at", "odd_taken", "ev_pct", "clv", "pnl",
@@ -483,7 +487,7 @@ def detail(db_path=DB_DEFAUT, filtres=None, page=1, par_page=50,
             v = clv_de(r)
         elif tri == "pnl":
             from ..clv import pnl as _pnl
-            v = _pnl(statut_de(r), float(r["odd_taken"]), filtres.stake)
+            v = _pnl(statut_de(r), float(r["odd_taken"]), mise_de(mise, r))
         else:
             v = r.get(tri)
         # ⚠️ LES VALEURS MANQUANTES VONT TOUJOURS EN FIN DE LISTE, dans les
@@ -525,7 +529,8 @@ def detail(db_path=DB_DEFAUT, filtres=None, page=1, par_page=50,
             "notified_at": r["notified_at"],
             # ⚠️ « non réglé » est un statut À PART ENTIÈRE, pas un trou.
             "result": statut_de(r) or "unsettled",
-            "stake": filtres.stake if statut_de(r) else None,
-            "pnl": clv_pnl(statut_de(r), float(r["odd_taken"]), filtres.stake),
+            # La mise du pari — fixe, ou Kelly tirée de SON EV et de SA cote.
+            "stake": mise_de(mise, r) if statut_de(r) else None,
+            "pnl": clv_pnl(statut_de(r), float(r["odd_taken"]), mise_de(mise, r)),
         } for r in lignes[debut:debut + par_page]],
     }

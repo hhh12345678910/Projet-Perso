@@ -466,6 +466,10 @@ def creer_app(db_path: Optional[str] = None) -> FastAPI:
         canal: Optional[str] = Query(None, description="Canal pour ELIGIBLE_FOR_ALERT."),
         dead_window_min: Optional[float] = Query(None),
         stake: float = Query(25.0, description="Mise notionnelle par pari."),
+        stake_mode: str = Query("flat", description="flat | kelly"),
+        kelly_fraction: float = Query(0.25, description="Fraction de Kelly, ]0 ; 1]."),
+        bankroll: float = Query(1000.0, description="Bankroll de la mise Kelly (fixe)."),
+        kelly_cap_pct: float = Query(3.0, description="Plafond par pari, % de la bankroll."),
         granularite: str = Query("semaine", description="jour | semaine | mois"),
     ):
         """L'analyse complète : résumé, avertissements, découpes, matrice.
@@ -490,7 +494,8 @@ def creer_app(db_path: Optional[str] = None) -> FastAPI:
             ev_max=ev_max, date_from=date_from, date_to=date_to,
             delay_min=delay_min, delay_max=delay_max, population=population,
             played=played, canal=canal, dead_window_min=dead_window_min,
-            stake=stake)
+            stake=stake, stake_mode=stake_mode, kelly_fraction=kelly_fraction,
+            bankroll=bankroll, kelly_cap_pct=kelly_cap_pct)
         return analyser(base(), f, granularite=granularite)
 
     @app.get("/api/detail", dependencies=[Depends(exiger_acces)],
@@ -511,6 +516,10 @@ def creer_app(db_path: Optional[str] = None) -> FastAPI:
         canal: Optional[str] = Query(None),
         dead_window_min: Optional[float] = Query(None),
         stake: float = Query(25.0),
+        stake_mode: str = Query("flat"),
+        kelly_fraction: float = Query(0.25),
+        bankroll: float = Query(1000.0),
+        kelly_cap_pct: float = Query(3.0),
         page: int = Query(1, ge=1),
         per_page: int = Query(50, ge=1),
         sort: str = Query("detected_at"),
@@ -537,7 +546,8 @@ def creer_app(db_path: Optional[str] = None) -> FastAPI:
             ev_max=ev_max, date_from=date_from, date_to=date_to,
             delay_min=delay_min, delay_max=delay_max, population=population,
             played=played, canal=canal, dead_window_min=dead_window_min,
-            stake=stake)
+            stake=stake, stake_mode=stake_mode, kelly_fraction=kelly_fraction,
+            bankroll=bankroll, kelly_cap_pct=kelly_cap_pct)
         return detail(base(), f, page=page, par_page=per_page,
                       tri=sort, ordre=order)
 
@@ -559,6 +569,10 @@ def creer_app(db_path: Optional[str] = None) -> FastAPI:
         canal: Optional[str] = Query(None),
         dead_window_min: Optional[float] = Query(None),
         stake: float = Query(25.0),
+        stake_mode: str = Query("flat"),
+        kelly_fraction: float = Query(0.25),
+        bankroll: float = Query(1000.0),
+        kelly_cap_pct: float = Query(3.0),
         min_n: int = Query(MIN_SEGMENT, ge=1,
                            description="Plancher d'opportunités par segment."),
         sort: str = Query("clv", description="clv (recommandé) | roi"),
@@ -588,7 +602,8 @@ def creer_app(db_path: Optional[str] = None) -> FastAPI:
             ev_max=ev_max, date_from=date_from, date_to=date_to,
             delay_min=delay_min, delay_max=delay_max, population=population,
             played=played, canal=canal, dead_window_min=dead_window_min,
-            stake=stake)
+            stake=stake, stake_mode=stake_mode, kelly_fraction=kelly_fraction,
+            bankroll=bankroll, kelly_cap_pct=kelly_cap_pct)
         return meilleurs_segments(base(), f, min_n=min_n, trier_par=sort,
                                   limite=limit, profondeur=depth)
 

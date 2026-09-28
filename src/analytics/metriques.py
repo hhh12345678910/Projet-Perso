@@ -20,6 +20,10 @@ LA FORMULE DU ROI, ÉNONCÉE
     mise  = stake × (nombre de paris RÉGLÉS)
     ROI % = 100 × Σ(P&L) / mise
 
+En mise Kelly (`mise.py`), `mise` est la SOMME des mises réelles des paris
+réglés, chacune tirée de l'EV et de la cote de son pari : le ROI est alors
+pondéré par la mise. En mise fixe, la forme ci-dessus reste exacte.
+
 Le dénominateur ne compte QUE les paris réglés : mettre au dénominateur les
 paris sans résultat diluerait le ROI vers zéro à mesure que le settlement
 prend du retard, et ferait baisser le chiffre sans qu'aucun pari n'ait perdu.
@@ -33,6 +37,7 @@ from ..clv import aggregate as clv_aggregate
 from ..clv import clv_pct
 from ..clv import pnl as clv_pnl
 from ..clv import settle as clv_settle
+from .mise import est_variable, mise_de
 from .perimetre import taille_echantillon
 
 
@@ -46,7 +51,7 @@ def _gains(rows: list, stake: float) -> list:
     for r in rows:
         statut = clv_settle(r["market"], r["outcome_label"], r["line"],
                             r["winner"], r["home_score"], r["away_score"])
-        p = clv_pnl(statut, float(r["odd_taken"]), stake)
+        p = clv_pnl(statut, float(r["odd_taken"]), mise_de(stake, r))
         if p is not None:
             out.append(p)
     return out
@@ -61,13 +66,16 @@ def _cellule(rows: list, stake: float) -> dict:
             if r["closing_fair_odd"] and float(r["closing_fair_odd"]) > 0]
 
     gains, gagnes, perdus, nuls = [], 0, 0, 0
+    mises: list = []
     for r in rows:
         statut = clv_settle(r["market"], r["outcome_label"], r["line"],
                             r["winner"], r["home_score"], r["away_score"])
-        p = clv_pnl(statut, float(r["odd_taken"]), stake)
+        m = mise_de(stake, r)
+        p = clv_pnl(statut, float(r["odd_taken"]), m)
         if p is None:
             continue
         gains.append(p)
+        mises.append(m)
         if statut == "won":
             gagnes += 1
         elif statut == "lost":
@@ -75,7 +83,9 @@ def _cellule(rows: list, stake: float) -> dict:
         else:
             nuls += 1
 
-    mise = stake * len(gains)
+    # Mise fixe : la forme d'origine, au bit près. Kelly : la somme des mises
+    # RÉELLES des paris réglés — le ROI devient pondéré par la mise (`mise.py`).
+    mise = sum(mises) if est_variable(stake) else stake * len(gains)
     ecart = st.stdev(gains) if len(gains) > 1 else 0.0
     # La CLV avait son effectif mais PAS sa precision. C'est pourtant elle qui
     # decide : elle est ~8 fois moins bruitee par pari que le P&L, donc c'est
@@ -90,6 +100,7 @@ def _cellule(rows: list, stake: float) -> dict:
         "clv_positives_pct": (round(100.0 * sum(1 for x in clvs if x > 0) / len(clvs), 1)
                               if clvs else None),
         "n_regles": len(gains),
+        "mise_totale": mise,
         "gagnes": gagnes,
         "perdus": perdus,
         "annules": nuls,
@@ -215,7 +226,7 @@ def resume(rows: list, stake: float) -> dict:
         "clv_positive_rate": c["clv_positives_pct"],
         "roi": c["roi_pct"],
         "pnl": c["pnl_eur"],
-        "stake_total": round(stake * c["n_regles"], 2),
+        "stake_total": round(c["mise_totale"], 2),
         "ev_mean": _moyenne(r["ev_pct"] for r in rows),
         "odds_mean": _moyenne(r["odd_taken"] for r in rows),
         "won": c["gagnes"],
