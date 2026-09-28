@@ -232,7 +232,7 @@ def test_les_criteres_portent_un_LIBELLE_lisible(tmp_path):
             if c["dimension"] == "bookmaker" and c["value"] == "unibet_be":
                 assert c["display"] == "Unibet BE"
             if c["dimension"] == "sport" and c["value"] == "soccer":
-                assert c["display"] == "Soccer"
+                assert c["display"] == "Football"
 
 
 def test_chaque_segment_porte_ses_effectifs_et_sa_couverture(tmp_path):

@@ -67,7 +67,7 @@ MARCHE_DU_PARI = {pari: marche
 # ── Les libellés d'affichage ─────────────────────────────────────────
 
 LIBELLE_SPORT = {
-    "soccer": "Soccer",
+    "soccer": "Football",
     "tennis": "Tennis",
 }
 

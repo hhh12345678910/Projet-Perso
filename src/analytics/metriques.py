@@ -222,6 +222,9 @@ def resume(rows: list, stake: float) -> dict:
         "lost": c["perdus"],
         "void": c["annules"],
         "played": c["n_joues"],
+        # Même définition que `settlement_rate` : une part du lot, calculée
+        # ICI et pas dans le navigateur — l'interface n'a pas de formule.
+        "played_rate": round(100.0 * c["n_joues"] / n, 2) if n else None,
         "sigma_roi": c["sigma_roi"],
         "sigma_clv": c["sigma_clv"],
         # ⚠️ INDICATEURS DE VOLUME, PAS DE SIGNIFICATIVITÉ. Deux, et non un :

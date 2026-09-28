@@ -985,3 +985,120 @@ def test_aucun_identifiant_HTML_nest_EN_DOUBLE():
     ids = re.findall(r'\bid="([^"]+)"', HTML)
     doubles = sorted({i for i in ids if ids.count(i) > 1})
     assert not doubles, f"identifiants en double : {doubles}"
+
+
+# ══ LA REFONTE : application à pages, filtres avancés, thèmes ══════════
+#
+# Ce qui est protégé ici n'est pas une mise en page — elle bougera encore —
+# mais les PROPRIÉTÉS qu'elle doit garder : une seule source de vérité pour
+# les filtres, un état « Tous » explicite qui ne part jamais au serveur,
+# aucun chiffre écrit en dur, un thème posé avant le premier rendu.
+
+
+PAGES_NAV = ["vue-ensemble", "performance", "clv", "bookmakers", "marches",
+             "competitions", "paris", "avancee", "mes-analyses", "exporter",
+             "parametres"]
+
+
+@pytest.mark.parametrize("page", PAGES_NAV)
+def test_chaque_entree_de_navigation_a_sa_page_et_sa_route(page):
+    assert f'href="#/{page}" data-page="{page}"' in HTML, page
+    assert f'id="page-{page}" data-page="{page}"' in HTML, page
+    assert re.search(rf"""['"]?{page}['"]?\s*:\s*\{{\s*titre:""", JS), (
+        f"la page {page} n'est pas déclarée dans le routeur")
+
+
+def test_le_theme_est_pose_AVANT_le_premier_rendu():
+    """Sans ce script en tête, un mode sombre choisi s'affiche une fraction
+    de seconde en clair à chaque chargement."""
+    tete = HTML[:HTML.index("</head>")]
+    assert tete.index("<script>") < tete.index('rel="stylesheet"')
+    assert "vb-theme" in tete and "prefers-color-scheme: dark" in tete
+
+
+def test_le_mode_sombre_est_un_THEME_et_pas_le_noir_absolu():
+    bloc = CSS[CSS.index(':root[data-theme="dark"] {'):]
+    bloc = bloc[:bloc.index("}")]
+    fond = re.search(r"--fond-page:\s*(#[0-9a-fA-F]{6})", bloc).group(1).lower()
+    assert fond not in ("#000000", "#000"), "fond noir absolu"
+    for jeton in ("--fond-carte", "--encre", "--bordure", "--marque", "--bon", "--grave"):
+        assert jeton in bloc, jeton
+
+
+def test_le_choix_du_theme_est_persiste_et_suit_le_systeme():
+    assert "stock.ecrire('vb-theme'" in JS
+    assert "prefers-color-scheme: dark" in JS
+
+
+def test_la_ligne_TOUS_ne_part_JAMAIS_au_serveur():
+    """« Tous » est un état d'affichage : « rien de coché » reste le contrat
+    de l'API. Si la ligne partait, l'API recevrait une valeur « on »."""
+    bloc = JS[JS.index("function coches(id)"):]
+    bloc = bloc[:bloc.index("\n}")]
+    assert "!c.dataset.tous" in bloc
+    assert "tous.dataset.tous = '1'" in JS
+
+
+def test_plus_aucun_rien_de_coche_egale_tous_dans_linterface():
+    assert "Rien de coché" not in HTML
+
+
+def test_les_raccourcis_de_la_barre_ecrivent_dans_le_formulaire_du_tiroir():
+    """Une seule source de vérité : `parametres()` ne lit QUE le tiroir."""
+    form = HTML[HTML.index('id="form"'):HTML.index("</form>")]
+    for champ in ("f-sports", "f-books", "f-markets", "f-league", "f-outcomes",
+                  "f-odds-bands", "f-ev-bands", "f-ev-min", "f-population",
+                  "f-played", "f-stake", "f-gran"):
+        assert f'id="{champ}"' in form, champ
+    for raccourci in ("pf-sport", "pf-books", "pf-market", "pf-ev"):
+        assert f'id="{raccourci}"' in HTML, raccourci
+
+
+def test_lexport_est_dans_un_menu_et_pas_au_niveau_du_bouton_analyser():
+    menu = HTML[HTML.index('id="pp-export"'):]
+    menu = menu[:menu.index("</div>")]
+    for ident in ('id="pdf"', 'id="csv-opps"', 'id="csv-decoupes"'):
+        assert ident in menu, ident
+
+
+def test_aucune_statistique_nest_ecrite_en_dur():
+    """Les chiffres de la maquette (« +12,1 % », « 3 482 ») n'existent que
+    dans la maquette : tout ce qui s'affiche vient de l'API."""
+    # Les commentaires citent des exemples de mise en forme (« +12,1 % ») :
+    # on ne cherche que dans le CODE et dans le balisage hors commentaires.
+    code = "\n".join(l for l in JS.splitlines()
+                     if not l.strip().startswith(("*", "//", "/*")))
+    balisage = re.sub(r"<!--.*?-->", "", HTML, flags=re.S)
+    for source, nom in ((balisage, "index.html"), (code, "app.js")):
+        for motif in (r"[+-]\d+[,.]\d+\s*%", r"\b3\s?482\b", r"\b2\s?847\b"):
+            assert not re.search(motif, source), f"{nom} : {motif}"
+
+
+def test_la_barre_de_contexte_lit_les_filtres_du_SERVEUR():
+    bloc = JS[JS.index("function contexte()"):]
+    bloc = bloc[:bloc.index("\n}")]
+    assert "ANALYSE ? ANALYSE.filters" in bloc
+
+
+def test_les_exports_CSV_ne_recalculent_rien(client):
+    """Chaque colonne du CSV des découpes est un champ que l'API rend déjà."""
+    champs = re.findall(r"\['(\w+)', '\w+'\]", JS[JS.index("const CHAMPS_CSV"):
+                                                    JS.index("function exporterCsvDecoupes")])
+    resume = client.get("/api/analyse").json()["summary"]
+    assert champs and set(champs) <= set(resume), set(champs) - set(resume)
+    items = client.get("/api/detail?per_page=1").json()["items"][0]
+    colonnes = re.findall(r"\['(\w+)', '\w+'\]", JS[JS.index("const COLONNES_CSV"):
+                                                      JS.index("async function exporterCsvOpportunites")])
+    assert colonnes and set(colonnes) <= set(items), set(colonnes) - set(items)
+
+
+def test_la_decoupe_par_competition_somme_au_total(client):
+    d = client.get("/api/analyse").json()
+    assert sum(t["opportunities"] for t in d["by_league"]) == d["summary"]["opportunities"]
+    assert {t["key"] for t in d["by_league"]} == {"Jupiler Pro League"}
+
+
+def test_le_taux_de_paris_joues_vient_du_SERVEUR(client):
+    s = client.get("/api/analyse").json()["summary"]
+    assert s["played"] == 1 and s["played_rate"] == 25.0
+    assert "played_rate" in JS

@@ -707,7 +707,7 @@ def test_le_perimetre_est_ANNONCE_par_api_filters(client):
 
 def test_api_filters_rend_les_LIBELLES(client):
     f = client.get("/api/filters").json()
-    assert f["sports_labels"]["soccer"] == "Soccer"
+    assert f["sports_labels"]["soccer"] == "Football"
     assert f["bookmakers_labels"].get("ladbrokes_be") == "Ladbrokes"
     # Les quatre jumeaux Kambi ne font qu'une case à cocher, sous le libellé
     # du GROUPE : en proposer quatre laisserait croire à quatre choix.

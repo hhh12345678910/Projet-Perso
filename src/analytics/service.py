@@ -338,6 +338,12 @@ def analyser(db_path=DB_DEFAUT, filtres=None, granularite="semaine") -> dict:
                                 lambda r: pari_de(r["outcome_label"]),
                                 ordre=list(PARIS_ANALYTICS),
                                 libelle=libelle_pari),
+        # La page « Compétitions » : la même découpe que les autres, par la
+        # compétition de l'événement. Aucune tranche n'est écartée — même une
+        # compétition à une seule opportunité —, sans quoi les tranches ne
+        # sommeraient plus au total.
+        "by_league": _decouper(lignes, filtres.stake,
+                               lambda r: r["league"] or "?"),
         "by_odds": _decouper(lignes, filtres.stake,
                              lambda r: _bande_cote(float(r["odd_taken"])),
                              ordre=[l for l, _, _ in _bandes_cote()]),

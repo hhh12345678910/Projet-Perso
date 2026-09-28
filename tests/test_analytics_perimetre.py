@@ -299,7 +299,7 @@ def test_TOUS_les_books_du_moteur_ont_un_libelle():
 
 
 def test_les_libelles_de_sports_et_marches():
-    assert libelle_sport("soccer") == "Soccer"
+    assert libelle_sport("soccer") == "Football"
     assert libelle_sport("tennis") == "Tennis"
     assert libelle_marche("h2h") == "H2H"
     assert libelle_marche("totals") == "Totals"
@@ -330,7 +330,7 @@ def test_les_valeurs_disponibles_sont_bornees_au_perimetre(tmp_path):
     v = valeurs_disponibles(p)
     assert v["sports"] == list(SPORTS_ANALYTICS)
     assert set(v["markets"]) <= set(MARCHES_ANALYTICS)
-    assert v["sports_labels"] == {"soccer": "Soccer", "tennis": "Tennis"}
+    assert v["sports_labels"] == {"soccer": "Football", "tennis": "Tennis"}
     assert v["perimetre"]["sports"] == list(SPORTS_ANALYTICS)
 
 

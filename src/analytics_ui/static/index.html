@@ -5,157 +5,789 @@
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>Valuebet Analytics</title>
 <!-- ⚠️ AUCUNE RESSOURCE EXTERNE. Pas de CDN, pas de police distante : la page
-     doit s'afficher derrière un tunnel SSH, sur une VM sans accès sortant. -->
+     doit s'afficher derrière un tunnel SSH, sur une VM sans accès sortant.
+     Les icônes sont des SVG écrits dans la page, les graphiques sont dessinés
+     par app.js, la police est celle du système. -->
 <!-- Favicon EN LIGNE : le navigateur réclame /favicon.ico de lui-même
      et récoltait un 404 dans la console. Une donnée intégrée évite la
      requête sans introduire la moindre ressource externe. -->
 <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 16 16'%3E%3Crect width='16' height='16' rx='3' fill='%232a78d6'/%3E%3Cpath d='M4 10.5l2.5-3 2 2L12 5' stroke='white' stroke-width='1.8' fill='none' stroke-linecap='round' stroke-linejoin='round'/%3E%3C/svg%3E">
+<!-- ⚠️ LE THÈME EST POSÉ AVANT LE PREMIER RENDU. Sans ce script, un mode
+     sombre choisi s'afficherait une fraction de seconde en clair à chaque
+     chargement. Préférence enregistrée d'abord, thème du système sinon. -->
+<script>
+(function () {
+  try {
+    var t = localStorage.getItem('vb-theme');
+    if (t !== 'light' && t !== 'dark') {
+      t = window.matchMedia('(prefers-color-scheme: dark)').matches ? 'dark' : 'light';
+    }
+    document.documentElement.setAttribute('data-theme', t);
+    if (localStorage.getItem('vb-sidebar') === 'replie') {
+      document.documentElement.classList.add('sb-replie');
+    }
+  } catch (e) { /* stockage bloqué : thème clair par défaut */ }
+})();
+</script>
 <link rel="stylesheet" href="style.css">
 </head>
 <body>
 
-<header>
-  <h1>Valuebet Analytics</h1>
-  <span class="sous" id="perimetre">chargement…</span>
-  <span class="droite">
-    <button class="discret" id="theme" type="button" title="Clair / sombre">◐</button>
-  </span>
-</header>
+<div class="app" id="app">
 
-<main>
+  <!-- ═══ BARRE LATÉRALE ═══════════════════════════════════════════════ -->
+  <aside class="sidebar" id="sidebar" aria-label="Navigation">
+    <div class="sb-marque">
+      <span class="sb-logo" aria-hidden="true">
+        <svg viewBox="0 0 24 24"><rect width="24" height="24" rx="6"/><path d="M6 15.5l3.6-4.4 3 3L18 7.5"/></svg>
+      </span>
+      <span class="sb-nom"><b>Valuebet</b><span>Analytics</span></span>
+      <button class="sb-replier" id="sb-replier" type="button" title="Réduire la barre latérale" aria-label="Réduire la barre latérale">
+        <svg viewBox="0 0 24 24"><path d="M15 18l-6-6 6-6"/></svg>
+      </button>
+    </div>
 
-  <section class="carte" id="bloc-filtres">
-    <h2>Filtres</h2>
-    <form class="filtres" id="form" autocomplete="off">
+    <nav class="sb-nav" id="sb-nav">
+      <a class="sb-lien" href="#/vue-ensemble" data-page="vue-ensemble" title="Vue d'ensemble">
+        <svg viewBox="0 0 24 24"><rect x="3" y="3" width="7" height="7" rx="1.5"/><rect x="14" y="3" width="7" height="7" rx="1.5"/><rect x="3" y="14" width="7" height="7" rx="1.5"/><rect x="14" y="14" width="7" height="7" rx="1.5"/></svg>
+        <span>Vue d'ensemble</span></a>
+      <a class="sb-lien" href="#/performance" data-page="performance" title="Performance">
+        <svg viewBox="0 0 24 24"><path d="M3 17l6-6 4 4 8-8"/><path d="M15 7h6v6"/></svg>
+        <span>Performance</span></a>
+      <a class="sb-lien" href="#/clv" data-page="clv" title="CLV">
+        <svg viewBox="0 0 24 24"><path d="M3 12h4l3-8 4 16 3-8h4"/></svg>
+        <span>CLV</span></a>
+      <a class="sb-lien" href="#/bookmakers" data-page="bookmakers" title="Bookmakers">
+        <svg viewBox="0 0 24 24"><path d="M3 21h18M5 21v-9M9.5 21v-9M14.5 21v-9M19 21v-9M2.5 10L12 4l9.5 6z"/></svg>
+        <span>Bookmakers</span></a>
+      <a class="sb-lien" href="#/marches" data-page="marches" title="Marchés">
+        <svg viewBox="0 0 24 24"><path d="M12 3l9 5-9 5-9-5z"/><path d="M3 13l9 5 9-5"/></svg>
+        <span>Marchés</span></a>
+      <a class="sb-lien" href="#/competitions" data-page="competitions" title="Compétitions">
+        <svg viewBox="0 0 24 24"><path d="M8 21h8M12 17v4M7 4h10v5a5 5 0 0 1-10 0z"/><path d="M17 5h3v2a3 3 0 0 1-3 3M7 5H4v2a3 3 0 0 0 3 3"/></svg>
+        <span>Compétitions</span></a>
+      <a class="sb-lien" href="#/paris" data-page="paris" title="Paris joués">
+        <svg viewBox="0 0 24 24"><rect x="3" y="4" width="18" height="16" rx="2"/><path d="M8 12l3 3 5-6"/></svg>
+        <span>Paris joués</span></a>
+      <a class="sb-lien" href="#/avancee" data-page="avancee" title="Analyse avancée">
+        <svg viewBox="0 0 24 24"><path d="M4 6h9M17 6h3M4 12h3M11 12h9M4 18h11M19 18h1"/><circle cx="15" cy="6" r="2"/><circle cx="9" cy="12" r="2"/><circle cx="17" cy="18" r="2"/></svg>
+        <span>Analyse avancée</span></a>
 
-      <!-- ⚠️ DES CASES À COCHER, PAS DES `select multiple`. Le Ctrl+clic est
-           invisible pour qui ne le connaît pas, perd toute la sélection au
-           moindre clic simple, et masque ce qui est coché dès que la liste
-           dépasse sa hauteur. Rien de tout ça n'arrive à une case. -->
-      <div class="champ pliable ouvert" id="champ-sports">
-        <label>Sport</label>
-        <div class="cases" id="f-sports"></div>
-        <span class="aide">Rien de coché = les deux</span>
-      </div>
+      <div class="sb-sep" role="separator"></div>
 
-      <div class="champ pliable ouvert" id="champ-books">
-        <label>Bookmakers</label>
-        <div class="cases" id="f-books"></div>
-        <span class="aide">Rien de coché = tous</span>
-      </div>
+      <a class="sb-lien" href="#/mes-analyses" data-page="mes-analyses" title="Mes analyses">
+        <svg viewBox="0 0 24 24"><path d="M6 3h12v18l-6-4-6 4z"/></svg>
+        <span>Mes analyses</span></a>
+      <a class="sb-lien" href="#/exporter" data-page="exporter" title="Exporter">
+        <svg viewBox="0 0 24 24"><path d="M12 3v12M7 10l5 5 5-5M4 21h16"/></svg>
+        <span>Exporter</span></a>
+      <a class="sb-lien" href="#/parametres" data-page="parametres" title="Paramètres">
+        <svg viewBox="0 0 24 24"><circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.7 1.7 0 0 0 .3 1.8l.1.1a2 2 0 1 1-2.8 2.8l-.1-.1a1.7 1.7 0 0 0-1.8-.3 1.7 1.7 0 0 0-1 1.5V21a2 2 0 1 1-4 0v-.1a1.7 1.7 0 0 0-1.1-1.5 1.7 1.7 0 0 0-1.8.3l-.1.1a2 2 0 1 1-2.8-2.8l.1-.1a1.7 1.7 0 0 0 .3-1.8 1.7 1.7 0 0 0-1.5-1H3a2 2 0 1 1 0-4h.1a1.7 1.7 0 0 0 1.5-1.1 1.7 1.7 0 0 0-.3-1.8l-.1-.1a2 2 0 1 1 2.8-2.8l.1.1a1.7 1.7 0 0 0 1.8.3H9a1.7 1.7 0 0 0 1-1.5V3a2 2 0 1 1 4 0v.1a1.7 1.7 0 0 0 1 1.5 1.7 1.7 0 0 0 1.8-.3l.1-.1a2 2 0 1 1 2.8 2.8l-.1.1a1.7 1.7 0 0 0-.3 1.8V9a1.7 1.7 0 0 0 1.5 1H21a2 2 0 1 1 0 4h-.1a1.7 1.7 0 0 0-1.5 1z"/></svg>
+        <span>Paramètres</span></a>
+    </nav>
 
-      <div class="champ pliable ouvert" id="champ-markets">
-        <label>Marché</label>
-        <div class="cases" id="f-markets"></div>
-        <span class="aide">Rien de coché = tous</span>
-      </div>
+    <div class="sb-pied">
+      <div class="sb-statut"><span class="point" id="sb-point"></span><span id="sb-statut">Connexion…</span></div>
+      <div class="sb-maj" id="sb-donnees">—</div>
+      <div class="sb-maj" id="sb-analyse"></div>
+    </div>
+  </aside>
+  <div class="voile" id="voile-nav" hidden></div>
 
-      <div class="champ">
-        <label for="f-league">Compétition</label>
-        <input list="ligues" id="f-league" placeholder="toutes — tape pour chercher">
-        <datalist id="ligues"></datalist>
-        <span class="aide" id="aide-ligue">Nom exact</span>
-      </div>
+  <!-- ═══ COLONNE PRINCIPALE ═══════════════════════════════════════════ -->
+  <div class="principal">
 
-      <!-- ⚠️ JUMEAU DU BLOC EV, VOLONTAIREMENT. Les tranches de cote
-           obéissent aux mêmes règles : union des cases cochées, règle propre
-           à un sport qui prime, et bornes libres qui se cumulent en ET. Une
-           seconde grammaire pour la même idée se paierait en erreurs de
-           lecture. -->
-      <!-- ⚠️ L'AVERTISSEMENT FAIT PARTIE DU FILTRE. Un Over n'est ni un 1,
-           ni un X, ni un 2 : ne cocher que du 1X2 écarte les totals. C'est
-           le sens exact de la demande, mais un total qui rétrécit sans
-           explication se lit comme une panne. -->
-      <div class="champ large pliable ouvert" id="champ-pari">
-        <label>Pari</label>
-        <div class="cases" id="f-outcomes"></div>
-        <span class="aide">Rien de coché = tous. Ne cocher que des paris
-          <b>1X2</b> écarte les <b>Over/Under</b>, et réciproquement.
-          Au tennis, <b>1</b> désigne le joueur cité en premier.</span>
-      </div>
-
-      <div class="champ large pliable ouvert" id="champ-cote">
-        <label>Cote — tranches</label>
-        <div class="cases" id="f-odds-bands"></div>
-        <label class="case" style="margin-top:8px;border:1px solid var(--bordure)">
-          <input type="checkbox" id="cote-split">
-          <span>Cote <b>différente par sport</b></span>
-        </label>
-        <div id="cote-par-sport"></div>
-        <span class="aide">Plusieurs tranches = union (OU). Rien de coché = toutes.</span>
-      </div>
-
-      <div class="champ">
-        <label>Cote — bornes libres</label>
-        <div class="paire">
-          <input type="number" id="f-odds-min" step="0.05" min="1.01" placeholder="min">
-          <span>→</span>
-          <input type="number" id="f-odds-max" step="0.05" min="1.01" placeholder="max">
+    <header class="barre-haut">
+      <div class="cadre barre-haut-cadre">
+        <button class="icone-btn menu-mobile" id="menu-mobile" type="button" aria-label="Ouvrir la navigation">
+          <svg viewBox="0 0 24 24"><path d="M4 6h16M4 12h16M4 18h16"/></svg>
+        </button>
+        <div class="titre-page">
+          <h1><span class="h1-marque">Valuebet Analytics</span><span class="h1-sep" aria-hidden="true">/</span><span id="titre-page">Vue d'ensemble</span></h1>
+          <p class="sous-titre" id="sous-titre-page">Analysez les performances de votre système de détection</p>
         </div>
-        <span class="aide">Se cumule (ET) avec les tranches ci-dessus</span>
+        <div class="actions-haut" id="actions-haut">
+          <div class="periode" id="periode" title="Période analysée (dates de détection, bornes incluses)">
+            <svg viewBox="0 0 24 24" aria-hidden="true"><rect x="3" y="4" width="18" height="17" rx="2"/><path d="M16 2v4M8 2v4M3 10h18"/></svg>
+            <input type="date" id="f-date-from" aria-label="Date de début">
+            <span class="fleche" aria-hidden="true">→</span>
+            <input type="date" id="f-date-to" aria-label="Date de fin">
+          </div>
+          <button class="btn btn-primaire" id="analyser" type="button">
+            <span class="roue" aria-hidden="true"></span><span class="btn-lib">Analyser</span>
+          </button>
+          <button class="icone-btn" id="theme" type="button" title="Thème clair / sombre" aria-label="Basculer le thème clair / sombre">
+            <svg class="ic-lune" viewBox="0 0 24 24"><path d="M21 12.8A9 9 0 1 1 11.2 3a7 7 0 0 0 9.8 9.8z"/></svg>
+            <svg class="ic-soleil" viewBox="0 0 24 24"><circle cx="12" cy="12" r="4"/><path d="M12 2v2M12 20v2M4.9 4.9l1.4 1.4M17.7 17.7l1.4 1.4M2 12h2M20 12h2M4.9 19.1l1.4-1.4M17.7 6.3l1.4-1.4"/></svg>
+          </button>
+        </div>
       </div>
+    </header>
 
-      <div class="champ large pliable ouvert" id="champ-ev">
-        <label>EV — tranches</label>
-        <div class="cases" id="f-ev-bands"></div>
-        <label class="case" style="margin-top:8px;border:1px solid var(--bordure)">
+    <!-- ── Filtres principaux + barre de contexte ──────────────────────
+         ⚠️ CE NE SONT QUE DES RACCOURCIS. L'état réel des filtres vit dans le
+         tiroir « Filtres avancés » (cases à cocher, bornes) ; ces menus y
+         écrivent et en relisent l'état. Une seule source de vérité : deux
+         formulaires indépendants finiraient par envoyer deux requêtes
+         différentes pour un même écran. -->
+    <section class="barre-filtres" id="bloc-filtres">
+      <div class="cadre">
+        <div class="filtres-principaux">
+          <div class="menu" id="m-sport">
+            <span class="menu-titre">Sport</span>
+            <button class="menu-btn" id="pf-sport" type="button" aria-haspopup="true"><span class="menu-val">Tous</span><svg viewBox="0 0 24 24"><path d="M6 9l6 6 6-6"/></svg></button>
+            <div class="menu-pop" id="pp-sport" hidden></div>
+          </div>
+          <div class="menu" id="m-books">
+            <span class="menu-titre">Bookmakers</span>
+            <button class="menu-btn" id="pf-books" type="button" aria-haspopup="true"><span class="menu-val">Tous</span><svg viewBox="0 0 24 24"><path d="M6 9l6 6 6-6"/></svg></button>
+            <div class="menu-pop menu-pop-large" id="pp-books" hidden></div>
+          </div>
+          <div class="menu" id="m-market">
+            <span class="menu-titre">Marché</span>
+            <button class="menu-btn" id="pf-market" type="button" aria-haspopup="true"><span class="menu-val">Tous</span><svg viewBox="0 0 24 24"><path d="M6 9l6 6 6-6"/></svg></button>
+            <div class="menu-pop" id="pp-market" hidden></div>
+          </div>
+          <div class="menu" id="m-ev">
+            <span class="menu-titre">EV minimum</span>
+            <button class="menu-btn" id="pf-ev" type="button" aria-haspopup="true"><span class="menu-val">Toute EV</span><svg viewBox="0 0 24 24"><path d="M6 9l6 6 6-6"/></svg></button>
+            <div class="menu-pop" id="pp-ev" hidden></div>
+          </div>
+          <button class="btn btn-fantome btn-avances" id="ouvrir-filtres" type="button">
+            <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M3 5h18l-7 8v6l-4 2v-8z"/></svg>
+            <span class="lib-desktop">Filtres avancés</span><span class="lib-mobile">Filtres</span>
+            <span class="pastille" id="nb-avances" hidden></span>
+          </button>
+        </div>
+
+        <div class="contexte">
+          <p class="contexte-ligne" id="contexte">Chargement des filtres…</p>
+          <span class="modifie" id="modifie" hidden>Filtres modifiés — cliquez « Analyser » pour les appliquer</span>
+          <div class="menu menu-droite" id="m-export">
+            <button class="btn btn-secondaire btn-petit" id="exporter-btn" type="button" aria-haspopup="true">
+              <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 3v12M7 10l5 5 5-5M4 21h16"/></svg>
+              Exporter<svg class="chev" viewBox="0 0 24 24"><path d="M6 9l6 6 6-6"/></svg>
+            </button>
+            <div class="menu-pop menu-pop-droite" id="pp-export" hidden>
+              <button class="menu-item" id="pdf" type="button"
+                      title="Ouvre l'impression du navigateur — choisis « Enregistrer au format PDF »">
+                <b>PDF</b><span>Page courante et filtres appliqués</span></button>
+              <button class="menu-item" id="csv-opps" type="button">
+                <b>CSV — opportunités</b><span>Une ligne par opportunité de l'analyse</span></button>
+              <button class="menu-item" id="csv-decoupes" type="button">
+                <b>CSV — découpes</b><span>Sport, bookmaker, marché, cote, EV, délai, période</span></button>
+            </div>
+          </div>
+        </div>
+      </div>
+    </section>
+
+    <main class="contenu" id="contenu">
+      <div class="cadre">
+
+        <div id="avertissements"></div>
+
+        <!-- ⚠️ CE BLOC N'EXISTE QUE SUR PAPIER, ET IL EST INDISPENSABLE.
+             Un PDF de résultats qui ne dit pas quels filtres l'ont produit est
+             un piège : relu trois semaines plus tard, « ROI +16 % » se lit
+             comme le ROI du système entier alors qu'il portait sur une tranche
+             d'EV et un seul sport. L'écran montre les filtres ; le papier ne
+             les emporte pas tout seul. -->
+        <section class="carte impression-seule" id="entete-pdf" hidden></section>
+
+        <!-- État vide : partagé par toutes les pages d'analyse. -->
+        <section class="etat-vide" id="vide" hidden>
+          <div class="etat-vide-icone" aria-hidden="true">
+            <svg viewBox="0 0 24 24"><circle cx="11" cy="11" r="7"/><path d="M21 21l-4.3-4.3M8 11h6"/></svg>
+          </div>
+          <h2>Aucune opportunité ne correspond à ces filtres.</h2>
+          <p>Essayez d'élargir la période ou de réduire les filtres.</p>
+          <div class="etat-vide-actions">
+            <button class="btn btn-secondaire" id="vide-periode" type="button">Toute la période disponible</button>
+            <button class="btn btn-fantome" id="vide-reinit" type="button">Réinitialiser les filtres</button>
+          </div>
+        </section>
+
+        <!-- ═══ VUE D'ENSEMBLE ═══════════════════════════════════════════ -->
+        <section class="page" id="page-vue-ensemble" data-page="vue-ensemble">
+
+          <div class="presets">
+            <span class="presets-titre">Analyses rapides</span>
+            <div class="puces" id="presets"></div>
+          </div>
+
+          <div class="si-donnees">
+            <div class="kpis kpis-principaux" id="kpis"></div>
+            <p class="note-methodo">
+              <span id="note-population"></span>
+              <span id="note-ev"></span>
+            </p>
+
+            <div class="grille-2">
+              <article class="carte carte-graphe">
+                <header class="carte-tete">
+                  <div>
+                    <h2>Évolution de la CLV</h2>
+                    <p class="carte-sous" id="evol-sous">CLV moyenne par période — en %</p>
+                  </div>
+                  <div class="carte-outils">
+                    <div class="segmente" id="evol-mode" role="group" aria-label="Série affichée">
+                      <button type="button" data-mode="clv" class="actif">CLV</button>
+                      <button type="button" data-mode="ev">EV</button>
+                      <button type="button" data-mode="mix">CLV + EV</button>
+                    </div>
+                    <div class="segmente segmente-mini" id="gran-rapide" role="group" aria-label="Axe temporel">
+                      <button type="button" data-gran="jour">Jour</button>
+                      <button type="button" data-gran="semaine">Sem.</button>
+                      <button type="button" data-gran="mois">Mois</button>
+                    </div>
+                  </div>
+                </header>
+                <div class="graphe" id="g-clv-temps"></div>
+                <div class="legende" id="evol-legende"></div>
+              </article>
+
+              <!-- ⚠️ JAMAIS UN DOUBLE AXE CLV / ROI. La CLV vaut quelques
+                   points et le ROI quelques dizaines : les superposer ferait
+                   lire un croisement qui n'existe pas. La performance
+                   financière a SA carte, et chaque série son échelle. -->
+              <article class="carte carte-graphe">
+                <header class="carte-tete">
+                  <div>
+                    <h2>Performance financière</h2>
+                    <p class="carte-sous" id="fin-sous">ROI par période — en %, sur mise notionnelle</p>
+                  </div>
+                  <div class="carte-outils">
+                    <div class="segmente" id="fin-mode" role="group" aria-label="Mesure financière">
+                      <button type="button" data-mode="roi" class="actif">ROI</button>
+                      <button type="button" data-mode="pnl">P&amp;L cumulé</button>
+                    </div>
+                  </div>
+                </header>
+                <div class="graphe" id="g-roi-temps"></div>
+                <div class="graphe" id="g-pnl-cumul" hidden></div>
+              </article>
+            </div>
+
+            <article class="carte carte-graphe">
+              <header class="carte-tete">
+                <div>
+                  <h2>CLV par tranche d'EV</h2>
+                  <p class="carte-sous">Barres : CLV moyenne de la tranche · à droite : nombre d'opportunités. C'est ici que se lit l'edge.</p>
+                </div>
+              </header>
+              <div class="graphe" id="g-clv-ev"></div>
+            </article>
+
+            <div class="grille-tables">
+              <article class="carte carte-table">
+                <header class="carte-tete"><div><h2>Performance par sport</h2></div></header>
+                <div class="enrob"><table class="tableau" id="t-sport"></table></div>
+              </article>
+              <article class="carte carte-table">
+                <header class="carte-tete"><div><h2>Performance par marché</h2></div></header>
+                <div class="enrob"><table class="tableau" id="t-market"></table></div>
+              </article>
+              <article class="carte carte-table pleine">
+                <header class="carte-tete">
+                  <div><h2>Performance par bookmaker</h2>
+                    <p class="carte-sous">Trié par volume d'opportunités — pas un classement de qualité.</p></div>
+                  <a class="lien-voir" href="#/bookmakers">Détail →</a>
+                </header>
+                <div class="enrob"><table class="tableau" id="t-book"></table></div>
+              </article>
+            </div>
+
+            <article class="carte carte-table">
+              <header class="carte-tete">
+                <div><h2>Dernières opportunités détectées</h2>
+                  <p class="carte-sous">Les plus récentes de la population analysée.</p></div>
+                <a class="lien-voir" href="#/paris">Tout voir →</a>
+              </header>
+              <div class="enrob"><table class="tableau tableau-dense" id="t-dernieres"></table></div>
+            </article>
+          </div>
+        </section>
+
+        <!-- ═══ PERFORMANCE ═════════════════════════════════════════════ -->
+        <section class="page" id="page-performance" data-page="performance" hidden>
+          <div class="si-donnees">
+            <div class="kpis kpis-secondaires" id="kpis-perf"></div>
+            <div class="grille-2">
+              <article class="carte carte-graphe">
+                <header class="carte-tete"><div><h2>Opportunités par période</h2>
+                  <p class="carte-sous">Volume détecté — une seule teinte, ce n'est pas une mesure signée.</p></div></header>
+                <div class="graphe" id="g-vol-temps"></div>
+              </article>
+              <article class="carte carte-graphe">
+                <header class="carte-tete"><div><h2>Réglées par période</h2>
+                  <p class="carte-sous">Paris dont le résultat est connu et réglable.</p></div></header>
+                <div class="graphe" id="g-reg-temps"></div>
+              </article>
+            </div>
+            <div class="grille-2">
+              <article class="carte carte-graphe">
+                <header class="carte-tete"><div><h2>ROI par sport</h2></div></header>
+                <div class="graphe" id="g-roi-sport"></div>
+              </article>
+              <article class="carte carte-graphe">
+                <header class="carte-tete"><div><h2>ROI par tranche de cote</h2></div></header>
+                <div class="graphe" id="g-roi-cote"></div>
+              </article>
+              <article class="carte carte-graphe">
+                <header class="carte-tete"><div><h2>ROI par tranche d'EV</h2></div></header>
+                <div class="graphe" id="g-roi-ev"></div>
+              </article>
+              <article class="carte carte-graphe">
+                <header class="carte-tete"><div><h2>ROI par délai avant coup d'envoi</h2></div></header>
+                <div class="graphe" id="g-roi-delay"></div>
+              </article>
+            </div>
+          </div>
+        </section>
+
+        <!-- ═══ CLV ═════════════════════════════════════════════════════ -->
+        <section class="page" id="page-clv" data-page="clv" hidden>
+          <div class="si-donnees">
+            <div class="kpis kpis-secondaires" id="kpis-clv"></div>
+            <div class="grille-2">
+              <article class="carte carte-graphe">
+                <header class="carte-tete"><div><h2>CLV cumulée</h2>
+                  <p class="carte-sous">Moyenne pondérée par l'effectif, pas moyenne de moyennes.</p></div></header>
+                <div class="graphe" id="g-clv-cumul"></div>
+              </article>
+              <article class="carte carte-graphe">
+                <header class="carte-tete"><div><h2>CLV par sport</h2></div></header>
+                <div class="graphe" id="g-clv-sport"></div>
+              </article>
+              <article class="carte carte-graphe">
+                <header class="carte-tete"><div><h2>CLV par tranche de cote</h2></div></header>
+                <div class="graphe" id="g-clv-cote"></div>
+              </article>
+              <article class="carte carte-graphe">
+                <header class="carte-tete"><div><h2>CLV par délai avant coup d'envoi</h2></div></header>
+                <div class="graphe" id="g-clv-delay"></div>
+              </article>
+            </div>
+            <article class="carte" id="bloc-matrice">
+              <header class="carte-tete">
+                <div><h2>Matrice cote × EV</h2>
+                  <p class="carte-sous">Clique une cellule pour ouvrir le détail de ses opportunités.</p></div>
+                <div class="carte-outils">
+                  <select id="m-mesure" class="select-mini" aria-label="Mesure de la matrice">
+                    <option value="clv">CLV</option>
+                    <option value="roi">ROI</option>
+                  </select>
+                </div>
+              </header>
+              <div class="enrob"><table class="matrice" id="matrice"></table></div>
+            </article>
+          </div>
+        </section>
+
+        <!-- ═══ BOOKMAKERS ══════════════════════════════════════════════ -->
+        <section class="page" id="page-bookmakers" data-page="bookmakers" hidden>
+          <div class="si-donnees">
+            <article class="carte carte-table">
+              <header class="carte-tete"><div><h2>Tous les bookmakers</h2>
+                <p class="carte-sous">Clique un en-tête pour trier. Les jumeaux Kambi comptent pour un seul book.</p></div></header>
+              <div class="enrob"><table class="tableau" id="t-book-complet"></table></div>
+            </article>
+            <div class="grille-2">
+              <article class="carte carte-graphe">
+                <header class="carte-tete"><div><h2>CLV par bookmaker</h2></div></header>
+                <div class="graphe" id="g-clv-book"></div>
+              </article>
+              <article class="carte carte-graphe">
+                <header class="carte-tete"><div><h2>ROI par bookmaker</h2></div></header>
+                <div class="graphe" id="g-roi-book"></div>
+              </article>
+            </div>
+          </div>
+        </section>
+
+        <!-- ═══ MARCHÉS ═════════════════════════════════════════════════ -->
+        <section class="page" id="page-marches" data-page="marches" hidden>
+          <div class="si-donnees">
+            <article class="carte carte-table">
+              <header class="carte-tete"><div><h2>Par marché</h2></div></header>
+              <div class="enrob"><table class="tableau" id="t-market-complet"></table></div>
+            </article>
+            <div class="grille-2">
+              <article class="carte carte-graphe">
+                <header class="carte-tete"><div><h2>CLV par marché</h2></div></header>
+                <div class="graphe" id="g-clv-market"></div>
+              </article>
+              <article class="carte carte-graphe">
+                <header class="carte-tete"><div><h2>ROI par marché</h2></div></header>
+                <div class="graphe" id="g-roi-market"></div>
+              </article>
+            </div>
+            <article class="carte carte-table">
+              <header class="carte-tete"><div><h2>Par pari (1 X 2, Over, Under)</h2>
+                <p class="carte-sous">Au tennis, « 1 » désigne le joueur cité en premier.</p></div></header>
+              <div class="enrob"><table class="tableau" id="t-outcome"></table></div>
+            </article>
+            <div class="grille-2">
+              <article class="carte carte-graphe">
+                <header class="carte-tete"><div><h2>CLV par pari</h2></div></header>
+                <div class="graphe" id="g-clv-outcome"></div>
+              </article>
+              <article class="carte carte-graphe">
+                <header class="carte-tete"><div><h2>ROI par pari</h2></div></header>
+                <div class="graphe" id="g-roi-outcome"></div>
+              </article>
+            </div>
+          </div>
+        </section>
+
+        <!-- ═══ COMPÉTITIONS ════════════════════════════════════════════ -->
+        <section class="page" id="page-competitions" data-page="competitions" hidden>
+          <div class="si-donnees">
+            <div class="grille-2">
+              <article class="carte carte-graphe">
+                <header class="carte-tete"><div><h2>CLV — compétitions les plus actives</h2>
+                  <p class="carte-sous">Les 12 compétitions au plus gros volume ; la liste complète est dessous.</p></div></header>
+                <div class="graphe" id="g-clv-league"></div>
+              </article>
+              <article class="carte carte-graphe">
+                <header class="carte-tete"><div><h2>ROI — compétitions les plus actives</h2>
+                  <p class="carte-sous">Mêmes 12 compétitions, même ordre.</p></div></header>
+                <div class="graphe" id="g-roi-league"></div>
+              </article>
+            </div>
+            <article class="carte carte-table">
+              <header class="carte-tete">
+                <div><h2>Toutes les compétitions</h2>
+                  <p class="carte-sous" id="cmp-compte"></p></div>
+                <div class="carte-outils">
+                  <input type="search" id="cmp-recherche" class="recherche" placeholder="Chercher une compétition…" aria-label="Chercher une compétition">
+                </div>
+              </header>
+              <div class="enrob"><table class="tableau" id="t-league"></table></div>
+              <div class="plus" id="cmp-plus"></div>
+            </article>
+          </div>
+        </section>
+
+        <!-- ═══ PARIS JOUÉS ═════════════════════════════════════════════ -->
+        <section class="page" id="page-paris" data-page="paris" hidden>
+          <div class="barre-page">
+            <div class="segmente" id="pj-filtre" role="group" aria-label="Paris affichés">
+              <button type="button" data-played="tous">Toutes les opportunités</button>
+              <button type="button" data-played="oui">Paris joués</button>
+              <button type="button" data-played="non">Non joués</button>
+            </div>
+            <p class="aide" id="pj-aide">Le choix est un filtre de l'analyse : KPI, graphiques et détail décrivent le même lot.</p>
+          </div>
+          <div class="si-donnees">
+            <div class="kpis kpis-secondaires" id="kpis-paris"></div>
+            <article class="carte carte-table" id="bloc-detail">
+              <header class="carte-tete">
+                <div><h2>Détail des opportunités</h2>
+                  <p class="carte-sous" id="detail-filtre"></p></div>
+              </header>
+              <div class="enrob"><table class="tableau tableau-dense detail" id="detail"></table></div>
+              <div class="pagination" id="pagination"></div>
+            </article>
+          </div>
+        </section>
+
+        <!-- ═══ ANALYSE AVANCÉE ═════════════════════════════════════════ -->
+        <section class="page" id="page-avancee" data-page="avancee" hidden>
+          <div class="si-donnees">
+            <article class="carte">
+              <header class="carte-tete"><div><h2>Analyser par :</h2>
+                <p class="carte-sous">Choisissez un axe ; CLV, ROI et le tableau complet de l'axe apparaissent dessous.</p></div></header>
+              <div class="puces puces-axes" id="aa-axes" role="group" aria-label="Axe d'analyse"></div>
+            </article>
+
+            <div id="aa-panneau" hidden>
+              <div class="grille-2">
+                <article class="carte carte-graphe">
+                  <header class="carte-tete"><div><h2 id="aa-titre-clv">CLV</h2>
+                    <p class="carte-sous" id="aa-sous"></p></div></header>
+                  <div class="graphe" id="aa-clv"></div>
+                </article>
+                <article class="carte carte-graphe">
+                  <header class="carte-tete"><div><h2 id="aa-titre-roi">ROI</h2>
+                    <p class="carte-sous">Sur les paris réglés, mise notionnelle.</p></div></header>
+                  <div class="graphe" id="aa-roi"></div>
+                </article>
+              </div>
+              <article class="carte carte-table">
+                <header class="carte-tete"><div><h2 id="aa-titre-table">Tableau</h2></div>
+                  <div class="carte-outils"><input type="search" id="aa-recherche" class="recherche" placeholder="Filtrer les lignes…" aria-label="Filtrer les lignes" hidden></div></header>
+                <div class="enrob"><table class="tableau" id="aa-table"></table></div>
+              </article>
+            </div>
+
+            <!-- ⚠️ LES SEGMENTS NE SONT PAS CALCULÉS D'OFFICE : trois
+                 dimensions croisées coûtent nettement plus qu'une analyse. -->
+            <article class="carte" id="bloc-segments" hidden>
+              <header class="carte-tete"><div><h2>Meilleurs segments croisés</h2>
+                <p class="carte-sous">Exploration, pas recommandation : lisez la mise en garde avant le tableau.</p></div></header>
+              <div class="barre-outils">
+                <select id="s-tri" class="select-mini">
+                  <option value="clv">Classer par CLV (recommandé)</option>
+                  <option value="roi">Classer par ROI</option>
+                </select>
+                <label class="aide">plancher
+                  <input type="number" id="s-min" value="100" min="1" step="10" class="input-mini">
+                  opportunités</label>
+                <select id="s-prof" class="select-mini">
+                  <option value="1">1 dimension</option>
+                  <option value="2">2 dimensions croisées</option>
+                  <option value="3" selected>3 dimensions croisées</option>
+                </select>
+                <button class="btn btn-secondaire btn-petit" id="s-lancer" type="button">Chercher</button>
+                <span class="aide" id="s-etat"></span>
+              </div>
+              <div id="s-garde"></div>
+              <div class="enrob"><table class="tableau segments" id="segments"></table></div>
+            </article>
+
+            <article class="carte">
+              <header class="carte-tete"><div><h2>Règles d'EV segmentées</h2>
+                <p class="carte-sous">EV différent par sport, ou par tranche de cote : ce sont des filtres, réglés dans les Filtres avancés.</p></div>
+                <button class="btn btn-secondaire btn-petit" id="aa-ouvrir-segmentation" type="button">Régler la segmentation</button></header>
+              <p class="aide" id="aa-regles"></p>
+            </article>
+          </div>
+        </section>
+
+        <!-- ═══ MES ANALYSES ════════════════════════════════════════════ -->
+        <section class="page" id="page-mes-analyses" data-page="mes-analyses" hidden>
+          <article class="carte">
+            <header class="carte-tete"><div><h2>Sauvegarder l'analyse courante</h2>
+              <p class="carte-sous">Période et tous les filtres, y compris avancés. Enregistré dans ce navigateur uniquement.</p></div></header>
+            <div class="barre-outils">
+              <input type="text" id="ma-nom" class="champ-texte" maxlength="60" placeholder="Nom — ex. « Football ≥ 8 % »" aria-label="Nom de l'analyse">
+              <button class="btn btn-primaire btn-petit" id="ma-sauver" type="button">Sauvegarder</button>
+            </div>
+            <p class="aide" id="ma-apercu"></p>
+          </article>
+          <div class="liste-analyses" id="ma-liste"></div>
+        </section>
+
+        <!-- ═══ EXPORTER ════════════════════════════════════════════════ -->
+        <section class="page" id="page-exporter" data-page="exporter" hidden>
+          <div class="grille-3">
+            <article class="carte carte-action">
+              <h2>PDF</h2>
+              <p>L'impression du navigateur : la page courante, avec en tête <b>tous les filtres appliqués par le serveur</b>. Choisissez « Enregistrer au format PDF ».</p>
+              <button class="btn btn-secondaire" id="ex-pdf" type="button">Exporter en PDF</button>
+            </article>
+            <article class="carte carte-action">
+              <h2>CSV — opportunités</h2>
+              <p>Une ligne par opportunité de l'analyse courante : cote, EV, clôture, CLV, résultat, P&amp;L, statut joué. Pleine précision, séparateur « ; ».</p>
+              <button class="btn btn-secondaire" id="ex-csv-opps" type="button">Télécharger le CSV</button>
+            </article>
+            <article class="carte carte-action">
+              <h2>CSV — découpes</h2>
+              <p>Les tableaux agrégés rendus par le serveur : par sport, bookmaker, marché, pari, compétition, cote, EV, délai et période.</p>
+              <button class="btn btn-secondaire" id="ex-csv-decoupes" type="button">Télécharger le CSV</button>
+            </article>
+          </div>
+          <p class="aide">Les exports décrivent la <b>dernière analyse lancée</b>. Si des filtres ont été modifiés depuis, relancez « Analyser » d'abord.</p>
+        </section>
+
+        <!-- ═══ PARAMÈTRES ══════════════════════════════════════════════ -->
+        <section class="page" id="page-parametres" data-page="parametres" hidden>
+          <div class="grille-2">
+            <article class="carte">
+              <header class="carte-tete"><div><h2>Apparence</h2></div></header>
+              <div class="reglage">
+                <span class="reglage-lib">Thème</span>
+                <div class="segmente" id="pr-theme" role="group" aria-label="Thème">
+                  <button type="button" data-theme-choix="system">Système</button>
+                  <button type="button" data-theme-choix="light">Clair</button>
+                  <button type="button" data-theme-choix="dark">Sombre</button>
+                </div>
+              </div>
+              <div class="reglage">
+                <span class="reglage-lib">Barre latérale</span>
+                <label class="interrupteur"><input type="checkbox" id="pr-sidebar"><span>Réduite (icônes seules)</span></label>
+              </div>
+              <div class="reglage">
+                <span class="reglage-lib">Lignes par page — Paris joués</span>
+                <select id="pr-lignes" class="select-mini">
+                  <option value="25">25</option>
+                  <option value="50">50</option>
+                  <option value="100">100</option>
+                </select>
+              </div>
+              <div class="reglage">
+                <span class="reglage-lib">Filtres</span>
+                <button class="btn btn-secondaire btn-petit" id="pr-reinit" type="button">Réinitialiser tous les filtres</button>
+              </div>
+            </article>
+            <article class="carte">
+              <header class="carte-tete"><div><h2>Données analysées</h2></div></header>
+              <dl class="liste-def" id="pr-donnees"></dl>
+              <p class="aide" id="pr-perimetre"></p>
+            </article>
+          </div>
+        </section>
+
+      </div>
+    </main>
+  </div>
+</div>
+
+<!-- ═══ TIROIR « FILTRES AVANCÉS » ══════════════════════════════════════
+     ⚠️ TOUS LES FILTRES DE L'ANALYSE VIVENT ICI, et c'est la seule source de
+     vérité. Les menus de la barre du haut n'en sont que des raccourcis. Les
+     sections sont repliées par défaut et affichent leur valeur courante dans
+     leur en-tête : l'état se lit sans rien ouvrir. -->
+<div class="voile" id="voile-filtres" hidden></div>
+<aside class="tiroir" id="tiroir" role="dialog" aria-modal="true" aria-labelledby="tiroir-titre" aria-hidden="true">
+  <header class="tiroir-tete">
+    <div>
+      <h2 id="tiroir-titre">Filtres avancés</h2>
+      <p class="carte-sous">Tout est optionnel. Une section non réglée ne filtre rien.</p>
+    </div>
+    <button class="icone-btn" id="fermer-filtres" type="button" aria-label="Fermer">
+      <svg viewBox="0 0 24 24"><path d="M18 6L6 18M6 6l12 12"/></svg>
+    </button>
+  </header>
+
+  <form class="tiroir-corps" id="form" autocomplete="off">
+
+    <!-- ⚠️ DES CASES À COCHER, PAS DES `select multiple`. Le Ctrl+clic est
+         invisible pour qui ne le connaît pas, perd toute la sélection au
+         moindre clic simple, et masque ce qui est coché dès que la liste
+         dépasse sa hauteur. Chaque groupe porte en tête une ligne « Tous »
+         explicite : l'état se lit, il ne se devine plus. -->
+    <div class="champ pliable" id="champ-sports">
+      <button class="champ-tete" type="button"><span class="champ-nom">Sport</span><span class="resume" id="r-sports"></span></button>
+      <div class="champ-corps"><div class="cases" id="f-sports"></div></div>
+    </div>
+
+    <div class="champ pliable" id="champ-books">
+      <button class="champ-tete" type="button"><span class="champ-nom">Bookmakers</span><span class="resume" id="r-books"></span></button>
+      <div class="champ-corps"><div class="cases" id="f-books"></div></div>
+    </div>
+
+    <div class="champ pliable" id="champ-markets">
+      <button class="champ-tete" type="button"><span class="champ-nom">Marché</span><span class="resume" id="r-markets"></span></button>
+      <div class="champ-corps"><div class="cases" id="f-markets"></div></div>
+    </div>
+
+    <div class="champ pliable" id="champ-league">
+      <button class="champ-tete" type="button"><span class="champ-nom">Compétition</span><span class="resume" id="r-league"></span></button>
+      <div class="champ-corps">
+        <div class="cases" id="f-league"></div>
+        <span class="aide" id="aide-ligue"></span>
+      </div>
+    </div>
+
+    <!-- ⚠️ L'AVERTISSEMENT FAIT PARTIE DU FILTRE. Un Over n'est ni un 1,
+         ni un X, ni un 2 : ne cocher que du 1X2 écarte les totals. C'est le
+         sens exact de la demande, mais un total qui rétrécit sans
+         explication se lit comme une panne. -->
+    <div class="champ pliable" id="champ-pari">
+      <button class="champ-tete" type="button"><span class="champ-nom">Pari</span><span class="resume" id="r-pari"></span></button>
+      <div class="champ-corps">
+        <div class="cases" id="f-outcomes"></div>
+        <span class="aide">Ne cocher que des paris <b>1X2</b> écarte les <b>Over/Under</b>,
+          et réciproquement. Au tennis, <b>1</b> désigne le joueur cité en premier.</span>
+      </div>
+    </div>
+
+    <!-- ⚠️ JUMEAU DU BLOC EV, VOLONTAIREMENT. Les tranches de cote obéissent
+         aux mêmes règles : union des cases cochées, règle propre à un sport
+         qui prime, et bornes libres qui se cumulent en ET. -->
+    <div class="champ pliable" id="champ-cote">
+      <button class="champ-tete" type="button"><span class="champ-nom">Cote</span><span class="resume" id="r-cote"></span></button>
+      <div class="champ-corps">
+        <div class="segmente segmente-plein" id="cote-mode" role="group" aria-label="Mode de filtre de cote">
+          <button type="button" data-mode="toutes">Toutes</button>
+          <button type="button" data-mode="tranches">Tranches</button>
+          <button type="button" data-mode="perso">Personnalisée</button>
+        </div>
+        <div class="sous-bloc" id="cote-bloc-tranches" hidden>
+          <div class="cases" id="f-odds-bands"></div>
+          <label class="case case-option">
+            <input type="checkbox" id="cote-split">
+            <span>Cote <b>différente par sport</b></span>
+          </label>
+          <div id="cote-par-sport"></div>
+          <span class="aide">Plusieurs tranches = union (OU).</span>
+        </div>
+        <div class="sous-bloc" id="cote-bloc-bornes" hidden>
+          <span class="sous-titre-bloc" id="cote-bornes-titre">Bornes</span>
+          <div class="paire">
+            <input type="number" id="f-odds-min" step="0.05" min="1.01" placeholder="min" aria-label="Cote minimum">
+            <span>→</span>
+            <input type="number" id="f-odds-max" step="0.05" min="1.01" placeholder="max" aria-label="Cote maximum">
+          </div>
+          <span class="aide" id="cote-bornes-aide">Bornes incluses.</span>
+        </div>
+      </div>
+    </div>
+
+    <div class="champ pliable" id="champ-ev">
+      <button class="champ-tete" type="button"><span class="champ-nom">EV</span><span class="resume" id="r-ev"></span></button>
+      <div class="champ-corps">
+        <div class="segmente segmente-plein" id="ev-mode" role="group" aria-label="Mode de filtre d'EV">
+          <button type="button" data-mode="minimum">Minimum</button>
+          <button type="button" data-mode="tranches">Tranches</button>
+          <button type="button" data-mode="perso">Personnalisée</button>
+        </div>
+        <div class="sous-bloc" id="ev-bloc-tranches" hidden>
+          <div class="cases" id="f-ev-bands"></div>
+          <span class="aide" id="ev-tranches-aide">Plusieurs tranches = union (OU).</span>
+        </div>
+        <div class="sous-bloc" id="ev-bloc-bornes">
+          <span class="sous-titre-bloc" id="ev-bornes-titre">EV minimum (%)</span>
+          <div class="paire">
+            <input type="number" id="f-ev-min" step="0.5" placeholder="min" aria-label="EV minimum (%)">
+            <span class="ev-max-part">→</span>
+            <input type="number" id="f-ev-max" class="ev-max-part" step="0.5" placeholder="max" aria-label="EV maximum (%)">
+          </div>
+          <span class="aide" id="ev-bornes-aide">Laisser vide : aucune contrainte d'EV.</span>
+        </div>
+      </div>
+    </div>
+
+    <div class="champ pliable" id="champ-segmentation">
+      <button class="champ-tete" type="button"><span class="champ-nom">Segmentation avancée</span><span class="resume" id="r-segmentation"></span></button>
+      <div class="champ-corps">
+        <label class="case case-option">
           <input type="checkbox" id="ev-split">
           <span>EV <b>différent par sport</b></span>
         </label>
         <div id="ev-par-sport"></div>
-        <span class="aide">Plusieurs tranches = union (OU). Rien de coché = toutes.</span>
-      </div>
 
-      <div class="champ">
-        <label>EV — bornes libres (%)</label>
-        <div class="paire">
-          <input type="number" id="f-ev-min" step="0.5" placeholder="min">
-          <span>→</span>
-          <input type="number" id="f-ev-max" step="0.5" placeholder="max">
-        </div>
-        <span class="aide">Se cumule (ET) avec les tranches ci-dessus</span>
-      </div>
-
-      <!-- ⚠️ CE BLOC PRIME SUR LES DEUX PRÉCÉDENTS, IL NE S'Y AJOUTE PAS.
-           Un pari dont la cote tombe dans une tranche réglée ici obéit à
-           CETTE borne et à aucune autre. Une règle qui s'additionnerait
-           serait un piège : demander « sous 1.80, accepte dès 3 % » alors
-           que la borne globale vaut 5 % ne rendrait aucune ligne de plus, et
-           rien ne le dirait. L'ordre est donc tranche de cote, puis sport,
-           puis règle globale — le même que celui du SQL, parce que c'est la
-           même clause. -->
-      <div class="champ large pliable" id="champ-ev-cote">
-        <label>EV par tranche de cote (%)</label>
-        <label class="case" style="border:1px solid var(--bordure)">
-          <input type="checkbox" id="ev-cote-split">
-          <span>EV <b>différent par tranche de cote</b></span>
-        </label>
-        <div id="ev-par-cote"></div>
-        <span class="aide">Une tranche réglée ici <b>remplace</b> la règle
-          générale ; les tranches laissées vides ne changent pas.</span>
-      </div>
-
-      <div class="champ large">
-        <label>Période</label>
-        <div class="paire">
-          <input type="date" id="f-date-from">
-          <span>→</span>
-          <input type="date" id="f-date-to">
+        <!-- ⚠️ CE BLOC PRIME SUR LES RÈGLES D'EV PRÉCÉDENTES, IL NE S'Y AJOUTE
+             PAS. Un pari dont la cote tombe dans une tranche réglée ici obéit
+             à CETTE borne et à aucune autre. L'ordre est tranche de cote,
+             puis sport, puis règle globale — le même que celui du SQL. -->
+        <div class="champ sous-champ" id="champ-ev-cote">
+          <label class="case case-option">
+            <input type="checkbox" id="ev-cote-split">
+            <span>EV par tranche de cote (%) — <b>différent par tranche</b></span>
+          </label>
+          <div id="ev-par-cote"></div>
+          <span class="aide">Une tranche réglée ici <b>remplace</b> la règle
+            générale ; les tranches laissées vides ne changent pas.</span>
         </div>
       </div>
+    </div>
 
-      <!-- ⚠️ L'UNITÉ EST UN CHOIX D'AFFICHAGE, PAS UN FORMAT D'API.
-           Le serveur attend et attendra toujours des HEURES, en décimal —
-           `delay_min=0.25` vaut déjà quinze minutes. Ce sélecteur ne fait que
-           convertir avant l'envoi : aucune route, aucun filtre, aucune URL
-           enregistrée ne change de sens. -->
-      <div class="champ large">
-        <label for="f-delay-min">Délai avant coup d'envoi</label>
+    <!-- ⚠️ L'UNITÉ EST UN CHOIX D'AFFICHAGE, PAS UN FORMAT D'API.
+         Le serveur attend et attendra toujours des HEURES, en décimal —
+         `delay_min=0.25` vaut déjà quinze minutes. Ce sélecteur ne fait que
+         convertir avant l'envoi. -->
+    <div class="champ pliable" id="champ-delai">
+      <button class="champ-tete" type="button"><span class="champ-nom">Délai avant coup d'envoi</span><span class="resume" id="r-delai"></span></button>
+      <div class="champ-corps">
         <div class="paire">
-          <input type="number" id="f-delay-min" step="1" min="0" placeholder="min">
+          <input type="number" id="f-delay-min" step="1" min="0" placeholder="min" aria-label="Délai minimum">
           <span>→</span>
-          <input type="number" id="f-delay-max" step="1" min="0" placeholder="max">
-          <select id="f-delay-unite" title="Unité des deux champs">
+          <input type="number" id="f-delay-max" step="1" min="0" placeholder="max" aria-label="Délai maximum">
+          <select id="f-delay-unite" title="Unité des deux champs" aria-label="Unité">
             <option value="h" selected>heures</option>
             <option value="min">minutes</option>
           </select>
@@ -163,154 +795,59 @@
         <div class="rapides" id="delay-rapides"></div>
         <span class="aide" id="aide-delai"></span>
       </div>
+    </div>
 
-      <div class="champ">
-        <label for="f-population">Population analysée</label>
-        <select id="f-population"></select>
+    <div class="champ pliable" id="champ-population">
+      <button class="champ-tete" type="button"><span class="champ-nom">Population analysée</span><span class="resume" id="r-population"></span></button>
+      <div class="champ-corps">
+        <select id="f-population" aria-label="Population analysée"></select>
         <span class="aide" id="aide-population"></span>
       </div>
+    </div>
 
-      <div class="champ">
-        <label for="f-played">Joué</label>
-        <select id="f-played">
+    <div class="champ pliable" id="champ-joue">
+      <button class="champ-tete" type="button"><span class="champ-nom">Joué</span><span class="resume" id="r-joue"></span></button>
+      <div class="champ-corps">
+        <select id="f-played" aria-label="Joué">
           <option value="tous">Tous</option>
           <option value="oui">Cliqués sur « Jouer »</option>
           <option value="non">Alertés, non cliqués</option>
         </select>
       </div>
+    </div>
 
-      <div class="champ">
-        <label for="f-stake">Mise notionnelle (€)</label>
-        <input type="number" id="f-stake" step="5" min="1" value="25">
-        <span class="aide">Le ROI en dépend</span>
+    <div class="champ pliable" id="champ-mise">
+      <button class="champ-tete" type="button"><span class="champ-nom">Mise notionnelle</span><span class="resume" id="r-mise"></span></button>
+      <div class="champ-corps">
+        <div class="paire paire-unite">
+          <input type="number" id="f-stake" step="5" min="1" value="25" aria-label="Mise notionnelle en euros">
+          <span>€ par pari</span>
+        </div>
+        <span class="aide">Le ROI et le P&amp;L en dépendent.</span>
       </div>
+    </div>
 
-      <div class="champ">
-        <label for="f-gran">Axe temporel</label>
-        <select id="f-gran">
+    <div class="champ pliable" id="champ-axe">
+      <button class="champ-tete" type="button"><span class="champ-nom">Axe temporel</span><span class="resume" id="r-axe"></span></button>
+      <div class="champ-corps">
+        <select id="f-gran" aria-label="Axe temporel">
           <option value="semaine">Semaine</option>
           <option value="jour">Jour</option>
           <option value="mois">Mois</option>
         </select>
       </div>
-
-    </form>
-
-    <div class="actions">
-      <button class="primaire" id="analyser" type="button">ANALYSER</button>
-      <button class="discret" id="reinit" type="button">Réinitialiser</button>
-      <button class="discret" id="pdf" type="button"
-              title="Ouvre l'impression du navigateur — choisis « Enregistrer au format PDF »">
-        Exporter en PDF</button>
-      <span class="aide" id="etat"></span>
     </div>
-  </section>
 
-  <div id="avertissements"></div>
+  </form>
 
-  <!-- ⚠️ CE BLOC N'EXISTE QUE SUR PAPIER, ET IL EST INDISPENSABLE.
-       Un PDF de résultats qui ne dit pas quels filtres l'ont produit est un
-       piège : relu trois semaines plus tard, « ROI +16 % » se lit comme le
-       ROI du système entier alors qu'il portait sur une tranche d'EV et un
-       seul sport. L'écran, lui, montre les filtres juste au-dessus ; le
-       papier ne les emporte pas. -->
-  <section class="carte impression-seule" id="entete-pdf" hidden></section>
+  <footer class="tiroir-pied">
+    <button class="btn btn-fantome" id="reinit" type="button">Réinitialiser</button>
+    <span class="aide" id="etat"></span>
+    <button class="btn btn-primaire" id="appliquer" type="button">Appliquer et analyser</button>
+  </footer>
+</aside>
 
-  <section class="carte" id="bloc-kpi" hidden>
-    <h2>Résultats</h2>
-    <div class="kpis" id="kpis"></div>
-    <p class="aide" id="note-ev" style="margin:12px 0 0"></p>
-    <p class="aide" id="note-population" style="margin:6px 0 0"></p>
-  </section>
-
-  <section class="carte" id="bloc-temps" hidden>
-    <h2>Évolution dans le temps</h2>
-    <!-- ⚠️ DEUX GRAPHIQUES, JAMAIS UN DOUBLE AXE. La CLV vaut quelques points
-         et le ROI quelques dizaines : les superposer sur deux échelles ferait
-         lire un croisement qui n'existe pas. -->
-    <div class="grille-graphes">
-      <figure><figcaption>CLV moyenne
-        <span class="prec">en % — échelle propre</span></figcaption>
-        <div id="g-clv-temps"></div></figure>
-      <figure><figcaption>ROI
-        <span class="prec">en % — échelle propre, ne se compare pas à la CLV</span></figcaption>
-        <div id="g-roi-temps"></div></figure>
-      <figure><figcaption>P&amp;L cumulé
-        <span class="prec">en € — somme des périodes réglées</span></figcaption>
-        <div id="g-pnl-cumul"></div></figure>
-      <figure><figcaption>CLV cumulée
-        <span class="prec">moyenne pondérée par l'effectif, pas moyenne de moyennes</span></figcaption>
-        <div id="g-clv-cumul"></div></figure>
-      <figure><figcaption>Opportunités par période</figcaption>
-        <div id="g-vol-temps"></div></figure>
-      <figure><figcaption>Réglées par période</figcaption>
-        <div id="g-reg-temps"></div></figure>
-    </div>
-  </section>
-
-  <section class="carte" id="bloc-decoupes" hidden>
-    <h2>Découpes</h2>
-    <div class="grille-graphes">
-      <figure><figcaption>CLV par tranche de cote</figcaption><div id="g-clv-cote"></div></figure>
-      <figure><figcaption>ROI par tranche de cote</figcaption><div id="g-roi-cote"></div></figure>
-      <figure><figcaption>CLV par tranche d'EV</figcaption><div id="g-clv-ev"></div></figure>
-      <figure><figcaption>ROI par tranche d'EV</figcaption><div id="g-roi-ev"></div></figure>
-      <figure><figcaption>CLV par bookmaker</figcaption><div id="g-clv-book"></div></figure>
-      <figure><figcaption>ROI par bookmaker</figcaption><div id="g-roi-book"></div></figure>
-      <figure><figcaption>CLV par sport</figcaption><div id="g-clv-sport"></div></figure>
-      <figure><figcaption>ROI par sport</figcaption><div id="g-roi-sport"></div></figure>
-      <figure><figcaption>CLV par marché</figcaption><div id="g-clv-market"></div></figure>
-      <figure><figcaption>ROI par marché</figcaption><div id="g-roi-market"></div></figure>
-      <figure><figcaption>CLV par pari (1 X 2)</figcaption><div id="g-clv-outcome"></div></figure>
-      <figure><figcaption>ROI par pari (1 X 2)</figcaption><div id="g-roi-outcome"></div></figure>
-      <figure><figcaption>CLV par délai avant coup d'envoi</figcaption><div id="g-clv-delay"></div></figure>
-      <figure><figcaption>ROI par délai avant coup d'envoi</figcaption><div id="g-roi-delay"></div></figure>
-    </div>
-  </section>
-
-  <section class="carte" id="bloc-segments" hidden>
-    <h2>Meilleurs segments</h2>
-    <div class="actions" style="margin:0 0 12px">
-      <select id="s-tri" style="width:auto">
-        <option value="clv">Classer par CLV (recommandé)</option>
-        <option value="roi">Classer par ROI</option>
-      </select>
-      <label class="aide">plancher
-        <input type="number" id="s-min" value="100" min="1" step="10" style="width:84px">
-        opportunités</label>
-      <select id="s-prof" style="width:auto">
-        <option value="1">1 dimension</option>
-        <option value="2">2 dimensions croisées</option>
-        <option value="3" selected>3 dimensions croisées</option>
-      </select>
-      <button class="discret" id="s-lancer" type="button">Chercher</button>
-      <span class="aide" id="s-etat"></span>
-    </div>
-    <div id="s-garde"></div>
-    <div class="enrob"><table class="segments" id="segments"></table></div>
-  </section>
-
-  <section class="carte" id="bloc-matrice" hidden>
-    <h2>Matrice cote × EV</h2>
-    <div class="actions" style="margin:0 0 12px">
-      <select id="m-mesure" style="width:auto">
-        <option value="clv">CLV</option>
-        <option value="roi">ROI</option>
-      </select>
-      <span class="aide">Clique une cellule pour filtrer le détail dessous.</span>
-    </div>
-    <div class="enrob"><table class="matrice" id="matrice"></table></div>
-  </section>
-
-  <section class="carte" id="bloc-detail" hidden>
-    <h2>Détail des opportunités</h2>
-    <p class="aide" id="detail-filtre" style="margin:0 0 10px"></p>
-    <div class="enrob"><table class="detail" id="detail"></table></div>
-    <div class="pagination" id="pagination"></div>
-  </section>
-
-</main>
-
+<div class="toast" id="toast" role="status" aria-live="polite" hidden></div>
 <div id="bulle" role="tooltip" aria-hidden="true"></div>
 <script src="app.js"></script>
 </body>

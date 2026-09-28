@@ -1,21 +1,33 @@
 /* Valuebet Analytics — interface.
  *
  * ⚠️ CE FICHIER NE CALCULE AUCUNE MÉTRIQUE. Pas de CLV, pas de ROI, pas de
- * P&L, pas de déduplication. Il appelle `/api/filters`, `/api/analyse` et
- * `/api/detail`, et il met en forme ce qu'on lui rend. Une formule qui
- * apparaîtrait ici serait une SECONDE définition — c'est le §17.7, et ce
- * projet l'a payé trois fois. Un test vérifie qu'aucune autre URL n'est
- * appelée.
+ * P&L, pas de déduplication. Il appelle `/api/filters`, `/api/analyse`,
+ * `/api/detail` et `/api/segments`, et il met en forme ce qu'on lui rend. Une
+ * formule qui apparaîtrait ici serait une SECONDE définition — c'est le
+ * §17.7, et ce projet l'a payé trois fois. Un test vérifie qu'aucune autre URL
+ * n'est appelée.
  *
  * ⚠️ L'ARRONDI EST UNIQUEMENT DE PRÉSENTATION. `12.068542605875932` s'affiche
- * « 12,07 % » ; la valeur rendue par l'API n'est jamais modifiée, et rien
+ * « +12,1 % » ; la valeur rendue par l'API n'est jamais modifiée, et rien
  * n'est renvoyé au serveur.
+ *
+ * ORGANISATION
+ * ------------
+ * Une application à pages (Vue d'ensemble, Performance, CLV, …) au-dessus
+ * d'UNE analyse : un seul appel `/api/analyse` nourrit toutes les pages, qui
+ * ne font que choisir quelles découpes montrer. Chaque page est dessinée à sa
+ * première ouverture après une analyse, pas avant : vingt graphiques cachés
+ * ne coûtent rien tant qu'on ne les regarde pas.
+ *
+ * Les filtres vivent dans le tiroir « Filtres avancés » ; la barre du haut
+ * n'en montre que quatre, sous forme de raccourcis qui écrivent dans le même
+ * formulaire. Une seule source de vérité : `parametres()`.
  */
 'use strict';
 
 /* Seuils d'AFFICHAGE. Ils reprennent ceux que l'API applique déjà pour ses
  * avertissements textuels ; ici ils ne servent qu'à marquer visuellement une
- * marque fragile. Aucun chiffre n'est recalculé à partir d'eux. */
+ * mesure fragile. Aucun chiffre n'est recalculé à partir d'eux. */
 const SEUIL_COUVERTURE = 80;   // sous ce taux, la CLV porte sur une minorité
 const SEUIL_REGLES = 30;       // sous cet effectif : indice, pas résultat
 
@@ -35,6 +47,9 @@ const eur = (v, dec = 2) => v === null || v === undefined ? '—'
   : (v > 0 ? '+' : '') + nb(v, dec) + FINE + '€';
 const ent = (v) => v === null || v === undefined ? '—' : nb(v, 0);
 const cote = (v) => v === null || v === undefined ? '—' : nb(v, 2);
+/* Un réglage saisi (8, 8.5) se relit sans décimales inutiles. */
+const num = (v) => v === null || v === undefined ? '—'
+  : Number(v).toLocaleString('fr-FR', { maximumFractionDigits: 2 });
 
 const signe = (v) => v === null || v === undefined ? '' : v > 0 ? 'pos'
   : v < 0 ? 'neg' : '';
@@ -47,7 +62,47 @@ const el = (t, cls, txt) => {
 };
 const $ = (id) => document.getElementById(id);
 
-/* ── Appels API — EXCLUSIVEMENT ces trois chemins ──────────────────── */
+/* Dates : « 21 juin », « 21 juin 2026 ». Les dates d'API sont des jours
+ * (AAAA-MM-JJ) : on les lit à midi pour qu'aucun fuseau ne les décale. */
+function dateLongue(iso, avecAnnee) {
+  if (!iso) return '—';
+  const d = new Date(String(iso).slice(0, 10) + 'T12:00:00');
+  if (Number.isNaN(d.getTime())) return String(iso);
+  return d.toLocaleDateString('fr-FR', avecAnnee
+    ? { day: 'numeric', month: 'long', year: 'numeric' }
+    : { day: 'numeric', month: 'long' });
+}
+function periodeTexte(de, a) {
+  if (!de && !a) return 'Toute la période';
+  const memeAnnee = de && a && String(de).slice(0, 4) === String(a).slice(0, 4);
+  return `${dateLongue(de, !memeAnnee)} → ${dateLongue(a, true)}`;
+}
+/* L'étiquette d'une période de l'axe temporel. La semaine arrive sous la
+ * forme « 2026-07-06 (S28) », le jour « 2026-07-06 », le mois « 2026-07 ». */
+function libTemps(cle) {
+  const s = String(cle);
+  let m = s.match(/^(\d{4})-(\d{2})-(\d{2})/);
+  if (m) {
+    return new Date(`${m[1]}-${m[2]}-${m[3]}T12:00:00`)
+      .toLocaleDateString('fr-FR', { day: 'numeric', month: 'short' });
+  }
+  m = s.match(/^(\d{4})-(\d{2})$/);
+  if (m) {
+    return new Date(`${s}-15T12:00:00`)
+      .toLocaleDateString('fr-FR', { month: 'short', year: 'numeric' });
+  }
+  return s;
+}
+/* Un instant ISO en heure LOCALE du navigateur : « 27/09 14:32 ». */
+function dateHeure(iso) {
+  if (!iso) return '—';
+  const d = new Date(iso);
+  if (Number.isNaN(d.getTime())) return String(iso).slice(0, 16).replace('T', ' ');
+  return d.toLocaleDateString('fr-FR', { day: '2-digit', month: '2-digit' })
+    + ' ' + d.toLocaleTimeString('fr-FR', { hour: '2-digit', minute: '2-digit' });
+}
+
+/* ── Appels API — EXCLUSIVEMENT ces chemins ────────────────────────── */
 
 const API_FILTERS = '/api/filters';
 const API_ANALYSE = '/api/analyse';
@@ -72,6 +127,57 @@ let REFS = null;      // /api/filters
 let ANALYSE = null;   // dernière /api/analyse
 let PAGE = 1, PAR_PAGE = 25, TRI = 'detected_at', ORDRE = 'desc';
 let CELLULE = null;   // cellule de matrice sélectionnée {odds, ev}
+let SALE = false;     // filtres modifiés depuis la dernière analyse
+let INIT = true;      // amorçage : rien n'est « modifié » par l'utilisateur
+let PAGE_ACTIVE = 'vue-ensemble';
+let AXE_AA = null;    // axe choisi dans « Analyse avancée »
+let MODE_EVOL = 'clv', MODE_FIN = 'roi';
+let MODE_COTE = 'toutes', MODE_EV = 'minimum';
+let JETON = null;     // la dernière analyse lancée — une réponse plus ancienne est ignorée
+let LIMITE_CMP = 50;  // lignes affichées du tableau des compétitions
+const RENDUES = new Set();
+
+/* Préférences locales. `localStorage` peut être bloqué (navigation privée,
+ * politique d'entreprise) : l'interface doit alors fonctionner quand même. */
+const stock = {
+  lire(k, d) {
+    try { const v = localStorage.getItem(k); return v === null ? d : v; } catch (_) { return d; }
+  },
+  ecrire(k, v) {
+    try { localStorage.setItem(k, v); } catch (_) { /* préférence non retenue */ }
+  },
+};
+
+/* Libellés : ils viennent TOUS du serveur. Les écrire ici ferait vivre deux
+ * vocabulaires, dont l'un finirait par ne plus correspondre au filtre. */
+const nomSport = (s) => (REFS && REFS.sports_labels && REFS.sports_labels[s]) || s || '—';
+const nomBook = (b) => (REFS && REFS.bookmakers_labels && REFS.bookmakers_labels[b]) || b || '—';
+const nomMarche = (m) => (REFS && REFS.markets_labels && REFS.markets_labels[m]) || m || '—';
+const libPari = (v) => ((((REFS && REFS.outcomes) || [])
+  .find((o) => o.value === v)) || { libelle: v || '—' }).libelle;
+const nomPopulation = (v) => (((REFS && REFS.populations) || [])
+  .find((p) => p.value === v) || { libelle: v || '—' }).libelle;
+
+/* ── Icônes (SVG écrits ici : aucune ressource externe) ───────────── */
+
+const ICONES = {
+  radar: '<circle cx="12" cy="12" r="9"/><circle cx="12" cy="12" r="4.5"/><path d="M12 12l6-6"/>',
+  coche: '<rect x="3" y="4" width="18" height="16" rx="2"/><path d="M8 12l3 3 5-6"/>',
+  euro: '<path d="M17 6.5A6.5 6.5 0 1 0 17 17.5"/><path d="M4 10h9M4 14h9"/>',
+  courbe: '<path d="M3 12h4l3-8 4 16 3-8h4"/>',
+  pile: '<ellipse cx="12" cy="6" rx="7" ry="3"/><path d="M5 6v6c0 1.7 3.1 3 7 3s7-1.3 7-3V6M5 12v6c0 1.7 3.1 3 7 3s7-1.3 7-3v-6"/>',
+  balance: '<path d="M12 3v18M5 7h14M5 7l-3 7a4 4 0 0 0 6 0zM19 7l-3 7a4 4 0 0 0 6 0z"/>',
+  cible: '<circle cx="12" cy="12" r="9"/><circle cx="12" cy="12" r="5"/><circle cx="12" cy="12" r="1"/>',
+  mediane: '<path d="M4 20V10M10 20V4M16 20v-8M22 20H2"/>',
+  pourcent: '<path d="M19 5L5 19"/><circle cx="7" cy="7" r="2.5"/><circle cx="17" cy="17" r="2.5"/>',
+  cote: '<path d="M4 18l6-6 4 4 6-8"/>',
+  bouclier: '<path d="M12 3l8 3v6c0 5-3.5 8-8 9-4.5-1-8-4-8-9V6z"/>',
+};
+function icone(nom) {
+  const s = el('span', 'ic');
+  s.innerHTML = `<svg viewBox="0 0 24 24" aria-hidden="true">${ICONES[nom] || ''}</svg>`;
+  return s;
+}
 
 /* ── Groupes de cases à cocher ──────────────────────────────────────
  *
@@ -81,6 +187,11 @@ let CELLULE = null;   // cellule de matrice sélectionnée {odds, ev}
  * cache ce qui est coché dès que la liste dépasse sa hauteur visible. Les
  * trois sont des pertes SILENCIEUSES : on croit avoir filtré sur quatre
  * bookmakers et on en a un seul, sous un tableau parfaitement normal.
+ *
+ * ⚠️ « RIEN DE COCHÉ = TOUS » RESTE LE CONTRAT DE L'API, PAS L'INTERFACE.
+ * Chaque groupe porte en tête une ligne « Tous » explicite, cochée tant
+ * qu'aucune valeur ne l'est. Elle n'a pas de valeur et ne part jamais au
+ * serveur (`coches()` l'écarte) : l'état se LIT au lieu de se deviner.
  *
  * La valeur rendue est TOUJOURS la valeur canonique (`unibet_be`), jamais le
  * libellé affiché (« Unibet BE ») : c'est la première qui repart vers l'API.
@@ -96,19 +207,44 @@ function groupeCases(hote, valeurs, options) {
   }
 
   const liste = el('div', 'cases-liste' + (o.courte ? ' courte' : ''));
+  const nomTous = o.tous || 'Tous';
+
+  const lt = el('label', 'case case-tous');
+  const tous = el('input');
+  tous.type = 'checkbox';
+  tous.dataset.tous = '1';
+  lt.appendChild(tous);
+  lt.appendChild(el('span', null, nomTous));
+  const majTous = () => {
+    tous.checked = !liste.querySelector('input:not([data-tous]):checked');
+  };
+  const changement = () => {
+    majTous();
+    if (o.onChange) o.onChange();
+    signalerChangement();
+  };
+  tous.addEventListener('change', () => {
+    // Cocher « Tous » vide la sélection ; le décocher seul n'a pas de sens —
+    // on quitte « Tous » en choisissant une valeur.
+    if (tous.checked) {
+      liste.querySelectorAll('input:not([data-tous])').forEach((c) => { c.checked = false; });
+    }
+    changement();
+  });
 
   // La barre n'apparaît que si elle sert : deux cases n'ont pas besoin d'un
   // « tout sélectionner », et une barre inutile vole de la place à l'écran.
   if (valeurs.length > 3) {
     const barre = el('div', 'cases-barre');
-    const tout = el('button', 'discret', 'Tout');
-    const aucun = el('button', 'discret', 'Aucun');
+    const tout = el('button', null, 'Tout');
+    const aucun = el('button', null, 'Aucun');
     tout.type = aucun.type = 'button';
+    tout.title = 'Cocher chaque valeur visible';
+    aucun.title = `Tout décocher — revient à « ${nomTous} »`;
     const basculer = (etat) => () => {
-      liste.querySelectorAll('input:not(.masquee)').forEach((c) => {
-        if (!c.closest('.case').classList.contains('masquee')) c.checked = etat;
-      });
-      if (o.onChange) o.onChange();
+      liste.querySelectorAll('.case:not(.case-tous):not(.masquee) input')
+        .forEach((c) => { c.checked = etat; });
+      changement();
     };
     tout.addEventListener('click', basculer(true));
     aucun.addEventListener('click', basculer(false));
@@ -119,11 +255,12 @@ function groupeCases(hote, valeurs, options) {
       const rech = el('input');
       rech.type = 'search';
       rech.placeholder = 'chercher…';
+      rech.setAttribute('aria-label', 'Chercher dans la liste');
       // La recherche MASQUE, elle ne décoche pas : filtrer une liste ne doit
       // jamais modifier la sélection qu'on a déjà faite.
       rech.addEventListener('input', () => {
         const q = rech.value.trim().toLowerCase();
-        liste.querySelectorAll('.case').forEach((c) => {
+        liste.querySelectorAll('.case:not(.case-tous)').forEach((c) => {
           c.classList.toggle('masquee',
             q !== '' && !c.textContent.toLowerCase().includes(q));
         });
@@ -133,6 +270,7 @@ function groupeCases(hote, valeurs, options) {
     hote.appendChild(barre);
   }
 
+  liste.appendChild(lt);
   valeurs.forEach((v) => {
     const cle = typeof v === 'string' ? v : v.key;
     const texte = typeof v === 'string' ? (o.labels && o.labels[v]) || v : v.label;
@@ -141,20 +279,32 @@ function groupeCases(hote, valeurs, options) {
     c.type = 'checkbox';
     c.value = cle;
     if (o.coches && o.coches.includes(cle)) c.checked = true;
-    if (o.onChange) c.addEventListener('change', o.onChange);
+    c.addEventListener('change', changement);
     l.appendChild(c);
     l.appendChild(el('span', null, texte));
     liste.appendChild(l);
   });
   hote.appendChild(liste);
+  majTous();
+  hote.majTous = majTous;
 }
 
-/** Les valeurs canoniques cochées d'un groupe. */
+/** Les valeurs canoniques cochées d'un groupe — jamais la ligne « Tous ». */
 function coches(id) {
   const h = $(id);
   if (!h) return [];
   return Array.from(h.querySelectorAll('input[type="checkbox"]:checked'))
+    .filter((c) => !c.dataset.tous)
     .map((c) => c.value);
+}
+
+/** Pose une sélection par programme (menus, analyses sauvegardées). */
+function cocher(id, valeurs) {
+  const h = $(id);
+  if (!h) return;
+  h.querySelectorAll('input[type="checkbox"]:not([data-tous])')
+    .forEach((c) => { c.checked = valeurs.includes(c.value); });
+  if (h.majTous) h.majTous();
 }
 
 /* ── Construction des paramètres ───────────────────────────────────── */
@@ -171,6 +321,9 @@ function parametres(extra) {
   coches('f-books').forEach((v) => p.append('bookmakers', v));
   coches('f-markets').forEach((v) => p.append('markets', v));
   coches('f-outcomes').forEach((v) => p.append('outcomes', v));
+  // ⚠️ Une compétition peut contenir une virgule : elle part en paramètre
+  // RÉPÉTÉ, jamais jointe — l'API ne découpe pas ce champ-là.
+  coches('f-league').forEach((v) => p.append('leagues', v));
 
   /* ⚠️ L'EV PAR SPORT PART VERS LE SERVEUR, IL N'EST PAS APPLIQUÉ ICI.
    * C'est la seule façon que les KPI, les découpes, la matrice ET le détail
@@ -185,9 +338,7 @@ function parametres(extra) {
   }
 
   /* ⚠️ LES TRANCHES DE COTE PARTENT VERS LE SERVEUR, PAS FILTRÉES ICI.
-   * Même raison que pour l'EV : les KPI, les découpes, la matrice et le
-   * détail viennent tous de la même requête. Trier côté navigateur n'en
-   * corrigerait aucun des quatre. */
+   * Même raison que pour l'EV. */
   if ($('cote-split').checked) {
     (sports.length ? sports : (REFS ? REFS.sports : [])).forEach((s) => {
       coches('odds-bands-' + s).forEach((b) => p.append('odds_bands_' + s, b));
@@ -222,9 +373,6 @@ function parametres(extra) {
     });
   }
 
-  const lig = valOuNull('f-league');
-  if (lig) p.append('leagues', lig);
-
   /* ⚠️ LE SERVEUR ATTEND DES HEURES, TOUJOURS. L'unité est un confort de
    * saisie : `0.25 h` et `15 min` désignent la même chose, et c'est l'heure
    * décimale qui part. Envoyer des minutes sous le nom `delay_min` ferait
@@ -247,6 +395,34 @@ function parametres(extra) {
   p.set('played', $('f-played').value);
   Object.entries(extra || {}).forEach(([k, v]) => p.set(k, v));
   return p;
+}
+
+/* Les filtres du FORMULAIRE, sous la forme où le serveur les renvoie dans
+ * `filters`. Lus depuis `parametres()` — ce qui partira vraiment — et non
+ * depuis les champs un à un : deux lectures finiraient par diverger. */
+function filtresDuFormulaire() {
+  const p = parametres();
+  const n = (k) => (p.get(k) === null ? null : Number(p.get(k)));
+  const f = {
+    date_from: p.get('date_from'), date_to: p.get('date_to'),
+    sports: p.getAll('sports'), bookmakers: p.getAll('bookmakers'),
+    markets: p.getAll('markets'), outcomes: p.getAll('outcomes'),
+    leagues: p.getAll('leagues'), ev_bands: p.getAll('ev_bands'),
+    odds_bands: p.getAll('odds_bands'),
+    ev_min: n('ev_min'), ev_max: n('ev_max'),
+    odds_min: n('odds_min'), odds_max: n('odds_max'),
+    delay_min: n('delay_min'), delay_max: n('delay_max'),
+    population: p.get('population'), played: p.get('played'), stake: n('stake'),
+    ev_bands_by_sport: {}, odds_bands_by_sport: {},
+    ev_free_by_sport: {}, ev_free_by_odds: {},
+  };
+  new Set(p.keys()).forEach((k) => {
+    if (k.startsWith('ev_bands_')) f.ev_bands_by_sport[k.slice(9)] = p.getAll(k);
+    else if (k.startsWith('odds_bands_')) f.odds_bands_by_sport[k.slice(11)] = p.getAll(k);
+    else if (k.startsWith('ev_odds_')) f.ev_free_by_odds[k] = p.get(k);
+    else if (/^ev_(min|max)_/.test(k)) f.ev_free_by_sport[k] = p.get(k);
+  });
+  return f;
 }
 
 /* ── Infobulle ─────────────────────────────────────────────────────── */
@@ -329,6 +505,11 @@ const svgEl = (t, attrs) => {
   Object.entries(attrs || {}).forEach(([k, v]) => n.setAttribute(k, v));
   return n;
 };
+const svgTexte = (cls, x, y, texte, ancre) => {
+  const t = svgEl('text', { class: cls, x, y, 'text-anchor': ancre || 'start' });
+  t.textContent = texte;
+  return t;
+};
 
 function vide(hote, message) {
   hote.innerHTML = '';
@@ -347,82 +528,107 @@ function bornes(valeurs) {
   return [lo - marge, hi + marge];
 }
 
-/* ── Courbe temporelle ─────────────────────────────────────────────── */
+/* La largeur RÉELLE du conteneur : un graphique dessiné à sa taille garde des
+ * textes à 11 px, là où un dessin fixe mis à l'échelle les rendait
+ * minuscules sur téléphone et énormes sur grand écran. */
+function largeur(hote) {
+  return Math.max(300, Math.min(1600, Math.round(hote.clientWidth || 560)));
+}
 
-function courbe(hote, tranches, champ, libelle, fmt) {
+/* ⚠️ LES ÉTIQUETTES SE CHOISISSENT PAR L'ESPACE DISPONIBLE, PAS PAR UN
+ * MODULO. Un « un sur deux » laisse les deux dernières se toucher dès que le
+ * nombre de points est impair. On réserve une largeur minimale par étiquette,
+ * et on retire l'avant-dernière si la dernière vient la percuter. */
+function etiquettesX(n, x, iw, largeurEtiq) {
+  const pas = Math.max(1, Math.ceil((n * largeurEtiq) / iw));
+  const garde = new Set();
+  for (let i = 0; i < n; i += pas) garde.add(i);
+  garde.add(n - 1);
+  const rangs = [...garde].sort((a, b) => a - b);
+  if (rangs.length >= 2) {
+    const [avant, dernier] = rangs.slice(-2);
+    if (x(dernier) - x(avant) < largeurEtiq) garde.delete(avant);
+  }
+  return garde;
+}
+
+/* ── Courbes temporelles ───────────────────────────────────────────── */
+
+/* Une ou plusieurs séries sur UNE échelle. N'y mettre que des grandeurs de
+ * même nature (CLV et EV, deux pourcentages d'edge) — jamais CLV et ROI. */
+function courbes(hote, tranches, series, libelle, fmt) {
   // `fmt` formate l'AXE et les étiquettes. Par défaut un pourcentage ;
   // le P&L cumulé passe `eur`, sans quoi un axe en « % » décrirait des
   // euros — une erreur d'unité qu'aucun relecteur ne rattrape ensuite.
   const F = fmt || ((v) => pct(v, 1));
   hote.innerHTML = '';
-  const pts = tranches.filter((t) => t[champ] !== null);
-  if (pts.length < 1) { vide(hote, 'Aucune valeur mesurable sur cette période.'); return; }
+  const aVal = (t, s) => t[s.champ] !== null && t[s.champ] !== undefined;
+  const pts = (tranches || []).filter((t) => series.some((s) => aVal(t, s)));
+  if (!pts.length) { vide(hote, 'Aucune valeur mesurable sur cette période.'); return; }
 
-  const W = 560, H = 220, mG = 46, mD = 12, mH = 12, mB = 46;
-  const b = bornes(pts.map((t) => t[champ]));
+  const W = largeur(hote), H = W < 520 ? 210 : 250;
+  const mG = 58, mD = 14, mH = 14, mB = 30;
+  const b = bornes(pts.flatMap((t) => series.filter((s) => aVal(t, s))
+    .map((s) => t[s.champ])));
   const iw = W - mG - mD, ih = H - mH - mB;
-  const x = (i) => mG + (pts.length === 1 ? iw / 2
-    : (i / (pts.length - 1)) * iw);
+  const x = (i) => mG + (pts.length === 1 ? iw / 2 : (i / (pts.length - 1)) * iw);
   const y = (v) => mH + ih - ((v - b[0]) / (b[1] - b[0])) * ih;
 
-  const svg = svgEl('svg', { viewBox: `0 0 ${W} ${H}`, role: 'img',
-    'aria-label': libelle });
-
+  const svg = svgEl('svg', { viewBox: `0 0 ${W} ${H}`, role: 'img', 'aria-label': libelle });
   for (let k = 0; k <= 4; k++) {
     const v = b[0] + (k / 4) * (b[1] - b[0]);
-    svg.appendChild(svgEl('line', { class: 'grille-ligne',
-      x1: mG, x2: W - mD, y1: y(v), y2: y(v) }));
-    const t = svgEl('text', { class: 'axe-txt', x: mG - 7, y: y(v) + 3.5,
-      'text-anchor': 'end' });
-    t.textContent = F(v);
-    svg.appendChild(t);
+    svg.appendChild(svgEl('line', { class: 'grille-ligne', x1: mG, x2: W - mD, y1: y(v), y2: y(v) }));
+    svg.appendChild(svgTexte('axe-txt', mG - 8, y(v) + 3.5, F(v), 'end'));
   }
   if (b[0] < 0 && b[1] > 0) {
-    svg.appendChild(svgEl('line', { class: 'ligne-zero',
-      x1: mG, x2: W - mD, y1: y(0), y2: y(0) }));
+    svg.appendChild(svgEl('line', { class: 'ligne-zero', x1: mG, x2: W - mD, y1: y(0), y2: y(0) }));
   }
 
-  const d = pts.map((t, i) => `${i ? 'L' : 'M'}${x(i)},${y(t[champ])}`).join(' ');
-  svg.appendChild(svgEl('path', { class: 'serie', d }));
-
-  // ⚠️ LES ÉTIQUETTES SE CHOISISSENT PAR L'ESPACE DISPONIBLE, PAS PAR UN
-  // MODULO. Un « un sur deux » laisse les deux dernières se toucher dès que
-  // le nombre de points est impair — observé au rendu : « 2026-09-21 » et
-  // « 2026-09-28 » collées. On réserve une largeur minimale par étiquette, et
-  // on retire l'avant-dernière si la dernière vient la percuter.
-  const LARGEUR_ETIQ = 68;
-  const pas = Math.max(1, Math.ceil((pts.length * LARGEUR_ETIQ) / iw));
-  const aEtiqueter = new Set();
-  for (let i = 0; i < pts.length; i += pas) aEtiqueter.add(i);
-  aEtiqueter.add(pts.length - 1);
-  const rangs = [...aEtiqueter].sort((a, b) => a - b);
-  if (rangs.length >= 2) {
-    const [avant, dernier] = rangs.slice(-2);
-    if (x(dernier) - x(avant) < LARGEUR_ETIQ) aEtiqueter.delete(avant);
-  }
-
-  pts.forEach((t, i) => {
-    const faible = t.clv_coverage !== null && t.clv_coverage < SEUIL_COUVERTURE;
-    const c = svgEl('circle', { cx: x(i), cy: y(t[champ]), r: 4.5,
-      class: 'pt' + (faible && champ === 'clv' ? ' faible' : '') });
-    accrocher(c, lib(t), lignesTranche(t), alerteTranche(t));
-    svg.appendChild(c);
-    if (aEtiqueter.has(i)) {
-      const lab = svgEl('text', { class: 'axe-txt', x: x(i), y: H - mB + 16,
-        'text-anchor': 'middle' });
-      lab.textContent = String(t.key).slice(0, 10);
-      svg.appendChild(lab);
+  series.forEach((s) => {
+    let d = '', ouvert = false, continu = true;
+    pts.forEach((t, i) => {
+      if (!aVal(t, s)) { ouvert = false; continu = false; return; }
+      d += `${ouvert ? 'L' : 'M'}${x(i)},${y(t[s.champ])} `;
+      ouvert = true;
+    });
+    // L'aire n'accompagne qu'une série seule et continue : sous deux séries
+    // elle brouillerait la lecture, sur une série trouée elle mentirait.
+    if (series.length === 1 && continu && pts.length > 1) {
+      svg.appendChild(svgEl('path', { class: 'aire',
+        d: `${d}L${x(pts.length - 1)},${y(0)} L${x(0)},${y(0)} Z` }));
     }
+    svg.appendChild(svgEl('path', { class: s.cls === '2' ? 'serie-2' : 'serie', d }));
+  });
+
+  const r = pts.length > 50 ? 2.2 : pts.length > 24 ? 3 : 3.8;
+  series.forEach((s) => pts.forEach((t, i) => {
+    if (!aVal(t, s)) return;
+    const faible = s.champ === 'clv' && t.clv_coverage !== null
+      && t.clv_coverage < SEUIL_COUVERTURE;
+    const c = svgEl('circle', { cx: x(i), cy: y(t[s.champ]), r,
+      class: (s.cls === '2' ? 'pt-2' : 'pt') + (faible ? ' faible' : '') });
+    accrocher(c, libTemps(lib(t)),
+      [[s.libelle || libelle, F(t[s.champ])]].concat(lignesTranche(t)), alerteTranche(t));
+    svg.appendChild(c);
+  }));
+
+  const aEtiqueter = etiquettesX(pts.length, x, iw, 62);
+  pts.forEach((t, i) => {
+    if (aEtiqueter.has(i)) svg.appendChild(svgTexte('axe-txt', x(i), H - mB + 18, libTemps(t.key), 'middle'));
   });
   hote.appendChild(svg);
+}
+
+function courbe(hote, tranches, champ, libelle, fmt) {
+  courbes(hote, tranches, [{ champ, libelle, cls: '' }], libelle, fmt);
 }
 
 /* ── Colonnes de volume ────────────────────────────────────────────
  *
  * ⚠️ UN VOLUME N'EST PAS UNE MESURE SIGNÉE. Les opportunités par période se
  * lisent sur un axe qui part de zéro et ne descend jamais en dessous ; leur
- * donner la palette divergente du CLV ferait croire à un signe. Fond neutre,
- * une seule teinte, aucune arme positive/négative. */
+ * donner la palette divergente du CLV ferait croire à un signe. Une seule
+ * teinte, aucune arme positive/négative. */
 
 function colonnes(hote, tranches, champ, libelle) {
   hote.innerHTML = '';
@@ -430,65 +636,71 @@ function colonnes(hote, tranches, champ, libelle) {
   const vals = tranches.map((t) => t[champ] || 0);
   const hi = Math.max(1, ...vals);
 
-  const W = 560, H = 190, mG = 46, mD = 12, mH = 12, mB = 46;
+  const W = largeur(hote), H = 220, mG = 50, mD = 12, mH = 12, mB = 30;
   const iw = W - mG - mD, ih = H - mH - mB;
-  const larg = Math.max(2, Math.min(28, iw / tranches.length - 3));
+  const larg = Math.max(2, Math.min(34, iw / tranches.length - 4));
   const x = (i) => mG + (i + 0.5) * (iw / tranches.length);
   const y = (v) => mH + ih - (v / hi) * ih;
 
-  const svg = svgEl('svg', { viewBox: `0 0 ${W} ${H}`, role: 'img',
-    'aria-label': libelle });
+  const svg = svgEl('svg', { viewBox: `0 0 ${W} ${H}`, role: 'img', 'aria-label': libelle });
   for (let k = 0; k <= 4; k++) {
     const v = (k / 4) * hi;
-    svg.appendChild(svgEl('line', { class: 'grille-ligne',
-      x1: mG, x2: W - mD, y1: y(v), y2: y(v) }));
-    const t = svgEl('text', { class: 'axe-txt', x: mG - 7, y: y(v) + 3.5,
-      'text-anchor': 'end' });
-    t.textContent = ent(Math.round(v));
-    svg.appendChild(t);
+    svg.appendChild(svgEl('line', { class: 'grille-ligne', x1: mG, x2: W - mD, y1: y(v), y2: y(v) }));
+    svg.appendChild(svgTexte('axe-txt', mG - 8, y(v) + 3.5, ent(Math.round(v)), 'end'));
   }
   tranches.forEach((t, i) => {
     const v = t[champ] || 0;
     const r = svgEl('rect', {
       x: x(i) - larg / 2, y: y(v), width: larg,
-      height: Math.max(0, mH + ih - y(v)), rx: 3, fill: 'var(--pos-2)' });
-    accrocher(r, lib(t), lignesTranche(t), alerteTranche(t));
+      height: Math.max(0, mH + ih - y(v)), rx: 3, class: 'barre',
+      fill: 'var(--pos-2)', 'fill-opacity': 0.85 });
+    accrocher(r, libTemps(lib(t)), lignesTranche(t), alerteTranche(t));
     svg.appendChild(r);
+  });
+  const aEtiqueter = etiquettesX(tranches.length, x, iw, 62);
+  tranches.forEach((t, i) => {
+    if (aEtiqueter.has(i)) svg.appendChild(svgTexte('axe-txt', x(i), H - mB + 18, libTemps(t.key), 'middle'));
   });
   hote.appendChild(svg);
 }
 
 /* ── Barres divergentes ────────────────────────────────────────────── */
 
-function barres(hote, tranches, champ, libelle) {
+function barres(hote, tranches, champ, libelle, options) {
+  const o = options || {};
   hote.innerHTML = '';
-  const lot = tranches.filter((t) => t.opportunities > 0);
+  const lot = (tranches || []).filter((t) => t.opportunities > 0);
   if (!lot.length) { vide(hote, 'Aucune opportunité.'); return; }
 
-  const hL = 26, mH = 10, mB = 26, mG = 108, mD = 54;
-  const W = 560, H = mH + lot.length * hL + mB;
+  const W = largeur(hote);
+  const hL = 30, mH = 6, mB = 24;
+  const mG = Math.min(190, Math.max(96, Math.round(W * 0.24)));
+  const mD = o.n ? 120 : 64;
+  const H = mH + lot.length * hL + mB;
   const b = bornes(lot.map((t) => t[champ]));
   if (!b) { vide(hote, 'Aucune valeur mesurable.'); return; }
   const iw = W - mG - mD;
   const x = (v) => mG + ((v - b[0]) / (b[1] - b[0])) * iw;
   const x0 = x(0);
+  const maxCar = Math.max(8, Math.floor((mG - 14) / 6.4));
 
-  const svg = svgEl('svg', { viewBox: `0 0 ${W} ${H}`, role: 'img',
-    'aria-label': libelle });
+  const svg = svgEl('svg', { viewBox: `0 0 ${W} ${H}`, role: 'img', 'aria-label': libelle });
 
   lot.forEach((t, i) => {
     const cy = mH + i * hL + hL / 2;
-    const lab = svgEl('text', { class: 'axe-txt', x: mG - 9, y: cy + 3.5,
-      'text-anchor': 'end' });
-    lab.textContent = String(lib(t)).slice(0, 18);
+    const nom = String(lib(t));
+    const lab = svgTexte('axe-txt', mG - 10, cy + 3.5,
+      nom.length > maxCar ? nom.slice(0, maxCar - 1) + '…' : nom, 'end');
     svg.appendChild(lab);
+    if (o.n) {
+      svg.appendChild(svgTexte('n-txt', W - 2, cy + 3.5, `n = ${ent(t.opportunities)}`, 'end'));
+    }
 
     const v = t[champ];
     if (v === null || v === undefined) {
-      const nd = svgEl('text', { class: 'axe-txt', x: x0 + 7, y: cy + 3.5 });
-      nd.textContent = '— non mesurable';
+      const nd = svgTexte('axe-txt', x0 + 7, cy + 3.5, '— non mesurable');
       svg.appendChild(nd);
-      accrocher(nd, lib(t), lignesTranche(t), alerteTranche(t));
+      accrocher(nd, nom, lignesTranche(t), alerteTranche(t));
       return;
     }
     const xv = x(v);
@@ -498,32 +710,24 @@ function barres(hote, tranches, champ, libelle) {
     const r = svgEl('rect', {
       x: gauche, y: cy - 8, width: larg, height: 16, rx: 4,
       fill: v >= 0 ? 'var(--pos)' : 'var(--neg)',
-      class: faible ? 'faible' : '',
-      'fill-opacity': faible ? 0.45 : 1,
+      class: 'barre' + (faible ? ' faible' : ''),
+      'fill-opacity': faible ? 0.45 : 0.92,
     });
-    accrocher(r, lib(t), lignesTranche(t), alerteTranche(t));
+    accrocher(r, nom, lignesTranche(t), alerteTranche(t));
     svg.appendChild(r);
 
     // ⚠️ L'ÉTIQUETTE NE DOIT JAMAIS ENTRER DANS LA GOUTTIÈRE DES LIBELLÉS.
-    // Observé au rendu : « 1.8-2.3-1,2 % » — le libellé de tranche et la
-    // valeur se chevauchaient, illisibles. Quand la barre négative est assez
-    // longue pour que sa valeur touche la gouttière, on bascule l'étiquette
-    // de l'autre côté du zéro, où la place est libre par construction.
+    // Quand la barre négative est assez longue pour que sa valeur touche la
+    // gouttière, on bascule l'étiquette de l'autre côté du zéro, où la place
+    // est libre par construction.
     let lx = v >= 0 ? xv + 6 : xv - 6;
     let ancre = v >= 0 ? 'start' : 'end';
-    if (v < 0 && lx - 46 < mG) { lx = x0 + 6; ancre = 'start'; }
-    const val = svgEl('text', { class: 'axe-txt', y: cy + 3.5, x: lx,
-      'text-anchor': ancre });
-    val.textContent = pct(v, 1) + (faible ? ' ⚠' : '');
-    svg.appendChild(val);
+    if (v < 0 && lx - 48 < mG) { lx = x0 + 6; ancre = 'start'; }
+    svg.appendChild(svgTexte('val-txt', lx, cy + 3.5, pct(v, 1) + (faible ? ' ⚠' : ''), ancre));
   });
 
-  svg.appendChild(svgEl('line', { class: 'ligne-zero',
-    x1: x0, x2: x0, y1: mH - 2, y2: H - mB + 2 }));
-  const z = svgEl('text', { class: 'axe-txt', x: x0, y: H - mB + 15,
-    'text-anchor': 'middle' });
-  z.textContent = '0';
-  svg.appendChild(z);
+  svg.appendChild(svgEl('line', { class: 'ligne-zero', x1: x0, x2: x0, y1: mH - 2, y2: H - mB + 2 }));
+  svg.appendChild(svgTexte('axe-txt', x0, H - mB + 16, '0', 'middle'));
   hote.appendChild(svg);
 }
 
@@ -531,12 +735,10 @@ function barres(hote, tranches, champ, libelle) {
 
 /* ⚠️ LE TEXTE DOIT SUIVRE LE FOND, PAS L'INVERSE.
  *
- * Observé au rendu : sur les paliers 2 et 3 (bleu #184f95, rouge #98211f,
- * clarté OKLab ≈ .43), l'encre quasi noire devenait illisible — « +13,8 % »
- * et « n = 3 » disparaissaient dans le fond. La couleur du texte est donc
- * choisie par palier, pas fixée une fois pour toutes. Les paliers 2 et 3
- * portent de l'encre claire, le palier 1 et le neutre gardent l'encre du
- * thème. */
+ * Sur les paliers 2 et 3 (bleu #184f95, rouge #98211f, clarté OKLab ≈ .43),
+ * l'encre quasi noire devenait illisible. La couleur du texte est donc
+ * choisie par palier : les paliers 2 et 3 portent de l'encre claire, le
+ * palier 1 et le neutre gardent l'encre du thème. */
 function styleCellule(v, max) {
   if (v === null || v === undefined || max === 0) {
     return { fond: 'var(--neutre)', encre: 'var(--encre)' };
@@ -545,7 +747,7 @@ function styleCellule(v, max) {
   const arme = v >= 0 ? 'pos' : 'neg';
   const pas = f < 0.34 ? 1 : f < 0.67 ? 2 : 3;
   return { fond: `var(--${arme}-${pas})`,
-           encre: pas === 1 ? 'var(--encre)' : '#ffffff' };
+           encre: pas === 1 ? '#0b0b0b' : '#ffffff' };
 }
 
 function matrice() {
@@ -589,12 +791,17 @@ function matrice() {
         td.appendChild(el('span', 'n', 'n = ' + ent(c.opportunities)));
         if (faible) td.style.outline = `1.5px dashed ${st.encre}`;
         accrocher(td, `${lig} · EV ${col}`, lignesTranche(c), alerteTranche(c));
+        // Le clic ouvre le DÉTAIL de la cellule, sur la page des paris : la
+        // cellule RESTREINT les filtres, elle ne les remplace pas.
         td.addEventListener('click', () => {
           CELLULE = (CELLULE && CELLULE.odds === lig && CELLULE.ev === col)
             ? null : { odds: lig, ev: col, cell: c };
           PAGE = 1;
-          chargerDetail();
           matrice();
+          if (CELLULE) {
+            RENDUES.delete('paris');
+            allerA('paris');
+          }
         });
         if (CELLULE && CELLULE.odds === lig && CELLULE.ev === col) {
           td.style.borderColor = 'var(--encre)';
@@ -609,12 +816,142 @@ function matrice() {
 
 /* ── KPI ───────────────────────────────────────────────────────────── */
 
-function tuile(titre, valeur, note, cls, vedette) {
-  const k = el('div', 'kpi' + (vedette ? ' vedette' : ''));
-  k.appendChild(el('div', 'titre', titre));
-  k.appendChild(el('div', 'valeur ' + (cls || ''), valeur));
-  if (note) k.appendChild(el('div', 'note', note));
+function compterCartes(h) { h.dataset.n = String(h.children.length); }
+
+function carteKpi(o) {
+  const k = el('div', 'kpi' + (o.cls ? ' ' + o.cls : ''));
+  const t = el('div', 'titre');
+  if (o.icone) t.appendChild(icone(o.icone));
+  t.appendChild(el('span', null, o.titre));
+  k.appendChild(t);
+  k.appendChild(el('div', 'valeur ' + (o.signe || ''), o.valeur));
+  if (o.sous) k.appendChild(el('div', 'sous', o.sous));
+  if (o.ligne2) {
+    const l = el('div', 'ligne2');
+    l.appendChild(el('b', o.ligne2[2] || '', o.ligne2[0]));
+    l.appendChild(el('span', null, o.ligne2[1]));
+    k.appendChild(l);
+  }
+  const det = el('div', 'details');
+  if (o.details) det.appendChild(el('span', o.fragile ? 'fragile' : '', o.details));
+  if (o.badge) det.appendChild(o.badge);
+  if (det.childNodes.length) k.appendChild(det);
   return k;
+}
+
+function squelettesKpi(id, n) {
+  const h = $(id);
+  if (!h) return;
+  h.innerHTML = '';
+  for (let i = 0; i < n; i += 1) {
+    const k = el('div', 'kpi chargement');
+    k.appendChild(el('div', 'titre squelette', 'chargement'));
+    k.appendChild(el('div', 'valeur squelette', '0'));
+    k.appendChild(el('div', 'sous squelette', '0'));
+    h.appendChild(k);
+  }
+}
+
+/* Les quatre cartes de la vue d'ensemble : opportunités, paris joués, ROI,
+ * CLV. ⚠️ ROI ET CLV NE SE MÉLANGENT JAMAIS : le ROI est le résultat
+ * financier du lot, la CLV sa performance face à la clôture. Deux cartes,
+ * deux icônes, deux accents — et chacune porte SON dénominateur. */
+function kpis(s) {
+  const h = $('kpis');
+  h.innerHTML = '';
+  const couvFaible = s.clv_coverage !== null && s.clv_coverage < SEUIL_COUVERTURE;
+  const peuRegles = s.settled > 0 && s.settled < SEUIL_REGLES;
+  const mise = ANALYSE && ANALYSE.filters ? ANALYSE.filters.stake : null;
+
+  h.appendChild(carteKpi({
+    icone: 'radar', titre: 'Opportunités détectées', valeur: ent(s.opportunities),
+    sous: 'opportunités détectées',
+    ligne2: [ent(s.matches), 'matchs distincts'],
+    details: 'volume de l\'échantillon', badge: badge(s.sample) }));
+
+  h.appendChild(carteKpi({
+    icone: 'coche', titre: 'Paris joués', valeur: ent(s.played),
+    sous: 'cliqués sur « Jouer »',
+    ligne2: [pctNu(s.played_rate), 'taux de paris joués'],
+    details: `sur ${ent(s.opportunities)} opportunités détectées` }));
+
+  // ⚠️ Le badge du ROI porte l'effectif des RÉGLÉS, pas des opportunités :
+  // c'est le dénominateur réel du ROI. Afficher celui des opportunités ferait
+  // passer pour solide un ROI calculé sur quarante paris.
+  h.appendChild(carteKpi({
+    icone: 'euro', titre: 'ROI', valeur: pct(s.roi, 1), signe: signe(s.roi),
+    cls: 'kpi-roi' + (s.roi > 0 ? ' pos-bord' : s.roi < 0 ? ' neg-bord' : ''),
+    sous: mise === null ? 'ROI sur mise notionnelle'
+      : `ROI sur mise notionnelle · ${num(mise)} € par pari`,
+    ligne2: [eur(s.pnl, 0), 'P&L cumulé', signe(s.pnl)],
+    details: peuRegles ? `${ent(s.settled)} réglés — indice, pas résultat`
+      : `sur ${ent(s.settled)} paris réglés`,
+    fragile: peuRegles, badge: badge(s.sample_settled) }));
+
+  // ⚠️ La CLV ne sort JAMAIS sans sa couverture. C'est la règle du projet :
+  // +10,4 % sur 95 % du lot et sur 30 % ne sont pas la même phrase.
+  h.appendChild(carteKpi({
+    icone: 'courbe', titre: 'CLV moyenne', valeur: pct(s.clv, 1), signe: signe(s.clv),
+    cls: 'kpi-clv', sous: 'Closing Line Value — face à la clôture Pinnacle',
+    ligne2: [pct(s.clv_median, 1), 'CLV médiane', signe(s.clv_median)],
+    details: `sur ${ent(s.clv_n)} paris · couverture ${pctNu(s.clv_coverage, 0)}`,
+    fragile: couvFaible, badge: badge(s.sample_clv) }));
+}
+
+function kpisPerf(s) {
+  const h = $('kpis-perf');
+  h.innerHTML = '';
+  h.appendChild(carteKpi({ icone: 'euro', titre: 'P&L notionnel', valeur: eur(s.pnl, 0),
+    signe: signe(s.pnl), sous: `mise totale ${eur(s.stake_total, 0).replace('+', '')}` }));
+  h.appendChild(carteKpi({ icone: 'pourcent', titre: 'ROI', valeur: pct(s.roi, 1),
+    signe: signe(s.roi), sous: `sur ${ent(s.settled)} paris réglés`,
+    fragile: s.settled > 0 && s.settled < SEUIL_REGLES }));
+  h.appendChild(carteKpi({ icone: 'coche', titre: 'Réglées', valeur: ent(s.settled),
+    sous: `${pctNu(s.settlement_rate)} de settlement`
+      + (s.unsettled ? ` · ${ent(s.unsettled)} non réglées` : ''),
+    details: s.unsettled_result_known
+      ? `dont ${ent(s.unsettled_result_known)} au résultat connu mais non tranchable` : '' }));
+  h.appendChild(carteKpi({ icone: 'balance', titre: 'Paris gagnés', valeur: ent(s.won),
+    sous: `${ent(s.lost)} perdus · ${ent(s.void)} annulés` }));
+  h.appendChild(carteKpi({ icone: 'cible', titre: 'EV moyenne', valeur: pct(s.ev_mean, 1),
+    sous: 'à la détection' }));
+  h.appendChild(carteKpi({ icone: 'cote', titre: 'Cote moyenne', valeur: cote(s.odds_mean),
+    sous: 'cote prise' }));
+  compterCartes(h);
+}
+
+function kpisClv(s) {
+  const h = $('kpis-clv');
+  h.innerHTML = '';
+  const couvFaible = s.clv_coverage !== null && s.clv_coverage < SEUIL_COUVERTURE;
+  h.appendChild(carteKpi({ icone: 'courbe', cls: 'kpi-clv', titre: 'CLV moyenne',
+    valeur: pct(s.clv, 1), signe: signe(s.clv),
+    sous: `couverture ${pctNu(s.clv_coverage, 0)}`, fragile: couvFaible }));
+  h.appendChild(carteKpi({ icone: 'mediane', titre: 'CLV médiane', valeur: pct(s.clv_median, 1),
+    signe: signe(s.clv_median), sous: 'la moitié des paris font mieux' }));
+  h.appendChild(carteKpi({ icone: 'pourcent', titre: 'CLV positives', valeur: pctNu(s.clv_positive_rate, 0),
+    sous: 'des paris mesurés battent la clôture' }));
+  h.appendChild(carteKpi({ icone: 'bouclier', titre: 'Couverture CLV', valeur: pctNu(s.clv_coverage, 0),
+    sous: `${ent(s.clv_n)} paris mesurés sur ${ent(s.opportunities)}`,
+    fragile: couvFaible, badge: badge(s.sample_clv) }));
+  compterCartes(h);
+}
+
+function kpisParis(s) {
+  const h = $('kpis-paris');
+  h.innerHTML = '';
+  h.appendChild(carteKpi({ icone: 'radar', titre: 'Opportunités', valeur: ent(s.opportunities),
+    sous: `${ent(s.matches)} matchs distincts` }));
+  h.appendChild(carteKpi({ icone: 'coche', titre: 'Paris joués', valeur: ent(s.played),
+    sous: s.played_rate === null || s.played_rate === undefined ? 'cliqués sur « Jouer »'
+      : `${pctNu(s.played_rate)} des opportunités` }));
+  h.appendChild(carteKpi({ icone: 'pile', titre: 'Réglées', valeur: ent(s.settled),
+    sous: `${pctNu(s.settlement_rate)} de settlement` }));
+  h.appendChild(carteKpi({ icone: 'euro', titre: 'ROI', valeur: pct(s.roi, 1), signe: signe(s.roi),
+    sous: `P&L ${eur(s.pnl, 0)}` }));
+  h.appendChild(carteKpi({ icone: 'courbe', titre: 'CLV moyenne', valeur: pct(s.clv, 1),
+    signe: signe(s.clv), sous: `couverture ${pctNu(s.clv_coverage, 0)}` }));
+  compterCartes(h);
 }
 
 /* Ce que le PDF doit emporter avec ses chiffres : la période, le périmètre
@@ -697,57 +1034,11 @@ function enteteExport(d) {
   }
 }
 
-function kpis(s) {
-  const h = $('kpis');
-  h.innerHTML = '';
-  const couvFaible = s.clv_coverage !== null && s.clv_coverage < SEUIL_COUVERTURE;
-  const peuRegles = s.settled > 0 && s.settled < SEUIL_REGLES;
-
-  const kOpp = tuile('Opportunités', ent(s.opportunities),
-    `${ent(s.matches)} matchs distincts`, '', true);
-  const bo = badge(s.sample);
-  if (bo) kOpp.appendChild(bo);
-  h.appendChild(kOpp);
-  h.appendChild(tuile('Réglées', ent(s.settled),
-    `${pctNu(s.settlement_rate)} de settlement`
-    + (s.unsettled ? ` · ${ent(s.unsettled)} non réglées` : '')
-    + (s.unsettled_result_known
-      ? ` (dont ${ent(s.unsettled_result_known)} au résultat connu mais `
-        + 'non tranchable)' : '')));
-  // ⚠️ La CLV ne sort JAMAIS sans sa couverture. C'est la règle du projet :
-  // +10,4 % sur 95 % du lot et sur 30 % ne sont pas la même phrase.
-  const kc = tuile('CLV moyenne', pct(s.clv),
-    `sur ${ent(s.clv_n)} paris · couverture ${pctNu(s.clv_coverage, 0)}`,
-    signe(s.clv), true);
-  if (couvFaible) kc.querySelector('.note').classList.add('fragile');
-  const bc = badge(s.sample_clv);
-  if (bc) kc.appendChild(bc);
-  h.appendChild(kc);
-  const kr = tuile('ROI', pct(s.roi),
-    peuRegles ? `${ent(s.settled)} réglés — indice, pas résultat`
-      : `sur ${ent(s.settled)} paris réglés`, signe(s.roi), true);
-  if (peuRegles) kr.querySelector('.note').classList.add('fragile');
-  // ⚠️ Le badge du ROI porte l'effectif des RÉGLÉS, pas des opportunités :
-  // c'est le dénominateur réel du ROI. Afficher celui des opportunités ferait
-  // passer pour solide un ROI calculé sur quarante paris.
-  const br = badge(s.sample_settled);
-  if (br) kr.appendChild(br);
-  h.appendChild(kr);
-  h.appendChild(tuile('P&L notionnel', eur(s.pnl, 0),
-    `mise totale ${eur(s.stake_total, 0).replace('+', '')}`, signe(s.pnl)));
-  h.appendChild(tuile('CLV médiane', pct(s.clv_median),
-    `${pctNu(s.clv_positive_rate)} de CLV positives`, signe(s.clv_median)));
-  h.appendChild(tuile('EV moyen', pct(s.ev_mean), 'à la détection'));
-  h.appendChild(tuile('Cote moyenne', cote(s.odds_mean),
-    `${ent(s.won)} G · ${ent(s.lost)} P · ${ent(s.void)} A`));
-}
-
 
 /* ⚠️ LA RÈGLE D'EV EST RELUE DEPUIS LA RÉPONSE DU SERVEUR, jamais depuis les
  * cases cochées. Afficher ce qu'on a coché prouverait seulement qu'on sait
  * lire son propre formulaire ; afficher ce que le serveur dit avoir appliqué
- * est la seule vérification qui vaille. Si les deux divergeaient un jour,
- * c'est ici que ça se verrait. */
+ * est la seule vérification qui vaille. */
 function noteEv(regles) {
   const h = $('note-ev');
   if (!h) return;
@@ -756,14 +1047,11 @@ function noteEv(regles) {
   const parts = [];
   const bySport = regles.by_sport || {};
   Object.keys(bySport).forEach((sp) => {
-    const nom = (REFS && REFS.sports_labels && REFS.sports_labels[sp]) || sp;
-    parts.push(`${nom} : ${bySport[sp].join(' ou ') || 'toutes tranches'}`);
+    parts.push(`${nomSport(sp)} : ${bySport[sp].join(' ou ') || 'toutes tranches'}`);
   });
   const restants = (regles.sports_analyses || []).filter((sp) => !bySport[sp]);
   if (restants.length) {
-    const noms = restants.map(
-      (sp) => (REFS && REFS.sports_labels && REFS.sports_labels[sp]) || sp);
-    parts.push(`${noms.join(', ')} : `
+    parts.push(`${restants.map(nomSport).join(', ')} : `
       + ((regles.global || []).join(' ou ') || 'toutes tranches'));
   }
   h.textContent = 'Règle d\'EV appliquée par le serveur — ' + parts.join(' · ');
@@ -774,43 +1062,65 @@ function noteEv(regles) {
 function avertissements(liste) {
   const h = $('avertissements');
   h.innerHTML = '';
-  (liste || []).forEach((m) => {
-    const grave = /indisponible|irrécupérable|lot vide/i.test(m);
+  const visibles = 2;
+  (liste || []).forEach((m, i) => {
+    const grave = /indisponible|irrécupérable|lot vide|refusé|erreur/i.test(m);
     const d = el('div', 'avert' + (grave ? ' grave' : ''));
-    d.appendChild(el('span', null, grave ? '🔴' : '⚠️'));
+    d.innerHTML = '<svg class="ic-av" viewBox="0 0 24 24" aria-hidden="true">'
+      + '<path d="M12 3l10 18H2z"/><path d="M12 10v4M12 17.5v.5"/></svg>';
     d.appendChild(el('span', null, m));
+    // Au-delà de deux, les avertissements se replient — sauf les graves,
+    // qui disent que le chiffre lui-même est en cause.
+    if (i >= visibles && !grave) d.hidden = true;
     h.appendChild(d);
   });
+  const caches = h.querySelectorAll('.avert[hidden]').length;
+  if (caches) {
+    const b = el('button', 'avert-plus',
+      `Afficher ${caches} autre${caches > 1 ? 's' : ''} avertissement${caches > 1 ? 's' : ''}`);
+    b.type = 'button';
+    b.addEventListener('click', () => {
+      h.querySelectorAll('.avert[hidden]').forEach((x) => { x.hidden = false; });
+      b.remove();
+    });
+    h.appendChild(b);
+  }
 }
 
 /* ── Détail ────────────────────────────────────────────────────────── */
 
 const COLONNES = [
-  ['detected_at', 'Détecté', (i) => String(i.detected_at).slice(0, 16).replace('T', ' ')],
-  ['sport', 'Sport', (i) => i.sport || '—'],
+  ['detected_at', 'Détecté', (i) => dateHeure(i.detected_at)],
+  ['sport', 'Sport', (i) => nomSport(i.sport)],
   [null, 'Compétition', (i) => i.league || '—'],
   [null, 'Match', (i) => i.event || '—'],
-  [null, 'Marché', (i) => i.market + (i.line !== null ? ' ' + i.line : '')],
-  [null, 'Pari', (i) => i.selection],
-  ['book', 'Book', (i) => i.bookmaker || '—'],
+  [null, 'Marché', (i) => nomMarche(i.market) + (i.line !== null ? ' ' + i.line : '')],
+  [null, 'Pari', (i) => libPari(i.selection)],
+  ['book', 'Bookmaker', (i) => nomBook(i.bookmaker)],
   ['odd_taken', 'Cote', (i) => cote(i.odds), 'num'],
-  ['ev_pct', 'EV', (i) => pct(i.ev_pct), 'num'],
+  ['ev_pct', 'EV', (i) => pct(i.ev_pct, 1), 'num'],
   [null, 'Clôture', (i) => cote(i.closing_fair_odd), 'num'],
-  ['clv', 'CLV', (i) => pct(i.clv_pct), 'num'],
+  ['clv', 'CLV', (i) => pct(i.clv_pct, 1), 'num'],
   [null, 'Mise', (i) => i.stake === null ? '—' : eur(i.stake, 0).replace('+', ''), 'num'],
   [null, 'Résultat', null],
   ['pnl', 'P&L', (i) => eur(i.pnl, 2), 'num'],
+  [null, 'Statut', null],
 ];
 
 const RESULTAT_FR = { won: 'Gagné', lost: 'Perdu', void: 'Annulé',
   unsettled: 'Non réglé' };
+
+function etiquetteStatut(i) {
+  return el('span', 'etiq ' + (i.played ? 'joue' : 'nonjoue'), i.played ? 'Joué' : 'Non joué');
+}
 
 function tableauDetail(d) {
   const t = $('detail');
   t.innerHTML = '';
   const thead = el('thead'), tr = el('tr');
   COLONNES.forEach(([tri, titre, , cls]) => {
-    const th = el('th', (cls || '') + (tri && tri === TRI ? ' actif' : ''));
+    const th = el('th', [cls || '', tri ? 'triable' : '', tri && tri === TRI ? 'actif' : '']
+      .filter(Boolean).join(' '));
     th.textContent = titre + (tri && tri === TRI ? (ORDRE === 'desc' ? ' ▾' : ' ▴') : '');
     if (tri) {
       th.addEventListener('click', () => {
@@ -819,20 +1129,27 @@ function tableauDetail(d) {
         PAGE = 1;
         chargerDetail();
       });
-    } else { th.style.cursor = 'default'; }
+    }
     tr.appendChild(th);
   });
   thead.appendChild(tr);
   t.appendChild(thead);
 
   const tb = el('tbody');
+  if (!d.items.length) {
+    const r = el('tr', 'vide-ligne'), td = el('td', null, 'Aucune opportunité.');
+    td.colSpan = COLONNES.length;
+    r.appendChild(td);
+    tb.appendChild(r);
+  }
   d.items.forEach((i) => {
     const r = el('tr');
     COLONNES.forEach(([, titre, rendu, cls]) => {
       const td = el('td', cls || '');
       if (titre === 'Résultat') {
-        const e = el('span', 'etiq ' + i.result, RESULTAT_FR[i.result] || i.result);
-        td.appendChild(e);
+        td.appendChild(el('span', 'etiq ' + i.result, RESULTAT_FR[i.result] || i.result));
+      } else if (titre === 'Statut') {
+        td.appendChild(etiquetteStatut(i));
       } else {
         td.textContent = rendu(i);
         if (titre === 'CLV' || titre === 'P&L' || titre === 'EV') {
@@ -853,16 +1170,18 @@ function tableauDetail(d) {
 
   const p = $('pagination');
   p.innerHTML = '';
-  if (!d.total) { p.appendChild(el('span', null, 'Aucune opportunité.')); return; }
-  const prec = el('button', 'discret', '‹ Précédent');
+  if (!d.total) return;
+  const prec = el('button', 'btn btn-secondaire btn-petit', '‹ Précédent');
+  prec.type = 'button';
   prec.disabled = d.page <= 1;
   prec.addEventListener('click', () => { PAGE = d.page - 1; chargerDetail(); });
-  const suiv = el('button', 'discret', 'Suivant ›');
+  const suiv = el('button', 'btn btn-secondaire btn-petit', 'Suivant ›');
+  suiv.type = 'button';
   suiv.disabled = d.page >= d.pages;
   suiv.addEventListener('click', () => { PAGE = d.page + 1; chargerDetail(); });
-  p.appendChild(prec);
   p.appendChild(el('span', null,
     `Page ${ent(d.page)} / ${ent(d.pages)} — ${ent(d.total)} opportunités`));
+  p.appendChild(prec);
   p.appendChild(suiv);
 }
 
@@ -876,18 +1195,14 @@ async function chargerDetail() {
     // `Filtres.valider` refuse toute cote_min ≤ 1 — une cote décimale vaut
     // toujours plus que 1 — donc envoyer la borne basse telle quelle faisait
     // répondre 400 à l'API et vidait le tableau de détail sur les CINQ
-    // cellules de cette ligne. Mesuré : 25 cellules sur 30 fonctionnaient.
-    // Ne pas envoyer la borne ne change pas le lot : aucune opportunité ne
-    // porte une cote inférieure ou égale à 1, la borne haute suffit donc à
-    // décrire la bande.
+    // cellules de cette ligne. Ne pas envoyer la borne ne change pas le lot :
+    // aucune opportunité ne porte une cote inférieure ou égale à 1.
     if (!Number.isNaN(a) && a > 1) extra.odds_min = a;
     // ⚠️ `Number.isNaN(undefined)` VAUT FALSE — c'est la subtilité qui manquait.
     // La dernière bande s'appelle « > 6.0 » : elle n'a pas de borne haute, donc
-    // `split('-')` ne rend qu'un morceau et `b` est `undefined`. Contrairement
-    // au `isNaN` global, `Number.isNaN` ne l'écarte pas : la borne partait dans
-    // l'URL sous la forme de la CHAÎNE « undefined », et l'API répondait 422
-    // sur les CINQ cellules de cette ligne. `odds_min` reste envoyé — c'est
-    // lui, et lui seul, qui décrit une bande ouverte vers le haut.
+    // `split('-')` ne rend qu'un morceau et `b` est `undefined`. La borne
+    // partait dans l'URL sous la forme de la CHAÎNE « undefined », et l'API
+    // répondait 422 sur les CINQ cellules de cette ligne.
     if (b !== undefined && !Number.isNaN(b)) extra.odds_max = b;
     const ev = CELLULE.ev.replace(/%/g, '');
     const m = ev.match(/^(\d+)-(\d+)$/);
@@ -896,18 +1211,75 @@ async function chargerDetail() {
     else if (ev.endsWith('+')) extra.ev_min = parseFloat(ev);
   }
   $('detail-filtre').textContent = CELLULE
-    ? `Restreint à la cellule cote ${CELLULE.odds} × EV ${CELLULE.ev} — reclique la cellule pour l'annuler.`
-    : 'Toutes les opportunités de l\'analyse courante.';
+    ? `Restreint à la cellule cote ${CELLULE.odds} × EV ${CELLULE.ev} de la matrice. `
+    : 'Toutes les opportunités de l\'analyse courante. Clique un en-tête pour trier.';
+  if (CELLULE) {
+    const retirer = el('button', 'avert-plus', 'Retirer la restriction');
+    retirer.type = 'button';
+    retirer.addEventListener('click', () => { CELLULE = null; PAGE = 1; chargerDetail(); matrice(); });
+    $('detail-filtre').appendChild(retirer);
+  }
   try {
     tableauDetail(await appel(API_DETAIL, parametres(extra)));
   } catch (e) {
-    // ⚠️ NE PAS REMPLACER LE CONTENEUR DE LA TABLE. La première version
-    // écrivait le message à la place de `.enrob`, donc `#detail` cessait
-    // d'exister — et l'appel SUIVANT plantait sur `null`, transformant une
-    // erreur passagère en panne définitive. Le message va à côté.
+    // ⚠️ NE PAS REMPLACER LE CONTENEUR DE LA TABLE : l'appel SUIVANT
+    // planterait sur `null`, transformant une erreur passagère en panne
+    // définitive. Le message va à côté.
     $('detail').innerHTML = '';
     $('pagination').innerHTML = '';
     $('detail-filtre').textContent = 'Détail indisponible : ' + e.message;
+  }
+}
+
+/* Les dernières opportunités de la vue d'ensemble : la même requête que le
+ * détail, triée par date de détection, huit lignes. */
+async function chargerDernieres() {
+  const t = $('t-dernieres');
+  const entetes = [['Date / heure'], ['Sport'], ['Compétition'], ['Match'], ['Marché'],
+    ['Pari'], ['Cote', 'num'], ['Bookmaker'], ['EV', 'num'], ['Statut']];
+  const tete = () => {
+    const thead = el('thead'), tr = el('tr');
+    entetes.forEach(([n, c]) => tr.appendChild(el('th', c || '', n)));
+    thead.appendChild(tr);
+    return thead;
+  };
+  try {
+    const r = await appel(API_DETAIL, parametres({ page: 1, per_page: 8, sort: 'detected_at', order: 'desc' }));
+    t.innerHTML = '';
+    t.appendChild(tete());
+    const tb = el('tbody');
+    if (!r.items.length) {
+      const l = el('tr', 'vide-ligne'), td = el('td', null, 'Aucune opportunité.');
+      td.colSpan = entetes.length;
+      l.appendChild(td);
+      tb.appendChild(l);
+    }
+    r.items.forEach((i) => {
+      const l = el('tr');
+      [dateHeure(i.detected_at), nomSport(i.sport), i.league || '—', i.event || '—',
+       nomMarche(i.market) + (i.line !== null ? ' ' + i.line : ''), libPari(i.selection)]
+        .forEach((v) => l.appendChild(el('td', null, v)));
+      l.appendChild(el('td', 'num', cote(i.odds)));
+      l.appendChild(el('td', null, nomBook(i.bookmaker)));
+      const tdEv = el('td', 'num', pct(i.ev_pct, 1));
+      const s = signe(i.ev_pct);
+      if (s) tdEv.classList.add(s);
+      l.appendChild(tdEv);
+      const tdS = el('td');
+      tdS.appendChild(etiquetteStatut(i));
+      l.appendChild(tdS);
+      tb.appendChild(l);
+    });
+    t.appendChild(tb);
+  } catch (e) {
+    t.innerHTML = '';
+    t.appendChild(tete());
+    const tb = el('tbody'), l = el('tr', 'vide-ligne');
+    const td = el('td', null, 'Dernières opportunités indisponibles : ' + e.message);
+    td.colSpan = entetes.length;
+    l.appendChild(td);
+    tb.appendChild(l);
+    t.appendChild(tb);
   }
 }
 
@@ -917,8 +1289,7 @@ async function chargerDetail() {
  * ⚠️ UN PANNEAU PAR SPORT COCHÉ, ET LA SÉLECTION SURVIT AU REDESSIN.
  * Cocher « Tennis » après avoir réglé l'EV du football ne doit pas effacer ce
  * qui était réglé : le panneau est reconstruit, mais les cases déjà cochées
- * sont relues et réappliquées. Sans ça, l'utilisateur perd son réglage en
- * touchant un filtre voisin, et ne le voit pas forcément.
+ * sont relues et réappliquées.
  */
 
 /* Deux champs « min → max » pour une CLÉ donnée — un sport, ou une tranche
@@ -968,13 +1339,15 @@ function panneauxEvParSport() {
   });
   hote.innerHTML = '';
   $('f-ev-bands').style.display = actif ? 'none' : '';
+  $('ev-tranches-aide').textContent = actif
+    ? 'Tranches réglées sport par sport — voir « Segmentation avancée ».'
+    : 'Plusieurs tranches = union (OU).';
   if (!actif || !REFS) return;
 
   const sports = coches('f-sports');
   (sports.length ? sports : REFS.sports).forEach((sp) => {
     const bloc = el('div', 'ev-sport');
-    bloc.appendChild(el('h4', null,
-      (REFS.sports_labels && REFS.sports_labels[sp]) || sp));
+    bloc.appendChild(el('h4', null, nomSport(sp)));
     const boite = el('div', 'cases');
     boite.id = 'ev-bands-' + sp;
     boite.dataset.sport = sp;
@@ -984,10 +1357,11 @@ function panneauxEvParSport() {
     // cumulent avec les tranches globales.
     bloc.appendChild(bornesPaire('ev', sp, bornes[sp] || ['', ''], '%'));
     hote.appendChild(bloc);
-    groupeCases(boite, REFS.ev_bands, { courte: true, coches: memoire[sp] || [] });
+    groupeCases(boite, REFS.ev_bands, { courte: true, tous: 'Toutes les tranches',
+      coches: memoire[sp] || [] });
   });
   if (!hote.children.length) {
-    hote.appendChild(el('p', 'aide', 'Coche au moins un sport ci-dessus.'));
+    hote.appendChild(el('p', 'aide', 'Choisis au moins un sport.'));
   }
 }
 
@@ -1006,17 +1380,17 @@ function panneauxCoteParSport() {
   const sports = coches('f-sports');
   (sports.length ? sports : REFS.sports).forEach((sp) => {
     const bloc = el('div', 'ev-sport');
-    bloc.appendChild(el('h4', null,
-      (REFS.sports_labels && REFS.sports_labels[sp]) || sp));
+    bloc.appendChild(el('h4', null, nomSport(sp)));
     const boite = el('div', 'cases');
     boite.id = 'odds-bands-' + sp;
     boite.dataset.sport = sp;
     bloc.appendChild(boite);
     hote.appendChild(bloc);
-    groupeCases(boite, bandesCote(), { courte: true, coches: memoire[sp] || [] });
+    groupeCases(boite, bandesCote(), { courte: true, tous: 'Toutes les tranches',
+      coches: memoire[sp] || [] });
   });
   if (!hote.children.length) {
-    hote.appendChild(el('p', 'aide', 'Coche au moins un sport ci-dessus.'));
+    hote.appendChild(el('p', 'aide', 'Choisis au moins un sport.'));
   }
 }
 
@@ -1024,8 +1398,7 @@ function panneauxCoteParSport() {
  *
  * ⚠️ TOUTES LES TRANCHES SONT AFFICHÉES, PAS SEULEMENT CELLES COCHÉES
  * PLUS HAUT. Une tranche laissée vide n'est pas « sans contrainte » : elle
- * garde la règle de son sport, puis la règle globale. Ne montrer qu'une
- * partie des tranches laisserait croire que les autres ne sont pas filtrées.
+ * garde la règle de son sport, puis la règle globale.
  */
 function panneauxEvParCote() {
   const hote = $('ev-par-cote');
@@ -1094,7 +1467,7 @@ function tableauSegments(d) {
 
   const tb = el('tbody');
   if (!d.segments.length) {
-    const r = el('tr'), td = el('td');
+    const r = el('tr', 'vide-ligne'), td = el('td');
     td.colSpan = cols.length;
     td.textContent = 'Aucun segment ne passe le plancher d\'effectif. '
       + 'Baisse le plancher ou élargis les filtres — ce n\'est pas un résultat '
@@ -1118,8 +1491,7 @@ function tableauSegments(d) {
     if (b) tdE.appendChild(b);
     r.appendChild(tdE);
     r.appendChild(el('td', 'num', ent(sg.settled)));
-    const tdC = el('td', 'num ' + signe(sg.clv), pct(sg.clv, 1));
-    r.appendChild(tdC);
+    r.appendChild(el('td', 'num ' + signe(sg.clv), pct(sg.clv, 1)));
     r.appendChild(el('td', 'num', pctNu(sg.clv_coverage, 0)));
     r.appendChild(el('td', 'num ' + signe(sg.roi), pct(sg.roi, 1)));
     r.appendChild(el('td', 'num ' + signe(sg.pnl), eur(sg.pnl, 0)));
@@ -1152,84 +1524,398 @@ async function chercherSegments() {
   }
 }
 
+/* ── Tableaux de découpe ───────────────────────────────────────────
+ *
+ * Une tranche de l'API par ligne, sans rien recalculer. Le TRI est un choix
+ * d'affichage : par défaut le volume, jamais un classement « du meilleur au
+ * pire » que rien ne justifierait. Les découpes ordonnées par nature (cote,
+ * EV, délai, période) gardent l'ordre du serveur.
+ */
+
+function parVolume(tranches) {
+  return (tranches || []).slice().sort((a, b) => b.opportunities - a.opportunities);
+}
+
+function tableDecoupe(hote, tranches, options) {
+  const o = options || {};
+  if (!hote.etatTri || hote.etatTri.cle !== o.cle) {
+    hote.etatTri = { cle: o.cle, champ: o.ordre ? null : 'opportunities', sens: -1 };
+  }
+  const etat = hote.etatTri;
+  let lignes = (tranches || []).filter((t) => t.opportunities > 0);
+  if (etat.champ) {
+    const champ = etat.champ;
+    lignes = lignes.slice().sort((a, b) => {
+      const va = champ === 'label' ? String(lib(a)) : a[champ];
+      const vb = champ === 'label' ? String(lib(b)) : b[champ];
+      const absA = va === null || va === undefined, absB = vb === null || vb === undefined;
+      // Une mesure absente reste EN BAS dans les deux sens : un « — » en tête
+      // de colonne se lirait comme le meilleur ou le pire, il n'est ni l'un
+      // ni l'autre.
+      if (absA || absB) return absA === absB ? 0 : absA ? 1 : -1;
+      if (typeof va === 'string') return va.localeCompare(vb, 'fr') * etat.sens;
+      return (va - vb) * etat.sens;
+    });
+  }
+  if (o.filtre) {
+    const q = o.filtre.toLowerCase();
+    lignes = lignes.filter((t) => String(lib(t)).toLowerCase().includes(q));
+  }
+  const total = lignes.length;
+  if (o.limite && total > o.limite) lignes = lignes.slice(0, o.limite);
+
+  const cols = [['label', o.nom || 'Segment', 'nom'], ['opportunities', 'Opportunités', 'num']];
+  if (o.complet) cols.push(['settled', 'Réglés', 'num']);
+  cols.push(['clv', 'CLV', 'num']);
+  if (o.complet) cols.push(['clv_median', 'CLV médiane', 'num'], ['clv_positive_rate', 'CLV > 0', 'num']);
+  cols.push(['roi', 'ROI', 'num']);
+  if (o.complet) cols.push(['pnl', 'P&L', 'num'], ['ev_mean', 'EV moy.', 'num'], ['odds_mean', 'Cote moy.', 'num']);
+
+  hote.innerHTML = '';
+  const thead = el('thead'), tr = el('tr');
+  cols.forEach(([champ, titre, cls]) => {
+    const actif = etat.champ === champ;
+    const th = el('th', `${cls} triable${actif ? ' actif' : ''}`,
+      titre + (actif ? (etat.sens < 0 ? ' ▾' : ' ▴') : ''));
+    th.addEventListener('click', () => {
+      if (etat.champ === champ) etat.sens = -etat.sens;
+      else { etat.champ = champ; etat.sens = champ === 'label' ? 1 : -1; }
+      tableDecoupe(hote, tranches, o);
+    });
+    tr.appendChild(th);
+  });
+  thead.appendChild(tr);
+  hote.appendChild(thead);
+
+  const tb = el('tbody');
+  if (!lignes.length) {
+    const r = el('tr', 'vide-ligne'), td = el('td', null, o.filtre ? 'Aucune ligne ne correspond.' : 'Aucune donnée.');
+    td.colSpan = cols.length;
+    r.appendChild(td);
+    tb.appendChild(r);
+  }
+  const cellule = (valeur, cls, sous, sousFragile) => {
+    const td = el('td', cls);
+    td.appendChild(document.createTextNode(valeur));
+    if (sous) td.appendChild(el('span', 'sub' + (sousFragile ? ' fragile' : ''), sous));
+    return td;
+  };
+  lignes.forEach((t) => {
+    const r = el('tr');
+    cols.forEach(([champ]) => {
+      if (champ === 'label') {
+        const td = el('td', 'nom', String(lib(t)));
+        td.title = String(lib(t));
+        r.appendChild(td);
+      } else if (champ === 'opportunities') {
+        r.appendChild(cellule(ent(t.opportunities), 'num', o.complet ? `${ent(t.matches)} matchs` : ''));
+      } else if (champ === 'settled') {
+        r.appendChild(cellule(ent(t.settled), 'num', pctNu(t.settlement_rate)));
+      } else if (champ === 'clv') {
+        // ⚠️ La CLV d'une ligne porte sa couverture, comme partout ailleurs.
+        const faible = t.clv_coverage !== null && t.clv_coverage < SEUIL_COUVERTURE;
+        r.appendChild(cellule(pct(t.clv, 1), 'num ' + signe(t.clv),
+          `couv. ${pctNu(t.clv_coverage, 0)}`, faible));
+      } else if (champ === 'roi') {
+        const peu = t.settled > 0 && t.settled < SEUIL_REGLES;
+        r.appendChild(cellule(pct(t.roi, 1), 'num ' + signe(t.roi),
+          `${ent(t.settled)} réglés`, peu));
+      } else if (champ === 'clv_median') {
+        r.appendChild(cellule(pct(t.clv_median, 1), 'num ' + signe(t.clv_median)));
+      } else if (champ === 'clv_positive_rate') {
+        r.appendChild(cellule(pctNu(t.clv_positive_rate, 0), 'num'));
+      } else if (champ === 'pnl') {
+        r.appendChild(cellule(eur(t.pnl, 0), 'num ' + signe(t.pnl)));
+      } else if (champ === 'ev_mean') {
+        r.appendChild(cellule(pct(t.ev_mean, 1), 'num'));
+      } else if (champ === 'odds_mean') {
+        r.appendChild(cellule(cote(t.odds_mean), 'num'));
+      }
+    });
+    accrocher(r, String(lib(t)), lignesTranche(t), alerteTranche(t));
+    tb.appendChild(r);
+  });
+  hote.appendChild(tb);
+  return total;
+}
+
+/* ── Rendu des pages ───────────────────────────────────────────────── */
+
+function grapheEvolution(d) {
+  document.querySelectorAll('#evol-mode button')
+    .forEach((b) => b.classList.toggle('actif', b.dataset.mode === MODE_EVOL));
+  const leg = $('evol-legende');
+  leg.innerHTML = '';
+  if (MODE_EVOL === 'clv') {
+    $('evol-sous').textContent = `CLV moyenne par période, en % — point pointillé : couverture sous ${SEUIL_COUVERTURE} %.`;
+    courbe($('g-clv-temps'), d.by_time, 'clv', 'CLV dans le temps');
+    return;
+  }
+  const series = MODE_EVOL === 'ev'
+    ? [{ champ: 'ev_mean', libelle: 'EV moyenne', cls: '2' }]
+    : [{ champ: 'clv', libelle: 'CLV moyenne', cls: '' },
+       { champ: 'ev_mean', libelle: 'EV moyenne', cls: '2' }];
+  $('evol-sous').textContent = MODE_EVOL === 'ev'
+    ? 'EV moyenne à la détection, par période — en %.'
+    : 'CLV moyenne et EV moyenne à la détection — même échelle, en %.';
+  courbes($('g-clv-temps'), d.by_time, series, 'Évolution dans le temps');
+  series.forEach((s) => {
+    const l = el('span', 'l');
+    l.appendChild(el('span', 'trait' + (s.cls === '2' ? ' t2' : '')));
+    l.appendChild(el('span', null, s.libelle));
+    leg.appendChild(l);
+  });
+}
+
+/* ⚠️ DEUX GRAPHIQUES, JAMAIS UN DOUBLE AXE. Le ROI par période et le P&L
+ * cumulé ont chacun leur échelle et leur unité : on bascule de l'un à
+ * l'autre, on ne les superpose pas. */
+function grapheFinance(d) {
+  const roi = MODE_FIN === 'roi';
+  document.querySelectorAll('#fin-mode button')
+    .forEach((b) => b.classList.toggle('actif', b.dataset.mode === MODE_FIN));
+  $('g-roi-temps').hidden = !roi;
+  $('g-pnl-cumul').hidden = roi;
+  const mise = d.filters ? d.filters.stake : null;
+  $('fin-sous').textContent = roi
+    ? `ROI par période, en % — mise notionnelle de ${num(mise)} € par pari réglé.`
+    : 'P&L cumulé, en € — somme des périodes réglées.';
+  if (roi) {
+    courbe($('g-roi-temps'), d.by_time, 'roi', 'ROI dans le temps');
+  } else {
+    courbe($('g-pnl-cumul'), d.by_time, 'pnl_cumul', 'P&L cumulé',
+      (v) => eur(v, 0));
+  }
+}
+
+function rendreVueEnsemble(d, graphesSeuls) {
+  kpis(d.summary);
+  grapheEvolution(d);
+  grapheFinance(d);
+  barres($('g-clv-ev'), d.by_ev, 'clv', 'CLV par tranche d\'EV', { n: true });
+  tableDecoupe($('t-sport'), d.by_sport, { nom: 'Sport', cle: 'sport' });
+  tableDecoupe($('t-market'), d.by_market, { nom: 'Marché', cle: 'market' });
+  tableDecoupe($('t-book'), d.by_book, { nom: 'Bookmaker', cle: 'book' });
+  if (!graphesSeuls) chargerDernieres();
+}
+
+function rendrePerformance(d) {
+  kpisPerf(d.summary);
+  colonnes($('g-vol-temps'), d.by_time, 'opportunities', 'Opportunités');
+  colonnes($('g-reg-temps'), d.by_time, 'settled', 'Réglées');
+  barres($('g-roi-sport'), d.by_sport, 'roi', 'ROI par sport');
+  barres($('g-roi-cote'), d.by_odds, 'roi', 'ROI par cote');
+  barres($('g-roi-ev'), d.by_ev, 'roi', 'ROI par EV');
+  barres($('g-roi-delay'), d.by_delay, 'roi', 'ROI par délai');
+}
+
+function rendreClv(d) {
+  kpisClv(d.summary);
+  courbe($('g-clv-cumul'), d.by_time, 'clv_cumul', 'CLV cumulée');
+  barres($('g-clv-sport'), d.by_sport, 'clv', 'CLV par sport');
+  barres($('g-clv-cote'), d.by_odds, 'clv', 'CLV par cote');
+  barres($('g-clv-delay'), d.by_delay, 'clv', 'CLV par délai');
+  matrice();
+}
+
+function rendreBookmakers(d) {
+  tableDecoupe($('t-book-complet'), d.by_book, { nom: 'Bookmaker', complet: true, cle: 'book' });
+  const lot = parVolume(d.by_book);
+  barres($('g-clv-book'), lot, 'clv', 'CLV par book');
+  barres($('g-roi-book'), lot, 'roi', 'ROI par book');
+}
+
+function rendreMarches(d) {
+  tableDecoupe($('t-market-complet'), d.by_market, { nom: 'Marché', complet: true, cle: 'market' });
+  barres($('g-clv-market'), d.by_market, 'clv', 'CLV par marché');
+  barres($('g-roi-market'), d.by_market, 'roi', 'ROI par marché');
+  tableDecoupe($('t-outcome'), d.by_outcome, { nom: 'Pari', complet: true, ordre: true, cle: 'outcome' });
+  barres($('g-clv-outcome'), d.by_outcome, 'clv', 'CLV par pari');
+  barres($('g-roi-outcome'), d.by_outcome, 'roi', 'ROI par pari');
+}
+
+function rendreCompetitions(d) {
+  const toutes = (d.by_league || []).filter((t) => t.opportunities > 0);
+  const tete = parVolume(toutes).slice(0, 12);
+  barres($('g-clv-league'), tete, 'clv', 'CLV par compétition');
+  barres($('g-roi-league'), tete, 'roi', 'ROI par compétition');
+  tableCompetitions();
+}
+
+function tableCompetitions() {
+  if (!ANALYSE) return;
+  const toutes = (ANALYSE.by_league || []).filter((t) => t.opportunities > 0);
+  const n = tableDecoupe($('t-league'), toutes, { nom: 'Compétition', complet: true,
+    cle: 'league', filtre: $('cmp-recherche').value.trim(), limite: LIMITE_CMP });
+  $('cmp-compte').textContent = `${ent(toutes.length)} compétitions avec au moins une opportunité`
+    + ($('cmp-recherche').value.trim() ? ` · ${ent(n)} correspondent à la recherche` : '');
+  const plus = $('cmp-plus');
+  plus.innerHTML = '';
+  if (n > LIMITE_CMP) {
+    const b = el('button', 'btn btn-secondaire btn-petit', `Afficher plus (${ent(n - LIMITE_CMP)} restantes)`);
+    b.type = 'button';
+    b.addEventListener('click', () => { LIMITE_CMP += 100; tableCompetitions(); });
+    plus.appendChild(b);
+  }
+}
+
+function rendreParis(d, graphesSeuls) {
+  document.querySelectorAll('#pj-filtre button')
+    .forEach((b) => b.classList.toggle('actif', b.dataset.played === $('f-played').value));
+  kpisParis(d.summary);
+  if (!graphesSeuls) chargerDetail();
+}
+
+/* ── Analyse avancée ───────────────────────────────────────────────
+ *
+ * PROGRESSIVE DISCLOSURE : l'utilisateur choisit d'abord un axe, et seuls
+ * ses graphiques et son tableau apparaissent. Chaque axe est une découpe que
+ * l'analyse a DÉJÀ rendue — rien n'est redemandé au serveur, sauf les
+ * segments croisés, qui ont leur propre bouton.
+ */
+const AXES = [
+  { cle: 'sport', lib: 'Sport', champ: 'by_sport', nom: 'Sport' },
+  { cle: 'book', lib: 'Bookmaker', champ: 'by_book', nom: 'Bookmaker', volume: true },
+  { cle: 'market', lib: 'Marché', champ: 'by_market', nom: 'Marché' },
+  { cle: 'league', lib: 'Compétition', champ: 'by_league', nom: 'Compétition',
+    volume: true, top: 15, recherche: true },
+  { cle: 'outcome', lib: 'Pari', champ: 'by_outcome', nom: 'Pari', ordre: true },
+  { cle: 'odds', lib: 'Cote', champ: 'by_odds', nom: 'Tranche de cote', ordre: true },
+  { cle: 'ev', lib: 'EV', champ: 'by_ev', nom: 'Tranche d\'EV', ordre: true },
+  { cle: 'delay', lib: 'Délai', champ: 'by_delay', nom: 'Délai avant coup d\'envoi', ordre: true },
+  { cle: 'time', lib: 'Période', champ: 'by_time', nom: 'Période', ordre: true, temps: true },
+  { cle: 'segments', lib: 'Segments croisés' },
+];
+
+function rendreAvancee(d) {
+  const h = $('aa-axes');
+  h.innerHTML = '';
+  AXES.forEach((a) => {
+    const b = el('button', 'puce' + (a.cle === AXE_AA ? ' actif' : ''), a.lib);
+    b.type = 'button';
+    b.setAttribute('aria-pressed', String(a.cle === AXE_AA));
+    b.addEventListener('click', () => { AXE_AA = a.cle; $('aa-recherche').value = ''; rendreAvancee(ANALYSE); });
+    h.appendChild(b);
+  });
+  $('aa-regles').textContent = $('note-ev').textContent
+    || 'Aucune règle segmentée : la même règle d\'EV vaut pour tous les sports et toutes les cotes.';
+
+  const axe = AXES.find((a) => a.cle === AXE_AA);
+  $('aa-panneau').hidden = !axe || axe.cle === 'segments';
+  $('bloc-segments').hidden = !axe || axe.cle !== 'segments';
+  if (!axe || axe.cle === 'segments') return;
+
+  const tranches = d[axe.champ] || [];
+  const nomAxe = axe.lib.toLowerCase();
+  $('aa-titre-clv').textContent = axe.temps ? 'CLV dans le temps' : `CLV par ${nomAxe}`;
+  $('aa-titre-roi').textContent = axe.temps ? 'ROI dans le temps' : `ROI par ${nomAxe}`;
+  $('aa-titre-table').textContent = `Tableau complet — par ${nomAxe}`;
+  if (axe.temps) {
+    $('aa-sous').textContent = 'Moyenne par période ; effectifs et couverture au survol.';
+    courbe($('aa-clv'), tranches, 'clv', 'CLV par période');
+    courbe($('aa-roi'), tranches, 'roi', 'ROI par période');
+  } else {
+    const lot = axe.volume ? parVolume(tranches) : tranches;
+    const visibles = axe.top ? lot.filter((t) => t.opportunities > 0).slice(0, axe.top) : lot;
+    const n = tranches.filter((t) => t.opportunities > 0).length;
+    $('aa-sous').textContent = axe.top && n > axe.top
+      ? `Les ${axe.top} plus gros volumes sur ${ent(n)} — le tableau les donne toutes.`
+      : 'Effectifs et couverture au survol de chaque barre.';
+    barres($('aa-clv'), visibles, 'clv', `CLV par ${nomAxe}`);
+    barres($('aa-roi'), visibles, 'roi', `ROI par ${nomAxe}`);
+  }
+  $('aa-recherche').hidden = !axe.recherche;
+  tableDecoupe($('aa-table'), tranches, { nom: axe.nom, complet: true, ordre: axe.ordre,
+    cle: axe.cle, filtre: axe.recherche ? $('aa-recherche').value.trim() : '' });
+}
+
+function rendrePage(p, graphesSeuls) {
+  if (!ANALYSE || !PAGES[p] || !PAGES[p].analyse) return;
+  if (!ANALYSE.summary.opportunities) return;
+  if (!graphesSeuls && RENDUES.has(p)) return;
+  RENDUES.add(p);
+  const d = ANALYSE;
+  if (p === 'vue-ensemble') rendreVueEnsemble(d, graphesSeuls);
+  else if (p === 'performance') rendrePerformance(d);
+  else if (p === 'clv') rendreClv(d);
+  else if (p === 'bookmakers') rendreBookmakers(d);
+  else if (p === 'marches') rendreMarches(d);
+  else if (p === 'competitions') rendreCompetitions(d);
+  else if (p === 'paris') rendreParis(d, graphesSeuls);
+  else if (p === 'avancee') rendreAvancee(d);
+}
+
 /* ── Analyse ───────────────────────────────────────────────────────── */
 
 async function analyser() {
   const bouton = $('analyser');
+  const jeton = {};
+  JETON = jeton;
   bouton.disabled = true;
+  bouton.classList.add('charge');
+  bouton.querySelector('.btn-lib').textContent = 'Analyse…';
+  document.body.classList.add('en-analyse');
   $('etat').textContent = 'analyse en cours…';
+  if (!ANALYSE) squelettesKpi('kpis', 4);
   try {
     const d = await appel(API_ANALYSE,
       parametres({ granularite: $('f-gran').value }));
+    // Une réponse plus ancienne que la dernière demande ne doit JAMAIS
+    // écraser la plus récente : l'écran décrirait d'autres filtres.
+    if (JETON !== jeton) return;
     ANALYSE = d;
     CELLULE = null;
     PAGE = 1;
+    SALE = false;
+    RENDUES.clear();
 
     avertissements(d.warnings);
     enteteExport(d);
-    kpis(d.summary);
-    ['bloc-kpi', 'bloc-temps', 'bloc-decoupes', 'bloc-matrice',
-     'bloc-segments', 'bloc-detail']
-      .forEach((id) => { $(id).hidden = false; });
-    // La recherche de segments n'est PAS lancée d'office : trois dimensions
-    // croisées coûtent nettement plus qu'une analyse, et la section n'est pas
-    // consultée à chaque affichage. Le tableau précédent est vidé pour qu'il
-    // ne décrive jamais d'autres filtres que ceux affichés au-dessus.
-    $('segments').innerHTML = '';
-    $('s-garde').innerHTML = '';
-    $('s-etat').textContent = 'Clique « Chercher » pour explorer les combinaisons.';
-
     $('note-population').textContent =
       `Population : ${d.population.explication}` +
       (d.population.limites.length
         ? ' — Limite : ' + d.population.limites.join(' ') : '');
     noteEv(d.ev_rules);
+    // Le tableau de segments précédent est vidé pour qu'il ne décrive jamais
+    // d'autres filtres que ceux affichés au-dessus. La recherche n'est PAS
+    // relancée d'office : trois dimensions croisées coûtent nettement plus
+    // qu'une analyse.
+    $('segments').innerHTML = '';
+    $('s-garde').innerHTML = '';
+    $('s-etat').textContent = 'Clique « Chercher » pour explorer les combinaisons.';
 
-    courbe($('g-clv-temps'), d.by_time, 'clv', 'CLV dans le temps');
-    courbe($('g-roi-temps'), d.by_time, 'roi', 'ROI dans le temps');
-    barres($('g-clv-cote'), d.by_odds, 'clv', 'CLV par cote');
-    barres($('g-roi-cote'), d.by_odds, 'roi', 'ROI par cote');
-    barres($('g-clv-ev'), d.by_ev, 'clv', 'CLV par EV');
-    barres($('g-roi-ev'), d.by_ev, 'roi', 'ROI par EV');
-    barres($('g-clv-book'), d.by_book, 'clv', 'CLV par book');
-    barres($('g-roi-book'), d.by_book, 'roi', 'ROI par book');
-    barres($('g-clv-sport'), d.by_sport, 'clv', 'CLV par sport');
-    barres($('g-roi-sport'), d.by_sport, 'roi', 'ROI par sport');
-    barres($('g-clv-market'), d.by_market, 'clv', 'CLV par marché');
-    barres($('g-roi-market'), d.by_market, 'roi', 'ROI par marché');
-    barres($('g-clv-outcome'), d.by_outcome, 'clv', 'CLV par pari');
-    barres($('g-roi-outcome'), d.by_outcome, 'roi', 'ROI par pari');
-    barres($('g-clv-delay'), d.by_delay, 'clv', 'CLV par délai');
-    barres($('g-roi-delay'), d.by_delay, 'roi', 'ROI par délai');
-    // ⚠️ Le P&L cumulé est en EUROS : il passe son propre formateur d'axe.
-    courbe($('g-pnl-cumul'), d.by_time, 'pnl_cumul', 'P&L cumulé',
-      (v) => eur(v, 0));
-    courbe($('g-clv-cumul'), d.by_time, 'clv_cumul', 'CLV cumulée');
-    colonnes($('g-vol-temps'), d.by_time, 'opportunities', 'Opportunités');
-    colonnes($('g-reg-temps'), d.by_time, 'settled', 'Réglées');
-    matrice();
-    await chargerDetail();
+    const videLot = !d.summary.opportunities;
+    document.body.classList.toggle('sans-donnees', videLot);
+    $('vide').hidden = !(videLot && PAGES[PAGE_ACTIVE].analyse);
+    $('sb-analyse').textContent = 'Analyse lancée à '
+      + new Date().toLocaleTimeString('fr-FR', { hour: '2-digit', minute: '2-digit' });
+    majSale();
+    contexte();
+    rendrePage(PAGE_ACTIVE);
     $('etat').textContent = '';
   } catch (e) {
+    if (JETON !== jeton) return;
     // Une erreur de saisie doit se lire, pas disparaître dans la console.
     avertissements([e.statut === 400 || e.statut === 422
       ? 'Filtre refusé : ' + e.message
       : 'Erreur : ' + e.message]);
     $('etat').textContent = '';
+    if (!ANALYSE) $('kpis').innerHTML = '';
   } finally {
-    bouton.disabled = false;
+    if (JETON === jeton) {
+      bouton.disabled = false;
+      bouton.classList.remove('charge');
+      bouton.querySelector('.btn-lib').textContent = 'Analyser';
+      document.body.classList.remove('en-analyse');
+    }
   }
 }
 
 /* ── Amorçage ──────────────────────────────────────────────────────── */
 
-/* Les bandes de délai en boutons : elles POSENT les bornes en heures, elles
- * n'ajoutent pas un filtre parallèle. Un second mécanisme de délai à côté du
- * premier finirait par en contredire l'autre sans que rien ne le signale. */
 /* ⚠️ DIRE CE QUI PART, PAS CE QUI EST TAPÉ. Le serveur reçoit des heures
  * décimales ; quelqu'un qui saisit « 90 » en minutes doit pouvoir vérifier
- * d'un coup d'œil que c'est bien 1,5 h qui partira. Une conversion muette
- * est une conversion qu'on finit par soupçonner d'être fausse. */
+ * d'un coup d'œil que c'est bien 1,5 h qui partira. */
 function majAideDelai() {
   const unite = $('f-delay-unite').value;
   const f = unite === 'min' ? 1 / 60 : 1;
@@ -1239,14 +1925,17 @@ function majAideDelai() {
   };
   $('aide-delai').textContent = unite === 'min'
     ? `Envoyé au serveur : ${bout('f-delay-min')} → ${bout('f-delay-max')}`
-    : 'Le serveur raisonne en heures décimales (0,25 = 15 min)';
+    : 'Le serveur raisonne en heures décimales (0,25 = 15 min).';
 }
 
+/* Les bandes de délai en boutons : elles POSENT les bornes en heures, elles
+ * n'ajoutent pas un filtre parallèle. Un second mécanisme de délai à côté du
+ * premier finirait par en contredire l'autre sans que rien ne le signale. */
 function boutonsDelai() {
   const h = $('delay-rapides');
   h.innerHTML = '';
   (REFS.delay_bands || []).forEach((b) => {
-    const bt = el('button', 'discret', b.key);
+    const bt = el('button', null, b.key);
     bt.type = 'button';
     bt.addEventListener('click', () => {
       const deja = bt.classList.contains('actif');
@@ -1258,53 +1947,901 @@ function boutonsDelai() {
       $('f-delay-max').value = deja || b.max === null ? '' : b.max;
       if (!deja) bt.classList.add('actif');
       majAideDelai();
+      signalerChangement();
     });
     h.appendChild(bt);
   });
 }
 
-/* ⚠️ LE REPLI SUR TÉLÉPHONE EST POSÉ EN JS, PAS SEULEMENT EN CSS.
- * Le CSS cache les groupes sous 720 px ; sans un gestionnaire, le libellé
- * serait alors un piège : on cliquerait dessus et rien ne s'ouvrirait. */
+/* Les sections du tiroir se replient : repliées par défaut, elles affichent
+ * leur valeur courante dans l'en-tête — l'état se lit sans rien ouvrir.
+ * ⚠️ Le gestionnaire est posé en JS : sans lui, l'en-tête serait un piège,
+ * on cliquerait dessus et rien ne s'ouvrirait. */
 function pliage() {
-  document.querySelectorAll('.champ.pliable > label').forEach((l) => {
-    l.addEventListener('click', () => {
-      if (matchMedia('(max-width: 720px)').matches) {
-        l.parentElement.classList.toggle('ouvert');
-      }
+  document.querySelectorAll('.champ.pliable > .champ-tete').forEach((t) => {
+    t.setAttribute('aria-expanded', 'false');
+    t.addEventListener('click', () => {
+      const ouvert = t.parentElement.classList.toggle('ouvert');
+      t.setAttribute('aria-expanded', String(ouvert));
     });
   });
-  if (matchMedia('(max-width: 720px)').matches) {
-    document.querySelectorAll('.champ.pliable')
-      .forEach((c) => c.classList.remove('ouvert'));
+}
+
+/* ── Changement de filtre : résumés, contexte, état « à relancer » ── */
+
+function signalerChangement() {
+  if (!REFS) return;
+  if (!INIT) SALE = true;
+  majSale();
+  majResumes();
+  majPresets();
+  contexte();
+}
+
+function majSale() {
+  $('modifie').hidden = !(SALE && ANALYSE);
+  $('analyser').classList.toggle('a-relancer', !!(SALE && ANALYSE));
+}
+
+function resumeGroupe(id, nom, tous) {
+  const v = coches(id);
+  if (!v.length) return [tous, false];
+  if (v.length <= 2) return [v.map(nom).join(' + '), true];
+  return [`${v.length} sélectionnés`, true];
+}
+
+function bornesTexte(a, b, unite, fmt) {
+  const F = fmt || num;
+  if (a != null && b != null) return `${F(a)} → ${F(b)}${unite}`;
+  if (a != null) return `≥ ${F(a)}${unite}`;
+  return `≤ ${F(b)}${unite}`;
+}
+
+function texteEv(f) {
+  const parts = [];
+  if (f.ev_min != null || f.ev_max != null) parts.push(`EV ${bornesTexte(f.ev_min, f.ev_max, ' %')}`);
+  if (f.ev_bands && f.ev_bands.length) parts.push(`EV ${f.ev_bands.join(', ')}`);
+  if (Object.keys(f.ev_bands_by_sport || {}).length || Object.keys(f.ev_free_by_sport || {}).length) {
+    parts.push('EV par sport');
+  }
+  if (Object.keys(f.ev_free_by_odds || {}).length) parts.push('EV par tranche de cote');
+  return parts.join(' + ');
+}
+
+function texteCote(f) {
+  const parts = [];
+  if (f.odds_bands && f.odds_bands.length) parts.push(`Cote ${f.odds_bands.join(', ')}`);
+  if (f.odds_min != null || f.odds_max != null) parts.push(`Cote ${bornesTexte(f.odds_min, f.odds_max, '', cote)}`);
+  if (Object.keys(f.odds_bands_by_sport || {}).length) parts.push('Cote par sport');
+  return parts.join(' + ');
+}
+
+/* Les phrases d'un jeu de filtres — celui du serveur (`d.filters`) ou celui
+ * du formulaire. Même vocabulaire que les menus, pour qu'une même contrainte
+ * ne se lise pas de deux façons. */
+function phrasesFiltres(f) {
+  const out = [periodeTexte(f.date_from || REFS.date_min, f.date_to || REFS.date_max)];
+  const liste = (v, nom, tous) => (!v || !v.length ? tous
+    : v.length <= 2 ? v.map(nom).join(' + ') : `${v.length} ${tous.split(' ').pop()}`);
+  out.push(liste(f.sports, nomSport, 'Tous les sports'));
+  out.push(liste(f.bookmakers, nomBook, 'Tous les bookmakers'));
+  out.push(liste(f.markets, nomMarche, 'Tous les marchés'));
+  if (f.leagues && f.leagues.length) out.push(liste(f.leagues, (x) => x, 'Toutes les compétitions'));
+  if (f.outcomes && f.outcomes.length) out.push('Pari ' + f.outcomes.map(libPari).join(', '));
+  out.push(texteEv(f) || 'Toute EV');
+  const c = texteCote(f);
+  if (c) out.push(c);
+  if (f.delay_min != null || f.delay_max != null) {
+    out.push(`Délai ${bornesTexte(f.delay_min, f.delay_max, ' h')}`);
+  }
+  out.push(nomPopulation(f.population));
+  if (f.played && f.played !== 'tous') out.push(f.played === 'oui' ? 'Paris joués' : 'Alertés, non cliqués');
+  return out;
+}
+
+/* ⚠️ LA BARRE DE CONTEXTE DÉCRIT CE QUE LES CHIFFRES AFFICHÉS DÉCRIVENT : les
+ * filtres que le SERVEUR a appliqués à la dernière analyse. Tant qu'un
+ * réglage n'est pas analysé, elle ne change pas — le badge « Filtres
+ * modifiés » le signale à côté. */
+function contexte() {
+  const h = $('contexte');
+  if (!REFS) return;
+  const f = ANALYSE ? ANALYSE.filters : filtresDuFormulaire();
+  h.innerHTML = '';
+  phrasesFiltres(f).forEach((p, i) => {
+    if (i) h.appendChild(el('span', 'sep', '·'));
+    h.appendChild(el(i === 0 ? 'b' : 'span', null, p));
+  });
+  h.title = ANALYSE ? 'Filtres appliqués par le serveur à l\'analyse affichée' : '';
+}
+
+function compteAvances() {
+  const f = filtresDuFormulaire();
+  let n = 0;
+  if (f.leagues.length) n += 1;
+  if (f.outcomes.length) n += 1;
+  if (texteCote(f)) n += 1;
+  if ($('ev-split').checked || $('ev-cote-split').checked) n += 1;
+  if (f.delay_min != null || f.delay_max != null) n += 1;
+  if (f.population !== 'detected') n += 1;
+  if (f.played !== 'tous') n += 1;
+  return n;
+}
+
+function majResumes() {
+  const f = filtresDuFormulaire();
+  const pose = (id, [texte, actif]) => {
+    const n = $(id);
+    n.textContent = texte;
+    n.classList.toggle('actif', !!actif);
+  };
+  const tousBooks = `Tous (${REFS.bookmakers.length})`;
+  pose('r-sports', resumeGroupe('f-sports', nomSport, 'Tous'));
+  pose('r-books', resumeGroupe('f-books', nomBook, tousBooks));
+  pose('r-markets', resumeGroupe('f-markets', nomMarche, 'Tous'));
+  pose('r-league', resumeGroupe('f-league', (x) => x, 'Toutes'));
+  pose('r-pari', resumeGroupe('f-outcomes', libPari, 'Tous'));
+  const tc = texteCote(f);
+  pose('r-cote', [tc ? tc.replace(/^Cote /, '') : 'Toutes', !!tc]);
+  const evGlobal = texteEv({ ...f, ev_bands_by_sport: {}, ev_free_by_sport: {}, ev_free_by_odds: {} });
+  pose('r-ev', [evGlobal ? evGlobal.replace(/EV /g, '') : 'Toute EV', !!evGlobal]);
+  const seg = [$('ev-split').checked ? 'par sport' : '', $('ev-cote-split').checked ? 'par tranche de cote' : '']
+    .filter(Boolean);
+  pose('r-segmentation', [seg.length ? 'EV ' + seg.join(' + ') : 'Aucune', !!seg.length]);
+  const delai = f.delay_min != null || f.delay_max != null;
+  pose('r-delai', [delai ? bornesTexte(f.delay_min, f.delay_max, ' h') : 'Aucun', delai]);
+  pose('r-population', [nomPopulation(f.population), f.population !== 'detected']);
+  pose('r-joue', [$('f-played').selectedIndex >= 0
+    ? $('f-played').options[$('f-played').selectedIndex].textContent : 'Tous', f.played !== 'tous']);
+  pose('r-mise', [`${num(f.stake)} € par pari`, false]);
+  pose('r-axe', [$('f-gran').options[$('f-gran').selectedIndex].textContent, false]);
+
+  // Les quatre raccourcis de la barre.
+  const bouton = (id, [texte, actif]) => {
+    const b = $(id);
+    b.querySelector('.menu-val').textContent = texte;
+    b.classList.toggle('filtre-actif', !!actif);
+  };
+  bouton('pf-sport', resumeGroupe('f-sports', nomSport, 'Tous'));
+  bouton('pf-books', resumeGroupe('f-books', nomBook, tousBooks));
+  bouton('pf-market', resumeGroupe('f-markets', nomMarche, 'Tous'));
+  const ev = texteEv(f);
+  bouton('pf-ev', [ev ? ev.replace(/^EV /, '') : 'Toute EV', !!ev]);
+
+  const n = compteAvances();
+  $('nb-avances').hidden = !n;
+  $('nb-avances').textContent = String(n);
+  document.querySelectorAll('#gran-rapide button')
+    .forEach((b) => b.classList.toggle('actif', b.dataset.gran === $('f-gran').value));
+}
+
+/* ── Modes « Cote » et « EV » du tiroir ────────────────────────────
+ *
+ * Le mode choisit ce qui est VISIBLE, et vide ce qui ne l'est plus : un
+ * filtre caché qui continuerait de s'appliquer serait exactement la panne
+ * silencieuse que cette interface existe pour empêcher. En mode « Tranches »,
+ * les bornes restent proposées : elles se cumulent (ET) avec les cases. */
+
+function segActif(id, attr, valeur) {
+  document.querySelectorAll(`#${id} button`)
+    .forEach((b) => b.classList.toggle('actif', b.dataset[attr] === valeur));
+}
+
+function appliquerModeCote(mode, vider) {
+  MODE_COTE = mode;
+  segActif('cote-mode', 'mode', mode);
+  $('cote-bloc-tranches').hidden = mode !== 'tranches';
+  $('cote-bloc-bornes').hidden = mode === 'toutes';
+  $('cote-bornes-titre').textContent = mode === 'tranches'
+    ? 'Bornes additionnelles (facultatif)' : 'Cote minimum → maximum';
+  $('cote-bornes-aide').textContent = mode === 'tranches'
+    ? 'Se cumulent (ET) avec les tranches cochées.' : 'Bornes incluses.';
+  if (vider) {
+    if (mode !== 'tranches') {
+      cocher('f-odds-bands', []);
+      if ($('cote-split').checked) { $('cote-split').checked = false; panneauxCoteParSport(); }
+    }
+    if (mode === 'toutes') { $('f-odds-min').value = ''; $('f-odds-max').value = ''; }
+    signalerChangement();
   }
 }
 
+function appliquerModeEv(mode, vider) {
+  MODE_EV = mode;
+  segActif('ev-mode', 'mode', mode);
+  $('ev-bloc-tranches').hidden = mode !== 'tranches';
+  document.querySelectorAll('.ev-max-part').forEach((n) => { n.hidden = mode === 'minimum'; });
+  $('ev-bornes-titre').textContent = mode === 'minimum' ? 'EV minimum (%)'
+    : mode === 'tranches' ? 'Bornes additionnelles (%) — facultatif' : 'EV minimum → maximum (%)';
+  $('ev-bornes-aide').textContent = mode === 'tranches'
+    ? 'Se cumulent (ET) avec les tranches cochées.'
+    : mode === 'minimum' ? 'Laisser vide : aucune contrainte d\'EV.' : 'Bornes incluses.';
+  if (vider) {
+    if (mode !== 'tranches') cocher('f-ev-bands', []);
+    if (mode === 'minimum') $('f-ev-max').value = '';
+    signalerChangement();
+  }
+}
+
+function deduireModes() {
+  const coteTranches = coches('f-odds-bands').length || $('cote-split').checked;
+  appliquerModeCote(coteTranches ? 'tranches'
+    : (valOuNull('f-odds-min') || valOuNull('f-odds-max')) ? 'perso' : 'toutes', false);
+  appliquerModeEv(coches('f-ev-bands').length ? 'tranches'
+    : valOuNull('f-ev-max') ? 'perso' : 'minimum', false);
+}
+
+/* ── Menus déroulants ──────────────────────────────────────────────── */
+
+function fermerMenus() {
+  document.querySelectorAll('.menu.ouvert').forEach((m) => {
+    m.classList.remove('ouvert');
+    m.querySelector('.menu-pop').hidden = true;
+    m.querySelector(':scope > button').setAttribute('aria-expanded', 'false');
+  });
+}
+
+function brancherMenu(idMenu, remplir) {
+  const m = $(idMenu);
+  const btn = m.querySelector(':scope > button');
+  const pop = m.querySelector('.menu-pop');
+  btn.setAttribute('aria-expanded', 'false');
+  btn.addEventListener('click', (e) => {
+    e.stopPropagation();
+    const deja = m.classList.contains('ouvert');
+    fermerMenus();
+    if (deja || !REFS) return;
+    if (remplir) remplir(pop);
+    m.classList.add('ouvert');
+    pop.hidden = false;
+    btn.setAttribute('aria-expanded', 'true');
+  });
+  pop.addEventListener('click', (e) => e.stopPropagation());
+}
+
+function itemMenu(texte, choisi, faire, compte) {
+  const b = el('button', 'menu-item' + (choisi ? ' choisi' : ''));
+  b.type = 'button';
+  b.innerHTML = '<svg class="coche" viewBox="0 0 24 24" aria-hidden="true"><path d="M5 12l5 5 9-10"/></svg>';
+  b.appendChild(el('span', null, texte));
+  if (compte !== undefined) b.appendChild(el('span', 'compte', compte));
+  b.addEventListener('click', faire);
+  return b;
+}
+
+/* Sport et marché : un choix simple depuis la barre. Plusieurs valeurs à la
+ * fois restent possibles dans le tiroir — et se relisent ici, cochées. */
+function menuUnique(groupe, valeurs, nom, tous, apres) {
+  return (pop) => {
+    pop.innerHTML = '';
+    const sel = coches(groupe);
+    const choisir = (v) => () => {
+      cocher(groupe, v === null ? [] : [v]);
+      if (apres) apres();
+      fermerMenus();
+      signalerChangement();
+    };
+    pop.appendChild(itemMenu(tous, !sel.length, choisir(null)));
+    valeurs.forEach((v) => pop.appendChild(itemMenu(nom(v), sel.includes(v), choisir(v))));
+    pop.appendChild(el('div', 'menu-note', 'Plusieurs à la fois : Filtres avancés.'));
+  };
+}
+
+function menuBooks(pop) {
+  pop.innerHTML = '';
+  const zone = el('div', 'menu-recherche');
+  const rech = el('input');
+  rech.type = 'search';
+  rech.placeholder = 'Chercher un bookmaker…';
+  rech.setAttribute('aria-label', 'Chercher un bookmaker');
+  zone.appendChild(rech);
+  pop.appendChild(zone);
+  const sel = new Set(coches('f-books'));
+  const tous = itemMenu('Tous les bookmakers', !sel.size, () => {
+    cocher('f-books', []);
+    fermerMenus();
+    signalerChangement();
+  }, ent(REFS.bookmakers.length));
+  pop.appendChild(tous);
+  pop.appendChild(el('div', 'menu-sep'));
+  const liste = el('div');
+  REFS.bookmakers.forEach((b) => {
+    const l = el('label', 'case');
+    const c = el('input');
+    c.type = 'checkbox';
+    c.checked = sel.has(b);
+    c.addEventListener('change', () => {
+      const cour = new Set(coches('f-books'));
+      if (c.checked) cour.add(b); else cour.delete(b);
+      cocher('f-books', [...cour]);
+      tous.classList.toggle('choisi', !cour.size);
+      signalerChangement();
+    });
+    l.appendChild(c);
+    l.appendChild(el('span', null, nomBook(b)));
+    liste.appendChild(l);
+  });
+  rech.addEventListener('input', () => {
+    const q = rech.value.trim().toLowerCase();
+    liste.querySelectorAll('.case').forEach((x) => {
+      x.classList.toggle('masquee', q !== '' && !x.textContent.toLowerCase().includes(q));
+    });
+  });
+  pop.appendChild(liste);
+  setTimeout(() => rech.focus(), 0);
+}
+
+/* Les seuils proposés viennent des tranches d'EV du SERVEUR — leur borne
+ * basse —, pas d'une liste écrite ici qui finirait par ne plus leur
+ * correspondre. */
+function seuilsEv() {
+  const out = [];
+  (REFS.ev_bands || []).forEach((b) => {
+    const m = String(b).match(/^(\d+(?:\.\d+)?)/);
+    if (m) {
+      const v = Number(m[1]);
+      if (v > 0 && !out.includes(v)) out.push(v);
+    }
+  });
+  return out.sort((a, b) => a - b);
+}
+
+function menuEv(pop) {
+  pop.innerHTML = '';
+  const actuel = valOuNull('f-ev-min');
+  const choisir = (v) => () => {
+    $('f-ev-min').value = v === null ? '' : String(v);
+    fermerMenus();
+    signalerChangement();
+  };
+  pop.appendChild(itemMenu('Toute EV', actuel === null, choisir(null)));
+  seuilsEv().forEach((s) => pop.appendChild(
+    itemMenu(`≥ ${num(s)} %`, actuel !== null && Number(actuel) === s, choisir(s))));
+  pop.appendChild(el('div', 'menu-sep'));
+  pop.appendChild(itemMenu('Tranches, bornes, par sport…', false, () => {
+    fermerMenus();
+    ouvrirTiroir('champ-ev');
+  }));
+}
+
+/* ── Tiroir ────────────────────────────────────────────────────────── */
+
+function ouvrirTiroir(section) {
+  fermerMenus();
+  const t = $('tiroir');
+  t.classList.add('ouvert');
+  t.setAttribute('aria-hidden', 'false');
+  $('voile-filtres').hidden = false;
+  document.body.classList.add('fige');
+  if (section && $(section)) {
+    const s = $(section);
+    s.classList.add('ouvert');
+    const tete = s.querySelector('.champ-tete');
+    if (tete) tete.setAttribute('aria-expanded', 'true');
+    setTimeout(() => s.scrollIntoView({ block: 'start', behavior: 'smooth' }), 60);
+  }
+  setTimeout(() => $('fermer-filtres').focus(), 60);
+}
+
+function fermerTiroir() {
+  const t = $('tiroir');
+  if (!t.classList.contains('ouvert')) return;
+  t.classList.remove('ouvert');
+  t.setAttribute('aria-hidden', 'true');
+  $('voile-filtres').hidden = true;
+  document.body.classList.remove('fige');
+  $('ouvrir-filtres').focus();
+}
+
+/* ── Analyses rapides ──────────────────────────────────────────────
+ *
+ * ⚠️ AUCUNE DÉFINITION MÉTIER N'EST INVENTÉE ICI. « Premium » est la
+ * population « Alertables » du serveur, dont la porte rejouée est celle du
+ * canal premium par défaut — sa définition vit dans `src.analytics`. Les
+ * autres raccourcis ouvrent une page ou posent un filtre existant.
+ */
+
+function ouvrirAxe(cle) {
+  AXE_AA = cle;
+  RENDUES.delete('avancee');
+  allerA('avancee');
+}
+
+function presets() {
+  const h = $('presets');
+  h.innerHTML = '';
+  const premium = (REFS.populations || []).find((p) => p.value === 'eligible_for_alert');
+  const liste = [
+    { id: 'global', lib: 'Performance globale',
+      titre: 'Toutes les détections, sur toute la période, sans aucun filtre',
+      faire: () => { $('reinit').click(); analyser(); } },
+    premium && { id: 'premium', lib: 'Premium',
+      titre: `${premium.libelle} — ${premium.explication} Porte du canal premium, définition du serveur.`,
+      faire: () => { $('f-population').value = premium.value; majAidePopulation(); signalerChangement(); analyser(); } },
+    { id: 'joues', lib: 'Paris joués', titre: 'Seulement les opportunités cliquées sur « Jouer »',
+      faire: () => { $('f-played').value = 'oui'; signalerChangement(); analyser(); } },
+    { id: 'clv', lib: 'CLV', titre: 'La performance face à la ligne de clôture',
+      faire: () => allerA('clv') },
+    { id: 'book', lib: 'Par bookmaker', faire: () => allerA('bookmakers') },
+    { id: 'sport', lib: 'Par sport', faire: () => ouvrirAxe('sport') },
+    { id: 'delai', lib: 'Par délai', faire: () => ouvrirAxe('delay') },
+    { id: 'cote', lib: 'Par cote', faire: () => ouvrirAxe('odds') },
+  ].filter(Boolean);
+  liste.forEach((p) => {
+    const b = el('button', 'puce', p.lib);
+    b.type = 'button';
+    b.dataset.preset = p.id;
+    if (p.titre) b.title = p.titre;
+    b.addEventListener('click', p.faire);
+    h.appendChild(b);
+  });
+  majPresets();
+}
+
+function majPresets() {
+  const f = filtresDuFormulaire();
+  const etat = {
+    global: !compteAvances() && !f.sports.length && !f.bookmakers.length && !f.markets.length
+      && !texteEv(f) && f.date_from === REFS.date_min && f.date_to === REFS.date_max,
+    premium: f.population === 'eligible_for_alert',
+    joues: f.played === 'oui',
+  };
+  document.querySelectorAll('#presets .puce').forEach((b) => {
+    b.classList.toggle('actif', !!etat[b.dataset.preset]);
+  });
+}
+
+/* ── Pages ─────────────────────────────────────────────────────────── */
+
+const PAGES = {
+  'vue-ensemble': { titre: 'Vue d\'ensemble', sous: 'Analysez les performances de votre système de détection', analyse: true },
+  performance: { titre: 'Performance', sous: 'ROI, P&L et volume de la population sélectionnée', analyse: true },
+  clv: { titre: 'CLV', sous: 'Le prix obtenu face à la ligne de clôture Pinnacle', analyse: true },
+  bookmakers: { titre: 'Bookmakers', sous: 'Opportunités, CLV et ROI par bookmaker', analyse: true },
+  marches: { titre: 'Marchés', sous: 'Par marché et par pari', analyse: true },
+  competitions: { titre: 'Compétitions', sous: 'Opportunités, CLV et ROI par compétition', analyse: true },
+  paris: { titre: 'Paris joués', sous: 'Le détail des opportunités, pari par pari', analyse: true },
+  avancee: { titre: 'Analyse avancée', sous: 'Découpez la population selon l\'axe de votre choix', analyse: true },
+  'mes-analyses': { titre: 'Mes analyses', sous: 'Vos configurations d\'analyse sauvegardées', analyse: false },
+  exporter: { titre: 'Exporter', sous: 'PDF et CSV de l\'analyse courante', analyse: false },
+  parametres: { titre: 'Paramètres', sous: 'Apparence, préférences et données', analyse: false },
+};
+
+function pageDuLien() {
+  const p = (location.hash || '').replace(/^#\/?/, '');
+  return PAGES[p] ? p : 'vue-ensemble';
+}
+
+function allerA(p) {
+  if (location.hash === '#/' + p) afficherPage(p);
+  else location.hash = '#/' + p;
+}
+
+function afficherPage(p) {
+  PAGE_ACTIVE = p;
+  const meta = PAGES[p];
+  document.querySelectorAll('.page').forEach((s) => { s.hidden = s.dataset.page !== p; });
+  document.querySelectorAll('.sb-lien').forEach((a) => {
+    const on = a.dataset.page === p;
+    a.classList.toggle('actif', on);
+    if (on) a.setAttribute('aria-current', 'page'); else a.removeAttribute('aria-current');
+  });
+  $('titre-page').textContent = meta.titre;
+  $('sous-titre-page').textContent = meta.sous;
+  document.title = `${meta.titre} — Valuebet Analytics`;
+  $('bloc-filtres').hidden = !meta.analyse;
+  $('avertissements').hidden = !meta.analyse;
+  const videLot = ANALYSE && !ANALYSE.summary.opportunities;
+  $('vide').hidden = !(videLot && meta.analyse);
+  fermerNavMobile();
+  fermerMenus();
+  window.scrollTo(0, 0);
+  if (meta.analyse) rendrePage(p);
+  if (p === 'mes-analyses') rendreMesAnalyses();
+  if (p === 'parametres') rendreParametres();
+}
+
+/* ── Navigation : barre latérale et téléphone ─────────────────────── */
+
+function replierSidebar(r) {
+  document.documentElement.classList.toggle('sb-replie', r);
+  stock.ecrire('vb-sidebar', r ? 'replie' : 'ouvert');
+  $('pr-sidebar').checked = r;
+  // Les graphiques sont dessinés à la largeur de leur conteneur : on les
+  // redessine une fois la transition de la barre terminée.
+  setTimeout(redessiner, 240);
+}
+
+function ouvrirNavMobile() {
+  $('app').classList.add('nav-ouverte');
+  $('voile-nav').hidden = false;
+}
+function fermerNavMobile() {
+  $('app').classList.remove('nav-ouverte');
+  $('voile-nav').hidden = true;
+}
+
+let LARGEUR_FENETRE = window.innerWidth;
+function redessiner() {
+  if (!ANALYSE) return;
+  RENDUES.delete(PAGE_ACTIVE);
+  rendrePage(PAGE_ACTIVE, true);
+}
+
+/* ── Thème ─────────────────────────────────────────────────────────
+ *
+ * Préférence enregistrée d'abord (« light » / « dark »), sinon le thème du
+ * système — suivi en direct tant que l'utilisateur n'a rien imposé. Le
+ * premier rendu est posé par le script de `<head>`, avant tout affichage. */
+
+function choixTheme() {
+  const t = stock.lire('vb-theme', 'system');
+  return t === 'light' || t === 'dark' ? t : 'system';
+}
+function appliquerTheme(choix, anime) {
+  const racine = document.documentElement;
+  const effectif = choix === 'system'
+    ? (window.matchMedia('(prefers-color-scheme: dark)').matches ? 'dark' : 'light')
+    : choix;
+  if (anime) {
+    racine.classList.add('theme-transition');
+    setTimeout(() => racine.classList.remove('theme-transition'), 320);
+  }
+  racine.setAttribute('data-theme', effectif);
+  segActif('pr-theme', 'themeChoix', choix);
+}
+
+/* ── Mes analyses ──────────────────────────────────────────────────
+ *
+ * Enregistrées dans CE navigateur (`localStorage`) : aucune route
+ * d'écriture n'est ajoutée à une API qui se veut en lecture seule. On stocke
+ * l'état du FORMULAIRE, pas une URL : restaurer, c'est remettre les cases et
+ * les bornes où elles étaient, puis relancer l'analyse.
+ */
+
+const CLE_ANALYSES = 'vb-analyses';
+const CHAMPS_ETAT = ['f-date-from', 'f-date-to', 'f-odds-min', 'f-odds-max', 'f-ev-min',
+  'f-ev-max', 'f-delay-min', 'f-delay-max', 'f-delay-unite', 'f-population', 'f-played',
+  'f-stake', 'f-gran'];
+
+function lireAnalyses() {
+  try { return JSON.parse(stock.lire(CLE_ANALYSES, '[]')) || []; } catch (_) { return []; }
+}
+function ecrireAnalyses(l) { stock.ecrire(CLE_ANALYSES, JSON.stringify(l)); }
+
+function capturerEtat() {
+  const e = { v: {}, c: {}, b: {}, t: {} };
+  CHAMPS_ETAT.forEach((id) => { e.v[id] = $(id).value; });
+  ['ev-split', 'cote-split', 'ev-cote-split'].forEach((id) => { e.t[id] = $(id).checked; });
+  document.querySelectorAll('#form .cases[id]').forEach((h) => {
+    const v = coches(h.id);
+    if (v.length) e.c[h.id] = v;
+  });
+  document.querySelectorAll('#form input[type="number"][data-cle]').forEach((n) => {
+    if (n.value) e.b[n.id] = n.value;
+  });
+  return e;
+}
+
+function restaurerEtat(e) {
+  $('reinit').click();
+  Object.entries(e.v || {}).forEach(([id, v]) => { if ($(id)) $(id).value = v; });
+  cocher('f-sports', (e.c || {})['f-sports'] || []);
+  Object.entries(e.t || {}).forEach(([id, v]) => { if ($(id)) $(id).checked = !!v; });
+  panneauxEvParSport();
+  panneauxCoteParSport();
+  panneauxEvParCote();
+  Object.entries(e.c || {}).forEach(([id, v]) => cocher(id, v));
+  Object.entries(e.b || {}).forEach(([id, v]) => { if ($(id)) $(id).value = v; });
+  deduireModes();
+  majAideDelai();
+  majAidePopulation();
+  signalerChangement();
+}
+
+function rendreMesAnalyses() {
+  if (!REFS) return;
+  $('ma-apercu').textContent = 'Configuration actuelle : '
+    + phrasesFiltres(filtresDuFormulaire()).join(' · ');
+  const h = $('ma-liste');
+  h.innerHTML = '';
+  const liste = lireAnalyses();
+  if (!liste.length) {
+    const c = el('article', 'carte analyse-carte');
+    c.appendChild(el('h3', null, 'Aucune analyse sauvegardée'));
+    c.appendChild(el('p', 'desc', 'Réglez la période et les filtres, puis sauvegardez : '
+      + 'l\'analyse se recharge ensuite en un clic, filtres avancés compris.'));
+    h.appendChild(c);
+    return;
+  }
+  liste.forEach((a, i) => {
+    const c = el('article', 'carte analyse-carte');
+    c.appendChild(el('h3', null, a.nom));
+    c.appendChild(el('div', 'quand', 'Sauvegardée le ' + new Date(a.cree)
+      .toLocaleString('fr-FR', { day: 'numeric', month: 'long', year: 'numeric', hour: '2-digit', minute: '2-digit' })));
+    c.appendChild(el('div', 'desc', a.resume));
+    const act = el('div', 'actions');
+    const charger = el('button', 'btn btn-primaire btn-petit', 'Charger et analyser');
+    charger.type = 'button';
+    charger.addEventListener('click', () => {
+      restaurerEtat(a.etat || {});
+      allerA('vue-ensemble');
+      analyser();
+      toast(`Analyse « ${a.nom} » chargée.`);
+    });
+    const suppr = el('button', 'btn btn-fantome btn-petit', 'Supprimer');
+    suppr.type = 'button';
+    suppr.addEventListener('click', () => {
+      const l = lireAnalyses();
+      l.splice(i, 1);
+      ecrireAnalyses(l);
+      rendreMesAnalyses();
+    });
+    act.appendChild(charger);
+    act.appendChild(suppr);
+    c.appendChild(act);
+    h.appendChild(c);
+  });
+}
+
+function sauverAnalyse() {
+  const nom = $('ma-nom').value.trim()
+    || `Analyse du ${new Date().toLocaleDateString('fr-FR')}`;
+  const l = lireAnalyses();
+  l.unshift({ nom, cree: new Date().toISOString(),
+    resume: phrasesFiltres(filtresDuFormulaire()).join(' · '), etat: capturerEtat() });
+  ecrireAnalyses(l.slice(0, 50));
+  $('ma-nom').value = '';
+  rendreMesAnalyses();
+  toast(`Analyse « ${nom} » sauvegardée dans ce navigateur.`);
+}
+
+/* ── Exports ───────────────────────────────────────────────────────
+ *
+ * ⚠️ AUCUNE BIBLIOTHÈQUE. Le PDF passe par l'impression du navigateur ; le
+ * CSV est une simple sérialisation de ce que l'API a rendu — pleine
+ * précision, séparateur « ; » et virgule décimale pour un tableur français,
+ * BOM UTF-8 pour les accents. Aucune valeur n'y est recalculée.
+ */
+
+const MAX_CSV = 20000;
+
+function toast(message, reste) {
+  const t = $('toast');
+  t.textContent = message;
+  t.hidden = false;
+  clearTimeout(toast.minuteur);
+  if (!reste) toast.minuteur = setTimeout(() => { t.hidden = true; }, 3800);
+}
+
+function csvCellule(v) {
+  if (v === null || v === undefined) return '';
+  if (typeof v === 'number') return String(v).replace('.', ',');
+  if (typeof v === 'boolean') return v ? 'oui' : 'non';
+  const s = String(v);
+  return /[;"\n\r]/.test(s) ? '"' + s.replace(/"/g, '""') + '"' : s;
+}
+function csvTexte(entetes, lignes) {
+  return '﻿' + [entetes].concat(lignes)
+    .map((l) => l.map(csvCellule).join(';')).join('\r\n');
+}
+function telecharger(nom, texte) {
+  const blob = new Blob([texte], { type: 'text/csv;charset=utf-8' });
+  const lien = URL.createObjectURL(blob);
+  const a = el('a');
+  a.href = lien;
+  a.download = nom;
+  document.body.appendChild(a);
+  a.click();
+  a.remove();
+  setTimeout(() => URL.revokeObjectURL(lien), 2000);
+}
+function nomFichier(quoi) {
+  const f = (ANALYSE && ANALYSE.filters) || {};
+  return `valuebet-${quoi}-${f.date_from || REFS.date_min}_${f.date_to || REFS.date_max}.csv`;
+}
+/* Un export décrit l'analyse AFFICHÉE. Des filtres modifiés depuis
+ * produiraient un fichier que rien à l'écran ne permet de vérifier. */
+function exportPossible() {
+  if (!ANALYSE) { toast('Lancez d\'abord une analyse.'); return false; }
+  if (SALE) { toast('Filtres modifiés : relancez « Analyser » avant d\'exporter.'); return false; }
+  return true;
+}
+
+const CHAMPS_CSV = [['opportunities', 'opportunites'], ['matches', 'matchs'],
+  ['settled', 'reglees'], ['settlement_rate', 'taux_reglement_pct'], ['played', 'jouees'],
+  ['played_rate', 'taux_joue_pct'], ['clv', 'clv_pct'], ['clv_n', 'clv_n'],
+  ['clv_coverage', 'couverture_clv_pct'], ['clv_median', 'clv_mediane_pct'],
+  ['clv_positive_rate', 'clv_positives_pct'], ['roi', 'roi_pct'], ['pnl', 'pnl_eur'],
+  ['stake_total', 'mise_totale_eur'], ['ev_mean', 'ev_moyenne_pct'],
+  ['odds_mean', 'cote_moyenne'], ['won', 'gagnes'], ['lost', 'perdus'], ['void', 'annules']];
+
+function exporterCsvDecoupes() {
+  fermerMenus();
+  if (!exportPossible()) return;
+  const d = ANALYSE;
+  const axes = [['sport', 'by_sport'], ['bookmaker', 'by_book'], ['marche', 'by_market'],
+    ['pari', 'by_outcome'], ['competition', 'by_league'], ['cote', 'by_odds'],
+    ['ev', 'by_ev'], ['delai', 'by_delay'], ['periode', 'by_time']];
+  const lignes = [['ensemble', 'tout', 'Tout le lot'].concat(CHAMPS_CSV.map(([c]) => d.summary[c]))];
+  axes.forEach(([nom, champ]) => (d[champ] || []).forEach((t) => {
+    lignes.push([nom, t.key, lib(t)].concat(CHAMPS_CSV.map(([c]) => t[c])));
+  }));
+  telecharger(nomFichier('decoupes'),
+    csvTexte(['decoupe', 'cle', 'libelle'].concat(CHAMPS_CSV.map(([, n]) => n)), lignes));
+  toast(`${ent(lignes.length)} lignes exportées.`);
+}
+
+const COLONNES_CSV = [['detected_at', 'detecte_le'], ['start_time', 'coup_envoi'],
+  ['sport', 'sport'], ['league', 'competition'], ['event', 'match'], ['market', 'marche'],
+  ['selection', 'pari'], ['line', 'ligne'], ['bookmaker', 'bookmaker'], ['odds', 'cote'],
+  ['fair_odd', 'cote_juste'], ['ev_pct', 'ev_pct'], ['closing_fair_odd', 'cloture_juste'],
+  ['clv_pct', 'clv_pct'], ['delay_h', 'delai_h'], ['played', 'joue'],
+  ['notified_at', 'alerte_le'], ['result', 'resultat'], ['stake', 'mise_eur'], ['pnl', 'pnl_eur']];
+
+async function exporterCsvOpportunites() {
+  fermerMenus();
+  if (!exportPossible()) return;
+  const items = [];
+  let total = 0;
+  toast('Export en cours…', true);
+  try {
+    for (let page = 1; ; page += 1) {
+      const r = await appel(API_DETAIL, parametres({ page, per_page: 500,
+        sort: 'detected_at', order: 'desc' }));
+      total = r.total;
+      items.push(...r.items);
+      toast(`Export en cours… ${ent(Math.min(items.length, total))} / ${ent(total)}`, true);
+      if (page >= r.pages || items.length >= MAX_CSV) break;
+    }
+  } catch (e) {
+    toast('Export impossible : ' + e.message);
+    return;
+  }
+  const lot = items.slice(0, MAX_CSV);
+  telecharger(nomFichier('opportunites'), csvTexte(COLONNES_CSV.map(([, n]) => n),
+    lot.map((i) => COLONNES_CSV.map(([k]) => i[k]))));
+  toast(lot.length < total
+    ? `CSV limité aux ${ent(MAX_CSV)} opportunités les plus récentes sur ${ent(total)}.`
+    : `${ent(lot.length)} opportunités exportées.`);
+}
+
+/* ── Paramètres ────────────────────────────────────────────────────── */
+
+function majAidePopulation() {
+  const p = (REFS.populations || []).find((x) => x.value === $('f-population').value);
+  $('aide-population').textContent = p
+    ? p.explication + (p.limites && p.limites.length ? ' Limite : ' + p.limites.join(' ') : '')
+    : '';
+}
+
+function rendreParametres() {
+  segActif('pr-theme', 'themeChoix', choixTheme());
+  $('pr-sidebar').checked = document.documentElement.classList.contains('sb-replie');
+  $('pr-lignes').value = String(PAR_PAGE);
+  if (!REFS) return;
+  const dl = $('pr-donnees');
+  dl.innerHTML = '';
+  const per = REFS.perimetre || {};
+  const ex = per.exclus || {};
+  const lignes = [
+    ['Période des données', `${dateLongue(REFS.date_min, true)} → ${dateLongue(REFS.date_max, true)}`],
+    ['Sports analysés', (per.sports || REFS.sports).map(nomSport).join(', ')],
+    ['Marchés analysés', (per.markets || REFS.markets).map(nomMarche).join(', ')],
+    ['Bookmakers', ent(REFS.bookmakers.length)],
+    ['Compétitions', ent(REFS.leagues.length)],
+  ];
+  if (ex.total_detections !== undefined) lignes.push(['Détections en base', ent(ex.total_detections)]);
+  if (ex.sport_hors_perimetre !== undefined) lignes.push(['Hors périmètre — sport', ent(ex.sport_hors_perimetre)]);
+  if (ex.marche_hors_perimetre !== undefined) lignes.push(['Hors périmètre — marché', ent(ex.marche_hors_perimetre)]);
+  if (ex.sans_evenement !== undefined) lignes.push(['Sans événement', ent(ex.sans_evenement)]);
+  lignes.forEach(([k, v]) => {
+    dl.appendChild(el('dt', null, k));
+    dl.appendChild(el('dd', null, v));
+  });
+  $('pr-perimetre').textContent = per.pourquoi || '';
+}
+
+/* ── Démarrage ─────────────────────────────────────────────────────── */
+
+function brancherInterface() {
+  // Navigation.
+  window.addEventListener('hashchange', () => afficherPage(pageDuLien()));
+  $('sb-replier').addEventListener('click', () =>
+    replierSidebar(!document.documentElement.classList.contains('sb-replie')));
+  $('menu-mobile').addEventListener('click', ouvrirNavMobile);
+  $('voile-nav').addEventListener('click', fermerNavMobile);
+
+  // Thème.
+  appliquerTheme(choixTheme(), false);
+  $('theme').addEventListener('click', () => {
+    const sombre = document.documentElement.getAttribute('data-theme') === 'dark';
+    stock.ecrire('vb-theme', sombre ? 'light' : 'dark');
+    appliquerTheme(sombre ? 'light' : 'dark', true);
+  });
+  const mq = window.matchMedia('(prefers-color-scheme: dark)');
+  const suivreSysteme = () => { if (choixTheme() === 'system') appliquerTheme('system', true); };
+  if (mq.addEventListener) mq.addEventListener('change', suivreSysteme);
+  document.querySelectorAll('#pr-theme button').forEach((b) => {
+    b.addEventListener('click', () => {
+      stock.ecrire('vb-theme', b.dataset.themeChoix);
+      appliquerTheme(b.dataset.themeChoix, true);
+    });
+  });
+  $('pr-sidebar').addEventListener('change', () => replierSidebar($('pr-sidebar').checked));
+  $('pr-lignes').addEventListener('change', () => {
+    PAR_PAGE = Number($('pr-lignes').value) || 25;
+    stock.ecrire('vb-lignes', String(PAR_PAGE));
+    RENDUES.delete('paris');
+  });
+
+  // Fermetures globales.
+  document.addEventListener('click', fermerMenus);
+  document.addEventListener('keydown', (e) => {
+    if (e.key !== 'Escape') return;
+    fermerMenus();
+    fermerTiroir();
+    fermerNavMobile();
+  });
+  window.addEventListener('resize', () => {
+    clearTimeout(redessiner.minuteur);
+    redessiner.minuteur = setTimeout(() => {
+      if (Math.abs(window.innerWidth - LARGEUR_FENETRE) < 24) return;
+      LARGEUR_FENETRE = window.innerWidth;
+      redessiner();
+    }, 180);
+  });
+}
+
 async function demarrer() {
+  PAR_PAGE = Number(stock.lire('vb-lignes', '25')) || 25;
+  brancherInterface();
+  afficherPage(pageDuLien());
+  squelettesKpi('kpis', 4);
+
   try {
     REFS = await appel(API_FILTERS);
   } catch (e) {
+    $('sb-point').className = 'point ko';
+    $('sb-statut').textContent = 'API indisponible';
+    $('contexte').textContent = 'Filtres indisponibles.';
+    $('kpis').innerHTML = '';
     avertissements(['Impossible de lire les filtres : ' + e.message]);
     return;
   }
+  $('sb-point').className = 'point ok';
+  $('sb-statut').textContent = 'API connectée';
+  $('sb-donnees').textContent = `Données jusqu'au ${dateLongue(REFS.date_max, true)}`;
+  // ⚠️ LE PÉRIMÈTRE EST ANNONCÉ. Un total qui ne couvre pas tout ce que le
+  // moteur détecte doit le DIRE : sans ça, « 27 053 opportunités » se lit
+  // comme « tout ce que j'ai détecté », et l'écart avec les chiffres du
+  // daemon passerait pour un bug.
+  const per = REFS.perimetre || { sports: REFS.sports, markets: REFS.markets };
+  $('sb-donnees').title = `${(per.sports || []).map(nomSport).join(' + ')} · `
+    + `${(per.markets || []).map(nomMarche).join(' + ')}`
+    + (per.pourquoi ? ' — ' + per.pourquoi : '');
 
   groupeCases($('f-sports'), REFS.sports,
-    { labels: REFS.sports_labels, courte: true,
+    { labels: REFS.sports_labels, courte: true, tous: 'Tous les sports',
       onChange: () => { panneauxEvParSport(); panneauxCoteParSport(); } });
-  groupeCases($('f-books'), REFS.bookmakers, { labels: REFS.bookmakers_labels });
+  groupeCases($('f-books'), REFS.bookmakers,
+    { labels: REFS.bookmakers_labels, tous: 'Tous les bookmakers' });
   groupeCases($('f-markets'), REFS.markets,
-    { labels: REFS.markets_labels, courte: true });
+    { labels: REFS.markets_labels, courte: true, tous: 'Tous les marchés' });
+  groupeCases($('f-league'), REFS.leagues, { tous: 'Toutes les compétitions' });
+  $('aide-ligue').textContent = `${ent(REFS.leagues.length)} compétitions — `
+    + 'la recherche masque, elle ne décoche rien.';
   /* ⚠️ LES LIBELLÉS VIENNENT DU SERVEUR, y compris la notation « 1 X 2 ».
    * Les écrire ici ferait exister deux vocabulaires pour le même pari, et
    * l'un des deux finirait par ne plus correspondre à ce que le filtre
    * envoie au serveur. */
   groupeCases($('f-outcomes'),
     (REFS.outcomes || []).map((o) => ({ key: o.value, label: o.libelle })),
-    { courte: true });
-  groupeCases($('f-ev-bands'), REFS.ev_bands, { courte: true });
+    { courte: true, tous: 'Tous les paris' });
+  groupeCases($('f-ev-bands'), REFS.ev_bands, { courte: true, tous: 'Toutes les tranches' });
   $('ev-split').addEventListener('change', panneauxEvParSport);
   panneauxEvParSport();
-  groupeCases($('f-odds-bands'), bandesCote(), { courte: true });
+  groupeCases($('f-odds-bands'), bandesCote(), { courte: true, tous: 'Toutes les tranches' });
   $('cote-split').addEventListener('change', panneauxCoteParSport);
   panneauxCoteParSport();
   $('ev-cote-split').addEventListener('change', panneauxEvParCote);
@@ -1316,15 +2853,6 @@ async function demarrer() {
   boutonsDelai();
   pliage();
 
-  const dl = $('ligues');
-  REFS.leagues.forEach((l) => {
-    const o = el('option');
-    o.value = l;
-    dl.appendChild(o);
-  });
-  $('aide-ligue').textContent =
-    `${ent(REFS.leagues.length)} compétitions — tape pour chercher, nom exact`;
-
   const sp = $('f-population');
   REFS.populations.forEach((p) => {
     // Le LIBELLÉ vient du serveur ; `value` reste la valeur canonique, celle
@@ -1334,45 +2862,98 @@ async function demarrer() {
     o.value = p.value;
     sp.appendChild(o);
   });
-  const majAide = () => {
-    const p = REFS.populations.find((x) => x.value === sp.value);
-    $('aide-population').textContent = p ? p.explication : '';
-  };
-  sp.addEventListener('change', majAide);
-  majAide();
-
-  // ⚠️ LE PÉRIMÈTRE EST ANNONCÉ DANS L'EN-TÊTE. Un total qui ne couvre pas
-  // tout ce que le moteur détecte doit le DIRE : sans ça, « 27 053
-  // opportunités » se lit comme « tout ce que j'ai détecté », et l'écart avec
-  // les chiffres du daemon passerait pour un bug.
-  const per = REFS.perimetre || { sports: REFS.sports, markets: REFS.markets };
-  const nomsSports = (per.sports || [])
-    .map((x) => (REFS.sports_labels && REFS.sports_labels[x]) || x).join(' + ');
-  const nomsMarches = (per.markets || [])
-    .map((x) => (REFS.markets_labels && REFS.markets_labels[x]) || x).join(' + ');
-  $('perimetre').textContent =
-    `${nomsSports} · ${nomsMarches} · ${REFS.bookmakers.length} books · `
-    + `${ent(REFS.leagues.length)} compétitions · ${REFS.date_min} → ${REFS.date_max}`;
-  if (per.pourquoi) $('perimetre').title = per.pourquoi;
+  sp.addEventListener('change', majAidePopulation);
+  majAidePopulation();
 
   if (REFS.date_min) $('f-date-from').value = REFS.date_min;
   if (REFS.date_max) $('f-date-to').value = REFS.date_max;
 
+  // Tout changement de filtre, où qu'il ait lieu, passe par le même chemin.
+  ['form', 'periode'].forEach((id) => {
+    $(id).addEventListener('input', signalerChangement);
+    $(id).addEventListener('change', signalerChangement);
+  });
+
+  // Modes du tiroir.
+  document.querySelectorAll('#cote-mode button').forEach((b) =>
+    b.addEventListener('click', () => appliquerModeCote(b.dataset.mode, true)));
+  document.querySelectorAll('#ev-mode button').forEach((b) =>
+    b.addEventListener('click', () => appliquerModeEv(b.dataset.mode, true)));
+  deduireModes();
+
+  // Menus de la barre.
+  brancherMenu('m-sport', menuUnique('f-sports', REFS.sports, nomSport, 'Tous les sports',
+    () => { panneauxEvParSport(); panneauxCoteParSport(); }));
+  brancherMenu('m-books', menuBooks);
+  brancherMenu('m-market', menuUnique('f-markets', REFS.markets, nomMarche, 'Tous les marchés'));
+  brancherMenu('m-ev', menuEv);
+  brancherMenu('m-export', null);
+
+  // Tiroir.
+  $('ouvrir-filtres').addEventListener('click', () => ouvrirTiroir());
+  $('fermer-filtres').addEventListener('click', fermerTiroir);
+  $('voile-filtres').addEventListener('click', fermerTiroir);
+  $('appliquer').addEventListener('click', () => { fermerTiroir(); analyser(); });
+  $('aa-ouvrir-segmentation').addEventListener('click', () => ouvrirTiroir('champ-segmentation'));
+
+  // Analyse et graphiques.
   $('analyser').addEventListener('click', analyser);
   $('m-mesure').addEventListener('change', matrice);
   $('s-lancer').addEventListener('click', chercherSegments);
+  document.querySelectorAll('#evol-mode button').forEach((b) => b.addEventListener('click', () => {
+    MODE_EVOL = b.dataset.mode;
+    if (ANALYSE && ANALYSE.summary.opportunities) grapheEvolution(ANALYSE);
+  }));
+  document.querySelectorAll('#fin-mode button').forEach((b) => b.addEventListener('click', () => {
+    MODE_FIN = b.dataset.mode;
+    if (ANALYSE && ANALYSE.summary.opportunities) grapheFinance(ANALYSE);
+  }));
+  document.querySelectorAll('#gran-rapide button').forEach((b) => b.addEventListener('click', () => {
+    $('f-gran').value = b.dataset.gran;
+    signalerChangement();
+    analyser();
+  }));
+  document.querySelectorAll('#pj-filtre button').forEach((b) => b.addEventListener('click', () => {
+    $('f-played').value = b.dataset.played;
+    signalerChangement();
+    analyser();
+  }));
+  $('cmp-recherche').addEventListener('input', () => { LIMITE_CMP = 50; tableCompetitions(); });
+  $('aa-recherche').addEventListener('input', () => { if (ANALYSE) rendreAvancee(ANALYSE); });
+
   /* ⚠️ AUCUNE BIBLIOTHÈQUE. L'impression du navigateur produit déjà un PDF
    * fidèle, hors ligne, avec les polices et les graphiques rendus tels qu'ils
-   * s'affichent. Embarquer un générateur PDF ajouterait des centaines de
-   * kilo-octets, une seconde mise en page à maintenir, et un téléchargement
-   * de dépendance — ce que cette VM s'interdit. La mise en page papier vit
-   * dans `@media print`, à côté du reste du style. */
-  $('pdf').addEventListener('click', () => window.print());
+   * s'affichent. La mise en page papier vit dans `@media print`. */
+  $('pdf').addEventListener('click', () => {
+    fermerMenus();
+    if (exportPossible()) window.print();
+  });
+  $('csv-opps').addEventListener('click', exporterCsvOpportunites);
+  $('csv-decoupes').addEventListener('click', exporterCsvDecoupes);
+  $('ex-pdf').addEventListener('click', () => $('pdf').click());
+  $('ex-csv-opps').addEventListener('click', exporterCsvOpportunites);
+  $('ex-csv-decoupes').addEventListener('click', exporterCsvDecoupes);
+
+  // Mes analyses.
+  $('ma-sauver').addEventListener('click', sauverAnalyse);
+  $('ma-nom').addEventListener('keydown', (e) => { if (e.key === 'Enter') sauverAnalyse(); });
+
+  // État vide.
+  $('vide-periode').addEventListener('click', () => {
+    $('f-date-from').value = REFS.date_min || '';
+    $('f-date-to').value = REFS.date_max || '';
+    signalerChangement();
+    analyser();
+  });
+  $('vide-reinit').addEventListener('click', () => { $('reinit').click(); analyser(); });
+  $('pr-reinit').addEventListener('click', () => {
+    $('reinit').click();
+    toast('Filtres réinitialisés — cliquez « Analyser » pour les appliquer.');
+  });
 
   $('reinit').addEventListener('click', () => {
     $('form').reset();
-    document.querySelectorAll('.cases input[type="checkbox"]')
-      .forEach((c) => { c.checked = false; });
+    document.querySelectorAll('#form .cases').forEach((h) => { if (h.id) cocher(h.id, []); });
     $('delay-rapides').querySelectorAll('button')
       .forEach((b) => b.classList.remove('actif'));
     panneauxEvParSport();
@@ -1380,27 +2961,21 @@ async function demarrer() {
     // Sans ça, `form.reset()` décocherait la case et laisserait les bornes
     // saisies à l'écran : un réglage visible qui ne part plus au serveur.
     panneauxEvParCote();
+    appliquerModeCote('toutes', false);
+    appliquerModeEv('minimum', false);
     majAideDelai();
     if (REFS.date_min) $('f-date-from').value = REFS.date_min;
     if (REFS.date_max) $('f-date-to').value = REFS.date_max;
-    majAide();
+    majAidePopulation();
+    signalerChangement();
   });
-  $('f-gran').addEventListener('change', () => { if (ANALYSE) analyser(); });
 
-  const racine = document.documentElement;
-  $('theme').addEventListener('click', () => {
-    const sombre = racine.getAttribute('data-theme') === 'dark';
-    racine.setAttribute('data-theme', sombre ? 'light' : 'dark');
-    try { localStorage.setItem('vb-theme', sombre ? 'light' : 'dark'); } catch (_) {}
-  });
-  try {
-    const t = localStorage.getItem('vb-theme');
-    if (t) racine.setAttribute('data-theme', t);
-    else if (matchMedia('(prefers-color-scheme: dark)').matches) {
-      racine.setAttribute('data-theme', 'dark');
-    }
-  } catch (_) {}
-
+  presets();
+  majResumes();
+  contexte();
+  INIT = false;
+  if (PAGE_ACTIVE === 'parametres') rendreParametres();
+  if (PAGE_ACTIVE === 'mes-analyses') rendreMesAnalyses();
   analyser();
 }
 
