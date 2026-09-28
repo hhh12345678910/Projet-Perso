@@ -9,6 +9,8 @@ le match dans nos paris joués, puis écrit le résultat avec la source
 * jamais d'écrasement : un match qui a déjà un résultat est laissé tel quel ;
 * une ligne qui ne désigne pas exactement UN match est refusée (aucun match,
   ou plusieurs clés possibles) — mieux vaut un pari sans résultat qu'un faux ;
+  seule exception : le même match (noms exacts) sous deux horaires, où la
+  clé à l'heure exacte de la ligne est retenue ;
 * une ligne dont le sport contredit celui du match en base est refusée.
 
 Ce que chaque sport écrit (`settle()` compare `home + away` à la ligne d'un
@@ -162,6 +164,12 @@ def main(argv=None) -> int:
                       if c[0].split("::", 1)[1] == f"{dom}__vs__{ext}"]
             if len(cles) > 1 and len(exacts) == 1:
                 cles = exacts      # « odense » écrit en entier ≠ « odensew »
+            elif len(exacts) > 1:
+                # Le MÊME match sous deux horaires (heure révisée) : chaque
+                # ligne du fichier porte l'heure de sa clé — celle-là seule.
+                a_l_heure = [c for c in exacts if _instant_cle(c[0]) == quand]
+                if len(a_l_heure) == 1:
+                    cles = a_l_heure
             if len(cles) != 1:
                 print(f"  REFUS   {libelle} : {len(cles)} match(s) trouvé(s) "
                       f"{[k for k, _ in cles]}")
