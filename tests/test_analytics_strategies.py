@@ -325,3 +325,78 @@ def test_les_cartes_ne_sont_pas_des_VARIANTES_les_unes_des_autres(tmp_path):
     # Les variantes passent APRÈS les pistes distinctes, et ne sont pas comptées.
     assert res["counts"]["shown"] == len(cartes)
     assert [s["rank"] for s in cartes] == list(range(1, len(cartes) + 1))
+
+
+# ── La configuration porte SA définition, EV comprise ─────────────────
+
+@pytest.fixture
+def base_ev(tmp_path):
+    """Un même bookmaker, deux tranches d'EV aux résultats opposés :
+    EV 6 % (5-8 %) gagnante, EV 10 % (8-15 %) perdante."""
+    return monter(tmp_path, _serie(1, "betano_be", 200, cloture=1.8, taux=0.62, ev=6.0)
+                  + _serie(1001, "betano_be", 200, cloture=2.1, taux=0.42, ev=10.0))
+
+
+def test_une_configuration_EV_8_15_porte_ses_BORNES(base_ev):
+    s = _par_id(_trouver(base_ev))["bookmaker=betano_be|ev=8-15%"]
+    ev = next(c for c in s["criteria"] if c["dimension"] == "ev")
+    assert (ev["value"], ev["display"], ev["min"], ev["max"]) == ("8-15%", "8-15%", 8.0, 15.0)
+    assert ev["min_inclusive"] is True and ev["max_inclusive"] is False
+    assert ev["unit"] == "%" and ev["rule"] == "8 % ≤ EV < 15 %"
+    # Rejouable tel quel dans l'Analytics : même tranche, même libellé.
+    assert s["analytics_filters"]["ev_bands"] == ["8-15%"]
+
+
+def test_EV_5_8_et_EV_8_15_sont_DEUX_configurations(base_ev):
+    ids = _par_id(_trouver(base_ev))
+    a, b = ids["bookmaker=betano_be|ev=5-8%"], ids["bookmaker=betano_be|ev=8-15%"]
+    assert a["summary"]["settled"] == b["summary"]["settled"] == 200
+    assert a["summary"]["roi"] > 0 > b["summary"]["roi"]
+    assert a["summary"]["clv"] > 0 > b["summary"]["clv"]
+    for k in ("train", "validation", "stability", "robustness", "score"):
+        assert a[k] != b[k], k
+
+
+def test_l_EV_MOYENNE_reste_une_mesure_distincte_du_critere(base_ev):
+    s = _par_id(_trouver(base_ev))["bookmaker=betano_be|ev=8-15%"]
+    assert s["summary"]["ev_mean"] == pytest.approx(10.0)
+    assert next(c for c in s["criteria"] if c["dimension"] == "ev")["display"] == "8-15%"
+
+
+def test_sans_critere_EV_aucune_tranche_n_est_inventee(base):
+    s = _par_id(_trouver(base))["bookmaker=betano_be"]
+    assert [c["dimension"] for c in s["criteria"]] == ["bookmaker"]
+    assert all("rule" not in c for c in s["criteria"])
+    assert [u["dimension"] for u in s["unconstrained"]] == ["market", "outcome", "ev", "odds", "delay"]
+    assert s["analytics_filters"]["ev_bands"] == []
+
+
+def test_les_criteres_sont_dans_l_ORDRE_des_dimensions(base_ev):
+    ordre = ["bookmaker", "market", "outcome", "ev", "odds", "delay"]
+    for s in _trouver(base_ev)["strategies"]:
+        dims = [c["dimension"] for c in s["criteria"]]
+        assert dims == sorted(dims, key=ordre.index)
+        assert not set(dims) & {u["dimension"] for u in s["unconstrained"]}
+        assert len(dims) + len(s["unconstrained"]) == len(ordre)
+
+
+def test_les_bornes_rendent_LA_MEME_bande_que_l_Analytics():
+    """Les bornes ne sont pas recopiées : relues, elles doivent ramener chaque
+    valeur dans la bande d'origine (borne basse incluse, haute exclue)."""
+    from src.analytics.perimetre import bande_delai
+    from src.analytics.service import _bande_cote, _bande_ev
+    classer = {"ev": _bande_ev, "odds": _bande_cote, "delay": bande_delai}
+    for dim, (table, _u, _n) in sf._bornes_bandes().items():
+        assert table, dim
+        for lab, (lo, hi) in table.items():
+            if lo is not None:
+                assert classer[dim](lo) == lab, (dim, lab, lo)
+            if hi is not None:
+                assert classer[dim](hi - 1e-9) == lab, (dim, lab, hi)
+                assert classer[dim](hi) != lab, (dim, lab, hi)
+
+
+def test_une_borne_n_est_jamais_arrondie():
+    assert sf._regle("EV", 7.5, 12.5, "%") == "7,5 % ≤ EV < 12,5 %"
+    assert sf._regle("EV", 10.0, None, "%") == "EV ≥ 10 %"
+    assert sf._regle("Cote", 1.8, 2.3, "") == "1,8 ≤ Cote < 2,3"

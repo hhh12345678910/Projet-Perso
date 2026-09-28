@@ -1145,6 +1145,8 @@ td.num { text-align: right; }
 .sf-rang-btn:hover { border-color: var(--marque-bord); }
 .sf-absent { color: var(--encre-muet); }
 .sf-crit-cell { white-space: nowrap; }
+.sf-sans-filtre { margin: 6px 0 0; font-size: 11.5px; color: var(--encre-muet); }
+.sf-dd-val.sf-libre { font-weight: 450; color: var(--encre-muet); }
 .sf-valid-cell .sf-v { display: block; white-space: nowrap; color: var(--encre-2); }
 .sf-valid-cell .sf-v2 { font-size: 11.5px; color: var(--encre-muet); }
 .sf-valid-cell b { font-weight: 600; }

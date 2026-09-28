@@ -410,13 +410,79 @@ def _diversifier(retenues) -> list:
 
 # ── Rendu d'une configuration ─────────────────────────────────────────
 
+def _bornes_bandes() -> dict:
+    """Les BORNES exactes de chaque bande, lues dans les définitions que
+    l'Analytics utilise — jamais recopiées :
+
+      - EV    : `main._EV_BUCKET_ORDER` / `main._ev_bucket` (libellés « 5-8% »,
+                « <5% », « 35%+ » ; un test vérifie que les bornes lues ici
+                rendent bien la même bande par `_ev_bucket`) ;
+      - cote  : `pnl_detections.BANDES_COTE` ;
+      - délai : `perimetre.BANDES_DELAI`.
+
+    Toutes suivent la même convention : borne basse INCLUSE, borne haute
+    EXCLUE (`lo <= x < hi`). Rendue telle quelle, sans arrondi."""
+    from .service import _bandes_cote, _ordre_ev
+
+    ev = {}
+    for lab in _ordre_ev():
+        t = lab.replace("%", "").strip()
+        if t.startswith("<"):
+            ev[lab] = (None, float(t[1:]))
+        elif t.endswith("+"):
+            ev[lab] = (float(t[:-1]), None)
+        else:
+            lo, hi = t.split("-")
+            ev[lab] = (float(lo), float(hi))
+    cote = {lab: (lo, None if hi >= 1e8 else hi) for lab, lo, hi in _bandes_cote()}
+    delai = {lab: (lo, hi) for lab, lo, hi in BANDES_DELAI}
+    return {"ev": (ev, "%", "EV"), "odds": (cote, "", "Cote"), "delay": (delai, "h", "Délai")}
+
+
+def _nombre(x) -> str:
+    """Un nombre SANS arrondi qui change le sens : 7.5 → « 7,5 », 8.0 → « 8 »."""
+    return (f"{x:g}").replace(".", ",")
+
+
+def _regle(nom, lo, hi, unite) -> str:
+    """La contrainte exacte, en toutes lettres : « 8 % ≤ EV < 15 % »."""
+    u = (" " + unite) if unite else ""
+    if lo is not None and hi is not None:
+        return f"{_nombre(lo)}{u} ≤ {nom} < {_nombre(hi)}{u}"
+    if lo is not None:
+        return f"{nom} ≥ {_nombre(lo)}{u}"
+    return f"{nom} < {_nombre(hi)}{u}"
+
+
 def _criteres(c, dims) -> list:
+    """LA DÉFINITION de la configuration : un critère par dimension qui a servi
+    à construire le lot, dans l'ordre fixe bookmaker, marché, pari, EV, cote,
+    délai. Une bande (EV, cote, délai) porte aussi ses bornes numériques et sa
+    règle exacte — « 8-15% » veut dire 8 % ≤ EV < 15 %, comme le filtre
+    `ev_bands` de l'Analytics, qui lit la même fonction."""
+    bornes = _bornes_bandes()
     out = [{"dimension": "bookmaker", "label": "Bookmaker", "value": c["cle"][0],
             "display": libelle_groupe_book(c["cle"][0])}]
     for i, v in zip(c["indices"], c["cle"][1:]):
         cle, lib, _x, affiche = dims[i]
-        out.append({"dimension": cle, "label": lib, "value": v, "display": affiche(v)})
+        crit = {"dimension": cle, "label": lib, "value": v, "display": affiche(v)}
+        if cle in bornes:
+            table, unite, nom = bornes[cle]
+            lo, hi = table.get(v, (None, None))
+            if lo is not None or hi is not None:
+                crit.update(min=lo, max=hi, unit=unite, min_inclusive=True,
+                            max_inclusive=False, rule=_regle(nom, lo, hi, unite))
+        out.append(crit)
     return out
+
+
+def _sans_filtre(c, dims) -> list:
+    """Les dimensions que la configuration NE restreint PAS : tous les paris y
+    sont inclus, quelle que soit leur valeur. Dites, pour que personne ne
+    prenne une absence pour un oubli (ni une EV moyenne pour un critère)."""
+    utilisees = set(c["indices"])
+    return [{"dimension": d[0], "label": d[1]}
+            for i, d in enumerate(dims) if i not in utilisees]
 
 
 def _ident(c, dims) -> str:
@@ -640,6 +706,7 @@ def _rendre(c, rang, dims, stake, min_n, decoupe, objectif, *, bootstrap,
         "depth": c["profondeur"],
         "title": _titre(criteres),
         "criteria": criteres,
+        "unconstrained": _sans_filtre(c, dims),
         "summary": {k: s[k] for k in (
             "opportunities", "settled", "stake_total", "pnl", "roi", "clv", "clv_n",
             "clv_coverage", "clv_median", "clv_positive_rate", "ev_mean", "odds_mean",

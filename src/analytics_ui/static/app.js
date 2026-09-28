@@ -3249,6 +3249,20 @@ function sfCritere(s, dim) {
   const c = (s.criteria || []).find((x) => x.dimension === dim);
   return c ? (c.display || c.value || null) : null;
 }
+/** Les critères de la configuration, dans l'ordre fixe des dimensions
+ * (bookmaker, marché, pari, EV, cote, délai) — rendus par le serveur. */
+function sfCriteresOrdonnes(s) {
+  const ordre = SF_DIMS.map(([d]) => d);
+  return (s.criteria || []).slice()
+    .sort((a, b) => ordre.indexOf(a.dimension) - ordre.indexOf(b.dimension));
+}
+/** « Sans filtre : marché, EV, cote » — les dimensions que la configuration
+ * ne restreint pas (`unconstrained`, dit par le serveur), ou null. */
+function sfSansFiltre(s) {
+  const l = (s.unconstrained || []).map((x) => (x.dimension === 'ev' ? 'EV'
+    : String(x.label || x.dimension).toLowerCase()));
+  return l.length ? l.join(', ') : null;
+}
 /* Le niveau de robustesse, borné aux trois valeurs du contrat : il devient
  * une classe CSS, rien d'autre n'y entre. */
 const sfNiveau = (r) => (r && ['strong', 'medium', 'weak'].includes(r.level) ? r.level : 'inconnu');
@@ -3534,20 +3548,22 @@ function sfCarte(s) {
   c.appendChild(el('h3', 'sf-carte-titre', s.title || '—'));
 
   // Le titre porte le bookmaker et le marché ; les autres critères, s'ils
-  // existent, sur une ligne chacun. Un critère absent n'est pas écrit
-  // « Toutes » : il n'est simplement pas restreint. Ordre de lecture fixe
-  // d'une carte à l'autre : EV, Cote, Pari, Délai.
-  const ordre = ['ev', 'odds', 'outcome', 'delay'];
-  const crit = (s.criteria || []).filter((x) => ordre.includes(x.dimension))
-    .sort((a, b) => ordre.indexOf(a.dimension) - ordre.indexOf(b.dimension));
+  // existent, sur une ligne chacun, dans l'ordre des dimensions (Pari, EV,
+  // Cote, Délai). Une dimension non restreinte n'est pas inventée : elle est
+  // nommée, en discret, sous « Sans filtre ».
+  const crit = sfCriteresOrdonnes(s).filter((x) => ['outcome', 'ev', 'odds', 'delay'].includes(x.dimension));
   if (crit.length) {
     const dl = el('dl', 'sf-crit');
     crit.forEach((x) => {
       dl.appendChild(el('dt', null, x.label || x.dimension));
-      dl.appendChild(el('dd', null, x.display || x.value || '—'));
+      const dd = el('dd', null, x.display || x.value || '—');
+      if (x.rule) dd.title = x.rule;
+      dl.appendChild(dd);
     });
     c.appendChild(dl);
   }
+  const libre = sfSansFiltre(s);
+  if (libre) c.appendChild(el('p', 'sf-sans-filtre', `Sans filtre : ${libre}`));
 
   const pied = el('div', 'sf-carte-pied');
   const m = el('div', 'sf-mesures');
@@ -3661,7 +3677,8 @@ function sfTableau() {
     SF_DIMS.forEach(([dim]) => {
       const x = sfCritere(s, dim);
       const td = el('td', x ? 'sf-crit-cell' : 'sf-absent', x || '—');
-      if (!x) td.title = 'Critère non restreint';
+      const cr = (s.criteria || []).find((y) => y.dimension === dim);
+      td.title = !x ? 'Sans filtre : tous les paris, quelle que soit la valeur' : (cr && cr.rule) || '';
       r.appendChild(td);
     });
     r.appendChild(el('td', 'num', ent(sm.settled)));
@@ -3884,9 +3901,16 @@ function sfRemplirDetail(s) {
     + 'analysée. Des résultats historiques ne préjugent pas des résultats futurs.'));
 
   const g1 = el('div', 'sf-detail-grille sf-grille-3');
+  // LA DÉFINITION de la configuration : chaque critère qui a construit le
+  // lot, avec sa règle exacte (« 8 % ≤ EV < 15 % ») ; puis les dimensions
+  // qu'elle ne restreint pas. L'EV MOYENNE, elle, est une mesure de
+  // l'échantillon et reste dans « Échantillon ».
+  const libreD = sfSansFiltre(s);
   g1.appendChild(sfSection('Configuration', sfDl(
-    [['Sport', sfNomSport(p)]].concat((s.criteria || [])
-      .map((c) => [c.label || c.dimension, c.display || c.value || '—'])))));
+    [['Sport', sfNomSport(p)]].concat(sfCriteresOrdonnes(s)
+      .map((c) => [c.label || c.dimension, c.display || c.value || '—', '',
+        c.rule ? [c.rule] : null]))
+      .concat(libreD ? [['Sans filtre', libreD, 'sf-libre', ['tous les paris, quelle que soit la valeur']]] : []))));
   g1.appendChild(sfSection('Échantillon', sfDl([
     ['Paris réglés', ent(sm.settled)],
     ['Opportunités', ent(sm.opportunities)],

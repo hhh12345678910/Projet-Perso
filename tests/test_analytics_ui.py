@@ -1297,10 +1297,12 @@ def test_strategy_finder_lit_la_reponse_du_serveur():
 
 
 def test_strategy_finder_cartes_criteres_dans_un_ordre_fixe():
-    """Les critères autres que bookmaker et marché, dans l'ordre EV, Cote,
-    Pari, Délai, et seulement ceux que la configuration restreint."""
+    """Les critères autres que bookmaker et marché, dans l'ordre des
+    dimensions (Pari, EV, Cote, Délai), et seulement ceux que la
+    configuration restreint ; les autres sont nommés « Sans filtre »."""
     carte = _corps("function sfCarte(s)")
-    assert "['ev', 'odds', 'outcome', 'delay']" in carte
+    assert "sfCriteresOrdonnes(s).filter((x) => ['outcome', 'ev', 'odds', 'delay']" in carte
+    assert "Sans filtre : ${libre}" in carte
     code = "\n".join(l for l in carte.splitlines() if not l.strip().startswith("//"))
     assert "Toutes" not in code, "un critère absent ne s'écrit pas « Toutes »"
 
@@ -1434,3 +1436,19 @@ def test_strategy_finder_vocabulaire_prudent_et_vouvoiement():
         bas = source.lower()
         for interdit in ("va gagner", "meilleure stratégie", "garanti", "clique ", "essaie "):
             assert interdit not in bas, interdit
+
+
+def test_strategy_finder_la_configuration_affiche_SES_criteres_et_ses_regles():
+    """Le bloc Configuration lit `criteria` (valeur + règle exacte) et
+    `unconstrained` ; l'EV moyenne reste dans l'Échantillon."""
+    from src.analytics_ui.app import STATIQUES
+    js = (STATIQUES / "app.js").read_text(encoding="utf-8")
+    assert "function sfCriteresOrdonnes(s)" in js and "function sfSansFiltre(s)" in js
+    assert "c.rule ? [c.rule] : null" in js
+    assert "s.unconstrained" in js and "'Sans filtre'" in js
+    detail = js[js.index("function sfOuvrirDetail"):]
+    config = detail[detail.index("sfSection('Configuration'"):detail.index("sfSection('Échantillon'")]
+    assert "ev_mean" not in config
+    assert "['EV moyenne', pct(sm.ev_mean, 1)" in detail
+    # Aucune tranche déduite d'une moyenne, aucune tranche écrite en dur.
+    assert "8-15" not in js and "8–15" not in js
