@@ -15,6 +15,8 @@ Lecture seule : aucune écriture en base.
 
     .venv/bin/python -m scripts.diag_match faro slova
     .venv/bin/python -m scripts.diag_match faro slova --book vivatbet
+    .venv/bin/python -m scripts.diag_match slova slova   # un seul nom : toutes
+                                                         # les orthographes de l'autre
 """
 from __future__ import annotations
 
@@ -27,15 +29,27 @@ BOOKS_TEMOINS = ("pinnacle", "golden_palace", "unibet_be", "magicbetting",
 
 
 def _alertes(con, book: str, t1: str, t2: str) -> None:
-    print(f"== Alertes {book} sur ce match ==")
+    # TOUS les books : l'alerte suspecte ne vient pas forcément de celui qu'on
+    # croit, et c'est justement ce qu'il faut pouvoir voir.
+    print("== Détections sur ce match (tous books ; * = le book étudié) ==")
     rows = con.execute(
-        "SELECT id, event_key, market, outcome_label, line, odd_taken, "
+        "SELECT id, book, event_key, market, outcome_label, line, odd_taken, "
         "round(fair_odd, 2), round(ev_pct, 1), substr(detected_at, 1, 16) "
-        "FROM value_bets WHERE book = ? AND event_key LIKE ? AND event_key LIKE ? "
-        "ORDER BY id DESC LIMIT 10", (book, f"%{t1}%", f"%{t2}%")).fetchall()
+        "FROM value_bets WHERE event_key LIKE ? AND event_key LIKE ? "
+        "ORDER BY id DESC LIMIT 15", (f"%{t1}%", f"%{t2}%")).fetchall()
     for r in rows:
-        print("  ", r)
+        print("  ", "*" if r[1] == book else " ", r)
     if not rows:
+        print("   (aucune)")
+    envoyees = con.execute(
+        "SELECT book, event_key, market, outcome_label, line, round(ev_pct, 1), "
+        "substr(notified_at, 1, 16) FROM notified_value_bets "
+        "WHERE event_key LIKE ? AND event_key LIKE ? ORDER BY id DESC LIMIT 10",
+        (f"%{t1}%", f"%{t2}%")).fetchall()
+    print("\n== Alertes réellement envoyées sur Telegram ==")
+    for r in envoyees:
+        print("   ", r)
+    if not envoyees:
         print("   (aucune)")
 
 
