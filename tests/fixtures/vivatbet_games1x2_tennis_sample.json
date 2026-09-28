@@ -1,0 +1,1460 @@
+[
+ {
+  "sport": {
+   "nameEng": "Tennis",
+   "timeName": "Set",
+   "timesName": "Sets",
+   "id": 4,
+   "name": "Tennis "
+  },
+  "liga": {
+   "countryName": "Chine",
+   "nameEng": "WTA. Jingshan",
+   "id": 2906879,
+   "name": "WTA. Jingshan"
+  },
+  "opponent1": {
+   "fullNameEng": "Alexandra Shubladze",
+   "fullName": "Alexandra Shubladze",
+   "countryId": 225
+  },
+  "opponent2": {
+   "fullNameEng": "Rina Saigo",
+   "fullName": "Rina Saigo",
+   "countryId": 218
+  },
+  "eventGroups": [
+   {
+    "groupId": 1,
+    "shortGroupId": 1,
+    "events": [
+     [
+      {
+       "type": 1,
+       "cf": 1.019,
+       "cfView": "1.019"
+      }
+     ],
+     [
+      {
+       "type": 3,
+       "cf": 9.4,
+       "cfView": "9.4"
+      }
+     ]
+    ]
+   },
+   {
+    "groupId": 17,
+    "shortGroupId": 4,
+    "events": [
+     [
+      {
+       "type": 9,
+       "parameter": 17.5,
+       "cf": 1.909,
+       "cfView": "1.909",
+       "isCenter": true,
+       "eventParams": {
+        "params": [
+         "(17.5)"
+        ]
+       }
+      }
+     ],
+     [
+      {
+       "type": 10,
+       "parameter": 17.5,
+       "cf": 1.8,
+       "cfView": "1.8",
+       "isCenter": true,
+       "eventParams": {
+        "params": [
+         "(17.5)"
+        ]
+       }
+      }
+     ]
+    ]
+   },
+   {
+    "groupId": 2,
+    "shortGroupId": 3,
+    "events": [
+     [
+      {
+       "type": 7,
+       "parameter": -7.5,
+       "cf": 2.098,
+       "cfView": "2.098",
+       "isCenter": true,
+       "eventParams": {
+        "params": [
+         "(-7.5)"
+        ]
+       }
+      }
+     ],
+     [
+      {
+       "type": 8,
+       "parameter": 7.5,
+       "cf": 1.623,
+       "cfView": "1.623",
+       "isCenter": true,
+       "eventParams": {
+        "params": [
+         "(7.5)"
+        ]
+       }
+      }
+     ]
+    ]
+   },
+   {
+    "groupId": 15,
+    "shortGroupId": 5,
+    "events": [
+     [
+      {
+       "type": 11,
+       "parameter": 12.5,
+       "cf": 2.64,
+       "cfView": "2.64",
+       "isCenter": true,
+       "eventParams": {
+        "params": [
+         "(12.5)"
+        ]
+       }
+      }
+     ],
+     [
+      {
+       "type": 12,
+       "parameter": 12.5,
+       "cf": 1.4,
+       "cfView": "1.4",
+       "isCenter": true,
+       "eventParams": {
+        "params": [
+         "(12.5)"
+        ]
+       }
+      }
+     ]
+    ]
+   },
+   {
+    "groupId": 62,
+    "shortGroupId": 6,
+    "events": [
+     [
+      {
+       "type": 13,
+       "parameter": 5.5,
+       "cf": 1.86,
+       "cfView": "1.86",
+       "isCenter": true,
+       "eventParams": {
+        "params": [
+         "(5.5)"
+        ]
+       }
+      }
+     ],
+     [
+      {
+       "type": 14,
+       "parameter": 5.5,
+       "cf": 1.8,
+       "cfView": "1.8",
+       "isCenter": true,
+       "eventParams": {
+        "params": [
+         "(5.5)"
+        ]
+       }
+      }
+     ]
+    ]
+   }
+  ],
+  "id": 756536402,
+  "mainGameId": 756536402,
+  "constId": 373936760,
+  "startTs": 1790650800,
+  "gameTypeName": "",
+  "periodName": "",
+  "kind": 3
+ },
+ {
+  "sport": {
+   "nameEng": "Tennis",
+   "timeName": "Set",
+   "timesName": "Sets",
+   "id": 4,
+   "name": "Tennis "
+  },
+  "liga": {
+   "countryName": "Chine",
+   "nameEng": "WTA. Jingshan",
+   "id": 2906879,
+   "name": "WTA. Jingshan"
+  },
+  "opponent1": {
+   "fullNameEng": "Kristina Mladenovic",
+   "fullName": "Kristina Mladenovic",
+   "countryId": 205
+  },
+  "opponent2": {
+   "fullNameEng": "Sofia Costoulas",
+   "fullName": "Sofia Costoulas",
+   "countryId": 24
+  },
+  "eventGroups": [
+   {
+    "groupId": 1,
+    "shortGroupId": 1,
+    "events": [
+     [
+      {
+       "type": 1,
+       "cf": 4.535,
+       "cfView": "4.535"
+      }
+     ],
+     [
+      {
+       "type": 3,
+       "cf": 1.164,
+       "cfView": "1.164"
+      }
+     ]
+    ]
+   },
+   {
+    "groupId": 17,
+    "shortGroupId": 4,
+    "events": [
+     [
+      {
+       "type": 9,
+       "parameter": 19.5,
+       "cf": 1.881,
+       "cfView": "1.881",
+       "isCenter": true,
+       "eventParams": {
+        "params": [
+         "(19.5)"
+        ]
+       }
+      }
+     ],
+     [
+      {
+       "type": 10,
+       "parameter": 19.5,
+       "cf": 1.782,
+       "cfView": "1.782",
+       "isCenter": true,
+       "eventParams": {
+        "params": [
+         "(19.5)"
+        ]
+       }
+      }
+     ]
+    ]
+   },
+   {
+    "groupId": 2,
+    "shortGroupId": 3,
+    "events": [
+     [
+      {
+       "type": 7,
+       "parameter": 5.5,
+       "cf": 1.892,
+       "cfView": "1.892",
+       "isCenter": true,
+       "eventParams": {
+        "params": [
+         "(5.5)"
+        ]
+       }
+      }
+     ],
+     [
+      {
+       "type": 8,
+       "parameter": -5.5,
+       "cf": 1.772,
+       "cfView": "1.772",
+       "isCenter": true,
+       "eventParams": {
+        "params": [
+         "(-5.5)"
+        ]
+       }
+      }
+     ]
+    ]
+   },
+   {
+    "groupId": 15,
+    "shortGroupId": 5,
+    "events": [
+     [
+      {
+       "type": 11,
+       "parameter": 7.5,
+       "cf": 1.84,
+       "cfView": "1.84",
+       "isCenter": true,
+       "eventParams": {
+        "params": [
+         "(7.5)"
+        ]
+       }
+      }
+     ],
+     [
+      {
+       "type": 12,
+       "parameter": 7.5,
+       "cf": 1.82,
+       "cfView": "1.82",
+       "isCenter": true,
+       "eventParams": {
+        "params": [
+         "(7.5)"
+        ]
+       }
+      }
+     ]
+    ]
+   },
+   {
+    "groupId": 62,
+    "shortGroupId": 6,
+    "events": [
+     [
+      {
+       "type": 13,
+       "parameter": 12.5,
+       "cf": 2.19,
+       "cfView": "2.19",
+       "isCenter": true,
+       "eventParams": {
+        "params": [
+         "(12.5)"
+        ]
+       }
+      }
+     ],
+     [
+      {
+       "type": 14,
+       "parameter": 12.5,
+       "cf": 1.57,
+       "cfView": "1.57",
+       "isCenter": true,
+       "eventParams": {
+        "params": [
+         "(12.5)"
+        ]
+       }
+      }
+     ]
+    ]
+   }
+  ],
+  "id": 756536401,
+  "mainGameId": 756536401,
+  "constId": 373936756,
+  "startTs": 1790650800,
+  "gameTypeName": "",
+  "periodName": "",
+  "kind": 3
+ },
+ {
+  "sport": {
+   "nameEng": "Tennis",
+   "timeName": "Set",
+   "timesName": "Sets",
+   "id": 4,
+   "name": "Tennis "
+  },
+  "liga": {
+   "countryName": "Chine",
+   "nameEng": "WTA. Jingshan",
+   "id": 2906879,
+   "name": "WTA. Jingshan"
+  },
+  "opponent1": {
+   "fullNameEng": "Tyra Caterina Grant",
+   "fullName": "Tyra Caterina Grant",
+   "countryId": 79
+  },
+  "opponent2": {
+   "fullNameEng": "Aliona Falei",
+   "fullName": "Aliona Falei",
+   "countryId": 22
+  },
+  "eventGroups": [
+   {
+    "groupId": 1,
+    "shortGroupId": 1,
+    "events": [
+     [
+      {
+       "type": 1,
+       "cf": 1.454,
+       "cfView": "1.454"
+      }
+     ],
+     [
+      {
+       "type": 3,
+       "cf": 2.545,
+       "cfView": "2.545"
+      }
+     ]
+    ]
+   },
+   {
+    "groupId": 17,
+    "shortGroupId": 4,
+    "events": [
+     [
+      {
+       "type": 9,
+       "parameter": 20.5,
+       "cf": 1.768,
+       "cfView": "1.768",
+       "isCenter": true,
+       "eventParams": {
+        "params": [
+         "(20.5)"
+        ]
+       }
+      }
+     ],
+     [
+      {
+       "type": 10,
+       "parameter": 20.5,
+       "cf": 1.896,
+       "cfView": "1.896",
+       "isCenter": true,
+       "eventParams": {
+        "params": [
+         "(20.5)"
+        ]
+       }
+      }
+     ]
+    ]
+   },
+   {
+    "groupId": 2,
+    "shortGroupId": 3,
+    "events": [
+     [
+      {
+       "type": 7,
+       "parameter": -3.5,
+       "cf": 1.84,
+       "cfView": "1.84",
+       "isCenter": true,
+       "eventParams": {
+        "params": [
+         "(-3.5)"
+        ]
+       }
+      }
+     ],
+     [
+      {
+       "type": 8,
+       "parameter": 3.5,
+       "cf": 1.82,
+       "cfView": "1.82",
+       "isCenter": true,
+       "eventParams": {
+        "params": [
+         "(3.5)"
+        ]
+       }
+      }
+     ]
+    ]
+   },
+   {
+    "groupId": 15,
+    "shortGroupId": 5,
+    "events": [
+     [
+      {
+       "type": 11,
+       "parameter": 12.5,
+       "cf": 1.98,
+       "cfView": "1.98",
+       "isCenter": true,
+       "eventParams": {
+        "params": [
+         "(12.5)"
+        ]
+       }
+      }
+     ],
+     [
+      {
+       "type": 12,
+       "parameter": 12.5,
+       "cf": 1.7,
+       "cfView": "1.7",
+       "isCenter": true,
+       "eventParams": {
+        "params": [
+         "(12.5)"
+        ]
+       }
+      }
+     ]
+    ]
+   },
+   {
+    "groupId": 62,
+    "shortGroupId": 6,
+    "events": [
+     [
+      {
+       "type": 13,
+       "parameter": 11.5,
+       "cf": 1.8,
+       "cfView": "1.8",
+       "isCenter": true,
+       "eventParams": {
+        "params": [
+         "(11.5)"
+        ]
+       }
+      }
+     ],
+     [
+      {
+       "type": 14,
+       "parameter": 11.5,
+       "cf": 1.86,
+       "cfView": "1.86",
+       "isCenter": true,
+       "eventParams": {
+        "params": [
+         "(11.5)"
+        ]
+       }
+      }
+     ]
+    ]
+   }
+  ],
+  "id": 756537088,
+  "mainGameId": 756537088,
+  "constId": 373936788,
+  "startTs": 1790650800,
+  "gameTypeName": "",
+  "periodName": "",
+  "kind": 3
+ },
+ {
+  "sport": {
+   "nameEng": "Tennis",
+   "timeName": "Set",
+   "timesName": "Sets",
+   "id": 4,
+   "name": "Tennis "
+  },
+  "liga": {
+   "countryName": "Chine",
+   "nameEng": "WTA. Jingshan",
+   "id": 2906879,
+   "name": "WTA. Jingshan"
+  },
+  "opponent1": {
+   "fullNameEng": "Viktoria Morvayova",
+   "fullName": "Viktoria Morvayova",
+   "countryId": 171
+  },
+  "opponent2": {
+   "fullNameEng": "Sara Sorribes Tormo",
+   "fullName": "Sara Sorribes Tormo",
+   "countryId": 78
+  },
+  "eventGroups": [
+   {
+    "groupId": 1,
+    "shortGroupId": 1,
+    "events": [
+     [
+      {
+       "type": 1,
+       "cf": 4.435,
+       "cfView": "4.435"
+      }
+     ],
+     [
+      {
+       "type": 3,
+       "cf": 1.171,
+       "cfView": "1.171"
+      }
+     ]
+    ]
+   },
+   {
+    "groupId": 17,
+    "shortGroupId": 4,
+    "events": [
+     [
+      {
+       "type": 9,
+       "parameter": 19.5,
+       "cf": 1.929,
+       "cfView": "1.929",
+       "isCenter": true,
+       "eventParams": {
+        "params": [
+         "(19.5)"
+        ]
+       }
+      }
+     ],
+     [
+      {
+       "type": 10,
+       "parameter": 19.5,
+       "cf": 1.741,
+       "cfView": "1.741",
+       "isCenter": true,
+       "eventParams": {
+        "params": [
+         "(19.5)"
+        ]
+       }
+      }
+     ]
+    ]
+   },
+   {
+    "groupId": 2,
+    "shortGroupId": 3,
+    "events": [
+     [
+      {
+       "type": 7,
+       "parameter": 5.5,
+       "cf": 1.86,
+       "cfView": "1.86",
+       "isCenter": true,
+       "eventParams": {
+        "params": [
+         "(5.5)"
+        ]
+       }
+      }
+     ],
+     [
+      {
+       "type": 8,
+       "parameter": -5.5,
+       "cf": 1.801,
+       "cfView": "1.801",
+       "isCenter": true,
+       "eventParams": {
+        "params": [
+         "(-5.5)"
+        ]
+       }
+      }
+     ]
+    ]
+   },
+   {
+    "groupId": 15,
+    "shortGroupId": 5,
+    "events": [
+     [
+      {
+       "type": 11,
+       "parameter": 7.5,
+       "cf": 1.83,
+       "cfView": "1.83",
+       "isCenter": true,
+       "eventParams": {
+        "params": [
+         "(7.5)"
+        ]
+       }
+      }
+     ],
+     [
+      {
+       "type": 12,
+       "parameter": 7.5,
+       "cf": 1.83,
+       "cfView": "1.83",
+       "isCenter": true,
+       "eventParams": {
+        "params": [
+         "(7.5)"
+        ]
+       }
+      }
+     ]
+    ]
+   },
+   {
+    "groupId": 62,
+    "shortGroupId": 6,
+    "events": [
+     [
+      {
+       "type": 13,
+       "parameter": 12.5,
+       "cf": 2.17,
+       "cfView": "2.17",
+       "isCenter": true,
+       "eventParams": {
+        "params": [
+         "(12.5)"
+        ]
+       }
+      }
+     ],
+     [
+      {
+       "type": 14,
+       "parameter": 12.5,
+       "cf": 1.58,
+       "cfView": "1.58",
+       "isCenter": true,
+       "eventParams": {
+        "params": [
+         "(12.5)"
+        ]
+       }
+      }
+     ]
+    ]
+   }
+  ],
+  "id": 756536403,
+  "mainGameId": 756536403,
+  "constId": 373936750,
+  "startTs": 1790656200,
+  "gameTypeName": "",
+  "periodName": "",
+  "kind": 3
+ },
+ {
+  "sport": {
+   "nameEng": "Tennis",
+   "timeName": "Set",
+   "timesName": "Sets",
+   "id": 4,
+   "name": "Tennis "
+  },
+  "liga": {
+   "countryName": "Chine",
+   "nameEng": "WTA. Jingshan",
+   "id": 2906879,
+   "name": "WTA. Jingshan"
+  },
+  "opponent1": {
+   "fullNameEng": "Kyoka Okamura",
+   "fullName": "Kyoka Okamura",
+   "countryId": 218
+  },
+  "opponent2": {
+   "fullNameEng": "Ru Xi Wu",
+   "fullName": "Ru Xi Wu",
+   "countryId": 90
+  },
+  "eventGroups": [
+   {
+    "groupId": 1,
+    "shortGroupId": 1,
+    "events": [
+     [
+      {
+       "type": 1,
+       "cf": 1.178,
+       "cfView": "1.178"
+      }
+     ],
+     [
+      {
+       "type": 3,
+       "cf": 4.325,
+       "cfView": "4.325"
+      }
+     ]
+    ]
+   },
+   {
+    "groupId": 17,
+    "shortGroupId": 4,
+    "events": [
+     [
+      {
+       "type": 9,
+       "parameter": 19.5,
+       "cf": 1.929,
+       "cfView": "1.929",
+       "isCenter": true,
+       "eventParams": {
+        "params": [
+         "(19.5)"
+        ]
+       }
+      }
+     ],
+     [
+      {
+       "type": 10,
+       "parameter": 19.5,
+       "cf": 1.741,
+       "cfView": "1.741",
+       "isCenter": true,
+       "eventParams": {
+        "params": [
+         "(19.5)"
+        ]
+       }
+      }
+     ]
+    ]
+   },
+   {
+    "groupId": 2,
+    "shortGroupId": 3,
+    "events": [
+     [
+      {
+       "type": 7,
+       "parameter": -5.5,
+       "cf": 1.82,
+       "cfView": "1.82",
+       "isCenter": true,
+       "eventParams": {
+        "params": [
+         "(-5.5)"
+        ]
+       }
+      }
+     ],
+     [
+      {
+       "type": 8,
+       "parameter": 5.5,
+       "cf": 1.84,
+       "cfView": "1.84",
+       "isCenter": true,
+       "eventParams": {
+        "params": [
+         "(5.5)"
+        ]
+       }
+      }
+     ]
+    ]
+   },
+   {
+    "groupId": 15,
+    "shortGroupId": 5,
+    "events": [
+     [
+      {
+       "type": 11,
+       "parameter": 12.5,
+       "cf": 2.17,
+       "cfView": "2.17",
+       "isCenter": true,
+       "eventParams": {
+        "params": [
+         "(12.5)"
+        ]
+       }
+      }
+     ],
+     [
+      {
+       "type": 12,
+       "parameter": 12.5,
+       "cf": 1.58,
+       "cfView": "1.58",
+       "isCenter": true,
+       "eventParams": {
+        "params": [
+         "(12.5)"
+        ]
+       }
+      }
+     ]
+    ]
+   },
+   {
+    "groupId": 62,
+    "shortGroupId": 6,
+    "events": [
+     [
+      {
+       "type": 13,
+       "parameter": 7.5,
+       "cf": 1.81,
+       "cfView": "1.81",
+       "isCenter": true,
+       "eventParams": {
+        "params": [
+         "(7.5)"
+        ]
+       }
+      }
+     ],
+     [
+      {
+       "type": 14,
+       "parameter": 7.5,
+       "cf": 1.85,
+       "cfView": "1.85",
+       "isCenter": true,
+       "eventParams": {
+        "params": [
+         "(7.5)"
+        ]
+       }
+      }
+     ]
+    ]
+   }
+  ],
+  "id": 756537087,
+  "mainGameId": 756537087,
+  "constId": 373936792,
+  "startTs": 1790656200,
+  "gameTypeName": "",
+  "periodName": "",
+  "kind": 3
+ },
+ {
+  "sport": {
+   "nameEng": "Tennis",
+   "timeName": "Set",
+   "timesName": "Sets",
+   "id": 4,
+   "name": "Tennis "
+  },
+  "liga": {
+   "countryName": "Chine",
+   "nameEng": "WTA. Jingshan",
+   "id": 2906879,
+   "name": "WTA. Jingshan"
+  },
+  "opponent1": {
+   "fullNameEng": "Kristiana Sidorova",
+   "fullName": "Kristiana Sidorova",
+   "countryId": 1
+  },
+  "opponent2": {
+   "fullNameEng": "Daria Egorova",
+   "fullName": "Daria Egorova",
+   "countryId": 1
+  },
+  "eventGroups": [
+   {
+    "groupId": 1,
+    "shortGroupId": 1,
+    "events": [
+     [
+      {
+       "type": 1,
+       "cf": 2.05,
+       "cfView": "2.05"
+      }
+     ],
+     [
+      {
+       "type": 3,
+       "cf": 1.67,
+       "cfView": "1.67"
+      }
+     ]
+    ]
+   },
+   {
+    "groupId": 17,
+    "shortGroupId": 4,
+    "events": [
+     [
+      {
+       "type": 9,
+       "parameter": 20.5,
+       "cf": 1.82,
+       "cfView": "1.82",
+       "isCenter": true,
+       "eventParams": {
+        "params": [
+         "(20.5)"
+        ]
+       }
+      }
+     ],
+     [
+      {
+       "type": 10,
+       "parameter": 20.5,
+       "cf": 1.84,
+       "cfView": "1.84",
+       "isCenter": true,
+       "eventParams": {
+        "params": [
+         "(20.5)"
+        ]
+       }
+      }
+     ]
+    ]
+   },
+   {
+    "groupId": 2,
+    "shortGroupId": 3,
+    "events": [
+     [
+      {
+       "type": 7,
+       "parameter": 1.5,
+       "cf": 1.86,
+       "cfView": "1.86",
+       "isCenter": true,
+       "eventParams": {
+        "params": [
+         "(1.5)"
+        ]
+       }
+      }
+     ],
+     [
+      {
+       "type": 8,
+       "parameter": -1.5,
+       "cf": 1.801,
+       "cfView": "1.801",
+       "isCenter": true,
+       "eventParams": {
+        "params": [
+         "(-1.5)"
+        ]
+       }
+      }
+     ]
+    ]
+   },
+   {
+    "groupId": 15,
+    "shortGroupId": 5,
+    "events": [
+     [
+      {
+       "type": 11,
+       "parameter": 11.5,
+       "cf": 1.6,
+       "cfView": "1.6",
+       "isCenter": true,
+       "eventParams": {
+        "params": [
+         "(11.5)"
+        ]
+       }
+      }
+     ],
+     [
+      {
+       "type": 12,
+       "parameter": 11.5,
+       "cf": 2.14,
+       "cfView": "2.14",
+       "isCenter": true,
+       "eventParams": {
+        "params": [
+         "(11.5)"
+        ]
+       }
+      }
+     ]
+    ]
+   }
+  ],
+  "id": 756610096,
+  "mainGameId": 756610096,
+  "constId": 374010246,
+  "startTs": 1790656200,
+  "gameTypeName": "",
+  "periodName": "",
+  "kind": 3
+ },
+ {
+  "sport": {
+   "nameEng": "Tennis",
+   "timeName": "Set",
+   "timesName": "Sets",
+   "id": 4,
+   "name": "Tennis "
+  },
+  "liga": {
+   "countryName": "France",
+   "nameEng": "Challenger. Mouilleron-le-Captif",
+   "id": 261901,
+   "name": "Challenger. Mouilleron-le-Captif"
+  },
+  "opponent1": {
+   "fullNameEng": "Pierre-Hugues Herbert",
+   "fullName": "Pierre-Hugues Herbert",
+   "countryId": 198
+  },
+  "opponent2": {
+   "fullNameEng": "Sascha Gueymard Wayenburg",
+   "fullName": "Sascha Gueymard Wayenburg",
+   "countryId": 198
+  },
+  "eventGroups": [
+   {
+    "groupId": 1,
+    "shortGroupId": 1,
+    "events": [
+     [
+      {
+       "type": 1,
+       "cf": 2.39,
+       "cfView": "2.39"
+      }
+     ],
+     [
+      {
+       "type": 3,
+       "cf": 1.51,
+       "cfView": "1.51"
+      }
+     ]
+    ]
+   },
+   {
+    "groupId": 17,
+    "shortGroupId": 4,
+    "events": [
+     [
+      {
+       "type": 9,
+       "parameter": 22.5,
+       "cf": 1.77,
+       "cfView": "1.77",
+       "isCenter": true,
+       "eventParams": {
+        "params": [
+         "(22.5)"
+        ]
+       }
+      }
+     ],
+     [
+      {
+       "type": 10,
+       "parameter": 22.5,
+       "cf": 1.92,
+       "cfView": "1.92",
+       "isCenter": true,
+       "eventParams": {
+        "params": [
+         "(22.5)"
+        ]
+       }
+      }
+     ]
+    ]
+   },
+   {
+    "groupId": 2,
+    "shortGroupId": 3,
+    "events": [
+     [
+      {
+       "type": 7,
+       "parameter": 2.5,
+       "cf": 1.83,
+       "cfView": "1.83",
+       "isCenter": true,
+       "eventParams": {
+        "params": [
+         "(2.5)"
+        ]
+       }
+      }
+     ],
+     [
+      {
+       "type": 8,
+       "parameter": -2.5,
+       "cf": 1.85,
+       "cfView": "1.85",
+       "isCenter": true,
+       "eventParams": {
+        "params": [
+         "(-2.5)"
+        ]
+       }
+      }
+     ]
+    ]
+   },
+   {
+    "groupId": 15,
+    "shortGroupId": 5,
+    "events": [
+     [
+      {
+       "type": 11,
+       "parameter": 12.5,
+       "cf": 1.98,
+       "cfView": "1.98",
+       "isCenter": true,
+       "eventParams": {
+        "params": [
+         "(12.5)"
+        ]
+       }
+      }
+     ],
+     [
+      {
+       "type": 12,
+       "parameter": 12.5,
+       "cf": 1.7,
+       "cfView": "1.7",
+       "isCenter": true,
+       "eventParams": {
+        "params": [
+         "(12.5)"
+        ]
+       }
+      }
+     ]
+    ]
+   },
+   {
+    "groupId": 62,
+    "shortGroupId": 6,
+    "events": [
+     [
+      {
+       "type": 13,
+       "parameter": 12.5,
+       "cf": 1.64,
+       "cfView": "1.64",
+       "isCenter": true,
+       "eventParams": {
+        "params": [
+         "(12.5)"
+        ]
+       }
+      }
+     ],
+     [
+      {
+       "type": 14,
+       "parameter": 12.5,
+       "cf": 2.04,
+       "cfView": "2.04",
+       "isCenter": true,
+       "eventParams": {
+        "params": [
+         "(12.5)"
+        ]
+       }
+      }
+     ]
+    ]
+   }
+  ],
+  "id": 756360830,
+  "mainGameId": 756360830,
+  "constId": 373730602,
+  "startTs": 1790616900,
+  "gameTypeName": "",
+  "periodName": "",
+  "kind": 3
+ },
+ {
+  "sport": {
+   "nameEng": "Tennis",
+   "timeName": "Set",
+   "timesName": "Sets",
+   "id": 4,
+   "name": "Tennis "
+  },
+  "liga": {
+   "countryName": "États-Unis",
+   "nameEng": "UTR Pro Tennis Series. Newport Beach",
+   "id": 2183358,
+   "name": "UTR Pro Tennis Series. Newport Beach"
+  },
+  "opponent1": {
+   "fullNameEng": "Marco Alvarez",
+   "fullName": "Marco Alvarez",
+   "countryId": 120
+  },
+  "opponent2": {
+   "fullNameEng": "Jacob Brumm",
+   "fullName": "Jacob Brumm",
+   "countryId": 153
+  },
+  "eventGroups": [
+   {
+    "groupId": 1,
+    "shortGroupId": 1,
+    "events": [
+     [
+      {
+       "type": 1,
+       "cf": 3.225,
+       "cfView": "3.225"
+      }
+     ],
+     [
+      {
+       "type": 3,
+       "cf": 1.343,
+       "cfView": "1.343"
+      }
+     ]
+    ]
+   }
+  ],
+  "id": 756214839,
+  "mainGameId": 756214839,
+  "constId": 373605082,
+  "startTs": 1790618400,
+  "gameTypeName": "",
+  "periodName": "",
+  "kind": 3
+ },
+ {
+  "sport": {
+   "nameEng": "Tennis",
+   "timeName": "Set",
+   "timesName": "Sets",
+   "id": 4,
+   "name": "Tennis "
+  },
+  "liga": {
+   "countryName": "États-Unis",
+   "nameEng": "UTR Pro Tennis Series. Newport Beach. Women",
+   "id": 2250601,
+   "name": "UTR Pro Tennis Series. Newport Beach. Femmes"
+  },
+  "opponent1": {
+   "fullNameEng": "Adriana Reami",
+   "fullName": "Adriana Reami",
+   "countryId": 153
+  },
+  "opponent2": {
+   "fullNameEng": "Yulia Zhytelna",
+   "fullName": "Yulia Zhytelna",
+   "countryId": 2
+  },
+  "eventGroups": [
+   {
+    "groupId": 1,
+    "shortGroupId": 1,
+    "events": [
+     [
+      {
+       "type": 1,
+       "cf": 1.05,
+       "cfView": "1.05"
+      }
+     ],
+     [
+      {
+       "type": 3,
+       "cf": 8.5,
+       "cfView": "8.5"
+      }
+     ]
+    ]
+   }
+  ],
+  "id": 756265737,
+  "mainGameId": 756265737,
+  "constId": 373649912,
+  "startTs": 1790618400,
+  "gameTypeName": "",
+  "periodName": "",
+  "kind": 3
+ },
+ {
+  "sport": {
+   "nameEng": "Tennis",
+   "timeName": "Set",
+   "timesName": "Sets",
+   "id": 4,
+   "name": "Tennis "
+  },
+  "liga": {
+   "countryName": "États-Unis",
+   "nameEng": "UTR Pro Tennis Series. Newport Beach. Women",
+   "id": 2250601,
+   "name": "UTR Pro Tennis Series. Newport Beach. Femmes"
+  },
+  "opponent1": {
+   "fullNameEng": "Kohana Darroch",
+   "fullName": "Kohana Darroch",
+   "countryId": 153
+  },
+  "opponent2": {
+   "fullNameEng": "Dia Evtimova",
+   "fullName": "Dia Evtimova",
+   "countryId": 27
+  },
+  "eventGroups": [
+   {
+    "groupId": 1,
+    "shortGroupId": 1,
+    "events": [
+     [
+      {
+       "type": 1,
+       "cf": 2.092,
+       "cfView": "2.092"
+      }
+     ],
+     [
+      {
+       "type": 3,
+       "cf": 1.687,
+       "cfView": "1.687"
+      }
+     ]
+    ]
+   }
+  ],
+  "id": 756338197,
+  "mainGameId": 756338197,
+  "constId": 373718206,
+  "startTs": 1790618400,
+  "gameTypeName": "",
+  "periodName": "",
+  "kind": 3
+ }
+]

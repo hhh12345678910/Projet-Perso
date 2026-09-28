@@ -1144,6 +1144,37 @@ compte, leur CLV est inconnue. Les jeter ferait lire « le ROI par tranche de
 CLV » sur la sous-population dont on a réussi à mesurer la CLV — une sélection,
 pas un échantillon. Elle est donc imprimée avec les autres.
 
+## Vivatbet — ajouté le 28/09 (marque blanche 1xBet)
+
+API JSON publique, **sans jeton ni cookie** : l'en-tête `x-hd` que le navigateur
+envoie n'est pas exigé (vérifié depuis la VM). Seule plateforme 1xBet du
+portefeuille — une autre marque blanche 1xBet serait son **jumeau**.
+
+**Sonde d'acceptation** — lit les 50 vedettes, la liste des compétitions et
+10 compétitions par sport, chronomètre, n'écrit rien :
+
+```bash
+.venv/bin/python -m src.main vivatbet-check
+.venv/bin/python -m src.main vivatbet-check --sport soccer --ligues 0   # tout balayer
+```
+
+Dans le cycle : les 50 vedettes à chaque tour (1 appel), le reste par un
+balayage **de fond**, une compétition par appel (le flux est plafonné à 50
+matchs : `count=100` répond 400).
+
+| réglage | défaut | rôle |
+|---|---|---|
+| `VIVATBET_DEEP_REFRESH_SEC` | `240` | âge au-delà duquel le balayage repart |
+| `VIVATBET_DEEP_MAX_AGE_SEC` | `600` | au-delà, le cache rend **rien** |
+| `VIVATBET_DEEP_WORKERS` | `4` | appels simultanés du balayage |
+| `VIVATBET_DEEP_ENABLED=0` | `1` | vedettes seules |
+| `BOOKS_DISABLED=vivatbet` | — | **coupe-circuit** |
+
+⚠️ Les faux matchs « Home vs Away » (statistiques d'une journée entière,
+total 26,5) arrivent **dans** de vraies compétitions : écartés par
+`homeAwayFlag` et par le nom. Football et tennis seulement — le 1X2 hockey
+de 1xBet est en temps réglementaire, pas comparable au vainqueur Pinnacle.
+
 ## MeridianBet — débloqué le 04/09
 
 **Le blocage n'était pas TrafficGuard.** L'API répondait `401 invalid_token` :

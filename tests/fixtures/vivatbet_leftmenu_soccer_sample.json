@@ -1,0 +1,264 @@
+[
+ {
+  "menuSectionId": 2,
+  "menuSectionName": "TOP",
+  "sports": [
+   {
+    "nameEng": "Football",
+    "gamesCount": 1307,
+    "champsCount": 188,
+    "ligas": [
+     {
+      "nameEng": "Enhanced Daily Specials",
+      "countryNameEng": "World",
+      "countryImage": "/sfiles/logo-flag/a09c04e45bfb1f2440d5185d9c5753ec.png",
+      "countryId": 225,
+      "countryName": "Monde",
+      "gamesCount": 2,
+      "image": "/sfiles/logo-champ/ChampDefaultLogo.png",
+      "id": 1413697,
+      "name": "Paris spéciaux du jour"
+     },
+     {
+      "nameEng": "UEFA Nations League",
+      "countryNameEng": "Europe",
+      "countryImage": "/sfiles/logo-flag/f791278851c9da6e30f0c86dc6244409.png",
+      "countryId": 223,
+      "countryName": "Europe",
+      "gamesCount": 55,
+      "isTop": true,
+      "globalChampId": 111,
+      "image": "/sfiles/logo-champ/ChampDefaultLogo.png",
+      "id": 1706694,
+      "name": "Ligue des nations de l'UEFA"
+     },
+     {
+      "nameEng": "UEFA Nations League. Team vs Player",
+      "countryNameEng": "Europe",
+      "countryImage": "/sfiles/logo-flag/f791278851c9da6e30f0c86dc6244409.png",
+      "countryId": 223,
+      "countryName": "Europe",
+      "gamesCount": 12,
+      "image": "/sfiles/logo-champ/ChampDefaultLogo.png",
+      "id": 2819162,
+      "name": "Ligue des Nations de l'UEFA. Équipe vs joueur"
+     },
+     {
+      "nameEng": "UEFA Nations League. League A. Matchday statistics",
+      "countryNameEng": "Europe",
+      "countryImage": "/sfiles/logo-flag/f791278851c9da6e30f0c86dc6244409.png",
+      "countryId": 223,
+      "countryName": "Europe",
+      "gamesCount": 2,
+      "image": "/sfiles/logo-champ/ChampDefaultLogo.png",
+      "id": 2144188,
+      "name": "Ligue des nations de l'UEFA. Ligue A. Statistiques du jour de match"
+     },
+     {
+      "nameEng": "UEFA Nations League. League D. Matchday statistics",
+      "countryNameEng": "Europe",
+      "countryImage": "/sfiles/logo-flag/f791278851c9da6e30f0c86dc6244409.png",
+      "countryId": 223,
+      "countryName": "Europe",
+      "gamesCount": 1,
+      "image": "/sfiles/logo-champ/ChampDefaultLogo.png",
+      "id": 2144166,
+      "name": "Ligue des nations de l'UEFA. Ligue D. Statistiques du jour de match"
+     },
+     {
+      "nameEng": "UEFA Champions League",
+      "countryNameEng": "Europe",
+      "countryImage": "/sfiles/logo-flag/f791278851c9da6e30f0c86dc6244409.png",
+      "countryId": 223,
+      "countryName": "Europe",
+      "gamesCount": 18,
+      "isTop": true,
+      "globalChampId": 105,
+      "image": "/sfiles/logo-champ/ChampDefaultLogo.png",
+      "id": 118587,
+      "name": "Ligue des champions de l'UEFA"
+     },
+     {
+      "nameEng": "UEFA Europa League",
+      "countryNameEng": "Europe",
+      "countryImage": "/sfiles/logo-flag/f791278851c9da6e30f0c86dc6244409.png",
+      "countryId": 223,
+      "countryName": "Europe",
+      "gamesCount": 18,
+      "isTop": true,
+      "globalChampId": 110,
+      "image": "/sfiles/logo-champ/ChampDefaultLogo.png",
+      "id": 118593,
+      "name": "Ligue Europa de l'UEFA"
+     },
+     {
+      "nameEng": "UEFA Conference League",
+      "countryNameEng": "Europe",
+      "countryImage": "/sfiles/logo-flag/f791278851c9da6e30f0c86dc6244409.png",
+      "countryId": 223,
+      "countryName": "Europe",
+      "gamesCount": 18,
+      "globalChampId": 139,
+      "image": "/sfiles/logo-champ/ChampDefaultLogo.png",
+      "id": 2252762,
+      "name": "Ligue Conférence de l'UEFA"
+     },
+     {
+      "subLigas": [
+       {
+        "nameEng": "England. League Cup",
+        "countryNameEng": "England",
+        "countryImage": "/sfiles/logo-flag/4269a9d0d55e0c20e4110ce1a41e1cf7.png",
+        "countryId": 231,
+        "countryName": "Angleterre",
+        "gamesCount": 8,
+        "image": "/sfiles/logo-champ/ChampDefaultLogo.png",
+        "id": 119237,
+        "name": "Angleterre. Coupe de la Ligue"
+       },
+       {
+        "nameEng": "England. Premier League",
+        "countryNameEng": "England",
+        "countryImage": "/sfiles/logo-flag/4269a9d0d55e0c20e4110ce1a41e1cf7.png",
+        "countryId": 231,
+        "countryName": "Angleterre",
+        "gamesCount": 20,
+        "isTop": true,
+        "globalChampId": 7,
+        "image": "/sfiles/logo-champ/ChampDefaultLogo.png",
+        "id": 88637,
+        "name": "Angleterre. Premier League"
+       },
+       {
+        "nameEng": "England. Championship",
+        "countryNameEng": "England",
+        "countryImage": "/sfiles/logo-flag/4269a9d0d55e0c20e4110ce1a41e1cf7.png",
+        "countryId": 231,
+        "countryName": "Angleterre",
+        "gamesCount": 12,
+        "image": "/sfiles/logo-champ/ChampDefaultLogo.png",
+        "id": 105759,
+        "name": "Angleterre. Championship"
+       }
+      ],
+      "subChampsCount": 19,
+      "countryImage": "/sfiles/logo-flag/4269a9d0d55e0c20e4110ce1a41e1cf7.png",
+      "countryId": 231,
+      "altImage": "/sfiles/logo-champ/ChampDefaultLogo.png",
+      "gamesCount": 150,
+      "image": "/sfiles/logo-champ/ChampDefaultLogo.png",
+      "id": 33,
+      "name": "Angleterre"
+     },
+     {
+      "subLigas": [
+       {
+        "nameEng": "Germany DFB Pokal",
+        "countryNameEng": "Germany",
+        "countryImage": "/sfiles/logo-flag/d4567348989cea3937d84a953323b252.png",
+        "countryId": 53,
+        "countryName": "Allemagne",
+        "gamesCount": 16,
+        "image": "/sfiles/logo-champ/ChampDefaultLogo.png",
+        "id": 119235,
+        "name": "Coupe d`Allemagne - DFB Pokal"
+       },
+       {
+        "nameEng": "Germany. Bundesliga",
+        "countryNameEng": "Germany",
+        "countryImage": "/sfiles/logo-flag/d4567348989cea3937d84a953323b252.png",
+        "countryId": 53,
+        "countryName": "Allemagne",
+        "gamesCount": 18,
+        "isTop": true,
+        "globalChampId": 107,
+        "image": "/sfiles/logo-champ/ChampDefaultLogo.png",
+        "id": 96463,
+        "name": "Allemagne. Bundesliga"
+       },
+       {
+        "nameEng": "Germany. 2. Bundesliga",
+        "countryNameEng": "Germany",
+        "countryImage": "/sfiles/logo-flag/d4567348989cea3937d84a953323b252.png",
+        "countryId": 53,
+        "countryName": "Allemagne",
+        "gamesCount": 9,
+        "image": "/sfiles/logo-champ/ChampDefaultLogo.png",
+        "id": 109313,
+        "name": "Allemagne. 2. Bundesliga"
+       }
+      ],
+      "subChampsCount": 8,
+      "countryImage": "/sfiles/logo-flag/d4567348989cea3937d84a953323b252.png",
+      "countryId": 53,
+      "altImage": "/sfiles/logo-champ/ChampDefaultLogo.png",
+      "gamesCount": 63,
+      "image": "/sfiles/logo-champ/ChampDefaultLogo.png",
+      "id": 69,
+      "name": "Allemagne"
+     }
+    ],
+    "id": 1,
+    "name": "Football "
+   },
+   {
+    "nameEng": "Tennis",
+    "gamesCount": 344,
+    "champsCount": 52,
+    "id": 4,
+    "name": "Tennis "
+   }
+  ]
+ },
+ {
+  "menuSectionId": 1,
+  "menuSectionName": "Category A-Z",
+  "sports": []
+ },
+ {
+  "menuSectionId": 3,
+  "menuSectionName": "Альтернативные",
+  "sports": [
+   {
+    "nameEng": "Football",
+    "gamesCount": 1187,
+    "champsCount": 12,
+    "id": 1,
+    "name": "Football "
+   }
+  ]
+ },
+ {
+  "menuSectionId": 7,
+  "menuSectionName": "Long-term bets",
+  "sports": [
+   {
+    "nameEng": "Football",
+    "gamesCount": 273,
+    "champsCount": 75,
+    "id": 1,
+    "name": "Football "
+   },
+   {
+    "nameEng": "Tennis",
+    "gamesCount": 8,
+    "champsCount": 8,
+    "id": 4,
+    "name": "Tennis "
+   }
+  ]
+ },
+ {
+  "menuSectionId": 9,
+  "menuSectionName": "Киберстрим",
+  "sports": [
+   {
+    "nameEng": "Football",
+    "gamesCount": 76,
+    "champsCount": 11,
+    "id": 1,
+    "name": "Football "
+   }
+  ]
+ }
+]

@@ -3496,6 +3496,79 @@ def elitesports_check(
                   "alertes, §15.3).[/dim]")
 
 
+@app.command(name="vivatbet-check")
+def vivatbet_check(
+    sport: str = typer.Option("soccer,tennis", "--sport"),
+    ligues: int = typer.Option(10, "--ligues",
+                               help="Compétitions balayées par sport (0 = toutes)."),
+):
+    """Sonde d'acceptation de Vivatbet — APPELLE l'API réelle, n'écrit rien.
+
+    Même règle qu'`elitesports-check` (§15.7) : un book se juge sur ce qu'il
+    rend depuis la VM, pas sur ce que sa capture laissait espérer. Elle lit les
+    50 vedettes, la liste des compétitions, puis `--ligues` compétitions, et
+    chronomètre le tout — la durée d'un balayage complet s'en déduit.
+    """
+    import time as _time
+
+    from .scrapers.vivatbet import (
+        MAX_COUNT, VivatbetScraper, compte_rejets, parse_games,
+    )
+
+    for sp in [x.strip() for x in sport.split(",") if x.strip()]:
+        console.print(f"\n[bold green]══ {sp.upper()} ══[/bold green]")
+        try:
+            with VivatbetScraper() as sc:
+                t0 = _time.monotonic()
+                top = sc.fetch_top(sp)
+                t_top = _time.monotonic() - t0
+                liste = sc.fetch_leagues(sp)
+                choix = liste if ligues <= 0 else liste[:ligues]
+                t1 = _time.monotonic()
+                lots = [sc.fetch_league(sp, lid) for lid, _nom, _n in choix]
+                t_lig = _time.monotonic() - t1
+        except Exception as e:                                    # noqa: BLE001
+            console.print(f"[red]  injoignable — {type(e).__name__}: {e}[/red]")
+            continue
+
+        quotes = list(parse_games(top))
+        rejets: Counter = Counter(compte_rejets(top))
+        for lot in lots:
+            quotes.extend(parse_games(lot))
+            rejets.update(compte_rejets(lot))
+        evs = {q.event_key for q in quotes}
+        par_marche = Counter(q.market.value for q in quotes)
+        lignes = sorted({q.outcome.line for q in quotes if q.outcome.line is not None})
+        par_appel = t_lig / len(choix) if choix else 0.0
+        console.print(f"  vedettes          : {len(top)} matchs en {t_top:.1f} s")
+        console.print(f"  compétitions      : {len(liste)} "
+                      f"({sum(n for *_x, n in liste)} matchs annoncés) — "
+                      f"{len(choix)} balayées en {t_lig:.1f} s "
+                      f"({par_appel:.2f} s par appel)")
+        console.print(f"  événements        : {len(evs)}")
+        console.print(f"  cotes             : {len(quotes)}  {dict(par_marche)}")
+        console.print(f"  lignes de totaux  : {lignes[:14]}")
+        ecartes = {k: v for k, v in sorted(rejets.items())
+                   if k not in ("annonces", "retenus") and v}
+        console.print(f"  écartés           : {sum(ecartes.values())} "
+                      f"{ecartes or '(aucun)'}")
+        tronquees = [f"{nom} ({n})" for _id, nom, n in liste if n > MAX_COUNT]
+        if tronquees:
+            console.print(f"[yellow]  ⚠️ servies en partie (plafond {MAX_COUNT}) : "
+                          f"{', '.join(tronquees)}[/yellow]")
+        if liste and choix:
+            console.print(f"  balayage complet estimé : "
+                          f"≈ {par_appel * len(liste) / 4:.0f} s à 4 appels simultanés")
+        if not quotes:
+            console.print("[yellow]  ⚠️ zéro cote : l'API répond mais le parseur ne "
+                          "reconnaît rien — la forme a changé.[/yellow]")
+        elif not par_marche.get("h2h"):
+            console.print("[yellow]  ⚠️ aucun vainqueur — vérifier groupId 1.[/yellow]")
+    console.print("\n[dim]Sonde seule — rien n'a été écrit. Dans le cycle, le book "
+                  "se coupe par BOOKS_DISABLED=vivatbet (coupe la donnée)\n   ou "
+                  "/book vivatbet (ne coupe que les alertes, §15.3).[/dim]")
+
+
 @app.command(name="inspect-betano")
 def inspect_betano(path: str):
     """Inspect a saved Betano overview JSON dump (DevTools → Response → save).

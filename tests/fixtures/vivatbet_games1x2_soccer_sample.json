@@ -1,0 +1,4873 @@
+[
+ {
+  "sport": {
+   "nameEng": "Football",
+   "timeName": "Mi-temps",
+   "timesName": "Mi-temps",
+   "id": 1,
+   "name": "Football "
+  },
+  "liga": {
+   "countryName": "Europe",
+   "nameEng": "UEFA Nations League",
+   "id": 1706694,
+   "name": "Ligue des nations de l'UEFA"
+  },
+  "opponent1": {
+   "fullNameEng": "Belgium",
+   "fullName": "Belgique",
+   "countryId": 24
+  },
+  "opponent2": {
+   "fullNameEng": "France",
+   "fullName": "France",
+   "countryId": 198
+  },
+  "eventGroups": [
+   {
+    "groupId": 1,
+    "shortGroupId": 1,
+    "events": [
+     [
+      {
+       "type": 1,
+       "cf": 3.98,
+       "cfView": "3.98"
+      }
+     ],
+     [
+      {
+       "type": 2,
+       "cf": 3.98,
+       "cfView": "3.98"
+      }
+     ],
+     [
+      {
+       "type": 3,
+       "cf": 1.891,
+       "cfView": "1.891"
+      }
+     ]
+    ]
+   },
+   {
+    "groupId": 8,
+    "shortGroupId": 2,
+    "events": [
+     [
+      {
+       "type": 4,
+       "cf": 1.97,
+       "cfView": "1.97"
+      }
+     ],
+     [
+      {
+       "type": 5,
+       "cf": 1.273,
+       "cfView": "1.273"
+      }
+     ],
+     [
+      {
+       "type": 6,
+       "cf": 1.273,
+       "cfView": "1.273"
+      }
+     ]
+    ]
+   },
+   {
+    "groupId": 19,
+    "shortGroupId": 21,
+    "events": [
+     [
+      {
+       "type": 180,
+       "cf": 1.52,
+       "cfView": "1.52"
+      }
+     ],
+     [
+      {
+       "type": 181,
+       "cf": 2.395,
+       "cfView": "2.395"
+      }
+     ]
+    ]
+   },
+   {
+    "groupId": 17,
+    "shortGroupId": 4,
+    "events": [
+     [
+      {
+       "type": 9,
+       "parameter": 2.5,
+       "cf": 1.619,
+       "cfView": "1.619",
+       "isCenter": true,
+       "eventParams": {
+        "params": [
+         "(2.5)"
+        ]
+       }
+      }
+     ],
+     [
+      {
+       "type": 10,
+       "parameter": 2.5,
+       "cf": 2.419,
+       "cfView": "2.419",
+       "isCenter": true,
+       "eventParams": {
+        "params": [
+         "(2.5)"
+        ]
+       }
+      }
+     ]
+    ]
+   },
+   {
+    "groupId": 2,
+    "shortGroupId": 3,
+    "events": [
+     [
+      {
+       "type": 7,
+       "cf": 2.994,
+       "cfView": "2.994",
+       "isCenter": true,
+       "eventParams": {
+        "params": [
+         "(0)"
+        ]
+       }
+      }
+     ],
+     [
+      {
+       "type": 8,
+       "cf": 1.435,
+       "cfView": "1.435",
+       "isCenter": true,
+       "eventParams": {
+        "params": [
+         "(0)"
+        ]
+       }
+      }
+     ]
+    ]
+   },
+   {
+    "groupId": 15,
+    "shortGroupId": 5,
+    "events": [
+     [
+      {
+       "type": 11,
+       "parameter": 1.5,
+       "cf": 2.52,
+       "cfView": "2.52",
+       "isCenter": true,
+       "eventParams": {
+        "params": [
+         "(1.5)"
+        ]
+       }
+      }
+     ],
+     [
+      {
+       "type": 12,
+       "parameter": 1.5,
+       "cf": 1.47,
+       "cfView": "1.47",
+       "isCenter": true,
+       "eventParams": {
+        "params": [
+         "(1.5)"
+        ]
+       }
+      }
+     ]
+    ]
+   },
+   {
+    "groupId": 62,
+    "shortGroupId": 6,
+    "events": [
+     [
+      {
+       "type": 13,
+       "parameter": 1.5,
+       "cf": 1.67,
+       "cfView": "1.67",
+       "isCenter": true,
+       "eventParams": {
+        "params": [
+         "(1.5)"
+        ]
+       }
+      }
+     ],
+     [
+      {
+       "type": 14,
+       "parameter": 1.5,
+       "cf": 2.15,
+       "cfView": "2.15",
+       "isCenter": true,
+       "eventParams": {
+        "params": [
+         "(1.5)"
+        ]
+       }
+      }
+     ]
+    ]
+   },
+   {
+    "groupId": 99,
+    "shortGroupId": 1007,
+    "events": [
+     [
+      {
+       "type": 3827,
+       "parameter": 3.25,
+       "cf": 2.246,
+       "cfView": "2.246",
+       "isCenter": true,
+       "eventParams": {
+        "params": [
+         "(3.25)"
+        ]
+       }
+      }
+     ],
+     [
+      {
+       "type": 3828,
+       "parameter": 3.25,
+       "cf": 1.707,
+       "cfView": "1.707",
+       "isCenter": true,
+       "eventParams": {
+        "params": [
+         "(3.25)"
+        ]
+       }
+      }
+     ]
+    ]
+   },
+   {
+    "groupId": 2854,
+    "shortGroupId": 1008,
+    "events": [
+     [
+      {
+       "type": 3829,
+       "parameter": 0.75,
+       "cf": 1.783,
+       "cfView": "1.783",
+       "isCenter": true,
+       "eventParams": {
+        "params": [
+         "(0.75)"
+        ]
+       }
+      }
+     ],
+     [
+      {
+       "type": 3830,
+       "parameter": -0.75,
+       "cf": 2.127,
+       "cfView": "2.127",
+       "isCenter": true,
+       "eventParams": {
+        "params": [
+         "(-0.75)"
+        ]
+       }
+      }
+     ]
+    ]
+   }
+  ],
+  "id": 754873915,
+  "mainGameId": 754873915,
+  "constId": 346384924,
+  "startTs": 1790621100,
+  "gameTypeName": "",
+  "periodName": "",
+  "kind": 3
+ },
+ {
+  "sport": {
+   "nameEng": "Football",
+   "timeName": "Mi-temps",
+   "timesName": "Mi-temps",
+   "id": 1,
+   "name": "Football "
+  },
+  "liga": {
+   "countryName": "Europe",
+   "nameEng": "UEFA Nations League",
+   "id": 1706694,
+   "name": "Ligue des nations de l'UEFA"
+  },
+  "opponent1": {
+   "fullNameEng": "Romania",
+   "fullName": "Roumanie",
+   "countryId": 152
+  },
+  "opponent2": {
+   "fullNameEng": "Bosnia and Herzegovina",
+   "fullName": "Bosnie-Herzégovine",
+   "countryId": 29
+  },
+  "eventGroups": [
+   {
+    "groupId": 1,
+    "shortGroupId": 1,
+    "events": [
+     [
+      {
+       "type": 1,
+       "cf": 2.468,
+       "cfView": "2.468"
+      }
+     ],
+     [
+      {
+       "type": 2,
+       "cf": 3.44,
+       "cfView": "3.44"
+      }
+     ],
+     [
+      {
+       "type": 3,
+       "cf": 2.984,
+       "cfView": "2.984"
+      }
+     ]
+    ]
+   },
+   {
+    "groupId": 8,
+    "shortGroupId": 2,
+    "events": [
+     [
+      {
+       "type": 4,
+       "cf": 1.426,
+       "cfView": "1.426"
+      }
+     ],
+     [
+      {
+       "type": 5,
+       "cf": 1.341,
+       "cfView": "1.341"
+      }
+     ],
+     [
+      {
+       "type": 6,
+       "cf": 1.584,
+       "cfView": "1.584"
+      }
+     ]
+    ]
+   },
+   {
+    "groupId": 19,
+    "shortGroupId": 21,
+    "events": [
+     [
+      {
+       "type": 180,
+       "cf": 1.79,
+       "cfView": "1.79"
+      }
+     ],
+     [
+      {
+       "type": 181,
+       "cf": 1.937,
+       "cfView": "1.937"
+      }
+     ]
+    ]
+   },
+   {
+    "groupId": 17,
+    "shortGroupId": 4,
+    "events": [
+     [
+      {
+       "type": 9,
+       "parameter": 2.5,
+       "cf": 2.104,
+       "cfView": "2.104",
+       "isCenter": true,
+       "eventParams": {
+        "params": [
+         "(2.5)"
+        ]
+       }
+      }
+     ],
+     [
+      {
+       "type": 10,
+       "parameter": 2.5,
+       "cf": 1.799,
+       "cfView": "1.799",
+       "isCenter": true,
+       "eventParams": {
+        "params": [
+         "(2.5)"
+        ]
+       }
+      }
+     ]
+    ]
+   },
+   {
+    "groupId": 2,
+    "shortGroupId": 3,
+    "events": [
+     [
+      {
+       "type": 7,
+       "cf": 1.778,
+       "cfView": "1.778",
+       "isCenter": true,
+       "eventParams": {
+        "params": [
+         "(0)"
+        ]
+       }
+      }
+     ],
+     [
+      {
+       "type": 8,
+       "cf": 2.134,
+       "cfView": "2.134",
+       "isCenter": true,
+       "eventParams": {
+        "params": [
+         "(0)"
+        ]
+       }
+      }
+     ]
+    ]
+   },
+   {
+    "groupId": 15,
+    "shortGroupId": 5,
+    "events": [
+     [
+      {
+       "type": 11,
+       "parameter": 1.5,
+       "cf": 2.37,
+       "cfView": "2.37",
+       "isCenter": true,
+       "eventParams": {
+        "params": [
+         "(1.5)"
+        ]
+       }
+      }
+     ],
+     [
+      {
+       "type": 12,
+       "parameter": 1.5,
+       "cf": 1.55,
+       "cfView": "1.55",
+       "isCenter": true,
+       "eventParams": {
+        "params": [
+         "(1.5)"
+        ]
+       }
+      }
+     ]
+    ]
+   },
+   {
+    "groupId": 62,
+    "shortGroupId": 6,
+    "events": [
+     [
+      {
+       "type": 13,
+       "parameter": 1.5,
+       "cf": 2.6,
+       "cfView": "2.6",
+       "isCenter": true,
+       "eventParams": {
+        "params": [
+         "(1.5)"
+        ]
+       }
+      }
+     ],
+     [
+      {
+       "type": 14,
+       "parameter": 1.5,
+       "cf": 1.46,
+       "cfView": "1.46",
+       "isCenter": true,
+       "eventParams": {
+        "params": [
+         "(1.5)"
+        ]
+       }
+      }
+     ]
+    ]
+   },
+   {
+    "groupId": 99,
+    "shortGroupId": 1007,
+    "events": [
+     [
+      {
+       "type": 3827,
+       "parameter": 2.25,
+       "cf": 1.856,
+       "cfView": "1.856",
+       "isCenter": true,
+       "eventParams": {
+        "params": [
+         "(2.25)"
+        ]
+       }
+      }
+     ],
+     [
+      {
+       "type": 3828,
+       "parameter": 2.25,
+       "cf": 2.032,
+       "cfView": "2.032",
+       "isCenter": true,
+       "eventParams": {
+        "params": [
+         "(2.25)"
+        ]
+       }
+      }
+     ]
+    ]
+   },
+   {
+    "groupId": 2854,
+    "shortGroupId": 1008,
+    "events": [
+     [
+      {
+       "type": 3829,
+       "parameter": -0.25,
+       "cf": 2.096,
+       "cfView": "2.096",
+       "isCenter": true,
+       "eventParams": {
+        "params": [
+         "(-0.25)"
+        ]
+       }
+      }
+     ],
+     [
+      {
+       "type": 3830,
+       "parameter": 0.25,
+       "cf": 1.805,
+       "cfView": "1.805",
+       "isCenter": true,
+       "eventParams": {
+        "params": [
+         "(0.25)"
+        ]
+       }
+      }
+     ]
+    ]
+   }
+  ],
+  "id": 754838792,
+  "mainGameId": 754838792,
+  "constId": 346671942,
+  "startTs": 1790621100,
+  "gameTypeName": "",
+  "periodName": "",
+  "kind": 3
+ },
+ {
+  "sport": {
+   "nameEng": "Football",
+   "timeName": "Mi-temps",
+   "timesName": "Mi-temps",
+   "id": 1,
+   "name": "Football "
+  },
+  "liga": {
+   "countryName": "Europe",
+   "nameEng": "UEFA Nations League",
+   "id": 1706694,
+   "name": "Ligue des nations de l'UEFA"
+  },
+  "opponent1": {
+   "fullNameEng": "Northern Ireland",
+   "fullName": "Irlande du Nord",
+   "countryId": 236
+  },
+  "opponent2": {
+   "fullNameEng": "Hungary",
+   "fullName": "Hongrie",
+   "countryId": 40
+  },
+  "eventGroups": [
+   {
+    "groupId": 1,
+    "shortGroupId": 1,
+    "events": [
+     [
+      {
+       "type": 1,
+       "cf": 2.993,
+       "cfView": "2.993"
+      }
+     ],
+     [
+      {
+       "type": 2,
+       "cf": 3.16,
+       "cfView": "3.16"
+      }
+     ],
+     [
+      {
+       "type": 3,
+       "cf": 2.629,
+       "cfView": "2.629"
+      }
+     ]
+    ]
+   },
+   {
+    "groupId": 8,
+    "shortGroupId": 2,
+    "events": [
+     [
+      {
+       "type": 4,
+       "cf": 1.525,
+       "cfView": "1.525"
+      }
+     ],
+     [
+      {
+       "type": 5,
+       "cf": 1.389,
+       "cfView": "1.389"
+      }
+     ],
+     [
+      {
+       "type": 6,
+       "cf": 1.424,
+       "cfView": "1.424"
+      }
+     ]
+    ]
+   },
+   {
+    "groupId": 19,
+    "shortGroupId": 21,
+    "events": [
+     [
+      {
+       "type": 180,
+       "cf": 2.09,
+       "cfView": "2.09"
+      }
+     ],
+     [
+      {
+       "type": 181,
+       "cf": 1.676,
+       "cfView": "1.676"
+      }
+     ]
+    ]
+   },
+   {
+    "groupId": 17,
+    "shortGroupId": 4,
+    "events": [
+     [
+      {
+       "type": 9,
+       "parameter": 1.5,
+       "cf": 1.554,
+       "cfView": "1.554",
+       "isCenter": true,
+       "eventParams": {
+        "params": [
+         "(1.5)"
+        ]
+       }
+      }
+     ],
+     [
+      {
+       "type": 10,
+       "parameter": 1.5,
+       "cf": 2.58,
+       "cfView": "2.58",
+       "isCenter": true,
+       "eventParams": {
+        "params": [
+         "(1.5)"
+        ]
+       }
+      }
+     ]
+    ]
+   },
+   {
+    "groupId": 2,
+    "shortGroupId": 3,
+    "events": [
+     [
+      {
+       "type": 7,
+       "cf": 2.069,
+       "cfView": "2.069",
+       "isCenter": true,
+       "eventParams": {
+        "params": [
+         "(0)"
+        ]
+       }
+      }
+     ],
+     [
+      {
+       "type": 8,
+       "cf": 1.826,
+       "cfView": "1.826",
+       "isCenter": true,
+       "eventParams": {
+        "params": [
+         "(0)"
+        ]
+       }
+      }
+     ]
+    ]
+   },
+   {
+    "groupId": 15,
+    "shortGroupId": 5,
+    "events": [
+     [
+      {
+       "type": 11,
+       "parameter": 0.5,
+       "cf": 1.49,
+       "cfView": "1.49",
+       "isCenter": true,
+       "eventParams": {
+        "params": [
+         "(0.5)"
+        ]
+       }
+      }
+     ],
+     [
+      {
+       "type": 12,
+       "parameter": 0.5,
+       "cf": 2.52,
+       "cfView": "2.52",
+       "isCenter": true,
+       "eventParams": {
+        "params": [
+         "(0.5)"
+        ]
+       }
+      }
+     ]
+    ]
+   },
+   {
+    "groupId": 62,
+    "shortGroupId": 6,
+    "events": [
+     [
+      {
+       "type": 13,
+       "parameter": 0.5,
+       "cf": 1.44,
+       "cfView": "1.44",
+       "isCenter": true,
+       "eventParams": {
+        "params": [
+         "(0.5)"
+        ]
+       }
+      }
+     ],
+     [
+      {
+       "type": 14,
+       "parameter": 0.5,
+       "cf": 2.7,
+       "cfView": "2.7",
+       "isCenter": true,
+       "eventParams": {
+        "params": [
+         "(0.5)"
+        ]
+       }
+      }
+     ]
+    ]
+   },
+   {
+    "groupId": 99,
+    "shortGroupId": 1007,
+    "events": [
+     [
+      {
+       "type": 3827,
+       "parameter": 1.75,
+       "cf": 1.711,
+       "cfView": "1.711",
+       "isCenter": true,
+       "eventParams": {
+        "params": [
+         "(1.75)"
+        ]
+       }
+      }
+     ],
+     [
+      {
+       "type": 3828,
+       "parameter": 1.75,
+       "cf": 2.24,
+       "cfView": "2.24",
+       "isCenter": true,
+       "eventParams": {
+        "params": [
+         "(1.75)"
+        ]
+       }
+      }
+     ]
+    ]
+   },
+   {
+    "groupId": 2854,
+    "shortGroupId": 1008,
+    "events": [
+     [
+      {
+       "type": 3829,
+       "parameter": -0.25,
+       "cf": 2.498,
+       "cfView": "2.498",
+       "isCenter": true,
+       "eventParams": {
+        "params": [
+         "(-0.25)"
+        ]
+       }
+      }
+     ],
+     [
+      {
+       "type": 3830,
+       "parameter": 0.25,
+       "cf": 1.586,
+       "cfView": "1.586",
+       "isCenter": true,
+       "eventParams": {
+        "params": [
+         "(0.25)"
+        ]
+       }
+      }
+     ]
+    ]
+   }
+  ],
+  "id": 754875055,
+  "mainGameId": 754875055,
+  "constId": 346671944,
+  "startTs": 1790621100,
+  "gameTypeName": "",
+  "periodName": "",
+  "kind": 3
+ },
+ {
+  "sport": {
+   "nameEng": "Football",
+   "timeName": "Mi-temps",
+   "timesName": "Mi-temps",
+   "id": 1,
+   "name": "Football "
+  },
+  "liga": {
+   "countryName": "Europe",
+   "nameEng": "UEFA Nations League",
+   "id": 1706694,
+   "name": "Ligue des nations de l'UEFA"
+  },
+  "opponent1": {
+   "fullNameEng": "Turkey",
+   "fullName": "Turquie",
+   "countryId": 190
+  },
+  "opponent2": {
+   "fullNameEng": "Italy",
+   "fullName": "Italie",
+   "countryId": 79
+  },
+  "eventGroups": [
+   {
+    "groupId": 1,
+    "shortGroupId": 1,
+    "events": [
+     [
+      {
+       "type": 1,
+       "cf": 2.792,
+       "cfView": "2.792"
+      }
+     ],
+     [
+      {
+       "type": 2,
+       "cf": 3.68,
+       "cfView": "3.68"
+      }
+     ],
+     [
+      {
+       "type": 3,
+       "cf": 2.492,
+       "cfView": "2.492"
+      }
+     ]
+    ]
+   },
+   {
+    "groupId": 8,
+    "shortGroupId": 2,
+    "events": [
+     [
+      {
+       "type": 4,
+       "cf": 1.575,
+       "cfView": "1.575"
+      }
+     ],
+     [
+      {
+       "type": 5,
+       "cf": 1.308,
+       "cfView": "1.308"
+      }
+     ],
+     [
+      {
+       "type": 6,
+       "cf": 1.475,
+       "cfView": "1.475"
+      }
+     ]
+    ]
+   },
+   {
+    "groupId": 19,
+    "shortGroupId": 21,
+    "events": [
+     [
+      {
+       "type": 180,
+       "cf": 1.51,
+       "cfView": "1.51"
+      }
+     ],
+     [
+      {
+       "type": 181,
+       "cf": 2.423,
+       "cfView": "2.423"
+      }
+     ]
+    ]
+   },
+   {
+    "groupId": 17,
+    "shortGroupId": 4,
+    "events": [
+     [
+      {
+       "type": 9,
+       "parameter": 2.5,
+       "cf": 1.675,
+       "cfView": "1.675",
+       "isCenter": true,
+       "eventParams": {
+        "params": [
+         "(2.5)"
+        ]
+       }
+      }
+     ],
+     [
+      {
+       "type": 10,
+       "parameter": 2.5,
+       "cf": 2.304,
+       "cfView": "2.304",
+       "isCenter": true,
+       "eventParams": {
+        "params": [
+         "(2.5)"
+        ]
+       }
+      }
+     ]
+    ]
+   },
+   {
+    "groupId": 2,
+    "shortGroupId": 3,
+    "events": [
+     [
+      {
+       "type": 7,
+       "cf": 2.053,
+       "cfView": "2.053",
+       "isCenter": true,
+       "eventParams": {
+        "params": [
+         "(0)"
+        ]
+       }
+      }
+     ],
+     [
+      {
+       "type": 8,
+       "cf": 1.839,
+       "cfView": "1.839",
+       "isCenter": true,
+       "eventParams": {
+        "params": [
+         "(0)"
+        ]
+       }
+      }
+     ]
+    ]
+   },
+   {
+    "groupId": 15,
+    "shortGroupId": 5,
+    "events": [
+     [
+      {
+       "type": 11,
+       "parameter": 1.5,
+       "cf": 2.2,
+       "cfView": "2.2",
+       "isCenter": true,
+       "eventParams": {
+        "params": [
+         "(1.5)"
+        ]
+       }
+      }
+     ],
+     [
+      {
+       "type": 12,
+       "parameter": 1.5,
+       "cf": 1.68,
+       "cfView": "1.68",
+       "isCenter": true,
+       "eventParams": {
+        "params": [
+         "(1.5)"
+        ]
+       }
+      }
+     ]
+    ]
+   },
+   {
+    "groupId": 62,
+    "shortGroupId": 6,
+    "events": [
+     [
+      {
+       "type": 13,
+       "parameter": 1.5,
+       "cf": 2.05,
+       "cfView": "2.05",
+       "isCenter": true,
+       "eventParams": {
+        "params": [
+         "(1.5)"
+        ]
+       }
+      }
+     ],
+     [
+      {
+       "type": 14,
+       "parameter": 1.5,
+       "cf": 1.78,
+       "cfView": "1.78",
+       "isCenter": true,
+       "eventParams": {
+        "params": [
+         "(1.5)"
+        ]
+       }
+      }
+     ]
+    ]
+   },
+   {
+    "groupId": 99,
+    "shortGroupId": 1007,
+    "events": [
+     [
+      {
+       "type": 3827,
+       "parameter": 2.75,
+       "cf": 1.838,
+       "cfView": "1.838",
+       "isCenter": true,
+       "eventParams": {
+        "params": [
+         "(2.75)"
+        ]
+       }
+      }
+     ],
+     [
+      {
+       "type": 3828,
+       "parameter": 2.75,
+       "cf": 2.054,
+       "cfView": "2.054",
+       "isCenter": true,
+       "eventParams": {
+        "params": [
+         "(2.75)"
+        ]
+       }
+      }
+     ]
+    ]
+   },
+   {
+    "groupId": 2854,
+    "shortGroupId": 1008,
+    "events": [
+     [
+      {
+       "type": 3829,
+       "parameter": -0.25,
+       "cf": 2.394,
+       "cfView": "2.394",
+       "isCenter": true,
+       "eventParams": {
+        "params": [
+         "(-0.25)"
+        ]
+       }
+      }
+     ],
+     [
+      {
+       "type": 3830,
+       "parameter": 0.25,
+       "cf": 1.631,
+       "cfView": "1.631",
+       "isCenter": true,
+       "eventParams": {
+        "params": [
+         "(0.25)"
+        ]
+       }
+      }
+     ]
+    ]
+   }
+  ],
+  "id": 754876169,
+  "mainGameId": 754876169,
+  "constId": 346384922,
+  "startTs": 1790621100,
+  "gameTypeName": "",
+  "periodName": "",
+  "kind": 3
+ },
+ {
+  "sport": {
+   "nameEng": "Football",
+   "timeName": "Mi-temps",
+   "timesName": "Mi-temps",
+   "id": 1,
+   "name": "Football "
+  },
+  "liga": {
+   "countryName": "Europe",
+   "nameEng": "UEFA Nations League",
+   "id": 1706694,
+   "name": "Ligue des nations de l'UEFA"
+  },
+  "opponent1": {
+   "fullNameEng": "Sweden",
+   "fullName": "Suède",
+   "countryId": 207
+  },
+  "opponent2": {
+   "fullNameEng": "Poland",
+   "fullName": "Pologne",
+   "countryId": 147
+  },
+  "eventGroups": [
+   {
+    "groupId": 1,
+    "shortGroupId": 1,
+    "events": [
+     [
+      {
+       "type": 1,
+       "cf": 2.023,
+       "cfView": "2.023"
+      }
+     ],
+     [
+      {
+       "type": 2,
+       "cf": 3.885,
+       "cfView": "3.885"
+      }
+     ],
+     [
+      {
+       "type": 3,
+       "cf": 3.58,
+       "cfView": "3.58"
+      }
+     ]
+    ]
+   },
+   {
+    "groupId": 8,
+    "shortGroupId": 2,
+    "events": [
+     [
+      {
+       "type": 4,
+       "cf": 1.321,
+       "cfView": "1.321"
+      }
+     ],
+     [
+      {
+       "type": 5,
+       "cf": 1.284,
+       "cfView": "1.284"
+      }
+     ],
+     [
+      {
+       "type": 6,
+       "cf": 1.845,
+       "cfView": "1.845"
+      }
+     ]
+    ]
+   },
+   {
+    "groupId": 19,
+    "shortGroupId": 21,
+    "events": [
+     [
+      {
+       "type": 180,
+       "cf": 1.55,
+       "cfView": "1.55"
+      }
+     ],
+     [
+      {
+       "type": 181,
+       "cf": 2.323,
+       "cfView": "2.323"
+      }
+     ]
+    ]
+   },
+   {
+    "groupId": 17,
+    "shortGroupId": 4,
+    "events": [
+     [
+      {
+       "type": 9,
+       "parameter": 2.5,
+       "cf": 1.675,
+       "cfView": "1.675",
+       "isCenter": true,
+       "eventParams": {
+        "params": [
+         "(2.5)"
+        ]
+       }
+      }
+     ],
+     [
+      {
+       "type": 10,
+       "parameter": 2.5,
+       "cf": 2.304,
+       "cfView": "2.304",
+       "isCenter": true,
+       "eventParams": {
+        "params": [
+         "(2.5)"
+        ]
+       }
+      }
+     ]
+    ]
+   },
+   {
+    "groupId": 2,
+    "shortGroupId": 3,
+    "events": [
+     [
+      {
+       "type": 7,
+       "cf": 1.53,
+       "cfView": "1.53",
+       "isCenter": true,
+       "eventParams": {
+        "params": [
+         "(0)"
+        ]
+       }
+      }
+     ],
+     [
+      {
+       "type": 8,
+       "cf": 2.651,
+       "cfView": "2.651",
+       "isCenter": true,
+       "eventParams": {
+        "params": [
+         "(0)"
+        ]
+       }
+      }
+     ]
+    ]
+   },
+   {
+    "groupId": 15,
+    "shortGroupId": 5,
+    "events": [
+     [
+      {
+       "type": 11,
+       "parameter": 1.5,
+       "cf": 1.74,
+       "cfView": "1.74",
+       "isCenter": true,
+       "eventParams": {
+        "params": [
+         "(1.5)"
+        ]
+       }
+      }
+     ],
+     [
+      {
+       "type": 12,
+       "parameter": 1.5,
+       "cf": 2.04,
+       "cfView": "2.04",
+       "isCenter": true,
+       "eventParams": {
+        "params": [
+         "(1.5)"
+        ]
+       }
+      }
+     ]
+    ]
+   },
+   {
+    "groupId": 62,
+    "shortGroupId": 6,
+    "events": [
+     [
+      {
+       "type": 13,
+       "parameter": 1.5,
+       "cf": 2.5,
+       "cfView": "2.5",
+       "isCenter": true,
+       "eventParams": {
+        "params": [
+         "(1.5)"
+        ]
+       }
+      }
+     ],
+     [
+      {
+       "type": 14,
+       "parameter": 1.5,
+       "cf": 1.49,
+       "cfView": "1.49",
+       "isCenter": true,
+       "eventParams": {
+        "params": [
+         "(1.5)"
+        ]
+       }
+      }
+     ]
+    ]
+   },
+   {
+    "groupId": 99,
+    "shortGroupId": 1007,
+    "events": [
+     [
+      {
+       "type": 3827,
+       "parameter": 2.75,
+       "cf": 1.837,
+       "cfView": "1.837",
+       "isCenter": true,
+       "eventParams": {
+        "params": [
+         "(2.75)"
+        ]
+       }
+      }
+     ],
+     [
+      {
+       "type": 3828,
+       "parameter": 2.75,
+       "cf": 2.055,
+       "cfView": "2.055",
+       "isCenter": true,
+       "eventParams": {
+        "params": [
+         "(2.75)"
+        ]
+       }
+      }
+     ]
+    ]
+   },
+   {
+    "groupId": 2854,
+    "shortGroupId": 1008,
+    "events": [
+     [
+      {
+       "type": 3829,
+       "parameter": -0.25,
+       "cf": 1.77,
+       "cfView": "1.77",
+       "isCenter": true,
+       "eventParams": {
+        "params": [
+         "(-0.25)"
+        ]
+       }
+      }
+     ],
+     [
+      {
+       "type": 3830,
+       "parameter": 0.25,
+       "cf": 2.145,
+       "cfView": "2.145",
+       "isCenter": true,
+       "eventParams": {
+        "params": [
+         "(0.25)"
+        ]
+       }
+      }
+     ]
+    ]
+   }
+  ],
+  "id": 754875058,
+  "mainGameId": 754875058,
+  "constId": 346671946,
+  "startTs": 1790621100,
+  "gameTypeName": "",
+  "periodName": "",
+  "kind": 3
+ },
+ {
+  "sport": {
+   "nameEng": "Football",
+   "timeName": "Mi-temps",
+   "timesName": "Mi-temps",
+   "id": 1,
+   "name": "Football "
+  },
+  "liga": {
+   "countryName": "Europe",
+   "nameEng": "UEFA Nations League",
+   "id": 1706694,
+   "name": "Ligue des nations de l'UEFA"
+  },
+  "opponent1": {
+   "fullNameEng": "Home (Special bets)",
+   "fullName": "Domicile (Paris spéciaux)",
+   "countryId": 225
+  },
+  "opponent2": {
+   "fullNameEng": "Away (Special bets)",
+   "fullName": "Extérieur (Paris spéciaux)",
+   "countryId": 225
+  },
+  "eventGroups": [
+   {
+    "groupId": 1,
+    "shortGroupId": 1,
+    "events": [
+     [
+      {
+       "type": 1,
+       "cf": 2.182,
+       "cfView": "2.182"
+      }
+     ],
+     [
+      {
+       "type": 2,
+       "cf": 7.75,
+       "cfView": "7.75"
+      }
+     ],
+     [
+      {
+       "type": 3,
+       "cf": 2.01,
+       "cfView": "2.01"
+      }
+     ]
+    ]
+   },
+   {
+    "groupId": 8,
+    "shortGroupId": 2,
+    "events": [
+     [
+      {
+       "type": 4,
+       "cf": 1.784,
+       "cfView": "1.784"
+      }
+     ],
+     [
+      {
+       "type": 5,
+       "cf": 1.065,
+       "cfView": "1.065"
+      }
+     ],
+     [
+      {
+       "type": 6,
+       "cf": 1.651,
+       "cfView": "1.651"
+      }
+     ]
+    ]
+   },
+   {
+    "groupId": 17,
+    "shortGroupId": 4,
+    "events": [
+     [
+      {
+       "type": 9,
+       "parameter": 13.5,
+       "cf": 1.828,
+       "cfView": "1.828",
+       "isCenter": true,
+       "eventParams": {
+        "params": [
+         "(13.5)"
+        ]
+       }
+      }
+     ],
+     [
+      {
+       "type": 10,
+       "parameter": 13.5,
+       "cf": 1.978,
+       "cfView": "1.978",
+       "isCenter": true,
+       "eventParams": {
+        "params": [
+         "(13.5)"
+        ]
+       }
+      }
+     ]
+    ]
+   },
+   {
+    "groupId": 2,
+    "shortGroupId": 3,
+    "events": [
+     [
+      {
+       "type": 7,
+       "parameter": 1.5,
+       "cf": 1.529,
+       "cfView": "1.529",
+       "isCenter": true,
+       "eventParams": {
+        "params": [
+         "(1.5)"
+        ]
+       }
+      }
+     ],
+     [
+      {
+       "type": 8,
+       "parameter": -1.5,
+       "cf": 2.509,
+       "cfView": "2.509",
+       "isCenter": true,
+       "eventParams": {
+        "params": [
+         "(-1.5)"
+        ]
+       }
+      }
+     ]
+    ]
+   },
+   {
+    "groupId": 15,
+    "shortGroupId": 5,
+    "events": [
+     [
+      {
+       "type": 11,
+       "parameter": 6.5,
+       "cf": 1.819,
+       "cfView": "1.819",
+       "isCenter": true,
+       "eventParams": {
+        "params": [
+         "(6.5)"
+        ]
+       }
+      }
+     ],
+     [
+      {
+       "type": 12,
+       "parameter": 6.5,
+       "cf": 1.989,
+       "cfView": "1.989",
+       "isCenter": true,
+       "eventParams": {
+        "params": [
+         "(6.5)"
+        ]
+       }
+      }
+     ]
+    ]
+   },
+   {
+    "groupId": 62,
+    "shortGroupId": 6,
+    "events": [
+     [
+      {
+       "type": 13,
+       "parameter": 6.5,
+       "cf": 1.732,
+       "cfView": "1.732",
+       "isCenter": true,
+       "eventParams": {
+        "params": [
+         "(6.5)"
+        ]
+       }
+      }
+     ],
+     [
+      {
+       "type": 14,
+       "parameter": 6.5,
+       "cf": 2.103,
+       "cfView": "2.103",
+       "isCenter": true,
+       "eventParams": {
+        "params": [
+         "(6.5)"
+        ]
+       }
+      }
+     ]
+    ]
+   },
+   {
+    "groupId": 99,
+    "shortGroupId": 1007,
+    "events": [
+     [
+      {
+       "type": 3827,
+       "parameter": 13.25,
+       "cf": 1.743,
+       "cfView": "1.743",
+       "isCenter": true,
+       "eventParams": {
+        "params": [
+         "(13.25)"
+        ]
+       }
+      }
+     ],
+     [
+      {
+       "type": 3828,
+       "parameter": 13.25,
+       "cf": 2.088,
+       "cfView": "2.088",
+       "isCenter": true,
+       "eventParams": {
+        "params": [
+         "(13.25)"
+        ]
+       }
+      }
+     ]
+    ]
+   },
+   {
+    "groupId": 2854,
+    "shortGroupId": 1008,
+    "events": [
+     [
+      {
+       "type": 3829,
+       "parameter": 1.25,
+       "cf": 1.576,
+       "cfView": "1.576",
+       "isCenter": true,
+       "eventParams": {
+        "params": [
+         "(1.25)"
+        ]
+       }
+      }
+     ],
+     [
+      {
+       "type": 3830,
+       "parameter": -1.25,
+       "cf": 2.392,
+       "cfView": "2.392",
+       "isCenter": true,
+       "eventParams": {
+        "params": [
+         "(-1.25)"
+        ]
+       }
+      }
+     ]
+    ]
+   }
+  ],
+  "homeAwayFlag": true,
+  "id": 755787783,
+  "mainGameId": 755787783,
+  "constId": 373096390,
+  "startTs": 1790621100,
+  "gameTypeName": "",
+  "dopInfo": "5 Matchs, GMT 18:45",
+  "periodName": "",
+  "kind": 3
+ },
+ {
+  "sport": {
+   "nameEng": "Football",
+   "timeName": "Mi-temps",
+   "timesName": "Mi-temps",
+   "id": 1,
+   "name": "Football "
+  },
+  "liga": {
+   "countryName": "Europe",
+   "nameEng": "UEFA Nations League",
+   "id": 1706694,
+   "name": "Ligue des nations de l'UEFA"
+  },
+  "opponent1": {
+   "fullNameEng": "Moldova",
+   "fullName": "Moldavie",
+   "countryId": 122
+  },
+  "opponent2": {
+   "fullNameEng": "Faroe Islands",
+   "fullName": "Îles Féroé",
+   "countryId": 194
+  },
+  "eventGroups": [
+   {
+    "groupId": 1,
+    "shortGroupId": 1,
+    "events": [
+     [
+      {
+       "type": 1,
+       "cf": 2.8,
+       "cfView": "2.8"
+      }
+     ],
+     [
+      {
+       "type": 2,
+       "cf": 3.155,
+       "cfView": "3.155"
+      }
+     ],
+     [
+      {
+       "type": 3,
+       "cf": 2.8,
+       "cfView": "2.8"
+      }
+     ]
+    ]
+   },
+   {
+    "groupId": 8,
+    "shortGroupId": 2,
+    "events": [
+     [
+      {
+       "type": 4,
+       "cf": 1.472,
+       "cfView": "1.472"
+      }
+     ],
+     [
+      {
+       "type": 5,
+       "cf": 1.389,
+       "cfView": "1.389"
+      }
+     ],
+     [
+      {
+       "type": 6,
+       "cf": 1.472,
+       "cfView": "1.472"
+      }
+     ]
+    ]
+   },
+   {
+    "groupId": 19,
+    "shortGroupId": 21,
+    "events": [
+     [
+      {
+       "type": 180,
+       "cf": 2.06,
+       "cfView": "2.06"
+      }
+     ],
+     [
+      {
+       "type": 181,
+       "cf": 1.696,
+       "cfView": "1.696"
+      }
+     ]
+    ]
+   },
+   {
+    "groupId": 17,
+    "shortGroupId": 4,
+    "events": [
+     [
+      {
+       "type": 9,
+       "parameter": 1.5,
+       "cf": 1.544,
+       "cfView": "1.544",
+       "isCenter": true,
+       "eventParams": {
+        "params": [
+         "(1.5)"
+        ]
+       }
+      }
+     ],
+     [
+      {
+       "type": 10,
+       "parameter": 1.5,
+       "cf": 2.61,
+       "cfView": "2.61",
+       "isCenter": true,
+       "eventParams": {
+        "params": [
+         "(1.5)"
+        ]
+       }
+      }
+     ]
+    ]
+   },
+   {
+    "groupId": 2,
+    "shortGroupId": 3,
+    "events": [
+     [
+      {
+       "type": 7,
+       "cf": 1.94,
+       "cfView": "1.94",
+       "isCenter": true,
+       "eventParams": {
+        "params": [
+         "(0)"
+        ]
+       }
+      }
+     ],
+     [
+      {
+       "type": 8,
+       "cf": 1.94,
+       "cfView": "1.94",
+       "isCenter": true,
+       "eventParams": {
+        "params": [
+         "(0)"
+        ]
+       }
+      }
+     ]
+    ]
+   },
+   {
+    "groupId": 15,
+    "shortGroupId": 5,
+    "events": [
+     [
+      {
+       "type": 11,
+       "parameter": 0.5,
+       "cf": 1.42,
+       "cfView": "1.42",
+       "isCenter": true,
+       "eventParams": {
+        "params": [
+         "(0.5)"
+        ]
+       }
+      }
+     ],
+     [
+      {
+       "type": 12,
+       "parameter": 0.5,
+       "cf": 2.625,
+       "cfView": "2.625",
+       "isCenter": true,
+       "eventParams": {
+        "params": [
+         "(0.5)"
+        ]
+       }
+      }
+     ]
+    ]
+   },
+   {
+    "groupId": 62,
+    "shortGroupId": 6,
+    "events": [
+     [
+      {
+       "type": 13,
+       "parameter": 0.5,
+       "cf": 1.43,
+       "cfView": "1.43",
+       "isCenter": true,
+       "eventParams": {
+        "params": [
+         "(0.5)"
+        ]
+       }
+      }
+     ],
+     [
+      {
+       "type": 14,
+       "parameter": 0.5,
+       "cf": 2.6,
+       "cfView": "2.6",
+       "isCenter": true,
+       "eventParams": {
+        "params": [
+         "(0.5)"
+        ]
+       }
+      }
+     ]
+    ]
+   },
+   {
+    "groupId": 99,
+    "shortGroupId": 1007,
+    "events": [
+     [
+      {
+       "type": 3827,
+       "parameter": 1.75,
+       "cf": 1.692,
+       "cfView": "1.692",
+       "isCenter": true,
+       "eventParams": {
+        "params": [
+         "(1.75)"
+        ]
+       }
+      }
+     ],
+     [
+      {
+       "type": 3828,
+       "parameter": 1.75,
+       "cf": 2.273,
+       "cfView": "2.273",
+       "isCenter": true,
+       "eventParams": {
+        "params": [
+         "(1.75)"
+        ]
+       }
+      }
+     ]
+    ]
+   },
+   {
+    "groupId": 2854,
+    "shortGroupId": 1008,
+    "events": [
+     [
+      {
+       "type": 3829,
+       "parameter": -0.25,
+       "cf": 2.334,
+       "cfView": "2.334",
+       "isCenter": true,
+       "eventParams": {
+        "params": [
+         "(-0.25)"
+        ]
+       }
+      }
+     ],
+     [
+      {
+       "type": 3830,
+       "parameter": 0.25,
+       "cf": 1.66,
+       "cfView": "1.66",
+       "isCenter": true,
+       "eventParams": {
+        "params": [
+         "(0.25)"
+        ]
+       }
+      }
+     ]
+    ]
+   }
+  ],
+  "id": 755773945,
+  "mainGameId": 755773945,
+  "constId": 347416312,
+  "startTs": 1790697600,
+  "gameTypeName": "",
+  "periodName": "",
+  "kind": 3
+ },
+ {
+  "sport": {
+   "nameEng": "Football",
+   "timeName": "Mi-temps",
+   "timesName": "Mi-temps",
+   "id": 1,
+   "name": "Football "
+  },
+  "liga": {
+   "countryName": "Europe",
+   "nameEng": "UEFA Nations League",
+   "id": 1706694,
+   "name": "Ligue des nations de l'UEFA"
+  },
+  "opponent1": {
+   "fullNameEng": "Finland",
+   "fullName": "Finlande",
+   "countryId": 197
+  },
+  "opponent2": {
+   "fullNameEng": "Belarus",
+   "fullName": "Bélarus",
+   "countryId": 22
+  },
+  "eventGroups": [
+   {
+    "groupId": 1,
+    "shortGroupId": 1,
+    "events": [
+     [
+      {
+       "type": 1,
+       "cf": 1.618,
+       "cfView": "1.618"
+      }
+     ],
+     [
+      {
+       "type": 2,
+       "cf": 3.92,
+       "cfView": "3.92"
+      }
+     ],
+     [
+      {
+       "type": 3,
+       "cf": 6.32,
+       "cfView": "6.32"
+      }
+     ]
+    ]
+   },
+   {
+    "groupId": 8,
+    "shortGroupId": 2,
+    "events": [
+     [
+      {
+       "type": 4,
+       "cf": 1.139,
+       "cfView": "1.139"
+      }
+     ],
+     [
+      {
+       "type": 5,
+       "cf": 1.28,
+       "cfView": "1.28"
+      }
+     ],
+     [
+      {
+       "type": 6,
+       "cf": 2.39,
+       "cfView": "2.39"
+      }
+     ]
+    ]
+   },
+   {
+    "groupId": 19,
+    "shortGroupId": 21,
+    "events": [
+     [
+      {
+       "type": 180,
+       "cf": 2.17,
+       "cfView": "2.17"
+      }
+     ],
+     [
+      {
+       "type": 181,
+       "cf": 1.626,
+       "cfView": "1.626"
+      }
+     ]
+    ]
+   },
+   {
+    "groupId": 17,
+    "shortGroupId": 4,
+    "events": [
+     [
+      {
+       "type": 9,
+       "parameter": 2.5,
+       "cf": 2.274,
+       "cfView": "2.274",
+       "isCenter": true,
+       "eventParams": {
+        "params": [
+         "(2.5)"
+        ]
+       }
+      }
+     ],
+     [
+      {
+       "type": 10,
+       "parameter": 2.5,
+       "cf": 1.691,
+       "cfView": "1.691",
+       "isCenter": true,
+       "eventParams": {
+        "params": [
+         "(2.5)"
+        ]
+       }
+      }
+     ]
+    ]
+   },
+   {
+    "groupId": 2,
+    "shortGroupId": 3,
+    "events": [
+     [
+      {
+       "type": 7,
+       "parameter": -1.5,
+       "cf": 2.848,
+       "cfView": "2.848",
+       "isCenter": true,
+       "eventParams": {
+        "params": [
+         "(-1.5)"
+        ]
+       }
+      }
+     ],
+     [
+      {
+       "type": 8,
+       "parameter": 1.5,
+       "cf": 1.471,
+       "cfView": "1.471",
+       "isCenter": true,
+       "eventParams": {
+        "params": [
+         "(1.5)"
+        ]
+       }
+      }
+     ]
+    ]
+   },
+   {
+    "groupId": 15,
+    "shortGroupId": 5,
+    "events": [
+     [
+      {
+       "type": 11,
+       "parameter": 1.5,
+       "cf": 1.87,
+       "cfView": "1.87",
+       "isCenter": true,
+       "eventParams": {
+        "params": [
+         "(1.5)"
+        ]
+       }
+      }
+     ],
+     [
+      {
+       "type": 12,
+       "parameter": 1.5,
+       "cf": 1.93,
+       "cfView": "1.93",
+       "isCenter": true,
+       "eventParams": {
+        "params": [
+         "(1.5)"
+        ]
+       }
+      }
+     ]
+    ]
+   },
+   {
+    "groupId": 62,
+    "shortGroupId": 6,
+    "events": [
+     [
+      {
+       "type": 13,
+       "parameter": 0.5,
+       "cf": 1.79,
+       "cfView": "1.79",
+       "isCenter": true,
+       "eventParams": {
+        "params": [
+         "(0.5)"
+        ]
+       }
+      }
+     ],
+     [
+      {
+       "type": 14,
+       "parameter": 0.5,
+       "cf": 1.92,
+       "cfView": "1.92",
+       "isCenter": true,
+       "eventParams": {
+        "params": [
+         "(0.5)"
+        ]
+       }
+      }
+     ]
+    ]
+   },
+   {
+    "groupId": 99,
+    "shortGroupId": 1007,
+    "events": [
+     [
+      {
+       "type": 3827,
+       "parameter": 2.25,
+       "cf": 1.98,
+       "cfView": "1.98",
+       "isCenter": true,
+       "eventParams": {
+        "params": [
+         "(2.25)"
+        ]
+       }
+      }
+     ],
+     [
+      {
+       "type": 3828,
+       "parameter": 2.25,
+       "cf": 1.901,
+       "cfView": "1.901",
+       "isCenter": true,
+       "eventParams": {
+        "params": [
+         "(2.25)"
+        ]
+       }
+      }
+     ]
+    ]
+   },
+   {
+    "groupId": 2854,
+    "shortGroupId": 1008,
+    "events": [
+     [
+      {
+       "type": 3829,
+       "parameter": -1.25,
+       "cf": 2.462,
+       "cfView": "2.462",
+       "isCenter": true,
+       "eventParams": {
+        "params": [
+         "(-1.25)"
+        ]
+       }
+      }
+     ],
+     [
+      {
+       "type": 3830,
+       "parameter": 1.25,
+       "cf": 1.563,
+       "cfView": "1.563",
+       "isCenter": true,
+       "eventParams": {
+        "params": [
+         "(1.25)"
+        ]
+       }
+      }
+     ]
+    ]
+   }
+  ],
+  "id": 755778548,
+  "mainGameId": 755778548,
+  "constId": 347416420,
+  "startTs": 1790697600,
+  "gameTypeName": "",
+  "periodName": "",
+  "kind": 3
+ },
+ {
+  "sport": {
+   "nameEng": "Football",
+   "timeName": "Mi-temps",
+   "timesName": "Mi-temps",
+   "id": 1,
+   "name": "Football "
+  },
+  "liga": {
+   "countryName": "Europe",
+   "nameEng": "UEFA Nations League",
+   "id": 1706694,
+   "name": "Ligue des nations de l'UEFA"
+  },
+  "opponent1": {
+   "fullNameEng": "Home",
+   "fullName": "à domicile",
+   "countryId": 225
+  },
+  "opponent2": {
+   "fullNameEng": "Away",
+   "fullName": "à l'extérieur",
+   "countryId": 225
+  },
+  "eventGroups": [
+   {
+    "groupId": 1,
+    "shortGroupId": 1,
+    "events": [
+     [
+      {
+       "type": 1,
+       "cf": 1.75,
+       "cfView": "1.75"
+      }
+     ],
+     [
+      {
+       "type": 2,
+       "cf": 11,
+       "cfView": "11"
+      }
+     ],
+     [
+      {
+       "type": 3,
+       "cf": 2.466,
+       "cfView": "2.466"
+      }
+     ]
+    ]
+   },
+   {
+    "groupId": 17,
+    "shortGroupId": 4,
+    "events": [
+     [
+      {
+       "type": 9,
+       "parameter": 26.5,
+       "cf": 1.845,
+       "cfView": "1.845",
+       "isCenter": true,
+       "eventParams": {
+        "params": [
+         "(26.5)"
+        ]
+       }
+      }
+     ],
+     [
+      {
+       "type": 10,
+       "parameter": 26.5,
+       "cf": 1.958,
+       "cfView": "1.958",
+       "isCenter": true,
+       "eventParams": {
+        "params": [
+         "(26.5)"
+        ]
+       }
+      }
+     ]
+    ]
+   },
+   {
+    "groupId": 2,
+    "shortGroupId": 3,
+    "events": [
+     [
+      {
+       "type": 7,
+       "parameter": -1.5,
+       "cf": 1.965,
+       "cfView": "1.965",
+       "isCenter": true,
+       "eventParams": {
+        "params": [
+         "(-1.5)"
+        ]
+       }
+      }
+     ],
+     [
+      {
+       "type": 8,
+       "parameter": 1.5,
+       "cf": 1.84,
+       "cfView": "1.84",
+       "isCenter": true,
+       "eventParams": {
+        "params": [
+         "(1.5)"
+        ]
+       }
+      }
+     ]
+    ]
+   },
+   {
+    "groupId": 15,
+    "shortGroupId": 5,
+    "events": [
+     [
+      {
+       "type": 11,
+       "parameter": 13.5,
+       "cf": 1.769,
+       "cfView": "1.769",
+       "isCenter": true,
+       "eventParams": {
+        "params": [
+         "(13.5)"
+        ]
+       }
+      }
+     ],
+     [
+      {
+       "type": 12,
+       "parameter": 13.5,
+       "cf": 2.052,
+       "cfView": "2.052",
+       "isCenter": true,
+       "eventParams": {
+        "params": [
+         "(13.5)"
+        ]
+       }
+      }
+     ]
+    ]
+   },
+   {
+    "groupId": 62,
+    "shortGroupId": 6,
+    "events": [
+     [
+      {
+       "type": 13,
+       "parameter": 12.5,
+       "cf": 1.847,
+       "cfView": "1.847",
+       "isCenter": true,
+       "eventParams": {
+        "params": [
+         "(12.5)"
+        ]
+       }
+      }
+     ],
+     [
+      {
+       "type": 14,
+       "parameter": 12.5,
+       "cf": 1.956,
+       "cfView": "1.956",
+       "isCenter": true,
+       "eventParams": {
+        "params": [
+         "(12.5)"
+        ]
+       }
+      }
+     ]
+    ]
+   },
+   {
+    "groupId": 99,
+    "shortGroupId": 1007,
+    "events": [
+     [
+      {
+       "type": 3827,
+       "parameter": 26.25,
+       "cf": 1.784,
+       "cfView": "1.784",
+       "isCenter": true,
+       "eventParams": {
+        "params": [
+         "(26.25)"
+        ]
+       }
+      }
+     ],
+     [
+      {
+       "type": 3828,
+       "parameter": 26.25,
+       "cf": 2.032,
+       "cfView": "2.032",
+       "isCenter": true,
+       "eventParams": {
+        "params": [
+         "(26.25)"
+        ]
+       }
+      }
+     ]
+    ]
+   },
+   {
+    "groupId": 2854,
+    "shortGroupId": 1008,
+    "events": [
+     [
+      {
+       "type": 3829,
+       "parameter": -1.75,
+       "cf": 2.039,
+       "cfView": "2.039",
+       "isCenter": true,
+       "eventParams": {
+        "params": [
+         "(-1.75)"
+        ]
+       }
+      }
+     ],
+     [
+      {
+       "type": 3830,
+       "parameter": 1.75,
+       "cf": 1.779,
+       "cfView": "1.779",
+       "isCenter": true,
+       "eventParams": {
+        "params": [
+         "(1.75)"
+        ]
+       }
+      }
+     ]
+    ]
+   }
+  ],
+  "homeAwayFlag": true,
+  "id": 755787789,
+  "mainGameId": 755787789,
+  "constId": 373096502,
+  "startTs": 1790697600,
+  "gameTypeName": "",
+  "dopInfo": "10 matchs",
+  "periodName": "",
+  "kind": 3
+ },
+ {
+  "sport": {
+   "nameEng": "Football",
+   "timeName": "Mi-temps",
+   "timesName": "Mi-temps",
+   "id": 1,
+   "name": "Football "
+  },
+  "liga": {
+   "countryName": "Europe",
+   "nameEng": "UEFA Nations League",
+   "id": 1706694,
+   "name": "Ligue des nations de l'UEFA"
+  },
+  "opponent1": {
+   "fullNameEng": "Home (Special bets)",
+   "fullName": "Domicile (Paris spéciaux)",
+   "countryId": 225
+  },
+  "opponent2": {
+   "fullNameEng": "Away (Special bets)",
+   "fullName": "Extérieur (Paris spéciaux)",
+   "countryId": 225
+  },
+  "eventGroups": [
+   {
+    "groupId": 1,
+    "shortGroupId": 1,
+    "events": [
+     [
+      {
+       "type": 1,
+       "cf": 1.68,
+       "cfView": "1.68"
+      }
+     ],
+     [
+      {
+       "type": 2,
+       "cf": 4.9,
+       "cfView": "4.9"
+      }
+     ],
+     [
+      {
+       "type": 3,
+       "cf": 3.61,
+       "cfView": "3.61"
+      }
+     ]
+    ]
+   },
+   {
+    "groupId": 8,
+    "shortGroupId": 2,
+    "events": [
+     [
+      {
+       "type": 4,
+       "cf": 1.252,
+       "cfView": "1.252"
+      }
+     ],
+     [
+      {
+       "type": 5,
+       "cf": 1.151,
+       "cfView": "1.151"
+      }
+     ],
+     [
+      {
+       "type": 6,
+       "cf": 2.282,
+       "cfView": "2.282"
+      }
+     ]
+    ]
+   },
+   {
+    "groupId": 19,
+    "shortGroupId": 21,
+    "events": [
+     [
+      {
+       "type": 180,
+       "cf": 1.24,
+       "cfView": "1.24"
+      }
+     ],
+     [
+      {
+       "type": 181,
+       "cf": 4.065,
+       "cfView": "4.065"
+      }
+     ]
+    ]
+   },
+   {
+    "groupId": 17,
+    "shortGroupId": 4,
+    "events": [
+     [
+      {
+       "type": 9,
+       "parameter": 4.5,
+       "cf": 1.934,
+       "cfView": "1.934",
+       "isCenter": true,
+       "eventParams": {
+        "params": [
+         "(4.5)"
+        ]
+       }
+      }
+     ],
+     [
+      {
+       "type": 10,
+       "parameter": 4.5,
+       "cf": 1.867,
+       "cfView": "1.867",
+       "isCenter": true,
+       "eventParams": {
+        "params": [
+         "(4.5)"
+        ]
+       }
+      }
+     ]
+    ]
+   },
+   {
+    "groupId": 2,
+    "shortGroupId": 3,
+    "events": [
+     [
+      {
+       "type": 7,
+       "parameter": -1.5,
+       "cf": 2.334,
+       "cfView": "2.334",
+       "isCenter": true,
+       "eventParams": {
+        "params": [
+         "(-1.5)"
+        ]
+       }
+      }
+     ],
+     [
+      {
+       "type": 8,
+       "parameter": 1.5,
+       "cf": 1.602,
+       "cfView": "1.602",
+       "isCenter": true,
+       "eventParams": {
+        "params": [
+         "(1.5)"
+        ]
+       }
+      }
+     ]
+    ]
+   },
+   {
+    "groupId": 15,
+    "shortGroupId": 5,
+    "events": [
+     [
+      {
+       "type": 11,
+       "parameter": 2.5,
+       "cf": 1.811,
+       "cfView": "1.811",
+       "isCenter": true,
+       "eventParams": {
+        "params": [
+         "(2.5)"
+        ]
+       }
+      }
+     ],
+     [
+      {
+       "type": 12,
+       "parameter": 2.5,
+       "cf": 1.998,
+       "cfView": "1.998",
+       "isCenter": true,
+       "eventParams": {
+        "params": [
+         "(2.5)"
+        ]
+       }
+      }
+     ]
+    ]
+   },
+   {
+    "groupId": 62,
+    "shortGroupId": 6,
+    "events": [
+     [
+      {
+       "type": 13,
+       "parameter": 1.5,
+       "cf": 1.771,
+       "cfView": "1.771",
+       "isCenter": true,
+       "eventParams": {
+        "params": [
+         "(1.5)"
+        ]
+       }
+      }
+     ],
+     [
+      {
+       "type": 14,
+       "parameter": 1.5,
+       "cf": 2.05,
+       "cfView": "2.05",
+       "isCenter": true,
+       "eventParams": {
+        "params": [
+         "(1.5)"
+        ]
+       }
+      }
+     ]
+    ]
+   },
+   {
+    "groupId": 99,
+    "shortGroupId": 1007,
+    "events": [
+     [
+      {
+       "type": 3827,
+       "parameter": 4.75,
+       "cf": 2.112,
+       "cfView": "2.112",
+       "isCenter": true,
+       "eventParams": {
+        "params": [
+         "(4.75)"
+        ]
+       }
+      }
+     ],
+     [
+      {
+       "type": 3828,
+       "parameter": 4.75,
+       "cf": 1.727,
+       "cfView": "1.727",
+       "isCenter": true,
+       "eventParams": {
+        "params": [
+         "(4.75)"
+        ]
+       }
+      }
+     ]
+    ]
+   },
+   {
+    "groupId": 2854,
+    "shortGroupId": 1008,
+    "events": [
+     [
+      {
+       "type": 3829,
+       "parameter": -1.75,
+       "cf": 2.66,
+       "cfView": "2.66",
+       "isCenter": true,
+       "eventParams": {
+        "params": [
+         "(-1.75)"
+        ]
+       }
+      }
+     ],
+     [
+      {
+       "type": 3830,
+       "parameter": 1.75,
+       "cf": 1.478,
+       "cfView": "1.478",
+       "isCenter": true,
+       "eventParams": {
+        "params": [
+         "(1.75)"
+        ]
+       }
+      }
+     ]
+    ]
+   }
+  ],
+  "homeAwayFlag": true,
+  "id": 755787795,
+  "mainGameId": 755787795,
+  "constId": 373096520,
+  "startTs": 1790697600,
+  "gameTypeName": "",
+  "dopInfo": "2 Matchs, GMT 16:00",
+  "periodName": "",
+  "kind": 3
+ },
+ {
+  "sport": {
+   "nameEng": "Football",
+   "timeName": "Mi-temps",
+   "timesName": "Mi-temps",
+   "id": 1,
+   "name": "Football "
+  },
+  "liga": {
+   "countryName": "Afrique",
+   "nameEng": "Africa Cup of Nations",
+   "id": 21317,
+   "name": "Coupe d'Afrique des nations"
+  },
+  "opponent1": {
+   "fullNameEng": "Botswana",
+   "fullName": "Botswana",
+   "countryId": 30
+  },
+  "opponent2": {
+   "fullNameEng": "Tunisia",
+   "fullName": "Tunisie",
+   "countryId": 187
+  },
+  "eventGroups": [
+   {
+    "groupId": 1,
+    "shortGroupId": 1,
+    "events": [
+     [
+      {
+       "type": 1,
+       "cf": 16,
+       "cfView": "16"
+      }
+     ],
+     [
+      {
+       "type": 2,
+       "cf": 6.2,
+       "cfView": "6.2"
+      }
+     ],
+     [
+      {
+       "type": 3,
+       "cf": 1.168,
+       "cfView": "1.168"
+      }
+     ]
+    ]
+   },
+   {
+    "groupId": 8,
+    "shortGroupId": 2,
+    "events": [
+     [
+      {
+       "type": 4,
+       "cf": 4.55,
+       "cfView": "4.55"
+      }
+     ],
+     [
+      {
+       "type": 5,
+       "cf": 1.082,
+       "cfView": "1.082"
+      }
+     ],
+     [
+      {
+       "type": 6,
+       "cf": 1.02,
+       "cfView": "1.02"
+      }
+     ]
+    ]
+   },
+   {
+    "groupId": 19,
+    "shortGroupId": 21,
+    "events": [
+     [
+      {
+       "type": 180,
+       "cf": 2.93,
+       "cfView": "2.93"
+      }
+     ],
+     [
+      {
+       "type": 181,
+       "cf": 1.353,
+       "cfView": "1.353"
+      }
+     ]
+    ]
+   },
+   {
+    "groupId": 17,
+    "shortGroupId": 4,
+    "events": [
+     [
+      {
+       "type": 9,
+       "parameter": 2.5,
+       "cf": 1.81,
+       "cfView": "1.81",
+       "isCenter": true,
+       "eventParams": {
+        "params": [
+         "(2.5)"
+        ]
+       }
+      }
+     ],
+     [
+      {
+       "type": 10,
+       "parameter": 2.5,
+       "cf": 1.92,
+       "cfView": "1.92",
+       "isCenter": true,
+       "eventParams": {
+        "params": [
+         "(2.5)"
+        ]
+       }
+      }
+     ]
+    ]
+   },
+   {
+    "groupId": 2,
+    "shortGroupId": 3,
+    "events": [
+     [
+      {
+       "type": 7,
+       "parameter": 1.5,
+       "cf": 2.07,
+       "cfView": "2.07",
+       "isCenter": true,
+       "eventParams": {
+        "params": [
+         "(1.5)"
+        ]
+       }
+      }
+     ],
+     [
+      {
+       "type": 8,
+       "parameter": -1.5,
+       "cf": 1.61,
+       "cfView": "1.61",
+       "isCenter": true,
+       "eventParams": {
+        "params": [
+         "(-1.5)"
+        ]
+       }
+      }
+     ]
+    ]
+   },
+   {
+    "groupId": 15,
+    "shortGroupId": 5,
+    "events": [
+     [
+      {
+       "type": 11,
+       "parameter": 0.5,
+       "cf": 2.55,
+       "cfView": "2.55",
+       "isCenter": true,
+       "eventParams": {
+        "params": [
+         "(0.5)"
+        ]
+       }
+      }
+     ],
+     [
+      {
+       "type": 12,
+       "parameter": 0.5,
+       "cf": 1.364,
+       "cfView": "1.364",
+       "isCenter": true,
+       "eventParams": {
+        "params": [
+         "(0.5)"
+        ]
+       }
+      }
+     ]
+    ]
+   },
+   {
+    "groupId": 62,
+    "shortGroupId": 6,
+    "events": [
+     [
+      {
+       "type": 13,
+       "parameter": 2.5,
+       "cf": 2.3,
+       "cfView": "2.3",
+       "isCenter": true,
+       "eventParams": {
+        "params": [
+         "(2.5)"
+        ]
+       }
+      }
+     ],
+     [
+      {
+       "type": 14,
+       "parameter": 2.5,
+       "cf": 1.57,
+       "cfView": "1.57",
+       "isCenter": true,
+       "eventParams": {
+        "params": [
+         "(2.5)"
+        ]
+       }
+      }
+     ]
+    ]
+   },
+   {
+    "groupId": 99,
+    "shortGroupId": 1007,
+    "events": [
+     [
+      {
+       "type": 3827,
+       "parameter": 2.25,
+       "cf": 1.606,
+       "cfView": "1.606",
+       "isCenter": true,
+       "eventParams": {
+        "params": [
+         "(2.25)"
+        ]
+       }
+      }
+     ],
+     [
+      {
+       "type": 3828,
+       "parameter": 2.25,
+       "cf": 2.219,
+       "cfView": "2.219",
+       "isCenter": true,
+       "eventParams": {
+        "params": [
+         "(2.25)"
+        ]
+       }
+      }
+     ]
+    ]
+   },
+   {
+    "groupId": 2854,
+    "shortGroupId": 1008,
+    "events": [
+     [
+      {
+       "type": 3829,
+       "parameter": 1.75,
+       "cf": 1.891,
+       "cfView": "1.891",
+       "isCenter": true,
+       "eventParams": {
+        "params": [
+         "(1.75)"
+        ]
+       }
+      }
+     ],
+     [
+      {
+       "type": 3830,
+       "parameter": -1.75,
+       "cf": 1.819,
+       "cfView": "1.819",
+       "isCenter": true,
+       "eventParams": {
+        "params": [
+         "(-1.75)"
+        ]
+       }
+      }
+     ]
+    ]
+   }
+  ],
+  "id": 756706062,
+  "mainGameId": 756706062,
+  "constId": 366842354,
+  "startTs": 1790622000,
+  "gameTypeName": "",
+  "periodName": "",
+  "kind": 3
+ },
+ {
+  "sport": {
+   "nameEng": "Football",
+   "timeName": "Mi-temps",
+   "timesName": "Mi-temps",
+   "id": 1,
+   "name": "Football "
+  },
+  "liga": {
+   "countryName": "Afrique",
+   "nameEng": "Africa Cup of Nations",
+   "id": 21317,
+   "name": "Coupe d'Afrique des nations"
+  },
+  "opponent1": {
+   "fullNameEng": "Comoro Islands",
+   "fullName": "Archipel des Comores",
+   "countryId": 92
+  },
+  "opponent2": {
+   "fullNameEng": "Namibia",
+   "fullName": "Namibie",
+   "countryId": 128
+  },
+  "eventGroups": [
+   {
+    "groupId": 1,
+    "shortGroupId": 1,
+    "events": [
+     [
+      {
+       "type": 1,
+       "cf": 1.83,
+       "cfView": "1.83"
+      }
+     ],
+     [
+      {
+       "type": 2,
+       "cf": 3.2,
+       "cfView": "3.2"
+      }
+     ],
+     [
+      {
+       "type": 3,
+       "cf": 4.56,
+       "cfView": "4.56"
+      }
+     ]
+    ]
+   },
+   {
+    "groupId": 8,
+    "shortGroupId": 2,
+    "events": [
+     [
+      {
+       "type": 4,
+       "cf": 1.155,
+       "cfView": "1.155"
+      }
+     ],
+     [
+      {
+       "type": 5,
+       "cf": 1.3,
+       "cfView": "1.3"
+      }
+     ],
+     [
+      {
+       "type": 6,
+       "cf": 1.88,
+       "cfView": "1.88"
+      }
+     ]
+    ]
+   },
+   {
+    "groupId": 19,
+    "shortGroupId": 21,
+    "events": [
+     [
+      {
+       "type": 180,
+       "cf": 2.26,
+       "cfView": "2.26"
+      }
+     ],
+     [
+      {
+       "type": 181,
+       "cf": 1.567,
+       "cfView": "1.567"
+      }
+     ]
+    ]
+   },
+   {
+    "groupId": 17,
+    "shortGroupId": 4,
+    "events": [
+     [
+      {
+       "type": 9,
+       "parameter": 1.5,
+       "cf": 1.47,
+       "cfView": "1.47",
+       "isCenter": true,
+       "eventParams": {
+        "params": [
+         "(1.5)"
+        ]
+       }
+      }
+     ],
+     [
+      {
+       "type": 10,
+       "parameter": 1.5,
+       "cf": 2.35,
+       "cfView": "2.35",
+       "isCenter": true,
+       "eventParams": {
+        "params": [
+         "(1.5)"
+        ]
+       }
+      }
+     ]
+    ]
+   },
+   {
+    "groupId": 2,
+    "shortGroupId": 3,
+    "events": [
+     [
+      {
+       "type": 7,
+       "cf": 1.27,
+       "cfView": "1.27",
+       "isCenter": true,
+       "eventParams": {
+        "params": [
+         "(0)"
+        ]
+       }
+      }
+     ],
+     [
+      {
+       "type": 8,
+       "cf": 3.14,
+       "cfView": "3.14",
+       "isCenter": true,
+       "eventParams": {
+        "params": [
+         "(0)"
+        ]
+       }
+      }
+     ]
+    ]
+   },
+   {
+    "groupId": 15,
+    "shortGroupId": 5,
+    "events": [
+     [
+      {
+       "type": 11,
+       "parameter": 1.5,
+       "cf": 2.28,
+       "cfView": "2.28",
+       "isCenter": true,
+       "eventParams": {
+        "params": [
+         "(1.5)"
+        ]
+       }
+      }
+     ],
+     [
+      {
+       "type": 12,
+       "parameter": 1.5,
+       "cf": 1.56,
+       "cfView": "1.56",
+       "isCenter": true,
+       "eventParams": {
+        "params": [
+         "(1.5)"
+        ]
+       }
+      }
+     ]
+    ]
+   },
+   {
+    "groupId": 62,
+    "shortGroupId": 6,
+    "events": [
+     [
+      {
+       "type": 13,
+       "parameter": 0.5,
+       "cf": 1.78,
+       "cfView": "1.78",
+       "isCenter": true,
+       "eventParams": {
+        "params": [
+         "(0.5)"
+        ]
+       }
+      }
+     ],
+     [
+      {
+       "type": 14,
+       "parameter": 0.5,
+       "cf": 1.94,
+       "cfView": "1.94",
+       "isCenter": true,
+       "eventParams": {
+        "params": [
+         "(0.5)"
+        ]
+       }
+      }
+     ]
+    ]
+   },
+   {
+    "groupId": 99,
+    "shortGroupId": 1007,
+    "events": [
+     [
+      {
+       "type": 3827,
+       "parameter": 1.75,
+       "cf": 1.613,
+       "cfView": "1.613",
+       "isCenter": true,
+       "eventParams": {
+        "params": [
+         "(1.75)"
+        ]
+       }
+      }
+     ],
+     [
+      {
+       "type": 3828,
+       "parameter": 1.75,
+       "cf": 2.073,
+       "cfView": "2.073",
+       "isCenter": true,
+       "eventParams": {
+        "params": [
+         "(1.75)"
+        ]
+       }
+      }
+     ]
+    ]
+   },
+   {
+    "groupId": 2854,
+    "shortGroupId": 1008,
+    "events": [
+     [
+      {
+       "type": 3829,
+       "parameter": -0.75,
+       "cf": 2.03,
+       "cfView": "2.03",
+       "isCenter": true,
+       "eventParams": {
+        "params": [
+         "(-0.75)"
+        ]
+       }
+      }
+     ],
+     [
+      {
+       "type": 3830,
+       "parameter": 0.75,
+       "cf": 1.64,
+       "cfView": "1.64",
+       "isCenter": true,
+       "eventParams": {
+        "params": [
+         "(0.75)"
+        ]
+       }
+      }
+     ]
+    ]
+   }
+  ],
+  "id": 756707174,
+  "mainGameId": 756707174,
+  "constId": 366842380,
+  "startTs": 1790679600,
+  "gameTypeName": "",
+  "periodName": "",
+  "kind": 3
+ },
+ {
+  "sport": {
+   "nameEng": "Football",
+   "timeName": "Mi-temps",
+   "timesName": "Mi-temps",
+   "id": 1,
+   "name": "Football "
+  },
+  "liga": {
+   "countryName": "Afrique",
+   "nameEng": "Africa Cup of Nations",
+   "id": 21317,
+   "name": "Coupe d'Afrique des nations"
+  },
+  "opponent1": {
+   "fullNameEng": "Burundi",
+   "fullName": "Burundi",
+   "countryId": 35
+  },
+  "opponent2": {
+   "fullNameEng": "Algeria",
+   "fullName": "Algérie",
+   "countryId": 8
+  },
+  "eventGroups": [
+   {
+    "groupId": 1,
+    "shortGroupId": 1,
+    "events": [
+     [
+      {
+       "type": 1,
+       "cf": 10.5,
+       "cfView": "10.5"
+      }
+     ],
+     [
+      {
+       "type": 2,
+       "cf": 5.1,
+       "cfView": "5.1"
+      }
+     ],
+     [
+      {
+       "type": 3,
+       "cf": 1.27,
+       "cfView": "1.27"
+      }
+     ]
+    ]
+   },
+   {
+    "groupId": 8,
+    "shortGroupId": 2,
+    "events": [
+     [
+      {
+       "type": 4,
+       "cf": 3.44,
+       "cfView": "3.44"
+      }
+     ],
+     [
+      {
+       "type": 5,
+       "cf": 1.125,
+       "cfView": "1.125"
+      }
+     ],
+     [
+      {
+       "type": 6,
+       "cf": 1.01,
+       "cfView": "1.01"
+      }
+     ]
+    ]
+   },
+   {
+    "groupId": 19,
+    "shortGroupId": 21,
+    "events": [
+     [
+      {
+       "type": 180,
+       "cf": 2.33,
+       "cfView": "2.33"
+      }
+     ],
+     [
+      {
+       "type": 181,
+       "cf": 1.536,
+       "cfView": "1.536"
+      }
+     ]
+    ]
+   },
+   {
+    "groupId": 17,
+    "shortGroupId": 4,
+    "events": [
+     [
+      {
+       "type": 9,
+       "parameter": 2.5,
+       "cf": 1.82,
+       "cfView": "1.82",
+       "isCenter": true,
+       "eventParams": {
+        "params": [
+         "(2.5)"
+        ]
+       }
+      }
+     ],
+     [
+      {
+       "type": 10,
+       "parameter": 2.5,
+       "cf": 1.909,
+       "cfView": "1.909",
+       "isCenter": true,
+       "eventParams": {
+        "params": [
+         "(2.5)"
+        ]
+       }
+      }
+     ]
+    ]
+   },
+   {
+    "groupId": 2,
+    "shortGroupId": 3,
+    "events": [
+     [
+      {
+       "type": 7,
+       "parameter": 1.5,
+       "cf": 1.83,
+       "cfView": "1.83",
+       "isCenter": true,
+       "eventParams": {
+        "params": [
+         "(1.5)"
+        ]
+       }
+      }
+     ],
+     [
+      {
+       "type": 8,
+       "parameter": -1.5,
+       "cf": 1.88,
+       "cfView": "1.88",
+       "isCenter": true,
+       "eventParams": {
+        "params": [
+         "(-1.5)"
+        ]
+       }
+      }
+     ]
+    ]
+   },
+   {
+    "groupId": 15,
+    "shortGroupId": 5,
+    "events": [
+     [
+      {
+       "type": 11,
+       "parameter": 0.5,
+       "cf": 2.1,
+       "cfView": "2.1",
+       "isCenter": true,
+       "eventParams": {
+        "params": [
+         "(0.5)"
+        ]
+       }
+      }
+     ],
+     [
+      {
+       "type": 12,
+       "parameter": 0.5,
+       "cf": 1.63,
+       "cfView": "1.63",
+       "isCenter": true,
+       "eventParams": {
+        "params": [
+         "(0.5)"
+        ]
+       }
+      }
+     ]
+    ]
+   },
+   {
+    "groupId": 62,
+    "shortGroupId": 6,
+    "events": [
+     [
+      {
+       "type": 13,
+       "parameter": 1.5,
+       "cf": 1.49,
+       "cfView": "1.49",
+       "isCenter": true,
+       "eventParams": {
+        "params": [
+         "(1.5)"
+        ]
+       }
+      }
+     ],
+     [
+      {
+       "type": 14,
+       "parameter": 1.5,
+       "cf": 2.5,
+       "cfView": "2.5",
+       "isCenter": true,
+       "eventParams": {
+        "params": [
+         "(1.5)"
+        ]
+       }
+      }
+     ]
+    ]
+   },
+   {
+    "groupId": 99,
+    "shortGroupId": 1007,
+    "events": [
+     [
+      {
+       "type": 3827,
+       "parameter": 2.25,
+       "cf": 1.616,
+       "cfView": "1.616",
+       "isCenter": true,
+       "eventParams": {
+        "params": [
+         "(2.25)"
+        ]
+       }
+      }
+     ],
+     [
+      {
+       "type": 3828,
+       "parameter": 2.25,
+       "cf": 2.199,
+       "cfView": "2.199",
+       "isCenter": true,
+       "eventParams": {
+        "params": [
+         "(2.25)"
+        ]
+       }
+      }
+     ]
+    ]
+   },
+   {
+    "groupId": 2854,
+    "shortGroupId": 1008,
+    "events": [
+     [
+      {
+       "type": 3829,
+       "parameter": 1.25,
+       "cf": 2.094,
+       "cfView": "2.094",
+       "isCenter": true,
+       "eventParams": {
+        "params": [
+         "(1.25)"
+        ]
+       }
+      }
+     ],
+     [
+      {
+       "type": 3830,
+       "parameter": -1.25,
+       "cf": 1.665,
+       "cfView": "1.665",
+       "isCenter": true,
+       "eventParams": {
+        "params": [
+         "(-1.25)"
+        ]
+       }
+      }
+     ]
+    ]
+   }
+  ],
+  "id": 756712720,
+  "mainGameId": 756712720,
+  "constId": 366842322,
+  "startTs": 1790686800,
+  "gameTypeName": "",
+  "periodName": "",
+  "kind": 3
+ },
+ {
+  "sport": {
+   "nameEng": "Football",
+   "timeName": "Mi-temps",
+   "timesName": "Mi-temps",
+   "id": 1,
+   "name": "Football "
+  },
+  "liga": {
+   "countryName": "Afrique",
+   "nameEng": "Africa Cup of Nations",
+   "id": 21317,
+   "name": "Coupe d'Afrique des nations"
+  },
+  "opponent1": {
+   "fullNameEng": "Lesotho",
+   "fullName": "Lesotho",
+   "countryId": 103
+  },
+  "opponent2": {
+   "fullNameEng": "Morocco",
+   "fullName": "Maroc",
+   "countryId": 125
+  },
+  "eventGroups": [
+   {
+    "groupId": 1,
+    "shortGroupId": 1,
+    "events": [
+     [
+      {
+       "type": 1,
+       "cf": 55,
+       "cfView": "55"
+      }
+     ],
+     [
+      {
+       "type": 2,
+       "cf": 13.5,
+       "cfView": "13.5"
+      }
+     ],
+     [
+      {
+       "type": 3,
+       "cf": 1.03,
+       "cfView": "1.03"
+      }
+     ]
+    ]
+   },
+   {
+    "groupId": 8,
+    "shortGroupId": 2,
+    "events": [
+     [
+      {
+       "type": 4,
+       "cf": 10,
+       "cfView": "10"
+      }
+     ],
+     [
+      {
+       "type": 5,
+       "cf": 1.02,
+       "cfView": "1.02"
+      }
+     ],
+     [
+      {
+       "type": 6,
+       "blocked": true,
+       "cf": 1.001,
+       "cfView": "1.001"
+      }
+     ]
+    ]
+   },
+   {
+    "groupId": 19,
+    "shortGroupId": 21,
+    "events": [
+     [
+      {
+       "type": 180,
+       "cf": 3.08,
+       "cfView": "3.08"
+      }
+     ],
+     [
+      {
+       "type": 181,
+       "cf": 1.322,
+       "cfView": "1.322"
+      }
+     ]
+    ]
+   },
+   {
+    "groupId": 17,
+    "shortGroupId": 4,
+    "events": [
+     [
+      {
+       "type": 9,
+       "parameter": 3.5,
+       "cf": 1.59,
+       "cfView": "1.59",
+       "isCenter": true,
+       "eventParams": {
+        "params": [
+         "(3.5)"
+        ]
+       }
+      }
+     ],
+     [
+      {
+       "type": 10,
+       "parameter": 3.5,
+       "cf": 2.25,
+       "cfView": "2.25",
+       "isCenter": true,
+       "eventParams": {
+        "params": [
+         "(3.5)"
+        ]
+       }
+      }
+     ]
+    ]
+   },
+   {
+    "groupId": 2,
+    "shortGroupId": 3,
+    "events": [
+     [
+      {
+       "type": 7,
+       "parameter": 3.5,
+       "cf": 1.71,
+       "cfView": "1.71",
+       "isCenter": true,
+       "eventParams": {
+        "params": [
+         "(3.5)"
+        ]
+       }
+      }
+     ],
+     [
+      {
+       "type": 8,
+       "parameter": -3.5,
+       "cf": 2.03,
+       "cfView": "2.03",
+       "isCenter": true,
+       "eventParams": {
+        "params": [
+         "(-3.5)"
+        ]
+       }
+      }
+     ]
+    ]
+   },
+   {
+    "groupId": 15,
+    "shortGroupId": 5,
+    "events": [
+     [
+      {
+       "type": 11,
+       "parameter": 0.5,
+       "cf": 2.55,
+       "cfView": "2.55",
+       "isCenter": true,
+       "eventParams": {
+        "params": [
+         "(0.5)"
+        ]
+       }
+      }
+     ],
+     [
+      {
+       "type": 12,
+       "parameter": 0.5,
+       "cf": 1.32,
+       "cfView": "1.32",
+       "isCenter": true,
+       "eventParams": {
+        "params": [
+         "(0.5)"
+        ]
+       }
+      }
+     ]
+    ]
+   },
+   {
+    "groupId": 62,
+    "shortGroupId": 6,
+    "events": [
+     [
+      {
+       "type": 13,
+       "parameter": 3.5,
+       "cf": 1.9,
+       "cfView": "1.9",
+       "isCenter": true,
+       "eventParams": {
+        "params": [
+         "(3.5)"
+        ]
+       }
+      }
+     ],
+     [
+      {
+       "type": 14,
+       "parameter": 3.5,
+       "cf": 1.83,
+       "cfView": "1.83",
+       "isCenter": true,
+       "eventParams": {
+        "params": [
+         "(3.5)"
+        ]
+       }
+      }
+     ]
+    ]
+   },
+   {
+    "groupId": 99,
+    "shortGroupId": 1007,
+    "events": [
+     [
+      {
+       "type": 3827,
+       "parameter": 3.75,
+       "cf": 1.718,
+       "cfView": "1.718",
+       "isCenter": true,
+       "eventParams": {
+        "params": [
+         "(3.75)"
+        ]
+       }
+      }
+     ],
+     [
+      {
+       "type": 3828,
+       "parameter": 3.75,
+       "cf": 2.035,
+       "cfView": "2.035",
+       "isCenter": true,
+       "eventParams": {
+        "params": [
+         "(3.75)"
+        ]
+       }
+      }
+     ]
+    ]
+   },
+   {
+    "groupId": 2854,
+    "shortGroupId": 1008,
+    "events": [
+     [
+      {
+       "type": 3829,
+       "parameter": 3.25,
+       "cf": 1.872,
+       "cfView": "1.872",
+       "isCenter": true,
+       "eventParams": {
+        "params": [
+         "(3.25)"
+        ]
+       }
+      }
+     ],
+     [
+      {
+       "type": 3830,
+       "parameter": -3.25,
+       "cf": 1.841,
+       "cfView": "1.841",
+       "isCenter": true,
+       "eventParams": {
+        "params": [
+         "(-3.25)"
+        ]
+       }
+      }
+     ]
+    ]
+   }
+  ],
+  "id": 756308761,
+  "mainGameId": 756308761,
+  "constId": 366936960,
+  "startTs": 1790686800,
+  "gameTypeName": "",
+  "periodName": "",
+  "kind": 3
+ },
+ {
+  "sport": {
+   "nameEng": "Football",
+   "timeName": "Mi-temps",
+   "timesName": "Mi-temps",
+   "id": 1,
+   "name": "Football "
+  },
+  "liga": {
+   "countryName": "Afrique",
+   "nameEng": "Africa Cup of Nations",
+   "id": 21317,
+   "name": "Coupe d'Afrique des nations"
+  },
+  "opponent1": {
+   "fullNameEng": "Madagascar",
+   "fullName": "Madagascar",
+   "countryId": 112
+  },
+  "opponent2": {
+   "fullNameEng": "Tanzania",
+   "fullName": "Tanzanie",
+   "countryId": 181
+  },
+  "eventGroups": [
+   {
+    "groupId": 1,
+    "shortGroupId": 1,
+    "events": [
+     [
+      {
+       "type": 1,
+       "cf": 2.51,
+       "cfView": "2.51"
+      }
+     ],
+     [
+      {
+       "type": 2,
+       "cf": 2.97,
+       "cfView": "2.97"
+      }
+     ],
+     [
+      {
+       "type": 3,
+       "cf": 2.85,
+       "cfView": "2.85"
+      }
+     ]
+    ]
+   },
+   {
+    "groupId": 8,
+    "shortGroupId": 2,
+    "events": [
+     [
+      {
+       "type": 4,
+       "cf": 1.363,
+       "cfView": "1.363"
+      }
+     ],
+     [
+      {
+       "type": 5,
+       "cf": 1.34,
+       "cfView": "1.34"
+      }
+     ],
+     [
+      {
+       "type": 6,
+       "cf": 1.46,
+       "cfView": "1.46"
+      }
+     ]
+    ]
+   },
+   {
+    "groupId": 19,
+    "shortGroupId": 21,
+    "events": [
+     [
+      {
+       "type": 180,
+       "cf": 2.1,
+       "cfView": "2.1"
+      }
+     ],
+     [
+      {
+       "type": 181,
+       "cf": 1.658,
+       "cfView": "1.658"
+      }
+     ]
+    ]
+   },
+   {
+    "groupId": 17,
+    "shortGroupId": 4,
+    "events": [
+     [
+      {
+       "type": 9,
+       "parameter": 1.5,
+       "cf": 1.48,
+       "cfView": "1.48",
+       "isCenter": true,
+       "eventParams": {
+        "params": [
+         "(1.5)"
+        ]
+       }
+      }
+     ],
+     [
+      {
+       "type": 10,
+       "parameter": 1.5,
+       "cf": 2.33,
+       "cfView": "2.33",
+       "isCenter": true,
+       "eventParams": {
+        "params": [
+         "(1.5)"
+        ]
+       }
+      }
+     ]
+    ]
+   },
+   {
+    "groupId": 2,
+    "shortGroupId": 3,
+    "events": [
+     [
+      {
+       "type": 7,
+       "cf": 1.75,
+       "cfView": "1.75",
+       "isCenter": true,
+       "eventParams": {
+        "params": [
+         "(0)"
+        ]
+       }
+      }
+     ],
+     [
+      {
+       "type": 8,
+       "cf": 1.98,
+       "cfView": "1.98",
+       "isCenter": true,
+       "eventParams": {
+        "params": [
+         "(0)"
+        ]
+       }
+      }
+     ]
+    ]
+   },
+   {
+    "groupId": 15,
+    "shortGroupId": 5,
+    "events": [
+     [
+      {
+       "type": 11,
+       "parameter": 0.5,
+       "cf": 1.42,
+       "cfView": "1.42",
+       "isCenter": true,
+       "eventParams": {
+        "params": [
+         "(0.5)"
+        ]
+       }
+      }
+     ],
+     [
+      {
+       "type": 12,
+       "parameter": 0.5,
+       "cf": 2.75,
+       "cfView": "2.75",
+       "isCenter": true,
+       "eventParams": {
+        "params": [
+         "(0.5)"
+        ]
+       }
+      }
+     ]
+    ]
+   },
+   {
+    "groupId": 62,
+    "shortGroupId": 6,
+    "events": [
+     [
+      {
+       "type": 13,
+       "parameter": 0.5,
+       "cf": 1.48,
+       "cfView": "1.48",
+       "isCenter": true,
+       "eventParams": {
+        "params": [
+         "(0.5)"
+        ]
+       }
+      }
+     ],
+     [
+      {
+       "type": 14,
+       "parameter": 0.5,
+       "cf": 2.5,
+       "cfView": "2.5",
+       "isCenter": true,
+       "eventParams": {
+        "params": [
+         "(0.5)"
+        ]
+       }
+      }
+     ]
+    ]
+   },
+   {
+    "groupId": 99,
+    "shortGroupId": 1007,
+    "events": [
+     [
+      {
+       "type": 3827,
+       "parameter": 1.75,
+       "cf": 1.618,
+       "cfView": "1.618",
+       "isCenter": true,
+       "eventParams": {
+        "params": [
+         "(1.75)"
+        ]
+       }
+      }
+     ],
+     [
+      {
+       "type": 3828,
+       "parameter": 1.75,
+       "cf": 2.064,
+       "cfView": "2.064",
+       "isCenter": true,
+       "eventParams": {
+        "params": [
+         "(1.75)"
+        ]
+       }
+      }
+     ]
+    ]
+   },
+   {
+    "groupId": 2854,
+    "shortGroupId": 1008,
+    "events": [
+     [
+      {
+       "type": 3829,
+       "parameter": -0.25,
+       "cf": 2.097,
+       "cfView": "2.097",
+       "isCenter": true,
+       "eventParams": {
+        "params": [
+         "(-0.25)"
+        ]
+       }
+      }
+     ],
+     [
+      {
+       "type": 3830,
+       "parameter": 0.25,
+       "cf": 1.667,
+       "cfView": "1.667",
+       "isCenter": true,
+       "eventParams": {
+        "params": [
+         "(0.25)"
+        ]
+       }
+      }
+     ]
+    ]
+   }
+  ],
+  "id": 756703790,
+  "mainGameId": 756703790,
+  "constId": 366947670,
+  "startTs": 1790686800,
+  "gameTypeName": "",
+  "periodName": "",
+  "kind": 3
+ },
+ {
+  "sport": {
+   "nameEng": "Football",
+   "timeName": "Mi-temps",
+   "timesName": "Mi-temps",
+   "id": 1,
+   "name": "Football "
+  },
+  "liga": {
+   "countryName": "Monde",
+   "nameEng": "CONCACAF Nations League",
+   "id": 1804188,
+   "name": "Ligue des Nations CONCACAF"
+  },
+  "opponent1": {
+   "fullNameEng": "Home",
+   "fullName": "à domicile",
+   "countryId": 225
+  },
+  "opponent2": {
+   "fullNameEng": "Away",
+   "fullName": "à l'extérieur",
+   "countryId": 225
+  },
+  "eventGroups": [
+   {
+    "groupId": 1,
+    "shortGroupId": 1,
+    "events": [
+     [
+      {
+       "type": 1,
+       "cf": 1.3,
+       "cfView": "1.3"
+      }
+     ],
+     [
+      {
+       "type": 2,
+       "cf": 12.7,
+       "cfView": "12.7"
+      }
+     ],
+     [
+      {
+       "type": 3,
+       "cf": 4.785,
+       "cfView": "4.785"
+      }
+     ]
+    ]
+   },
+   {
+    "groupId": 17,
+    "shortGroupId": 4,
+    "events": [
+     [
+      {
+       "type": 9,
+       "parameter": 19.5,
+       "cf": 1.826,
+       "cfView": "1.826",
+       "isCenter": true,
+       "eventParams": {
+        "params": [
+         "(19.5)"
+        ]
+       }
+      }
+     ],
+     [
+      {
+       "type": 10,
+       "parameter": 19.5,
+       "cf": 1.98,
+       "cfView": "1.98",
+       "isCenter": true,
+       "eventParams": {
+        "params": [
+         "(19.5)"
+        ]
+       }
+      }
+     ]
+    ]
+   },
+   {
+    "groupId": 2,
+    "shortGroupId": 3,
+    "events": [
+     [
+      {
+       "type": 7,
+       "parameter": -3.5,
+       "cf": 1.878,
+       "cfView": "1.878",
+       "isCenter": true,
+       "eventParams": {
+        "params": [
+         "(-3.5)"
+        ]
+       }
+      }
+     ],
+     [
+      {
+       "type": 8,
+       "parameter": 3.5,
+       "cf": 1.922,
+       "cfView": "1.922",
+       "isCenter": true,
+       "eventParams": {
+        "params": [
+         "(3.5)"
+        ]
+       }
+      }
+     ]
+    ]
+   },
+   {
+    "groupId": 15,
+    "shortGroupId": 5,
+    "events": [
+     [
+      {
+       "type": 11,
+       "parameter": 11.5,
+       "cf": 1.863,
+       "cfView": "1.863",
+       "isCenter": true,
+       "eventParams": {
+        "params": [
+         "(11.5)"
+        ]
+       }
+      }
+     ],
+     [
+      {
+       "type": 12,
+       "parameter": 11.5,
+       "cf": 1.939,
+       "cfView": "1.939",
+       "isCenter": true,
+       "eventParams": {
+        "params": [
+         "(11.5)"
+        ]
+       }
+      }
+     ]
+    ]
+   },
+   {
+    "groupId": 62,
+    "shortGroupId": 6,
+    "events": [
+     [
+      {
+       "type": 13,
+       "parameter": 8.5,
+       "cf": 2.158,
+       "cfView": "2.158",
+       "isCenter": true,
+       "eventParams": {
+        "params": [
+         "(8.5)"
+        ]
+       }
+      }
+     ],
+     [
+      {
+       "type": 14,
+       "parameter": 8.5,
+       "cf": 1.697,
+       "cfView": "1.697",
+       "isCenter": true,
+       "eventParams": {
+        "params": [
+         "(8.5)"
+        ]
+       }
+      }
+     ]
+    ]
+   },
+   {
+    "groupId": 99,
+    "shortGroupId": 1007,
+    "events": [
+     [
+      {
+       "type": 3827,
+       "parameter": 19.25,
+       "cf": 1.756,
+       "cfView": "1.756",
+       "isCenter": true,
+       "eventParams": {
+        "params": [
+         "(19.25)"
+        ]
+       }
+      }
+     ],
+     [
+      {
+       "type": 3828,
+       "parameter": 19.25,
+       "cf": 2.07,
+       "cfView": "2.07",
+       "isCenter": true,
+       "eventParams": {
+        "params": [
+         "(19.25)"
+        ]
+       }
+      }
+     ]
+    ]
+   },
+   {
+    "groupId": 2854,
+    "shortGroupId": 1008,
+    "events": [
+     [
+      {
+       "type": 3829,
+       "parameter": -3.25,
+       "cf": 1.807,
+       "cfView": "1.807",
+       "isCenter": true,
+       "eventParams": {
+        "params": [
+         "(-3.25)"
+        ]
+       }
+      }
+     ],
+     [
+      {
+       "type": 3830,
+       "parameter": 3.25,
+       "cf": 2.003,
+       "cfView": "2.003",
+       "isCenter": true,
+       "eventParams": {
+        "params": [
+         "(3.25)"
+        ]
+       }
+      }
+     ]
+    ]
+   }
+  ],
+  "homeAwayFlag": true,
+  "id": 756616731,
+  "mainGameId": 756616731,
+  "constId": 374102526,
+  "startTs": 1790622000,
+  "gameTypeName": "",
+  "dopInfo": "7 matchs",
+  "periodName": "",
+  "kind": 3
+ }
+]

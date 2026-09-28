@@ -49,6 +49,9 @@ class Book(str, Enum):
     ELITESPORTS = "elitesports"    # Elitesports.be — marque blanche FM Gaming,
                                    # API REST publique sans authentification ni
                                    # anti-bot, et l'IP de datacenter est acceptée
+    VIVATBET = "vivatbet"          # Vivatbet.be — marque blanche 1xBet, API
+                                   # JSON publique sans jeton ni cookie ; seule
+                                   # plateforme 1xBet du portefeuille
     ASIANODDS = "asianodds"        # AsianOdds — courtier agrégeant 9 books
                                    # asiatiques. Source LIVE uniquement : le
                                    # prématch ne l'interroge pas, aucun scraper

@@ -92,6 +92,7 @@ LIBELLE_BOOK = {
     "smarkets": "Smarkets",
     "magicbetting": "MagicBetting",
     "elitesports": "EliteSports",
+    "vivatbet": "Vivatbet",
     "asianodds": "AsianOdds",
 }
 

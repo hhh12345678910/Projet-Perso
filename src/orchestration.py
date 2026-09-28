@@ -79,6 +79,9 @@ from .scrapers.smarkets import (
 )
 from .scrapers.starcasinosport import StarCasinoSportScraper, parse_get_events as starcasinosport_parse_get_events
 from .scrapers.unibet import UnibetScraper, parse_listview as unibet_parse_listview
+from .scrapers.vivatbet import SPORT_IDS as VIVATBET_SPORTS
+from .scrapers.vivatbet import VivatbetScraper
+from .scrapers.vivatbet import parse_games as vivatbet_parse_games
 from .ui import console
 
 
@@ -577,6 +580,122 @@ def fetch_elitesports_quotes(sport: str) -> list[OddQuote]:
         if ajout:
             console.print(f"\\[{sport}]   EliteSports +{len(ajout)} cotes "
                           f"du balayage profond")
+            quotes.extend(ajout)
+    return quotes
+
+
+# ── Vivatbet : vedettes dans le cycle, compétitions en cache de fond ────────
+#
+# Le flux `games1x2` est plafonné à 50 matchs par appel (100 → HTTP 400,
+# mesuré le 28/09). Un appel par sport ne rend donc que les 50 vedettes ; le
+# reste de l'offre (≈ 1 300 matchs de football sur ≈ 190 compétitions) coûte
+# un appel par compétition.
+#
+# Même motif qu'EliteSports : le cycle lit les vedettes, FRAÎCHES, en un
+# appel, et fusionne ce que le balayage de fond a en réserve. Le cycle
+# n'attend JAMAIS le balayage (§5 : c'est ce qui avait fait retirer Smarkets).
+#
+# ⚠️ Des réglages plus serrés qu'EliteSports, et c'est voulu : ce book est
+# fait pour être JOUÉ, pas seulement mesuré. Une cote de fond vieille de
+# 10 minutes au plus, rafraîchie toutes les 4 minutes. Au-delà, rien plutôt
+# que des cotes mortes — un flux périmé fabrique des value bets contre des
+# prix qui n'existent plus.
+_VIVAT_DEEP_TTL = float(os.getenv("VIVATBET_DEEP_REFRESH_SEC", "240"))
+_VIVAT_DEEP_MAX_AGE = float(os.getenv("VIVATBET_DEEP_MAX_AGE_SEC", "600"))
+# Appels simultanés du balayage. Quatre suffisent à tenir ≈ 240 compétitions
+# en une vingtaine de secondes sans marteler le site.
+_VIVAT_DEEP_WORKERS = max(1, int(os.getenv("VIVATBET_DEEP_WORKERS", "4")))
+# Coupe-circuit du balayage seul : à 0, le book reste sur ses 50 vedettes.
+_VIVAT_DEEP_ENABLED = os.getenv("VIVATBET_DEEP_ENABLED", "1").strip().lower() \
+    not in ("0", "false", "no", "off", "non")
+_VIVAT_DEEP_CACHE: dict[str, tuple[float, list[OddQuote]]] = {}
+_VIVAT_DEEP_REFRESHING: set[str] = set()
+_VIVAT_DEEP_LOCK = threading.Lock()
+
+
+def _vivatbet_deep_refresh(sport: str) -> None:
+    """Balaye Vivatbet compétition par compétition, en fond.
+
+    Ne lève JAMAIS : c'est un thread détaché, une exception y serait perdue et
+    emporterait le drapeau de rafraîchissement, laissant le cache figé.
+    """
+    try:
+        from .scrapers.vivatbet import MAX_COUNT
+
+        quotes: list[OddQuote] = []
+        echecs = 0
+        with VivatbetScraper() as vb:
+            ligues = vb.fetch_leagues(sport)
+
+            def une(ligue: tuple[int, str, int]) -> list[OddQuote]:
+                return list(vivatbet_parse_games(vb.fetch_league(sport, ligue[0])))
+
+            with ThreadPoolExecutor(max_workers=_VIVAT_DEEP_WORKERS) as pool:
+                futures = [pool.submit(une, lg) for lg in ligues]
+                for fut in futures:
+                    try:
+                        quotes.extend(fut.result())
+                    except Exception:                             # noqa: BLE001
+                        # Une compétition qui casse n'emporte pas les autres.
+                        echecs += 1
+        with _VIVAT_DEEP_LOCK:
+            _VIVAT_DEEP_CACHE[sport] = (time.monotonic(), quotes)
+        # Pas de plafond silencieux : une compétition de plus de 50 matchs
+        # n'est servie qu'en partie, et le journal le dit.
+        tronquees = [nom for _id, nom, n in ligues if n > MAX_COUNT]
+        console.print(f"\\[{sport}]   Vivatbet profond : {len(quotes)} cotes "
+                      f"sur {len(ligues)} compétitions"
+                      + (f" ({echecs} en échec)" if echecs else "")
+                      + (f" · tronquées à {MAX_COUNT} : {', '.join(tronquees)}"
+                         if tronquees else ""))
+    except Exception as e:                                        # noqa: BLE001
+        console.print(f"[yellow]Vivatbet profond échoué : {e}[/yellow]")
+    finally:
+        with _VIVAT_DEEP_LOCK:
+            _VIVAT_DEEP_REFRESHING.discard(sport)
+
+
+def _vivatbet_deep_quotes(sport: str) -> list[OddQuote]:
+    """Ce que le balayage de fond a en réserve. Ne bloque JAMAIS le cycle."""
+    if not _VIVAT_DEEP_ENABLED:
+        return []
+    now = time.monotonic()
+    with _VIVAT_DEEP_LOCK:
+        ts, quotes = _VIVAT_DEEP_CACHE.get(sport, (0.0, []))
+        age = now - ts if ts else float("inf")
+        lancer = age > _VIVAT_DEEP_TTL and sport not in _VIVAT_DEEP_REFRESHING
+        if lancer:
+            _VIVAT_DEEP_REFRESHING.add(sport)
+    if lancer:
+        threading.Thread(target=_vivatbet_deep_refresh,
+                         args=(sport,), daemon=True).start()
+    return [] if age > _VIVAT_DEEP_MAX_AGE else quotes
+
+
+def fetch_vivatbet_quotes(sport: str) -> list[OddQuote]:
+    """L'offre prématch de Vivatbet (marque blanche 1xBet) pour un sport.
+
+    Les 50 vedettes sont lues DANS le cycle, en un appel ; le reste vient du
+    balayage de fond. Sur un marché présent des deux côtés, **les vedettes
+    gagnent** : entre deux prix, celui de maintenant vaut mieux que celui
+    d'il y a quelques minutes.
+    """
+    quotes: list[OddQuote] = []
+    try:
+        with VivatbetScraper() as vb:
+            quotes = list(vivatbet_parse_games(vb.fetch_top(sport)))
+    except httpx.HTTPError as e:
+        console.print(f"[yellow]Vivatbet skipped:[/yellow] {e}")
+
+    profond = _vivatbet_deep_quotes(sport)
+    if profond:
+        vus = {(q.event_key, q.market, q.outcome.label, q.outcome.line)
+               for q in quotes}
+        ajout = [q for q in profond
+                 if (q.event_key, q.market, q.outcome.label, q.outcome.line) not in vus]
+        if ajout:
+            console.print(f"\\[{sport}]   Vivatbet +{len(ajout)} cotes "
+                          f"du balayage de fond")
             quotes.extend(ajout)
     return quotes
 
@@ -1108,6 +1227,12 @@ def fetch_all_parallel(
         tasks["Circus"] = lambda: fetch_circus_quotes(sport)
     if sport in MAGIC_SPORTS:
         tasks["MagicBetting"] = lambda: fetch_magicbetting_quotes(sport)
+    # Vivatbet (marque blanche 1xBet) : API JSON publique, ni jeton ni cookie,
+    # IP de la VM acceptée — vérifié le 28/09. Football et tennis seulement
+    # (voir `scrapers/vivatbet.SPORT_IDS` pour le hockey).
+    # Coupe-circuit : BOOKS_DISABLED=vivatbet.
+    if sport in VIVATBET_SPORTS:
+        tasks["Vivatbet"] = lambda: fetch_vivatbet_quotes(sport)
 
     # Coupe-circuit par book, sans déploiement. Les motifs de désactivation
     # vivent dans les commentaires du registre ci-dessus et y restent — ceci
