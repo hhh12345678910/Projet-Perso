@@ -34,6 +34,7 @@ SONDES = [
     "repair_leagues", "clv_roi_matrix", "staking_curves", "closing_gap",
     "book_latency", "alert_cost", "noms_hostiles", "book_exclusif", "rapport_clv_roi",
     "survie_cote", "resultats_manquants", "verif_resultats", "banc_rapprochement",
+    "diag_match",
 ]
 
 
