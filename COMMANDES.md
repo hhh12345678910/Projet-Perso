@@ -1144,6 +1144,26 @@ compte, leur CLV est inconnue. Les jeter ferait lire « le ROI par tranche de
 CLV » sur la sous-population dont on a réussi à mesurer la CLV — une sélection,
 pas un échantillon. Elle est donc imprimée avec les autres.
 
+## Strategy Finder (Analytics) — ajouté le 28/09
+
+Page « Strategy Finder » de l'Analytics (https://analytics.equodds.com/#/strategies) :
+sport, période, population, minimum de paris réglés, objectif → les 5
+configurations (bookmaker + jusqu'à 3 critères parmi marché, pari, EV, cote,
+délai) qui ont le mieux tenu, **validées hors échantillon**.
+
+Garde-fous (détail dans `src/analytics/strategies.py`) : volume minimum de
+paris RÉGLÉS ; sélection sur les 70 % les plus anciens, validation sur les
+30 % les plus récents (chronologique) ; classement sur des BORNES BASSES
+(moyenne − 1 erreur type) de la CLV et du ROI ; bonus de volume
+logarithmique ; stabilité sur 4 sous-périodes ; pénalité par critère ajouté.
+Les chiffres affichés sont ceux de `/api/analyse` pour les mêmes filtres
+(testé) — le bouton « Ouvrir dans l'Analytics » les rejoue.
+
+```bash
+# L'API seule (lecture seule, ~3 s sur 40 000 opportunités, cache 5 min)
+curl -s -u "identifiant:motdepasse" "https://analytics.equodds.com/api/strategies?sport=soccer&min_n=250&objective=balanced" | head -c 600
+```
+
 ## Vivatbet — ajouté le 28/09 (marque blanche 1xBet)
 
 API JSON publique, **sans jeton ni cookie** : l'en-tête `x-hd` que le navigateur

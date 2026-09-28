@@ -607,6 +607,27 @@ def creer_app(db_path: Optional[str] = None) -> FastAPI:
         return meilleurs_segments(base(), f, min_n=min_n, trier_par=sort,
                                   limite=limit, profondeur=depth)
 
+    @app.get("/api/strategies", dependencies=[Depends(exiger_acces)])
+    def strategies_route(
+        sport: Optional[str] = Query(
+            None, description="Un sport ; absent = tous les sports du périmètre."),
+        date_from: Optional[str] = Query(None, description="AAAA-MM-JJ inclus."),
+        date_to: Optional[str] = Query(None, description="AAAA-MM-JJ INCLUS."),
+        population: str = Query("settled"),
+        min_n: int = Query(100, description="Minimum de paris RÉGLÉS par configuration."),
+        objective: str = Query("balanced", description="balanced | clv | roi"),
+    ):
+        """Strategy Finder — les configurations (bookmaker, marché, pari, EV,
+        cote, délai) qui ont le mieux tenu, validées hors échantillon.
+
+        Même lot que `/api/analyse` (population, déduplication, règlement),
+        mêmes définitions de CLV, ROI et P&L. Voir `src/analytics/strategies.py`
+        pour les garde-fous : volume minimum, découpage chronologique 70 / 30,
+        bornes basses, stabilité, pénalité de complexité."""
+        from src.analytics.strategies import trouver
+        return trouver(base(), sport=sport, date_from=date_from, date_to=date_to,
+                       population=population, min_n=min_n, objectif=objective)
+
     return app
 
 
