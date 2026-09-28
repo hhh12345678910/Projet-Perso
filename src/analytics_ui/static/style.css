@@ -36,7 +36,7 @@
   --fond-survol:  #f0f3f7;
   --encre:        #101828;
   --encre-2:      #475467;
-  --encre-muet:   #7d8798;
+  --encre-muet:   #667085;   /* 4,6:1 sur le fond de page — lisible, pas décoratif */
   --bordure:      #e4e8ee;
   --bordure-forte:#cfd6e0;
   --grille:       #edf0f4;
@@ -46,6 +46,9 @@
   --marque-fort:  #1d64bd;
   --marque-doux:  rgba(42, 120, 214, .09);
   --marque-bord:  rgba(42, 120, 214, .35);
+  /* Le fond du bouton principal : sous texte blanc, ≥ 4,5:1 dans les deux thèmes. */
+  --marque-bouton:#2170cf;
+  --marque-bouton-fort:#1a5fb4;
   --serie-2:      #b7791f;
 
   /* Divergent des graphiques : pôles validés. */
@@ -85,13 +88,13 @@
 :root[data-theme="dark"] {
   color-scheme: dark;
 
-  --fond-page:    #0f1216;
-  --fond-carte:   #161a20;
-  --fond-sous:    #1b2027;
-  --fond-survol:  #1f252d;
-  --encre:        #e4e7ec;
-  --encre-2:      #a8b0bc;
-  --encre-muet:   #737d8c;
+  --fond-page:    #13171d;
+  --fond-carte:   #1a1f27;
+  --fond-sous:    #20262f;
+  --fond-survol:  #252c36;
+  --encre:        #e6e9ee;
+  --encre-2:      #adb5c1;
+  --encre-muet:   #8d97a6;   /* 5,6:1 sur les cartes */
   --bordure:      rgba(255, 255, 255, .07);
   --bordure-forte:rgba(255, 255, 255, .13);
   --grille:       rgba(255, 255, 255, .05);
@@ -101,11 +104,13 @@
   --marque-fort:  #6ea3e6;
   --marque-doux:  rgba(79, 143, 220, .13);
   --marque-bord:  rgba(79, 143, 220, .45);
+  --marque-bouton:#2f6fc0;
+  --marque-bouton-fort:#3a7bcf;
   --serie-2:      #cf9e4a;
 
   --pos:          #3987e5;
   --neg:          #e66767;
-  --neutre:       #232a33;
+  --neutre:       #28303a;
   --pos-1: #b7d3f6;  --pos-2: #3987e5;  --pos-3: #1c5cab;
   --neg-1: #f4c4c4;  --neg-2: #e66767;  --neg-3: #a83230;
 
@@ -116,7 +121,7 @@
   --alerte:       #e0964f;
   --alerte-doux:  rgba(224, 150, 79, .11);
 
-  --sb-fond:      #0a0d11;
+  --sb-fond:      #0e1116;
   --sb-encre:     #b9c1cd;
   --sb-muet:      #6c7686;
   --sb-bord:      rgba(255, 255, 255, .06);
@@ -191,8 +196,8 @@ button:focus-visible, a:focus-visible { border-radius: var(--r-s); }
 .btn svg { width: 16px; height: 16px; fill: none; stroke: currentColor;
            stroke-width: 1.9; stroke-linecap: round; stroke-linejoin: round; }
 .btn-petit { height: 32px; padding: 0 12px; font-size: 12.5px; }
-.btn-primaire { background: var(--marque); color: #fff; border-color: var(--marque); }
-.btn-primaire:hover:not(:disabled) { background: var(--marque-fort); border-color: var(--marque-fort); }
+.btn-primaire { background: var(--marque-bouton); color: #fff; border-color: var(--marque-bouton); }
+.btn-primaire:hover:not(:disabled) { background: var(--marque-bouton-fort); border-color: var(--marque-bouton-fort); }
 .btn-primaire:disabled { opacity: .7; cursor: progress; }
 .btn-secondaire { background: var(--fond-carte); color: var(--encre); border-color: var(--bordure-forte); }
 .btn-secondaire:hover:not(:disabled) { background: var(--fond-survol); }
@@ -431,7 +436,7 @@ html.sb-replie .sb-pied { align-items: center; padding: 14px 0; }
 .btn-avances .lib-mobile { display: none; }
 .pastille {
   min-width: 19px; height: 19px; padding: 0 5px; border-radius: 10px;
-  background: var(--marque); color: #fff; font-size: 11px; font-weight: 650;
+  background: var(--marque-bouton); color: #fff; font-size: 11px; font-weight: 650;
   display: inline-flex; align-items: center; justify-content: center;
 }
 
@@ -439,9 +444,17 @@ html.sb-replie .sb-pied { align-items: center; padding: 14px 0; }
   display: flex; align-items: center; gap: 12px; flex-wrap: wrap;
   margin-top: 14px; padding: 10px 0 2px; border-top: 1px dashed var(--bordure);
 }
-.contexte-ligne { margin: 0; font-size: 13px; color: var(--encre-2); flex: 1 1 360px; min-width: 0; }
+.contexte-ligne {
+  margin: 0; font-size: 13px; color: var(--encre-2); flex: 1 1 360px; min-width: 0;
+  /* Les critères sont des blocs insécables : c'est ENTRE eux que la ligne
+     se coupe, jamais au milieu de l'un. */
+  display: flex; flex-wrap: wrap; align-items: baseline; row-gap: 2px;
+}
 .contexte-ligne b { color: var(--encre); font-weight: 600; }
-.contexte-ligne .sep { color: var(--bordure-forte); margin: 0 7px; }
+.contexte-ligne .sep { color: var(--encre-muet); margin: 0 7px; opacity: .6; }
+/* Un critère ne se coupe pas en deux lignes : « Tous les / bookmakers » se
+   lirait comme deux filtres. */
+.contexte-ligne > span:not(.sep), .contexte-ligne > b { white-space: nowrap; }
 .modifie {
   font-size: 12px; font-weight: 550; color: var(--alerte);
   background: var(--alerte-doux); padding: 3px 9px; border-radius: 20px;
@@ -483,9 +496,9 @@ body.sans-donnees .si-donnees { display: none; }
 
 .barre-outils { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; margin-bottom: 12px; }
 .select-mini { width: auto; padding: 6px 30px 6px 10px; }
-.input-mini { width: 84px; }
+input.input-mini { width: 84px; }
 .champ-texte { max-width: 360px; }
-.recherche { width: 240px; }
+input.recherche { width: 240px; }
 .barre-page { display: flex; align-items: center; gap: 14px; flex-wrap: wrap; }
 
 /* ── Analyses rapides ──────────────────────────────────────────────── */
@@ -520,9 +533,16 @@ body.sans-donnees .si-donnees { display: none; }
   display: flex; flex-direction: column;
   transition: box-shadow .15s, border-color .15s;
 }
-.kpi:hover { box-shadow: var(--ombre-survol); }
+.kpi-lien { cursor: pointer; }
+.kpi-lien:hover { box-shadow: var(--ombre-survol); border-color: var(--bordure-forte); }
+.kpi-lien:focus-visible { outline: 2px solid var(--marque); outline-offset: 2px; }
+.kpi-lien::after {
+  content: "→"; position: absolute; top: 18px; right: 18px; font-size: 14px;
+  color: var(--encre-muet); opacity: 0; transition: opacity .15s, transform .15s;
+}
+.kpi-lien:hover::after, .kpi-lien:focus-visible::after { opacity: 1; transform: translateX(2px); }
 .kpi .titre {
-  display: flex; align-items: center; gap: 9px;
+  display: flex; align-items: center; gap: 9px; min-height: 30px;
   font-size: 13px; font-weight: 550; color: var(--encre-2); margin-bottom: 12px;
 }
 .kpi .ic {
@@ -534,7 +554,7 @@ body.sans-donnees .si-donnees { display: none; }
                stroke-width: 1.9; stroke-linecap: round; stroke-linejoin: round; }
 .kpi .valeur {
   font-size: 34px; line-height: 1.05; font-weight: 650; letter-spacing: -.03em;
-  white-space: nowrap;
+  white-space: nowrap; min-height: 42px; display: flex; align-items: flex-end;
 }
 .kpi .sous { font-size: 12.5px; color: var(--encre-muet); margin-top: 6px; }
 .kpi .ligne2 {
@@ -548,13 +568,13 @@ body.sans-donnees .si-donnees { display: none; }
 .kpi .fragile { color: var(--alerte); font-weight: 600; }
 
 /* Le ROI : la métrique financière, en tête d'affiche. */
-.kpi-roi .valeur { font-size: 40px; }
+.kpi-roi .valeur { font-size: 40px; min-height: 42px; }
 .kpi-roi .ic { background: var(--bon-doux); color: var(--bon); border-color: transparent; }
 /* La CLV : la mesure par rapport à la clôture — accent bleu, pas vert. */
 .kpi-clv .ic { background: var(--marque-doux); color: var(--marque); border-color: transparent; }
 .kpi-clv::before, .kpi-roi::before {
-  content: ""; position: absolute; left: 22px; right: 22px; top: -1px; height: 2px;
-  border-radius: 0 0 2px 2px;
+  content: ""; position: absolute; left: -1px; right: -1px; top: -1px; height: 3px;
+  border-radius: var(--r) var(--r) 0 0;
 }
 .kpi-roi::before { background: var(--encre-muet); opacity: .25; }
 .kpi-roi.pos-bord::before { background: var(--bon); opacity: .7; }
@@ -563,7 +583,8 @@ body.sans-donnees .si-donnees { display: none; }
 
 .kpis-secondaires .kpi { padding: 16px 18px; }
 .kpis-secondaires .kpi .titre { margin-bottom: 8px; font-size: 12.5px; }
-.kpis-secondaires .kpi .valeur { font-size: 24px; }
+.kpis-secondaires .kpi .valeur { font-size: 24px; min-height: 0; }
+.kpis-secondaires .kpi .titre { min-height: 0; }
 
 /* ⚠️ Le SIGNE porte le sens, pas seulement la couleur : « +7,67 % » se lit
    même en noir et blanc, et reste juste pour un daltonien. */
@@ -575,6 +596,22 @@ body.sans-donnees .si-donnees { display: none; }
   display: flex; flex-direction: column; gap: 2px;
 }
 .note-methodo span:empty { display: none; }
+
+.couv-ligne { margin: 10px 0 0; font-size: 12px; color: var(--encre-muet); }
+.couv-ligne:empty { display: none; }
+.couv-ligne.fragile { color: var(--alerte); font-weight: 600; }
+caption.note-tri {
+  caption-side: bottom; text-align: left; padding: 8px 2px 0;
+  font-size: 12px; color: var(--encre-muet);
+}
+.aa-param {
+  display: flex; align-items: center; justify-content: space-between; gap: 12px; flex-wrap: wrap;
+  padding: 12px 16px; border-radius: var(--r);
+  background: var(--fond-sous); border: 1px solid var(--bordure);
+}
+.aa-param-texte { display: flex; align-items: baseline; gap: 8px; flex-wrap: wrap; min-width: 0; font-size: 13px; }
+.aa-param-texte b { font-weight: 600; overflow-wrap: anywhere; }
+.menu-note + .menu-item { margin-top: 2px; }
 
 /* ── Squelettes de chargement ─────────────────────────────────────── */
 
@@ -590,7 +627,8 @@ body.sans-donnees .si-donnees { display: none; }
 @keyframes lueur { to { transform: translateX(100%); } }
 .kpi.chargement .valeur { width: 58%; height: 34px; }
 .kpi.chargement .sous { width: 40%; height: 12px; }
-body.en-analyse .graphe, body.en-analyse .carte-table .enrob { opacity: .45; transition: opacity .15s; }
+body.en-analyse .graphe, body.en-analyse .carte-table .enrob,
+body.en-analyse .kpis .kpi:not(.chargement) { opacity: .45; transition: opacity .15s; }
 body.en-analyse .graphe { pointer-events: none; }
 
 /* ── État vide ─────────────────────────────────────────────────────── */
@@ -628,6 +666,14 @@ body.en-analyse .graphe { pointer-events: none; }
                border-color: color-mix(in srgb, var(--grave) 30%, transparent); }
 .avert.grave .ic-av { stroke: var(--grave); }
 .avert b { font-weight: 650; }
+.avert { cursor: pointer; }
+/* Deux lignes par défaut : un long avertissement ne pousse pas les KPI hors
+   de l'écran. Un clic le déplie ; l'impression le montre en entier. */
+.avert-texte {
+  flex: 1 1 auto; min-width: 0;
+  display: -webkit-box; -webkit-box-orient: vertical; -webkit-line-clamp: 2; overflow: hidden;
+}
+.avert.deplie .avert-texte { display: block; -webkit-line-clamp: unset; overflow: visible; }
 .avert-plus { align-self: flex-start; font-size: 12.5px; border: 0; background: none;
               color: var(--marque); cursor: pointer; padding: 2px 4px; }
 
@@ -1003,7 +1049,11 @@ td.num { text-align: right; }
   .app.nav-ouverte .sb-pied { align-items: flex-start; padding: 14px 18px; }
   #voile-nav { z-index: 84; }
   .menu-mobile { display: inline-flex; }
-  .barre-haut { padding: 0 14px; }
+  /* Sur téléphone, un en-tête collant de trois étages mangerait la moitié
+     de l'écran : il défile avec la page. */
+  .barre-haut { padding: 0 14px; position: static; }
+  /* Un nom long passe à la ligne ENTRE ses mots — jamais « Foot / ball ». */
+  .tableau td.nom { white-space: normal; max-width: 180px; min-width: 92px; overflow-wrap: break-word; }
   .barre-haut-cadre { flex-wrap: wrap; gap: 10px; min-height: 0; }
   .titre-page { flex: 1 1 calc(100% - 60px); }
   .titre-page h1 { font-size: 19px; }
@@ -1025,14 +1075,17 @@ td.num { text-align: right; }
   .periode { flex: 1 1 100%; justify-content: space-between; }
   #analyser { flex: 1 1 auto; }
   .presets .puces { flex-wrap: nowrap; overflow-x: auto; padding-bottom: 4px;
-                    margin: 0 -14px; padding-left: 14px; padding-right: 14px; scrollbar-width: none; }
+                    margin: 0 -14px; padding-left: 14px; padding-right: 14px; scrollbar-width: none;
+                    /* Le fondu à droite dit qu'il y a d'autres puces à faire défiler. */
+                    -webkit-mask-image: linear-gradient(90deg, #000 85%, transparent);
+                    mask-image: linear-gradient(90deg, #000 85%, transparent); }
   .presets .puce { flex: 0 0 auto; }
   .kpi .valeur { font-size: 30px; }
   .kpi-roi .valeur { font-size: 34px; }
   .carte { padding: 16px; }
   .enrob { margin: 0 -16px; padding: 0 16px; }
   .carte-tete { flex-direction: column; }
-  .recherche { width: 100%; }
+  input.recherche { width: 100%; }
   .grille-tables { gap: 14px; }
   .tiroir { width: 100vw; }
   .champ.pliable > .champ-tete { padding: 15px 2px; }
@@ -1075,7 +1128,7 @@ td.num { text-align: right; }
     --neutre: #f4f4f4; --bon: #0a6b3c; --grave: #b3261e;
   }
   body { background: #fff; color: #111; font-size: 10.5pt; }
-  .app { display: block; }
+  .app { display: block; background: none; }
 
   /* Ce qui ne sert qu'à PILOTER disparaît : navigation, filtres, boutons. */
   .sidebar, .voile, .tiroir, .toast, #bloc-filtres, .actions-haut, .menu-mobile,
@@ -1110,6 +1163,20 @@ td.num { text-align: right; }
   .enrob { overflow: visible; margin: 0; padding: 0; }
 
   a[href]::after { content: ""; }   /* pas d'URL entre parenthèses */
+
+  /* Un avertissement se lit EN ENTIER sur le papier ; ses boutons non. */
+  .avert-texte { display: block !important; -webkit-line-clamp: unset !important; overflow: visible !important; }
+  .avert-plus, .kpi-lien::after { display: none !important; }
+
+  /* Rapport complet : chaque page d'analyse, titrée, sur sa propre feuille. */
+  body.impression-rapport .barre-haut, body.impression-rapport .page-outil { display: none !important; }
+  body.impression-rapport .page[data-titre]::before {
+    content: attr(data-titre); display: block;
+    font-size: 15pt; font-weight: 700; margin: 0 0 8pt; padding-bottom: 4pt;
+    border-bottom: 1.5pt solid #111;
+  }
+  body.impression-rapport .page + .page:not([hidden]) { break-before: page; page-break-before: always; }
+  .page { animation: none !important; }
 }
 
 @page { size: A4 portrait; margin: 12mm 10mm; }

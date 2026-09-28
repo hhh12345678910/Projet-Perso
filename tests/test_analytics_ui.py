@@ -578,64 +578,44 @@ def test_la_liste_defile_sans_allonger_la_page():
 # ══════════════════════════════════════════════════════════════════════
 
 
-#: Sentinelle pour le `undefined` de JavaScript. Une valeur absente n'est PAS
-#: `None` côté JS, et la différence est exactement ce qui a produit le défaut
-#: n° 2 : `Number.isNaN(undefined)` vaut **false**, donc une borne absente est
-#: affectée quand même, puis sérialisée en la chaîne « undefined ».
-INDEFINI = object()
+#: ⚠️ LA CELLULE EST DÉSORMAIS TRADUITE EN TRANCHES, PLUS EN BORNES.
+#: L'ancienne version recopiait « 1.0-1.8 » en `odds_min`/`odds_max` et
+#: « 5-8% » en `ev_min`/`ev_max` : deux défauts en sont sortis (borne 1.0
+#: refusée, `undefined` sérialisé), et surtout les bornes ne recouvraient pas
+#: toujours la tranche au bord près. La cellule envoie maintenant SES
+#: tranches (`odds_bands`, `ev_bands`) — les mêmes que la matrice — et les
+#: règles PAR SPORT, qui priment sur la règle globale, sont restreintes à la
+#: cellule ou retirent leur sport. Le miroir ci-dessous suit `requeteCellule`
+#: à la lettre ; `test_le_js_correspond_bien_a_ce_miroir` relit le JS.
 
 
-def _number_isNaN(v) -> bool:
-    """`Number.isNaN` de JavaScript, à la lettre.
-
-    Il ne rend `true` QUE pour la valeur NaN elle-même — pas pour `undefined`,
-    contrairement au `isNaN` global. C'est cette subtilité que le code de
-    `chargerDetail` n'anticipe pas."""
-    return isinstance(v, float) and v != v
-
-
-def _params_du_clic(bande_cote: str, bande_ev: str) -> dict:
-    """Reproduit `chargerDetail` À LA LETTRE, `undefined` compris.
-
-    ⚠️ LA PREMIÈRE VERSION DE CE MIROIR ÉTAIT INFIDÈLE, ET ELLE A MENTI.
-    Elle traitait une borne absente comme une absence de clé, là où le JS
-    affecte `undefined`. Résultat : le test annonçait « les 30 cellules sont
-    cliquables » pendant que cinq d'entre elles répondaient 422 dans un vrai
-    navigateur. Un miroir approximatif est pire qu'aucun miroir — il donne la
-    tranquillité sans la vérification.
-
-    D'où la fidélité littérale ci-dessous, et le test
-    `test_le_js_correspond_bien_a_ce_miroir` qui relit le JS pour que la
-    dérive se voie."""
-    extra = {}
-    morceaux = bande_cote.replace("> ", "").split("-")
-
-    def flottant(i):
-        # `map(parseFloat)` sur un tableau plus court rend `undefined`.
-        if i >= len(morceaux):
-            return INDEFINI
-        try:
-            return float(morceaux[i])
-        except ValueError:
-            return float("nan")
-
-    a, b = flottant(0), flottant(1)
-    if not _number_isNaN(a) and a is not INDEFINI and a > 1:
-        extra["odds_min"] = a
-    if b is not INDEFINI and not _number_isNaN(b):
-        # Le JS teste maintenant `b !== undefined && !Number.isNaN(b)` :
-        # une bande ouverte vers le haut n'envoie plus de borne haute du tout.
-        extra["odds_max"] = b
-
-    ev = bande_ev.replace("%", "")
-    m = re.match(r"^(\d+)-(\d+)$", ev)
-    if m:
-        extra["ev_min"], extra["ev_max"] = m.group(1), m.group(2)
-    elif ev.startswith("<"):
-        extra["ev_max"] = float(ev[1:])
-    elif ev.endswith("+"):
-        extra["ev_min"] = float(ev[:-1])
-    return extra
+def _params_du_clic(bande_cote: str, bande_ev: str, base=None, sports=None):
+    """Reproduit `requeteCellule` : liste de paires (clé, valeur), comme une
+    `URLSearchParams`."""
+    p = [(k, v) for k, v in (base or [])]
+    p = [(k, v) for k, v in p if k not in ("odds_bands", "ev_bands")]
+    p += [("odds_bands", bande_cote), ("ev_bands", bande_ev)]
+    exclus = set()
+    for k in dict.fromkeys(k for k, _ in p):
+        if k.startswith("ev_bands_"):
+            prefixe, cible = "ev_bands_", bande_ev
+        elif k.startswith("odds_bands_"):
+            prefixe, cible = "odds_bands_", bande_cote
+        else:
+            continue
+        valeurs = [v for kk, v in p if kk == k]
+        if cible in valeurs:
+            p = [(kk, v) for kk, v in p if kk != k] + [(k, cible)]
+        else:
+            exclus.add(k[len(prefixe):])
+    if exclus:
+        choisis = [v for k, v in p if k == "sports"] or list(sports or [])
+        restants = [s for s in choisis if s not in exclus]
+        if not restants:
+            return None     # cellule vide : aucun appel, jamais « tous les sports »
+        p = [(k, v) for k, v in p if k != "sports"]
+        p += [("sports", s) for s in restants]
+    return p
 
 
 def _cellules():
@@ -643,85 +623,101 @@ def _cellules():
     return [(c, e) for c, _, _ in bandes_cote() for e in ordre_ev()]
 
 
+def _matrice(client, base=None):
+    d = client.get("/api/analyse", params=list(base or [])).json()
+    return {(c["odds"], c["ev"]): c["opportunities"] for c in d["matrix"]["cells"]}
+
+
 @pytest.mark.parametrize("cote,ev", _cellules())
 def test_chaque_cellule_de_la_matrice_est_cliquable(client, cote, ev):
-    """Les 30 cellules, une par une, pour que l'échec nomme la cellule.
-
-    Deux défauts sont passés par ici, tous deux antérieurs à la Phase 4 et
-    tous deux sur la même ligne de code :
-
-    * la bande « 1.0-1.8 » envoyait `odds_min=1.0`, refusé en 400 ;
-    * la bande « > 6.0 » envoyait `odds_max=undefined`, refusé en 422.
-
-    Les deux sont corrigés. Ce test les couvre désormais sans exception."""
+    """Les 30 cellules, une par une, pour que l'échec nomme la cellule."""
     r = client.get("/api/detail", params=_params_du_clic(cote, ev))
     assert r.status_code == 200, (
         f"cote {cote} × EV {ev} → {r.status_code} "
         f"{str(r.json().get('detail', ''))[:90]}")
 
 
-def test_la_premiere_bande_n_envoie_PAS_de_borne_basse(client):
-    """Le défaut n° 1, corrigé, isolé pour que l'échec soit lisible."""
-    p = _params_du_clic("1.0-1.8", "5-8%")
-    assert "odds_min" not in p, "la borne basse 1.0 repart vers l'API"
-    assert p["odds_max"] == 1.8, "la borne haute doit être conservée"
-    assert client.get("/api/detail", params=p).status_code == 200
+def test_le_clic_ramene_EXACTEMENT_leffectif_de_la_cellule(client):
+    """Le contrat du clic, compté : le détail d'une cellule a autant de lignes
+    que la cellule en annonce — ni plus (bornes trop larges), ni moins (bord
+    de tranche perdu). Vérifié sur les 30 cellules, vides comprises."""
+    matrice = _matrice(client)
+    assert sum(matrice.values()) > 0
+    for cote, ev in _cellules():
+        total = client.get("/api/detail",
+                           params=_params_du_clic(cote, ev) + [("per_page", 500)]).json()["total"]
+        assert total == matrice.get((cote, ev), 0), (cote, ev, total)
 
 
-@pytest.mark.parametrize("bande,attendu", [
-    ("1.8-2.3", 1.8), ("2.3-3.0", 2.3), ("3.0-4.0", 3.0), ("4.0-6.0", 4.0)])
-def test_les_AUTRES_bandes_gardent_leur_borne_basse(bande, attendu):
-    """La correction ne doit toucher QUE la première bande : élargir le lot
-    des autres ferait remonter des paris hors de la cellule cliquée."""
-    assert _params_du_clic(bande, "8-15%")["odds_min"] == attendu
+def test_le_clic_respecte_les_regles_PAR_SPORT(tmp_path):
+    """⚠️ UNE RÈGLE PAR SPORT PRIME SUR LA RÈGLE GLOBALE. Envoyer seulement
+    `ev_bands=<cellule>` laisserait le sport réglé suivre SA règle, donc
+    remonter des paris hors de la cellule. Le miroir la restreint à la
+    cellule, ou retire le sport quand sa règle exclut la cellule.
 
-
-def test_la_bande_ouverte_garde_sa_borne_basse():
-    """« > 6.0 » garde bien `odds_min` — son défaut est sur l'autre borne."""
-    assert _params_du_clic("> 6.0", "8-15%")["odds_min"] == 6.0
-
-
-def test_le_js_garde_la_borne_basse_de_la_premiere_bande():
-    """La garde est vérifiée sur le FICHIER, pas sur son miroir Python."""
-    bloc = JS[JS.index("async function chargerDetail"):]
-    bloc = bloc[:bloc.index("$('detail-filtre')")]
-    assert re.search(r"if\s*\(!Number\.isNaN\(a\)\s*&&\s*a\s*>\s*1\)", bloc), (
-        "app.js n'écarte plus la borne basse ≤ 1 : la première ligne de la "
-        "matrice va de nouveau répondre 400")
-    assert "extra.odds_max = b" in bloc, "la borne haute a disparu"
+    La base est construite pour que la version naïve ÉCHOUE : un tennis à
+    40 % d'EV dans la même tranche de cote qu'un tennis à 25 %, et un
+    football à 12 % que la règle du football garde mais que la cellule
+    « 5-8 % » ne contient pas."""
+    base_db = monter(tmp_path, [
+        Opp(1, sport="soccer", book="unibet_be", odd=2.20, ev=12, jour="2026-08-10",
+            cloture=2.10, gagnant="away", outcome="home"),
+        Opp(2, sport="soccer", home="C", away="D", book="unibet_be", odd=2.10, ev=6,
+            jour="2026-08-11", cloture=2.00, gagnant="home", outcome="home"),
+        Opp(3, sport="tennis", home="Sinner", away="Alcaraz", book="betano_be",
+            odd=4.50, ev=25, jour="2026-09-02", cloture=4.80, gagnant="away", outcome="home"),
+        Opp(4, sport="tennis", home="Rune", away="Zverev", book="betano_be",
+            odd=4.20, ev=40, jour="2026-09-03", cloture=4.00, gagnant="home", outcome="home"),
+    ])
+    c = TestClient(creer_app(str(base_db)))
+    regles = [("ev_bands_soccer", "8-15%"),
+              ("ev_bands_tennis", "15-35%"), ("ev_bands_tennis", "35%+")]
+    matrice = _matrice(c, regles)
+    assert matrice.get(("4.0-6.0", "15-35%")) == 1
+    assert matrice.get(("4.0-6.0", "35%+")) == 1
+    assert not matrice.get(("1.8-2.3", "5-8%"))
+    sports = c.get("/api/filters").json()["sports"]
+    vides = 0
+    for cote, ev in _cellules():
+        p = _params_du_clic(cote, ev, regles, sports)
+        if p is None:
+            vides += 1
+            total = 0
+        else:
+            total = c.get("/api/detail", params=p + [("per_page", 500)]).json()["total"]
+        assert total == matrice.get((cote, ev), 0), (cote, ev, total, p)
+    assert vides, "aucune cellule n'exclut tous les sports : le cas limite n'est plus couvert"
+    # La version naïve (règles par sport laissées telles quelles) se trompe
+    # ici — c'est ce qui rend ce test capable d'échouer.
+    naif = regles + [("odds_bands", "4.0-6.0"), ("ev_bands", "15-35%")]
+    assert c.get("/api/detail", params=naif).json()["total"] == 2
 
 
 def test_le_js_correspond_bien_a_ce_miroir():
-    """⚠️ CE GARDE EST EXACT, ET LA VERSION PRÉCÉDENTE NE L'ÉTAIT PAS.
-
-    Elle se contentait de chercher la sous-chaîne « !Number.isNaN(b) » —
-    toujours présente APRÈS la correction du défaut n° 2. Elle n'aurait donc
-    jamais signalé la dérive : un garde qui ne peut pas échouer ne garde rien.
-    Et de fait, la correction du JS a été faite sans que cette suite bouge
-    d'un test.
-
-    On exige donc les DEUX conditions dans leur forme littérale. Toute
-    modification de cette ligne casse ce test, ce qui est précisément le but :
-    le miroir Python ci-dessus doit être remis à jour en même temps."""
-    bloc = JS[JS.index("async function chargerDetail"):]
-    bloc = bloc[:bloc.index("$('detail-filtre')")]
-    assert re.search(r"if\s*\(!Number\.isNaN\(a\)\s*&&\s*a\s*>\s*1\)\s*"
-                     r"extra\.odds_min\s*=\s*a;", bloc), (
-        "la garde de la borne BASSE a changé — mets à jour `_params_du_clic`")
-    assert re.search(r"if\s*\(b\s*!==\s*undefined\s*&&\s*!Number\.isNaN\(b\)\)\s*"
-                     r"extra\.odds_max\s*=\s*b;", bloc), (
-        "la garde de la borne HAUTE a changé — mets à jour `_params_du_clic`. "
-        "Si `b !== undefined` disparaît, la bande « > 6.0 » renverra "
-        "`odds_max=undefined` et l'API répondra 422 sur cinq cellules.")
+    """Le miroir n'a de valeur que s'il suit le JS : les gestes essentiels de
+    `requeteCellule` sont relus dans le fichier."""
+    bloc = JS[JS.index("function requeteCellule"):]
+    bloc = bloc[:bloc.index("\n}\n")]
+    for geste in ("p.set('odds_bands', cellule.odds)", "p.set('ev_bands', cellule.ev)",
+                  "k.startsWith('ev_bands_')", "k.startsWith('odds_bands_')",
+                  "p.getAll(k).includes(regle[1])", "exclus.add(",
+                  "p.delete('sports')"):
+        assert geste in bloc, f"`requeteCellule` a changé ({geste}) — mettez à jour `_params_du_clic`"
+    # Plus aucune traduction de la cellule en bornes : c'était la source des
+    # deux défauts historiques.
+    assert "odds_min" not in bloc and "ev_min" not in bloc
+    detail = JS[JS.index("async function chargerDetail"):]
+    detail = detail[:detail.index("$('detail-filtre')")]
+    assert "if (CELLULE && !requeteCellule(p, CELLULE))" in detail
+    assert "if (!restants.length) return null;" in bloc
 
 
 def test_le_clic_restreint_toujours_sans_remplacer(client):
-    """La correction ne doit pas transformer la restriction en remplacement :
-    le lot d'une cellule reste un sous-ensemble du lot complet."""
+    """La restriction reste un sous-ensemble du lot complet."""
     tout = client.get("/api/detail", params={"per_page": 500}).json()["total"]
     cellule = client.get("/api/detail",
-                         params={**_params_du_clic("1.0-1.8", "5-8%"),
-                                 "per_page": 500}).json()["total"]
+                         params=_params_du_clic("1.0-1.8", "5-8%")
+                         + [("per_page", 500)]).json()["total"]
     assert cellule <= tout
 
 
@@ -1102,3 +1098,108 @@ def test_le_taux_de_paris_joues_vient_du_SERVEUR(client):
     s = client.get("/api/analyse").json()["summary"]
     assert s["played"] == 1 and s["played_rate"] == 25.0
     assert "played_rate" in JS
+
+
+# ══ LA REVUE UX DE LA REFONTE ══════════════════════════════════════
+
+def _corps(nom):
+    """Le corps d'une fonction de app.js, jusqu'à sa accolade fermante en
+    colonne 0."""
+    debut = JS.index(nom)
+    return JS[debut:JS.index("\n}\n", debut)]
+
+
+def test_tout_ce_qui_suit_lanalyse_repart_de_SES_parametres():
+    """⚠️ UN FILTRE RETOUCHÉ SANS RELANCER NE DOIT RIEN FAIRE DÉRIVER. Détail,
+    dernières opportunités, segments et CSV repartent des paramètres de
+    l'analyse AFFICHÉE ; relire le formulaire leur ferait décrire un autre
+    lot que les KPI juste au-dessus."""
+    for fonction in ("async function chargerDetail", "async function chargerDernieres",
+                     "async function chercherSegments", "async function exporterCsvOpportunites"):
+        corps = _corps(fonction)
+        assert "parametresAnalyse(" in corps, fonction
+        assert "parametres(" not in corps.replace("parametresAnalyse(", ""), fonction
+    analyse = _corps("async function analyser")
+    assert "PARAMS_ANALYSE = new URLSearchParams(envoyes)" in analyse
+    assert "SALE = cleFormulaire() !== CLE_ANALYSE" in analyse
+
+
+def test_modifie_se_DEDUIT_et_seteint_si_lon_revient_aux_filtres_analyses():
+    corps = _corps("function signalerChangement")
+    assert "cleFormulaire() !== CLE_ANALYSE" in corps
+    assert "SALE = true" not in JS
+
+
+def test_la_lentille_paris_ne_touche_PAS_le_filtre_de_lanalyse():
+    """Les boutons Joués / Non joués / Toutes changent la page, pas
+    l'analyse : ils n'écrivent pas dans `f-played` et ne relancent rien."""
+    bloc = JS[JS.index("document.querySelectorAll('#pj-filtre button').forEach((b) => b.addEventListener"):]
+    bloc = bloc[:bloc.index("}));")]
+    assert "f-played" not in bloc and "analyser()" not in bloc
+    assert "choisirLentille(b.dataset.played)" in bloc
+    # Les KPI de la lentille viennent d'une analyse du SERVEUR.
+    assert "appel(API_ANALYSE, parametresAnalyse({ played: mode }))" in _corps("async function rendreParis")
+
+
+def test_non_joues_nest_pas_presente_comme_alertes_non_cliques():
+    """⚠️ `played=non` = `played = 0` en SQL : une opportunité jamais alertée
+    en fait partie. L'appeler « Alertés, non cliqués » décrivait un autre
+    lot que celui compté."""
+    assert "Alertés, non cliqués" not in JS and "Alertés, non cliqués" not in HTML
+    select = HTML[HTML.index('id="f-played"'):]
+    select = select[:select.index("</select>")]
+    assert ">Non joués<" in select
+
+
+@pytest.mark.parametrize("champ", ["roi", "pnl", "clv", "clv_median", "clv_positive_rate"])
+def test_trier_par_une_mesure_ne_couronne_pas_un_petit_echantillon(champ):
+    corps = _corps("function tableDecoupe")
+    assert f"'{champ}'" in corps
+    assert "if (fa !== fb) return fa ? 1 : -1;" in corps
+    assert "note-tri" in corps
+
+
+def test_le_rapport_PDF_attend_ses_requetes_avant_dimprimer():
+    corps = _corps("async function imprimerRapport")
+    assert "await Promise.all(" in corps
+    assert corps.index("await Promise.all(") < corps.index("window.print()")
+    assert "impression-rapport" in corps and "impression-rapport" in CSS
+    for page in ("vue-ensemble", "performance", "clv", "bookmakers", "marches",
+                 "competitions", "paris", "avancee"):
+        assert re.search(rf'data-page="{page}" data-titre="[^"]+"', HTML), page
+    for page in ("mes-analyses", "exporter", "parametres"):
+        assert f'class="page page-outil" id="page-{page}"' in HTML, page
+    assert 'id="pdf-rapport"' in HTML
+
+
+def test_le_menu_EV_coche_toute_EV_seulement_sans_AUCUNE_contrainte():
+    corps = _corps("function menuEv")
+    assert "itemMenu('Toute EV', !texte, toute)" in corps
+    toute = corps[corps.index("const toute"):corps.index("const seuil")]
+    for geste in ("$('f-ev-min').value = ''", "$('f-ev-max').value = ''",
+                  "cocher('f-ev-bands', [])", "$('ev-split').checked = false",
+                  "$('ev-cote-split').checked = false"):
+        assert geste in toute, geste
+
+
+def test_le_tiroir_est_un_dialogue_modal_qui_rend_le_focus():
+    ouvrir, fermer = _corps("function ouvrirTiroir"), _corps("function fermerTiroir")
+    assert "$('app').inert = true" in ouvrir and "OUVREUR" in ouvrir
+    assert "$('app').inert = false" in fermer and "cible.focus()" in fermer
+
+
+def test_le_bouton_principal_garde_un_contraste_AA_dans_les_deux_themes():
+    def lum(h):
+        r, g, b = (int(h[i:i + 2], 16) / 255 for i in (1, 3, 5))
+        f = lambda c: c / 12.92 if c <= 0.03928 else ((c + 0.055) / 1.055) ** 2.4
+        return 0.2126 * f(r) + 0.7152 * f(g) + 0.0722 * f(b)
+    clair = CSS[CSS.index(":root {"):]
+    sombre = CSS[CSS.index(':root[data-theme="dark"] {'):]
+    for bloc in (clair[:clair.index("}")], sombre[:sombre.index("}")]):
+        fond = re.search(r"--marque-bouton:\s*(#[0-9a-fA-F]{6})", bloc).group(1)
+        assert 1.05 / (lum(fond) + 0.05) >= 4.5, fond
+        muet = re.search(r"--encre-muet:\s*(#[0-9a-fA-F]{6})", bloc).group(1)
+        carte = re.search(r"--fond-carte:\s*(#[0-9a-fA-F]{6})", bloc).group(1)
+        hi, lo = sorted((lum(muet), lum(carte)), reverse=True)
+        assert (hi + 0.05) / (lo + 0.05) >= 4.5, (muet, carte)
+    assert "background: var(--marque-bouton)" in CSS

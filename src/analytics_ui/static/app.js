@@ -114,7 +114,13 @@ async function appel(chemin, params) {
   const r = await fetch(url, { headers: { Accept: 'application/json' } });
   const corps = await r.json().catch(() => null);
   if (!r.ok) {
-    const e = new Error((corps && corps.detail) || `HTTP ${r.status}`);
+    // FastAPI rend un 422 sous forme de LISTE d'objets : sans ce dépliage,
+    // l'utilisateur lisait « [object Object] ».
+    const det = corps && corps.detail;
+    const msg = Array.isArray(det)
+      ? det.map((d) => `${(d.loc || []).slice(-1)[0]} : ${d.msg}`).join(' · ')
+      : det;
+    const e = new Error(msg || `HTTP ${r.status}`);
     e.statut = r.status;
     throw e;
   }
@@ -128,14 +134,37 @@ let ANALYSE = null;   // dernière /api/analyse
 let PAGE = 1, PAR_PAGE = 25, TRI = 'detected_at', ORDRE = 'desc';
 let CELLULE = null;   // cellule de matrice sélectionnée {odds, ev}
 let SALE = false;     // filtres modifiés depuis la dernière analyse
-let INIT = true;      // amorçage : rien n'est « modifié » par l'utilisateur
 let PAGE_ACTIVE = 'vue-ensemble';
 let AXE_AA = null;    // axe choisi dans « Analyse avancée »
 let MODE_EVOL = 'clv', MODE_FIN = 'roi';
 let MODE_COTE = 'toutes', MODE_EV = 'minimum';
 let JETON = null;     // la dernière analyse lancée — une réponse plus ancienne est ignorée
+let JETON_DETAIL = null, JETON_DERNIERES = null, JETON_PARIS = null;
 let LIMITE_CMP = 50;  // lignes affichées du tableau des compétitions
+let PJ_MODE = 'oui';  // lentille de la page « Paris joués » : oui | non | tous
+let PARIS = null;     // l'analyse de la page « Paris joués », pour sa lentille
+let OUVREUR = null;   // l'élément qui a ouvert le tiroir, pour lui rendre le focus
 const RENDUES = new Set();
+const A_REDESSINER = new Set();
+
+/* ⚠️ LA REQUÊTE DE L'ANALYSE AFFICHÉE, PAS LE FORMULAIRE.
+ *
+ * Les pages se dessinent à leur première ouverture, et l'utilisateur peut
+ * toucher un filtre sans relancer l'analyse. Un détail, des « dernières
+ * opportunités », des segments ou un CSV construits depuis le formulaire
+ * vivant décriraient alors un AUTRE lot que les KPI juste au-dessus — sous une
+ * étiquette qui les dit identiques. Tout ce qui complète une analyse part donc
+ * de la requête réellement envoyée, mémorisée ici, plus ses seuls paramètres
+ * de navigation (page, tri, cellule). */
+let PARAMS_ANALYSE = null;   // URLSearchParams de la dernière analyse affichée
+let CLE_ANALYSE = null;      // sa signature, granularité comprise
+
+function parametresAnalyse(extra) {
+  const p = new URLSearchParams(PARAMS_ANALYSE || parametres());
+  Object.entries(extra || {}).forEach(([k, v]) => p.set(k, v));
+  return p;
+}
+const cleFormulaire = () => parametres({ granularite: $('f-gran').value }).toString();
 
 /* Préférences locales. `localStorage` peut être bloqué (navigation privée,
  * politique d'entreprise) : l'interface doit alors fonctionner quand même. */
@@ -244,6 +273,13 @@ function groupeCases(hote, valeurs, options) {
     const basculer = (etat) => () => {
       liste.querySelectorAll('.case:not(.case-tous):not(.masquee) input')
         .forEach((c) => { c.checked = etat; });
+      // Tout cocher SANS recherche, c'est ne rien restreindre : on revient à
+      // l'état explicite « Tous » plutôt que d'envoyer la liste entière —
+      // qui exclurait en silence toute valeur apparue depuis.
+      const cases = liste.querySelectorAll('input:not([data-tous])');
+      if (etat && cases.length > 1 && [...cases].every((c) => c.checked)) {
+        cases.forEach((c) => { c.checked = false; });
+      }
       changement();
     };
     tout.addEventListener('click', basculer(true));
@@ -458,6 +494,12 @@ function accrocher(n, titre, lignes, alerte) {
   n.addEventListener('mouseenter', (e) => montrer(e, titre, lignes, alerte));
   n.addEventListener('mousemove', placer);
   n.addEventListener('mouseleave', cacher);
+  // Au clavier, la bulle se place sous l'élément qui a le focus.
+  n.addEventListener('focus', () => {
+    const r = n.getBoundingClientRect();
+    montrer({ clientX: r.left, clientY: r.bottom }, titre, lignes, alerte);
+  });
+  n.addEventListener('blur', cacher);
 }
 
 /* Le libellé d'affichage d'une tranche. L'API rend `label` à côté de `key` ;
@@ -528,6 +570,29 @@ function bornes(valeurs) {
   return [lo - marge, hi + marge];
 }
 
+/* Des graduations RONDES (pas de 1, 2, 2,5 ou 5 × 10^k) qui englobent zéro.
+ * « +6,8 % / +5,0 % / +3,1 % » faisait amateur ; « 0 / 2 / 4 / 6 % » se lit
+ * d'un coup d'œil. C'est de la présentation d'axe : aucune valeur n'en dépend. */
+function graduations(valeurs, n) {
+  const b = bornes(valeurs);
+  if (!b) return null;
+  let lo = Math.min(0, ...valeurs.filter((x) => x !== null && x !== undefined));
+  let hi = Math.max(0, ...valeurs.filter((x) => x !== null && x !== undefined));
+  if (lo === hi) { lo -= 1; hi += 1; }
+  const brut = (hi - lo) / (n || 4);
+  const p10 = Math.pow(10, Math.floor(Math.log10(brut)));
+  const pas = [1, 2, 2.5, 5, 10].map((m) => m * p10).find((x) => x >= brut) || 10 * p10;
+  // La tolérance RAPPROCHE du multiple exact : une borne déjà ronde (zéro,
+  // 150) reste la dernière graduation, au lieu d'ajouter un cran vide —
+  // « -50 » sous un axe de volumes qui ne descend jamais sous zéro.
+  const bas = Math.floor(lo / pas + 1e-9) * pas;
+  const haut = Math.ceil(hi / pas - 1e-9) * pas;
+  const ticks = [];
+  for (let v = bas; v <= haut + pas / 2; v += pas) ticks.push(Math.abs(v) < pas / 1e6 ? 0 : v);
+  const dec = pas >= 1 ? 0 : pas >= 0.1 ? 1 : 2;
+  return { lo: bas, hi: haut, ticks, dec };
+}
+
 /* La largeur RÉELLE du conteneur : un graphique dessiné à sa taille garde des
  * textes à 11 px, là où un dessin fixe mis à l'échelle les rendait
  * minuscules sur téléphone et énormes sur grand écran. */
@@ -560,26 +625,26 @@ function courbes(hote, tranches, series, libelle, fmt) {
   // `fmt` formate l'AXE et les étiquettes. Par défaut un pourcentage ;
   // le P&L cumulé passe `eur`, sans quoi un axe en « % » décrirait des
   // euros — une erreur d'unité qu'aucun relecteur ne rattrape ensuite.
-  const F = fmt || ((v) => pct(v, 1));
   hote.innerHTML = '';
   const aVal = (t, s) => t[s.champ] !== null && t[s.champ] !== undefined;
   const pts = (tranches || []).filter((t) => series.some((s) => aVal(t, s)));
   if (!pts.length) { vide(hote, 'Aucune valeur mesurable sur cette période.'); return; }
 
-  const W = largeur(hote), H = W < 520 ? 210 : 250;
+  const W = largeur(hote), H = W < 520 ? 200 : 236;
   const mG = 58, mD = 14, mH = 14, mB = 30;
-  const b = bornes(pts.flatMap((t) => series.filter((s) => aVal(t, s))
+  const g = graduations(pts.flatMap((t) => series.filter((s) => aVal(t, s))
     .map((s) => t[s.champ])));
+  const b = [g.lo, g.hi];
+  const F = fmt || ((v) => pct(v, g.dec));
   const iw = W - mG - mD, ih = H - mH - mB;
   const x = (i) => mG + (pts.length === 1 ? iw / 2 : (i / (pts.length - 1)) * iw);
   const y = (v) => mH + ih - ((v - b[0]) / (b[1] - b[0])) * ih;
 
   const svg = svgEl('svg', { viewBox: `0 0 ${W} ${H}`, role: 'img', 'aria-label': libelle });
-  for (let k = 0; k <= 4; k++) {
-    const v = b[0] + (k / 4) * (b[1] - b[0]);
+  g.ticks.forEach((v) => {
     svg.appendChild(svgEl('line', { class: 'grille-ligne', x1: mG, x2: W - mD, y1: y(v), y2: y(v) }));
-    svg.appendChild(svgTexte('axe-txt', mG - 8, y(v) + 3.5, F(v), 'end'));
-  }
+    svg.appendChild(svgTexte('axe-txt', mG - 8, y(v) + 3.5, v === 0 ? '0' : F(v), 'end'));
+  });
   if (b[0] < 0 && b[1] > 0) {
     svg.appendChild(svgEl('line', { class: 'ligne-zero', x1: mG, x2: W - mD, y1: y(0), y2: y(0) }));
   }
@@ -608,7 +673,8 @@ function courbes(hote, tranches, series, libelle, fmt) {
     const c = svgEl('circle', { cx: x(i), cy: y(t[s.champ]), r,
       class: (s.cls === '2' ? 'pt-2' : 'pt') + (faible ? ' faible' : '') });
     accrocher(c, libTemps(lib(t)),
-      [[s.libelle || libelle, F(t[s.champ])]].concat(lignesTranche(t)), alerteTranche(t));
+      [[s.libelle || libelle, fmt ? fmt(t[s.champ]) : pct(t[s.champ], 2)]]
+        .concat(lignesTranche(t)), alerteTranche(t));
     svg.appendChild(c);
   }));
 
@@ -634,7 +700,8 @@ function colonnes(hote, tranches, champ, libelle) {
   hote.innerHTML = '';
   if (!tranches.length) { vide(hote, 'Aucune période.'); return; }
   const vals = tranches.map((t) => t[champ] || 0);
-  const hi = Math.max(1, ...vals);
+  const g = graduations([1].concat(vals));
+  const hi = g.hi;
 
   const W = largeur(hote), H = 220, mG = 50, mD = 12, mH = 12, mB = 30;
   const iw = W - mG - mD, ih = H - mH - mB;
@@ -643,11 +710,10 @@ function colonnes(hote, tranches, champ, libelle) {
   const y = (v) => mH + ih - (v / hi) * ih;
 
   const svg = svgEl('svg', { viewBox: `0 0 ${W} ${H}`, role: 'img', 'aria-label': libelle });
-  for (let k = 0; k <= 4; k++) {
-    const v = (k / 4) * hi;
+  g.ticks.forEach((v) => {
     svg.appendChild(svgEl('line', { class: 'grille-ligne', x1: mG, x2: W - mD, y1: y(v), y2: y(v) }));
-    svg.appendChild(svgTexte('axe-txt', mG - 8, y(v) + 3.5, ent(Math.round(v)), 'end'));
-  }
+    svg.appendChild(svgTexte('axe-txt', mG - 8, y(v) + 3.5, ent(v), 'end'));
+  });
   tranches.forEach((t, i) => {
     const v = t[champ] || 0;
     const r = svgEl('rect', {
@@ -675,7 +741,7 @@ function barres(hote, tranches, champ, libelle, options) {
   const W = largeur(hote);
   const hL = 30, mH = 6, mB = 24;
   const mG = Math.min(190, Math.max(96, Math.round(W * 0.24)));
-  const mD = o.n ? 120 : 64;
+  const mD = o.n ? 190 : 124;
   const H = mH + lot.length * hL + mB;
   const b = bornes(lot.map((t) => t[champ]));
   if (!b) { vide(hote, 'Aucune valeur mesurable.'); return; }
@@ -692,9 +758,10 @@ function barres(hote, tranches, champ, libelle, options) {
     const lab = svgTexte('axe-txt', mG - 10, cy + 3.5,
       nom.length > maxCar ? nom.slice(0, maxCar - 1) + '…' : nom, 'end');
     svg.appendChild(lab);
-    if (o.n) {
-      svg.appendChild(svgTexte('n-txt', W - 2, cy + 3.5, `n = ${ent(t.opportunities)}`, 'end'));
-    }
+    const droite = champ === 'clv'
+      ? `couv. ${pctNu(t.clv_coverage, 0)}` : champ === 'roi' ? `${ent(t.settled)} réglés` : '';
+    const n = o.n ? `${ent(t.opportunities)} opp.` : '';
+    svg.appendChild(svgTexte('n-txt', W - 2, cy + 3.5, [n, droite].filter(Boolean).join(' · '), 'end'));
 
     const v = t[champ];
     if (v === null || v === undefined) {
@@ -783,25 +850,36 @@ function matrice() {
         const st = styleCellule(c[champ], max);
         td.style.background = st.fond;
         td.style.color = st.encre;
-        const faible = (champ === 'clv' && c.clv_coverage < SEUIL_COUVERTURE)
-          || (champ === 'roi' && c.settled < SEUIL_REGLES);
+        const mesure = c[champ] !== null && c[champ] !== undefined;
+        const faible = mesure && ((champ === 'clv' && c.clv_coverage < SEUIL_COUVERTURE)
+          || (champ === 'roi' && c.settled < SEUIL_REGLES));
         // ⚠️ La couleur ne suffit JAMAIS : la valeur est écrite dans la
         // cellule, et une cellule fragile porte un repère visible.
         td.appendChild(el('span', 'v', pct(c[champ], 1) + (faible ? ' ⚠' : '')));
         td.appendChild(el('span', 'n', 'n = ' + ent(c.opportunities)));
         if (faible) td.style.outline = `1.5px dashed ${st.encre}`;
         accrocher(td, `${lig} · EV ${col}`, lignesTranche(c), alerteTranche(c));
+        td.tabIndex = 0;
+        td.setAttribute('role', 'button');
+        td.setAttribute('aria-label', `Détail de la cellule cote ${lig}, EV ${col}`);
         // Le clic ouvre le DÉTAIL de la cellule, sur la page des paris : la
         // cellule RESTREINT les filtres, elle ne les remplace pas.
-        td.addEventListener('click', () => {
+        const ouvrir = () => {
           CELLULE = (CELLULE && CELLULE.odds === lig && CELLULE.ev === col)
             ? null : { odds: lig, ev: col, cell: c };
           PAGE = 1;
+          // Sélection OU désélection : la page des paris doit se recharger.
+          RENDUES.delete('paris');
           matrice();
           if (CELLULE) {
-            RENDUES.delete('paris');
+            // La cellule compte TOUTES ses opportunités, jouées ou non.
+            PJ_MODE = 'tous';
             allerA('paris');
           }
+        };
+        td.addEventListener('click', ouvrir);
+        td.addEventListener('keydown', (e) => {
+          if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); ouvrir(); }
         });
         if (CELLULE && CELLULE.odds === lig && CELLULE.ev === col) {
           td.style.borderColor = 'var(--encre)';
@@ -836,6 +914,15 @@ function carteKpi(o) {
   if (o.details) det.appendChild(el('span', o.fragile ? 'fragile' : '', o.details));
   if (o.badge) det.appendChild(o.badge);
   if (det.childNodes.length) k.appendChild(det);
+  if (o.vers) {
+    k.classList.add('kpi-lien');
+    k.tabIndex = 0;
+    k.setAttribute('role', 'link');
+    k.title = o.versTitre || 'Voir le détail';
+    const aller = () => { if (o.avant) o.avant(); allerA(o.vers); };
+    k.addEventListener('click', aller);
+    k.addEventListener('keydown', (e) => { if (e.key === 'Enter') aller(); });
+  }
   return k;
 }
 
@@ -861,19 +948,24 @@ function kpis(s) {
   h.innerHTML = '';
   const couvFaible = s.clv_coverage !== null && s.clv_coverage < SEUIL_COUVERTURE;
   const peuRegles = s.settled > 0 && s.settled < SEUIL_REGLES;
-  const mise = ANALYSE && ANALYSE.filters ? ANALYSE.filters.stake : null;
+  const f = (ANALYSE && ANALYSE.filters) || {};
+  const quoi = f.played === 'oui' ? 'paris joués' : 'opportunités';
 
   h.appendChild(carteKpi({
     icone: 'radar', titre: 'Opportunités détectées', valeur: ent(s.opportunities),
-    sous: 'opportunités détectées',
+    sous: 'sur la période et les filtres affichés',
     ligne2: [ent(s.matches), 'matchs distincts'],
-    details: 'volume de l\'échantillon', badge: badge(s.sample) }));
+    details: 'volume de l\'échantillon', badge: badge(s.sample),
+    vers: 'paris', versTitre: 'Voir les opportunités une par une',
+    avant: () => choisirLentille('tous') }));
 
   h.appendChild(carteKpi({
     icone: 'coche', titre: 'Paris joués', valeur: ent(s.played),
     sous: 'cliqués sur « Jouer »',
     ligne2: [pctNu(s.played_rate), 'taux de paris joués'],
-    details: `sur ${ent(s.opportunities)} opportunités détectées` }));
+    details: `sur ${ent(s.opportunities)} opportunités détectées`,
+    vers: 'paris', versTitre: 'Voir les paris joués',
+    avant: () => choisirLentille('oui') }));
 
   // ⚠️ Le badge du ROI porte l'effectif des RÉGLÉS, pas des opportunités :
   // c'est le dénominateur réel du ROI. Afficher celui des opportunités ferait
@@ -881,21 +973,22 @@ function kpis(s) {
   h.appendChild(carteKpi({
     icone: 'euro', titre: 'ROI', valeur: pct(s.roi, 1), signe: signe(s.roi),
     cls: 'kpi-roi' + (s.roi > 0 ? ' pos-bord' : s.roi < 0 ? ' neg-bord' : ''),
-    sous: mise === null ? 'ROI sur mise notionnelle'
-      : `ROI sur mise notionnelle · ${num(mise)} € par pari`,
+    sous: `notionnel — ${num(f.stake)} € misés sur chaque ${quoi === 'paris joués' ? 'pari joué' : 'opportunité'}`,
     ligne2: [eur(s.pnl, 0), 'P&L cumulé', signe(s.pnl)],
     details: peuRegles ? `${ent(s.settled)} réglés — indice, pas résultat`
-      : `sur ${ent(s.settled)} paris réglés`,
-    fragile: peuRegles, badge: badge(s.sample_settled) }));
+      : `sur ${ent(s.settled)} ${quoi} réglé${quoi === 'paris joués' ? 's' : 'es'}`,
+    fragile: peuRegles, badge: badge(s.sample_settled),
+    vers: 'performance', versTitre: 'Voir la performance financière' }));
 
   // ⚠️ La CLV ne sort JAMAIS sans sa couverture. C'est la règle du projet :
   // +10,4 % sur 95 % du lot et sur 30 % ne sont pas la même phrase.
   h.appendChild(carteKpi({
     icone: 'courbe', titre: 'CLV moyenne', valeur: pct(s.clv, 1), signe: signe(s.clv),
-    cls: 'kpi-clv', sous: 'Closing Line Value — face à la clôture Pinnacle',
+    cls: 'kpi-clv', sous: 'Closing Line Value — face à la clôture Pinnacle déviguée',
     ligne2: [pct(s.clv_median, 1), 'CLV médiane', signe(s.clv_median)],
-    details: `sur ${ent(s.clv_n)} paris · couverture ${pctNu(s.clv_coverage, 0)}`,
-    fragile: couvFaible, badge: badge(s.sample_clv) }));
+    details: `sur ${ent(s.clv_n)} ${quoi} mesuré${quoi === 'paris joués' ? 's' : 'es'} · couverture ${pctNu(s.clv_coverage, 0)}`,
+    fragile: couvFaible, badge: badge(s.sample_clv),
+    vers: 'clv', versTitre: 'Voir l\'analyse de la CLV' }));
 }
 
 function kpisPerf(s) {
@@ -928,7 +1021,7 @@ function kpisClv(s) {
     valeur: pct(s.clv, 1), signe: signe(s.clv),
     sous: `couverture ${pctNu(s.clv_coverage, 0)}`, fragile: couvFaible }));
   h.appendChild(carteKpi({ icone: 'mediane', titre: 'CLV médiane', valeur: pct(s.clv_median, 1),
-    signe: signe(s.clv_median), sous: 'la moitié des paris font mieux' }));
+    signe: signe(s.clv_median), sous: `la moitié des ${ent(s.clv_n)} paris mesurés font au moins autant` }));
   h.appendChild(carteKpi({ icone: 'pourcent', titre: 'CLV positives', valeur: pctNu(s.clv_positive_rate, 0),
     sous: 'des paris mesurés battent la clôture' }));
   h.appendChild(carteKpi({ icone: 'bouclier', titre: 'Couverture CLV', valeur: pctNu(s.clv_coverage, 0),
@@ -966,20 +1059,22 @@ function enteteExport(d) {
   hote.appendChild(el('h2', null, 'Valuebet Analytics — export'));
 
   const lignes = [];
-  const joint = (v) => (v && v.length ? v.join(', ') : 'tous');
+  // Les libellés lus à l'écran, pas les clés techniques (« soccer »).
+  const joint = (v, nom) => (v && v.length ? v.map(nom || String).join(', ') : 'tous');
   const table = (t) => Object.entries(t || {})
-    .map(([k, v]) => `${k} : ${Array.isArray(v) ? v.join(', ') : v}`).join(' · ');
+    .map(([k, v]) => `${nomSport(k)} : ${Array.isArray(v) ? v.join(', ') : v}`).join(' · ');
   /* ⚠️ UN COUPLE DE BORNES N'EST PAS UNE LISTE. `table()` joint à la virgule
    * et rendait « 1.0-1.8 : 3, » quand la borne haute manque : sur le papier,
    * cette virgule orpheline ne dit ni que la borne est absente, ni laquelle
    * des deux vaut 3. Une flèche et un tiret le disent. */
+  // Clé de sport → son libellé ; une tranche de cote n'en a pas et reste telle.
   const bornes = (t) => Object.entries(t || {})
-    .map(([k, v]) => `${k} : ${v[0] ?? '—'} → ${v[1] ?? '—'}`).join(' · ');
+    .map(([k, v]) => `${nomSport(k)} : ${v[0] ?? '—'} → ${v[1] ?? '—'}`).join(' · ');
 
   lignes.push(['Période', `${f.date_from || REFS.date_min || '—'} → ${f.date_to || REFS.date_max || '—'}`]);
-  lignes.push(['Sports', joint(f.sports)]);
-  lignes.push(['Bookmakers', joint(f.bookmakers)]);
-  lignes.push(['Marchés', joint(f.markets)]);
+  lignes.push(['Sports', joint(f.sports, nomSport)]);
+  lignes.push(['Bookmakers', joint(f.bookmakers, nomBook)]);
+  lignes.push(['Marchés', joint(f.markets, nomMarche)]);
   // Le pari retenu change le lot autant qu'un sport : le papier doit le
   // nommer, et sous le libellé lu à l'écran, pas sous « home ».
   const nomPari = (v) => ((REFS.outcomes || []).find((o) => o.value === v)
@@ -1014,7 +1109,8 @@ function enteteExport(d) {
   }
   const pop = (REFS.populations || []).find((x) => x.value === f.population);
   lignes.push(['Population', pop ? pop.libelle : (f.population || '—')]);
-  lignes.push(['Joué', f.played || 'tous']);
+  lignes.push(['Joué', f.played === 'oui' ? 'joués (cliqués sur « Jouer »)'
+    : f.played === 'non' ? 'non joués' : 'tous']);
   lignes.push(['Mise notionnelle', `${f.stake} €`]);
   lignes.push(['Exporté le', new Date().toLocaleString('fr-BE')]);
 
@@ -1044,17 +1140,27 @@ function noteEv(regles) {
   if (!h) return;
   h.innerHTML = '';
   if (!regles) return;
+  const f = (ANALYSE && ANALYSE.filters) || {};
   const parts = [];
+  if (f.ev_min != null || f.ev_max != null) {
+    parts.push(`bornes ${bornesTexte(f.ev_min, f.ev_max, ' %')}`);
+  }
   const bySport = regles.by_sport || {};
   Object.keys(bySport).forEach((sp) => {
     parts.push(`${nomSport(sp)} : ${bySport[sp].join(' ou ') || 'toutes tranches'}`);
   });
   const restants = (regles.sports_analyses || []).filter((sp) => !bySport[sp]);
-  if (restants.length) {
-    parts.push(`${restants.map(nomSport).join(', ')} : `
-      + ((regles.global || []).join(' ou ') || 'toutes tranches'));
+  if (restants.length && (regles.global || []).length) {
+    parts.push(`${restants.map(nomSport).join(', ')} : ${regles.global.join(' ou ')}`);
   }
-  h.textContent = 'Règle d\'EV appliquée par le serveur — ' + parts.join(' · ');
+  Object.entries(f.ev_free_by_sport || {}).forEach(([sp, v]) => {
+    parts.push(`${nomSport(sp)} : bornes ${bornesTexte(v[0], v[1], ' %')}`);
+  });
+  Object.entries(f.ev_free_by_odds || {}).forEach(([bande, v]) => {
+    parts.push(`cote ${bande} : ${bornesTexte(v[0], v[1], ' %')} (prioritaire)`);
+  });
+  h.textContent = 'Règle d\'EV appliquée par le serveur — '
+    + (parts.length ? parts.join(' · ') : 'aucune contrainte d\'EV');
 }
 
 /* ── Avertissements ────────────────────────────────────────────────── */
@@ -1062,46 +1168,40 @@ function noteEv(regles) {
 function avertissements(liste) {
   const h = $('avertissements');
   h.innerHTML = '';
-  const visibles = 2;
-  (liste || []).forEach((m, i) => {
-    const grave = /indisponible|irrécupérable|lot vide|refusé|erreur/i.test(m);
+  (liste || []).forEach((m) => {
+    const grave = /^(Erreur|Filtre refusé|Impossible)/.test(m);
     const d = el('div', 'avert' + (grave ? ' grave' : ''));
     d.innerHTML = '<svg class="ic-av" viewBox="0 0 24 24" aria-hidden="true">'
       + '<path d="M12 3l10 18H2z"/><path d="M12 10v4M12 17.5v.5"/></svg>';
-    d.appendChild(el('span', null, m));
-    // Au-delà de deux, les avertissements se replient — sauf les graves,
-    // qui disent que le chiffre lui-même est en cause.
-    if (i >= visibles && !grave) d.hidden = true;
+    const t = el('span', 'avert-texte', m);
+    d.appendChild(t);
+    // Un avertissement long se lit en entier d'un clic ; il n'est jamais
+    // retiré de la page, donc jamais absent du PDF.
+    d.title = 'Cliquer pour lire en entier';
+    d.addEventListener('click', () => d.classList.toggle('deplie'));
     h.appendChild(d);
   });
-  const caches = h.querySelectorAll('.avert[hidden]').length;
-  if (caches) {
-    const b = el('button', 'avert-plus',
-      `Afficher ${caches} autre${caches > 1 ? 's' : ''} avertissement${caches > 1 ? 's' : ''}`);
-    b.type = 'button';
-    b.addEventListener('click', () => {
-      h.querySelectorAll('.avert[hidden]').forEach((x) => { x.hidden = false; });
-      b.remove();
-    });
-    h.appendChild(b);
-  }
 }
 
 /* ── Détail ────────────────────────────────────────────────────────── */
 
+const deuxLignes = (haut, bas) => {
+  const f = document.createDocumentFragment();
+  f.appendChild(document.createTextNode(haut));
+  if (bas) f.appendChild(el('span', 'sub', bas));
+  return f;
+};
 const COLONNES = [
   ['detected_at', 'Détecté', (i) => dateHeure(i.detected_at)],
   ['sport', 'Sport', (i) => nomSport(i.sport)],
-  [null, 'Compétition', (i) => i.league || '—'],
-  [null, 'Match', (i) => i.event || '—'],
-  [null, 'Marché', (i) => nomMarche(i.market) + (i.line !== null ? ' ' + i.line : '')],
-  [null, 'Pari', (i) => libPari(i.selection)],
+  [null, 'Match', (i) => deuxLignes(i.event || '—', i.league || '')],
+  [null, 'Pari', (i) => deuxLignes(libPari(i.selection),
+    nomMarche(i.market) + (i.line !== null ? ' ' + i.line : ''))],
   ['book', 'Bookmaker', (i) => nomBook(i.bookmaker)],
   ['odd_taken', 'Cote', (i) => cote(i.odds), 'num'],
   ['ev_pct', 'EV', (i) => pct(i.ev_pct, 1), 'num'],
-  [null, 'Clôture', (i) => cote(i.closing_fair_odd), 'num'],
-  ['clv', 'CLV', (i) => pct(i.clv_pct, 1), 'num'],
-  [null, 'Mise', (i) => i.stake === null ? '—' : eur(i.stake, 0).replace('+', ''), 'num'],
+  ['clv', 'CLV', (i) => deuxLignes(pct(i.clv_pct, 1),
+    i.closing_fair_odd ? `clôture ${cote(i.closing_fair_odd)}` : 'sans clôture'), 'num'],
   [null, 'Résultat', null],
   ['pnl', 'P&L', (i) => eur(i.pnl, 2), 'num'],
   [null, 'Statut', null],
@@ -1123,11 +1223,17 @@ function tableauDetail(d) {
       .filter(Boolean).join(' '));
     th.textContent = titre + (tri && tri === TRI ? (ORDRE === 'desc' ? ' ▾' : ' ▴') : '');
     if (tri) {
-      th.addEventListener('click', () => {
+      const trier = () => {
         if (TRI === tri) ORDRE = ORDRE === 'desc' ? 'asc' : 'desc';
         else { TRI = tri; ORDRE = 'desc'; }
         PAGE = 1;
         chargerDetail();
+      };
+      th.tabIndex = 0;
+      th.setAttribute('aria-sort', tri === TRI ? (ORDRE === 'desc' ? 'descending' : 'ascending') : 'none');
+      th.addEventListener('click', trier);
+      th.addEventListener('keydown', (e) => {
+        if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); trier(); }
       });
     }
     tr.appendChild(th);
@@ -1151,9 +1257,12 @@ function tableauDetail(d) {
       } else if (titre === 'Statut') {
         td.appendChild(etiquetteStatut(i));
       } else {
-        td.textContent = rendu(i);
-        if (titre === 'CLV' || titre === 'P&L' || titre === 'EV') {
-          const v = titre === 'CLV' ? i.clv_pct : titre === 'P&L' ? i.pnl : i.ev_pct;
+        const r0 = rendu(i);
+        if (typeof r0 === 'string') td.textContent = r0; else td.appendChild(r0);
+        // L'EV d'une value bet est positive par construction : la colorer ne
+        // dirait rien. Seuls les RÉSULTATS (CLV, P&L) portent une couleur.
+        if (titre === 'CLV' || titre === 'P&L') {
+          const v = titre === 'CLV' ? i.clv_pct : i.pnl;
           // ⚠️ `classList.add('')` LÈVE une exception (DOMTokenList refuse le
           // jeton vide), et `signe()` rend '' pour zéro comme pour null. Le
           // symptôme observé : la table entière restait vide, sans erreur
@@ -1185,34 +1294,66 @@ function tableauDetail(d) {
   p.appendChild(suiv);
 }
 
+/* ⚠️ UNE CELLULE DE MATRICE PART SOUS FORME DE TRANCHES, PAS DE BORNES.
+ *
+ * La version précédente traduisait la cellule en bornes (`odds_min`,
+ * `ev_min`…), et elle mentait deux fois. Les bornes de l'API sont
+ * INCLUSIVES alors que les tranches de la matrice sont semi-ouvertes : 12
+ * cellules sur 30 rendaient plus de lignes que leur effectif. Et `set`
+ * ÉCRASAIT les bornes de l'utilisateur au lieu de les restreindre : avec
+ * « EV ≥ 6 % », la cellule 5-8 % en comptait 41, le détail 72. La tranche est
+ * la clé même de la matrice ; l'envoyer telle quelle rend exactement la
+ * cellule, et les bornes de l'utilisateur restent en place (ET).
+ *
+ * Les règles PAR SPORT (`ev_bands_<s>`, `odds_bands_<s>`) priment sur la
+ * règle globale pour leur sport : on les remplace par la tranche de la
+ * cellule si elles la contiennent — sinon ce sport ne peut rien avoir dans la
+ * cellule et il est retiré de la liste des sports. */
+function requeteCellule(p, cellule) {
+  p.set('odds_bands', cellule.odds);
+  p.set('ev_bands', cellule.ev);
+  const exclus = new Set();
+  [...new Set(p.keys())].forEach((k) => {
+    const regle = k.startsWith('ev_bands_') ? ['ev_bands_', cellule.ev]
+      : k.startsWith('odds_bands_') ? ['odds_bands_', cellule.odds] : null;
+    if (!regle) return;
+    if (p.getAll(k).includes(regle[1])) p.set(k, regle[1]);
+    else exclus.add(k.slice(regle[0].length));
+  });
+  if (exclus.size) {
+    const sports = p.getAll('sports').length ? p.getAll('sports') : REFS.sports;
+    const restants = sports.filter((sp) => !exclus.has(sp));
+    // ⚠️ Plus aucun sport possible : la cellule est vide. Une liste de sports
+    // VIDE voudrait dire « tous les sports » pour l'API — l'inverse exact.
+    if (!restants.length) return null;
+    p.delete('sports');
+    restants.forEach((sp) => p.append('sports', sp));
+  }
+  return p;
+}
+
+/* La lentille de la page « Paris joués » : joués, non joués ou tous. Elle
+ * ne s'applique que si l'analyse elle-même ne filtre pas déjà sur « Joué » —
+ * sinon c'est le filtre de l'analyse qui décide, et la page le dit. */
+function lentilleParis() {
+  const joue = (ANALYSE && ANALYSE.filters && ANALYSE.filters.played) || 'tous';
+  return joue === 'tous' ? PJ_MODE : joue;
+}
+
 async function chargerDetail() {
-  const extra = { page: PAGE, per_page: PAR_PAGE, sort: TRI, order: ORDRE };
+  const jeton = {};
+  JETON_DETAIL = jeton;
+  const p = parametresAnalyse({ page: PAGE, per_page: PAR_PAGE, sort: TRI, order: ORDRE,
+    played: lentilleParis() });
   // Une cellule de matrice RESTREINT les filtres, elle ne les remplace pas :
   // l'utilisateur doit retrouver exactement le sous-ensemble qu'il a cliqué.
-  if (CELLULE) {
-    const [a, b] = CELLULE.odds.replace('> ', '').split('-').map(parseFloat);
-    // ⚠️ LA PREMIÈRE BANDE S'APPELLE « 1.0-1.8 », ET 1,00 N'EST PAS UNE COTE.
-    // `Filtres.valider` refuse toute cote_min ≤ 1 — une cote décimale vaut
-    // toujours plus que 1 — donc envoyer la borne basse telle quelle faisait
-    // répondre 400 à l'API et vidait le tableau de détail sur les CINQ
-    // cellules de cette ligne. Ne pas envoyer la borne ne change pas le lot :
-    // aucune opportunité ne porte une cote inférieure ou égale à 1.
-    if (!Number.isNaN(a) && a > 1) extra.odds_min = a;
-    // ⚠️ `Number.isNaN(undefined)` VAUT FALSE — c'est la subtilité qui manquait.
-    // La dernière bande s'appelle « > 6.0 » : elle n'a pas de borne haute, donc
-    // `split('-')` ne rend qu'un morceau et `b` est `undefined`. La borne
-    // partait dans l'URL sous la forme de la CHAÎNE « undefined », et l'API
-    // répondait 422 sur les CINQ cellules de cette ligne.
-    if (b !== undefined && !Number.isNaN(b)) extra.odds_max = b;
-    const ev = CELLULE.ev.replace(/%/g, '');
-    const m = ev.match(/^(\d+)-(\d+)$/);
-    if (m) { extra.ev_min = m[1]; extra.ev_max = m[2]; }
-    else if (ev.startsWith('<')) extra.ev_max = parseFloat(ev.slice(1));
-    else if (ev.endsWith('+')) extra.ev_min = parseFloat(ev);
+  if (CELLULE && !requeteCellule(p, CELLULE)) {
+    tableauDetail({ items: [], total: 0, page: 1, pages: 0 });
+    return;
   }
   $('detail-filtre').textContent = CELLULE
     ? `Restreint à la cellule cote ${CELLULE.odds} × EV ${CELLULE.ev} de la matrice. `
-    : 'Toutes les opportunités de l\'analyse courante. Clique un en-tête pour trier.';
+    : 'Lot de l\'analyse affichée. Cliquez sur un en-tête pour trier.';
   if (CELLULE) {
     const retirer = el('button', 'avert-plus', 'Retirer la restriction');
     retirer.type = 'button';
@@ -1220,8 +1361,13 @@ async function chargerDetail() {
     $('detail-filtre').appendChild(retirer);
   }
   try {
-    tableauDetail(await appel(API_DETAIL, parametres(extra)));
+    const d = await appel(API_DETAIL, p);
+    // Une réponse plus ancienne (tri, page ou analyse précédents) ne doit
+    // jamais écraser la plus récente.
+    if (JETON_DETAIL !== jeton) return;
+    tableauDetail(d);
   } catch (e) {
+    if (JETON_DETAIL !== jeton) return;
     // ⚠️ NE PAS REMPLACER LE CONTENEUR DE LA TABLE : l'appel SUIVANT
     // planterait sur `null`, transformant une erreur passagère en panne
     // définitive. Le message va à côté.
@@ -1243,8 +1389,12 @@ async function chargerDernieres() {
     thead.appendChild(tr);
     return thead;
   };
+  const jeton = {};
+  JETON_DERNIERES = jeton;
   try {
-    const r = await appel(API_DETAIL, parametres({ page: 1, per_page: 8, sort: 'detected_at', order: 'desc' }));
+    const r = await appel(API_DETAIL, parametresAnalyse({ page: 1, per_page: 8,
+      sort: 'detected_at', order: 'desc' }));
+    if (JETON_DERNIERES !== jeton) return;
     t.innerHTML = '';
     t.appendChild(tete());
     const tb = el('tbody');
@@ -1261,10 +1411,8 @@ async function chargerDernieres() {
         .forEach((v) => l.appendChild(el('td', null, v)));
       l.appendChild(el('td', 'num', cote(i.odds)));
       l.appendChild(el('td', null, nomBook(i.bookmaker)));
-      const tdEv = el('td', 'num', pct(i.ev_pct, 1));
-      const s = signe(i.ev_pct);
-      if (s) tdEv.classList.add(s);
-      l.appendChild(tdEv);
+      // L'EV d'une value bet est positive par construction : pas de couleur.
+      l.appendChild(el('td', 'num', pct(i.ev_pct, 1)));
       const tdS = el('td');
       tdS.appendChild(etiquetteStatut(i));
       l.appendChild(tdS);
@@ -1272,6 +1420,7 @@ async function chargerDernieres() {
     });
     t.appendChild(tb);
   } catch (e) {
+    if (JETON_DERNIERES !== jeton) return;
     t.innerHTML = '';
     t.appendChild(tete());
     const tb = el('tbody'), l = el('tr', 'vide-ligne');
@@ -1361,7 +1510,7 @@ function panneauxEvParSport() {
       coches: memoire[sp] || [] });
   });
   if (!hote.children.length) {
-    hote.appendChild(el('p', 'aide', 'Choisis au moins un sport.'));
+    hote.appendChild(el('p', 'aide', 'Choisissez au moins un sport.'));
   }
 }
 
@@ -1390,7 +1539,7 @@ function panneauxCoteParSport() {
       coches: memoire[sp] || [] });
   });
   if (!hote.children.length) {
-    hote.appendChild(el('p', 'aide', 'Choisis au moins un sport.'));
+    hote.appendChild(el('p', 'aide', 'Choisissez au moins un sport.'));
   }
 }
 
@@ -1470,7 +1619,7 @@ function tableauSegments(d) {
     const r = el('tr', 'vide-ligne'), td = el('td');
     td.colSpan = cols.length;
     td.textContent = 'Aucun segment ne passe le plancher d\'effectif. '
-      + 'Baisse le plancher ou élargis les filtres — ce n\'est pas un résultat '
+      + 'Baissez le plancher ou élargissez les filtres — ce n\'est pas un résultat '
       + 'nul, c\'est une absence de mesure.';
     r.appendChild(td);
     tb.appendChild(r);
@@ -1497,7 +1646,8 @@ function tableauSegments(d) {
     r.appendChild(el('td', 'num ' + signe(sg.pnl), eur(sg.pnl, 0)));
     accrocher(r, sg.criteres.map((c) => c.display).join(' × '),
       lignesTranche(sg).concat([['vs lot entier',
-        `CLV ${pct((d.overall || {}).clv, 1)} sur ${ent((d.overall || {}).opportunities)}`]]),
+        `CLV ${pct((d.overall || {}).clv, 1)} sur ${ent((d.overall || {}).clv_n)} `
+        + `(couv. ${pctNu((d.overall || {}).clv_coverage, 0)})`]]),
       alerteTranche(sg));
     tb.appendChild(r);
   });
@@ -1509,7 +1659,7 @@ async function chercherSegments() {
   b.disabled = true;
   $('s-etat').textContent = 'recherche en cours…';
   try {
-    tableauSegments(await appel(API_SEGMENTS, parametres({
+    tableauSegments(await appel(API_SEGMENTS, parametresAnalyse({
       min_n: $('s-min').value || 100,
       sort: $('s-tri').value,
       depth: $('s-prof').value,
@@ -1543,9 +1693,22 @@ function tableDecoupe(hote, tranches, options) {
   }
   const etat = hote.etatTri;
   let lignes = (tranches || []).filter((t) => t.opportunities > 0);
+  /* ⚠️ TRIER PAR UNE MESURE NE DOIT PAS COURONNER UN PETIT ÉCHANTILLON.
+   * Un ROI de +80 % sur 4 paris réglés en tête de colonne se lirait comme le
+   * meilleur segment. Les lignes sous SEUIL_REGLES (réglés pour le ROI et le
+   * P&L, mesurés pour la CLV) sont triées entre elles, APRÈS les autres — et
+   * le tableau le dit. */
+  const faibleEffectif = (t, champ) => {
+    if (['roi', 'pnl'].includes(champ)) return (t.settled || 0) < SEUIL_REGLES;
+    if (['clv', 'clv_median', 'clv_positive_rate'].includes(champ)) return (t.clv_n || 0) < SEUIL_REGLES;
+    return false;
+  };
+  let relegues = 0;
   if (etat.champ) {
     const champ = etat.champ;
     lignes = lignes.slice().sort((a, b) => {
+      const fa = faibleEffectif(a, champ), fb = faibleEffectif(b, champ);
+      if (fa !== fb) return fa ? 1 : -1;
       const va = champ === 'label' ? String(lib(a)) : a[champ];
       const vb = champ === 'label' ? String(lib(b)) : b[champ];
       const absA = va === null || va === undefined, absB = vb === null || vb === undefined;
@@ -1556,6 +1719,7 @@ function tableDecoupe(hote, tranches, options) {
       if (typeof va === 'string') return va.localeCompare(vb, 'fr') * etat.sens;
       return (va - vb) * etat.sens;
     });
+    relegues = lignes.filter((t) => faibleEffectif(t, champ)).length;
   }
   if (o.filtre) {
     const q = o.filtre.toLowerCase();
@@ -1572,15 +1736,29 @@ function tableDecoupe(hote, tranches, options) {
   if (o.complet) cols.push(['pnl', 'P&L', 'num'], ['ev_mean', 'EV moy.', 'num'], ['odds_mean', 'Cote moy.', 'num']);
 
   hote.innerHTML = '';
+  if (relegues && lignes.length > relegues) {
+    const base = ['roi', 'pnl'].includes(etat.champ) ? 'réglés' : 'mesurés';
+    hote.appendChild(el('caption', 'note-tri',
+      `${ent(relegues)} ligne${relegues > 1 ? 's' : ''} à moins de ${SEUIL_REGLES} ${base} `
+      + 'classée' + (relegues > 1 ? 's' : '') + ' en bas du tri — indice, pas résultat.'));
+  }
   const thead = el('thead'), tr = el('tr');
   cols.forEach(([champ, titre, cls]) => {
     const actif = etat.champ === champ;
     const th = el('th', `${cls} triable${actif ? ' actif' : ''}`,
       titre + (actif ? (etat.sens < 0 ? ' ▾' : ' ▴') : ''));
-    th.addEventListener('click', () => {
+    th.tabIndex = 0;
+    th.setAttribute('aria-sort', actif ? (etat.sens < 0 ? 'descending' : 'ascending') : 'none');
+    const trier = () => {
       if (etat.champ === champ) etat.sens = -etat.sens;
       else { etat.champ = champ; etat.sens = champ === 'label' ? 1 : -1; }
       tableDecoupe(hote, tranches, o);
+      const th2 = hote.querySelectorAll('thead th')[cols.findIndex(([c]) => c === champ)];
+      if (th2) th2.focus();
+    };
+    th.addEventListener('click', trier);
+    th.addEventListener('keydown', (e) => {
+      if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); trier(); }
     });
     tr.appendChild(th);
   });
@@ -1644,6 +1822,14 @@ function tableDecoupe(hote, tranches, options) {
 function grapheEvolution(d) {
   document.querySelectorAll('#evol-mode button')
     .forEach((b) => b.classList.toggle('actif', b.dataset.mode === MODE_EVOL));
+  $('evol-titre').textContent = { clv: 'Évolution de la CLV', ev: 'Évolution de l\'EV',
+    mix: 'Évolution de la CLV et de l\'EV' }[MODE_EVOL];
+  // ⚠️ La CLV ne sort jamais sans sa couverture, courbe comprise.
+  const s = d.summary;
+  $('evol-couv').textContent = MODE_EVOL === 'ev' ? ''
+    : `CLV mesurée sur ${ent(s.clv_n)} opportunités · couverture ${pctNu(s.clv_coverage, 0)} sur la période.`;
+  $('evol-couv').classList.toggle('fragile',
+    MODE_EVOL !== 'ev' && s.clv_coverage !== null && s.clv_coverage < SEUIL_COUVERTURE);
   const leg = $('evol-legende');
   leg.innerHTML = '';
   if (MODE_EVOL === 'clv') {
@@ -1696,7 +1882,7 @@ function rendreVueEnsemble(d, graphesSeuls) {
   tableDecoupe($('t-sport'), d.by_sport, { nom: 'Sport', cle: 'sport' });
   tableDecoupe($('t-market'), d.by_market, { nom: 'Marché', cle: 'market' });
   tableDecoupe($('t-book'), d.by_book, { nom: 'Bookmaker', cle: 'book' });
-  if (!graphesSeuls) chargerDernieres();
+  return graphesSeuls ? null : chargerDernieres();
 }
 
 function rendrePerformance(d) {
@@ -1759,11 +1945,73 @@ function tableCompetitions() {
   }
 }
 
-function rendreParis(d, graphesSeuls) {
-  document.querySelectorAll('#pj-filtre button')
-    .forEach((b) => b.classList.toggle('actif', b.dataset.played === $('f-played').value));
-  kpisParis(d.summary);
-  if (!graphesSeuls) chargerDetail();
+/* ⚠️ LA LENTILLE N'EST PAS UN FILTRE DE L'ANALYSE. Les boutons « Joués /
+ * Non joués / Toutes » ne changent QUE cette page : les autres pages restent
+ * sur l'analyse affichée. Quand l'analyse filtre déjà sur « Joué » (tiroir),
+ * c'est elle qui décide et les boutons le montrent, grisés. Les KPI de la
+ * lentille viennent d'une analyse du serveur — jamais d'un calcul local. */
+const AIDE_PJ = {
+  oui: 'Opportunités sur lesquelles vous avez cliqué « Jouer ». Les autres pages restent sur l\'analyse complète.',
+  non: 'Opportunités jamais cliquées sur « Jouer » — alertées ou non. Les autres pages restent sur l\'analyse complète.',
+  tous: 'Toutes les opportunités de l\'analyse affichée, jouées ou non.',
+};
+
+function majPjFiltre() {
+  const impose = ANALYSE && ANALYSE.filters && ANALYSE.filters.played !== 'tous'
+    ? ANALYSE.filters.played : null;
+  const mode = impose || PJ_MODE;
+  document.querySelectorAll('#pj-filtre button').forEach((b) => {
+    b.classList.toggle('actif', b.dataset.played === mode);
+    b.setAttribute('aria-pressed', String(b.dataset.played === mode));
+    b.disabled = !!impose && b.dataset.played !== impose;
+  });
+  $('pj-aide').textContent = impose
+    ? `L'analyse filtre déjà sur « ${impose === 'oui' ? 'Joués' : 'Non joués'} » (filtres avancés) : `
+      + 'la page suit ce filtre.'
+    : AIDE_PJ[mode];
+}
+
+/* Choisir la lentille AVANT d'arriver sur la page : la carte « Paris
+ * joués » mène aux joués, « Opportunités » et « Tout voir » à tout le lot. */
+function choisirLentille(mode) {
+  PJ_MODE = mode;
+  PAGE = 1;
+  CELLULE = null;
+  RENDUES.delete('paris');
+}
+
+async function rendreParis(d, graphesSeuls) {
+  majPjFiltre();
+  const mode = lentilleParis();
+  const joue = (d.filters && d.filters.played) || 'tous';
+  if (graphesSeuls) {
+    if (PARIS && PARIS.mode === mode) kpisParis(PARIS.d.summary);
+    return;
+  }
+  const detail = chargerDetail();
+  if (joue !== 'tous' || mode === 'tous') {
+    PARIS = { mode, d };
+    kpisParis(d.summary);
+    await detail;
+    return;
+  }
+  if (PARIS && PARIS.mode === mode) { kpisParis(PARIS.d.summary); await detail; return; }
+  const jeton = {};
+  JETON_PARIS = jeton;
+  squelettesKpi('kpis-paris', 5);
+  try {
+    const r = await appel(API_ANALYSE, parametresAnalyse({ played: mode }));
+    if (JETON_PARIS === jeton) {
+      PARIS = { mode, d: r };
+      kpisParis(r.summary);
+    }
+  } catch (e) {
+    if (JETON_PARIS === jeton) {
+      $('kpis-paris').innerHTML = '';
+      $('kpis-paris').appendChild(el('p', 'aide', 'Indicateurs indisponibles : ' + e.message));
+    }
+  }
+  await detail;
 }
 
 /* ── Analyse avancée ───────────────────────────────────────────────
@@ -1774,18 +2022,38 @@ function rendreParis(d, graphesSeuls) {
  * segments croisés, qui ont leur propre bouton.
  */
 const AXES = [
-  { cle: 'sport', lib: 'Sport', champ: 'by_sport', nom: 'Sport' },
-  { cle: 'book', lib: 'Bookmaker', champ: 'by_book', nom: 'Bookmaker', volume: true },
-  { cle: 'market', lib: 'Marché', champ: 'by_market', nom: 'Marché' },
+  { cle: 'sport', lib: 'Sport', champ: 'by_sport', nom: 'Sport', section: 'champ-sports',
+    filtre: (f) => listeTexte(f.sports, nomSport, 'Tous les sports') },
+  { cle: 'book', lib: 'Bookmaker', champ: 'by_book', nom: 'Bookmaker', volume: true,
+    section: 'champ-books', filtre: (f) => listeTexte(f.bookmakers, nomBook, 'Tous les bookmakers') },
+  { cle: 'market', lib: 'Marché', champ: 'by_market', nom: 'Marché', section: 'champ-markets',
+    filtre: (f) => listeTexte(f.markets, nomMarche, 'Tous les marchés') },
   { cle: 'league', lib: 'Compétition', champ: 'by_league', nom: 'Compétition',
-    volume: true, top: 15, recherche: true },
-  { cle: 'outcome', lib: 'Pari', champ: 'by_outcome', nom: 'Pari', ordre: true },
-  { cle: 'odds', lib: 'Cote', champ: 'by_odds', nom: 'Tranche de cote', ordre: true },
-  { cle: 'ev', lib: 'EV', champ: 'by_ev', nom: 'Tranche d\'EV', ordre: true },
-  { cle: 'delay', lib: 'Délai', champ: 'by_delay', nom: 'Délai avant coup d\'envoi', ordre: true },
-  { cle: 'time', lib: 'Période', champ: 'by_time', nom: 'Période', ordre: true, temps: true },
+    volume: true, top: 15, recherche: true, section: 'champ-league',
+    filtre: (f) => listeTexte(f.leagues, (x) => x, 'Toutes les compétitions') },
+  { cle: 'outcome', lib: 'Pari', champ: 'by_outcome', nom: 'Pari', ordre: true,
+    section: 'champ-pari', filtre: (f) => listeTexte(f.outcomes, libPari, 'Tous les paris') },
+  { cle: 'odds', lib: 'Cote', champ: 'by_odds', nom: 'Tranche de cote', ordre: true,
+    section: 'champ-cote', regles: true, filtre: (f) => texteCote(f) || 'Toutes les cotes' },
+  { cle: 'ev', lib: 'EV', champ: 'by_ev', nom: 'Tranche d\'EV', ordre: true,
+    section: 'champ-ev', regles: true, filtre: (f) => texteEv(f) || 'Toute EV' },
+  { cle: 'delay', lib: 'Délai', champ: 'by_delay', nom: 'Délai avant coup d\'envoi', ordre: true,
+    section: 'champ-delai',
+    filtre: (f) => (f.delay_min != null || f.delay_max != null
+      ? `Délai ${bornesTexte(f.delay_min, f.delay_max, ' h')}` : 'Aucun délai imposé') },
+  { cle: 'time', lib: 'Période', champ: 'by_time', nom: 'Période', ordre: true, temps: true,
+    section: 'champ-axe',
+    filtre: (f) => `${periodeTexte(f.date_from || REFS.date_min, f.date_to || REFS.date_max)}`
+      + ` · pas ${libGranularite()}` },
   { cle: 'segments', lib: 'Segments croisés' },
 ];
+
+/* Le pas de temps de l'analyse AFFICHÉE, sous le libellé du menu. */
+function libGranularite() {
+  const g = CLE_ANALYSE ? new URLSearchParams(CLE_ANALYSE).get('granularite') : $('f-gran').value;
+  const o = [...$('f-gran').options].find((x) => x.value === g);
+  return (o ? o.textContent : g || '').toLowerCase();
+}
 
 function rendreAvancee(d) {
   const h = $('aa-axes');
@@ -1803,10 +2071,17 @@ function rendreAvancee(d) {
   const axe = AXES.find((a) => a.cle === AXE_AA);
   $('aa-panneau').hidden = !axe || axe.cle === 'segments';
   $('bloc-segments').hidden = !axe || axe.cle !== 'segments';
+  // Les règles d'EV segmentées ne concernent que les axes EV et Cote.
+  $('aa-bloc-regles').hidden = !axe || !axe.regles;
   if (!axe || axe.cle === 'segments') return;
 
+  // Ce que l'analyse affichée filtre sur CET axe, et où le régler.
+  $('aa-param-valeur').textContent = axe.filtre(d.filters || {});
+  $('aa-param-regler').onclick = () => ouvrirTiroir(axe.section);
+
   const tranches = d[axe.champ] || [];
-  const nomAxe = axe.lib.toLowerCase();
+  // « EV », « CLV » : un sigle garde ses capitales.
+  const nomAxe = /^[A-Z]{2,}$/.test(axe.lib) ? axe.lib : axe.lib.toLowerCase();
   $('aa-titre-clv').textContent = axe.temps ? 'CLV dans le temps' : `CLV par ${nomAxe}`;
   $('aa-titre-roi').textContent = axe.temps ? 'ROI dans le temps' : `ROI par ${nomAxe}`;
   $('aa-titre-table').textContent = `Tableau complet — par ${nomAxe}`;
@@ -1832,17 +2107,26 @@ function rendreAvancee(d) {
 function rendrePage(p, graphesSeuls) {
   if (!ANALYSE || !PAGES[p] || !PAGES[p].analyse) return;
   if (!ANALYSE.summary.opportunities) return;
-  if (!graphesSeuls && RENDUES.has(p)) return;
+  if (!graphesSeuls && RENDUES.has(p)) {
+    // Déjà rendue, mais à une autre largeur : on ne redessine que les
+    // graphiques, sans relancer ses requêtes.
+    if (!A_REDESSINER.has(p)) return;
+    graphesSeuls = true;
+  }
+  A_REDESSINER.delete(p);
   RENDUES.add(p);
   const d = ANALYSE;
-  if (p === 'vue-ensemble') rendreVueEnsemble(d, graphesSeuls);
-  else if (p === 'performance') rendrePerformance(d);
-  else if (p === 'clv') rendreClv(d);
-  else if (p === 'bookmakers') rendreBookmakers(d);
-  else if (p === 'marches') rendreMarches(d);
-  else if (p === 'competitions') rendreCompetitions(d);
-  else if (p === 'paris') rendreParis(d, graphesSeuls);
-  else if (p === 'avancee') rendreAvancee(d);
+  // Rend la promesse des requêtes de la page (dernières, détail) : le
+  // rapport PDF les attend avant d'imprimer.
+  if (p === 'vue-ensemble') return rendreVueEnsemble(d, graphesSeuls);
+  if (p === 'performance') return rendrePerformance(d);
+  if (p === 'clv') return rendreClv(d);
+  if (p === 'bookmakers') return rendreBookmakers(d);
+  if (p === 'marches') return rendreMarches(d);
+  if (p === 'competitions') return rendreCompetitions(d);
+  if (p === 'paris') return rendreParis(d, graphesSeuls);
+  if (p === 'avancee') return rendreAvancee(d);
+  return null;
 }
 
 /* ── Analyse ───────────────────────────────────────────────────────── */
@@ -1857,17 +2141,26 @@ async function analyser() {
   document.body.classList.add('en-analyse');
   $('etat').textContent = 'analyse en cours…';
   if (!ANALYSE) squelettesKpi('kpis', 4);
+  const envoyes = parametres({ granularite: $('f-gran').value });
   try {
-    const d = await appel(API_ANALYSE,
-      parametres({ granularite: $('f-gran').value }));
+    const d = await appel(API_ANALYSE, envoyes);
     // Une réponse plus ancienne que la dernière demande ne doit JAMAIS
     // écraser la plus récente : l'écran décrirait d'autres filtres.
     if (JETON !== jeton) return;
     ANALYSE = d;
+    // Tout ce qui suit l'analyse (détail, dernières, segments, exports)
+    // repart de CES paramètres, pas du formulaire : un filtre retouché sans
+    // relancer ne doit pas faire décrire au tableau autre chose que les KPI.
+    PARAMS_ANALYSE = new URLSearchParams(envoyes);
+    PARAMS_ANALYSE.delete('granularite');
+    CLE_ANALYSE = envoyes.toString();
     CELLULE = null;
     PAGE = 1;
-    SALE = false;
+    PARIS = null;
+    LIMITE_CMP = 50;
+    SALE = cleFormulaire() !== CLE_ANALYSE;
     RENDUES.clear();
+    A_REDESSINER.clear();
 
     avertissements(d.warnings);
     enteteExport(d);
@@ -1882,7 +2175,7 @@ async function analyser() {
     // qu'une analyse.
     $('segments').innerHTML = '';
     $('s-garde').innerHTML = '';
-    $('s-etat').textContent = 'Clique « Chercher » pour explorer les combinaisons.';
+    $('s-etat').textContent = 'Cliquez sur « Chercher » pour explorer les combinaisons.';
 
     const videLot = !d.summary.opportunities;
     document.body.classList.toggle('sans-donnees', videLot);
@@ -1896,9 +2189,13 @@ async function analyser() {
   } catch (e) {
     if (JETON !== jeton) return;
     // Une erreur de saisie doit se lire, pas disparaître dans la console.
-    avertissements([e.statut === 400 || e.statut === 422
+    const message = e.statut === 400 || e.statut === 422
       ? 'Filtre refusé : ' + e.message
-      : 'Erreur : ' + e.message]);
+      : 'Erreur : ' + e.message;
+    avertissements([message]);
+    // Sur une page sans analyse (Paramètres, Mes analyses…), le bandeau
+    // d'avertissement n'est pas sous les yeux : on le dit aussi en toast.
+    if (!PAGES[PAGE_ACTIVE].analyse) toast(message, 6000);
     $('etat').textContent = '';
     if (!ANALYSE) $('kpis').innerHTML = '';
   } finally {
@@ -1971,7 +2268,9 @@ function pliage() {
 
 function signalerChangement() {
   if (!REFS) return;
-  if (!INIT) SALE = true;
+  // « Modifié » se DÉDUIT : revenir à la main aux filtres analysés efface
+  // l'alerte, au lieu de la laisser allumée pour rien.
+  SALE = !!CLE_ANALYSE && cleFormulaire() !== CLE_ANALYSE;
   majSale();
   majResumes();
   majPresets();
@@ -2019,10 +2318,14 @@ function texteCote(f) {
 /* Les phrases d'un jeu de filtres — celui du serveur (`d.filters`) ou celui
  * du formulaire. Même vocabulaire que les menus, pour qu'une même contrainte
  * ne se lise pas de deux façons. */
+function listeTexte(v, nom, tous) {
+  if (!v || !v.length) return tous;
+  return v.length <= 2 ? v.map(nom).join(' + ') : `${v.length} ${tous.split(' ').pop()}`;
+}
+
 function phrasesFiltres(f) {
   const out = [periodeTexte(f.date_from || REFS.date_min, f.date_to || REFS.date_max)];
-  const liste = (v, nom, tous) => (!v || !v.length ? tous
-    : v.length <= 2 ? v.map(nom).join(' + ') : `${v.length} ${tous.split(' ').pop()}`);
+  const liste = listeTexte;
   out.push(liste(f.sports, nomSport, 'Tous les sports'));
   out.push(liste(f.bookmakers, nomBook, 'Tous les bookmakers'));
   out.push(liste(f.markets, nomMarche, 'Tous les marchés'));
@@ -2034,8 +2337,8 @@ function phrasesFiltres(f) {
   if (f.delay_min != null || f.delay_max != null) {
     out.push(`Délai ${bornesTexte(f.delay_min, f.delay_max, ' h')}`);
   }
-  out.push(nomPopulation(f.population));
-  if (f.played && f.played !== 'tous') out.push(f.played === 'oui' ? 'Paris joués' : 'Alertés, non cliqués');
+  out.push('Population : ' + nomPopulation(f.population));
+  if (f.played && f.played !== 'tous') out.push(f.played === 'oui' ? 'Joués' : 'Non joués');
   return out;
 }
 
@@ -2173,11 +2476,14 @@ function deduireModes() {
 
 /* ── Menus déroulants ──────────────────────────────────────────────── */
 
-function fermerMenus() {
+function fermerMenus(rendreFocus) {
   document.querySelectorAll('.menu.ouvert').forEach((m) => {
     m.classList.remove('ouvert');
     m.querySelector('.menu-pop').hidden = true;
-    m.querySelector(':scope > button').setAttribute('aria-expanded', 'false');
+    const btn = m.querySelector(':scope > button');
+    btn.setAttribute('aria-expanded', 'false');
+    // Échap depuis un menu rend le focus à son bouton, pas au document.
+    if (rendreFocus === true) btn.focus();
   });
 }
 
@@ -2286,17 +2592,46 @@ function seuilsEv() {
   return out.sort((a, b) => a - b);
 }
 
+/* ⚠️ LA COCHE DIT CE QUI PART. « Toute EV » n'est cochée que si AUCUNE
+ * contrainte d'EV ne part au serveur — règles par sport et par cote
+ * comprises — et la choisir les retire toutes. Un seuil « ≥ X % » remplace
+ * la règle globale (bornes, tranches) mais laisse la segmentation, qui
+ * prime pour ses sports : le menu le rappelle. */
 function menuEv(pop) {
   pop.innerHTML = '';
+  const f = filtresDuFormulaire();
   const actuel = valOuNull('f-ev-min');
-  const choisir = (v) => () => {
-    $('f-ev-min').value = v === null ? '' : String(v);
+  const globalSimple = valOuNull('f-ev-max') === null && !coches('f-ev-bands').length;
+  const segmentee = $('ev-split').checked || $('ev-cote-split').checked;
+  const toute = () => {
+    appliquerModeEv('minimum', false);
+    $('f-ev-min').value = '';
+    $('f-ev-max').value = '';
+    cocher('f-ev-bands', []);
+    if ($('ev-split').checked) { $('ev-split').checked = false; panneauxEvParSport(); }
+    if ($('ev-cote-split').checked) { $('ev-cote-split').checked = false; panneauxEvParCote(); }
     fermerMenus();
     signalerChangement();
   };
-  pop.appendChild(itemMenu('Toute EV', actuel === null, choisir(null)));
-  seuilsEv().forEach((s) => pop.appendChild(
-    itemMenu(`≥ ${num(s)} %`, actuel !== null && Number(actuel) === s, choisir(s))));
+  const seuil = (v) => () => {
+    appliquerModeEv('minimum', false);
+    cocher('f-ev-bands', []);
+    $('f-ev-max').value = '';
+    $('f-ev-min').value = String(v);
+    fermerMenus();
+    signalerChangement();
+  };
+  const texte = texteEv(f);
+  if (texte && !(globalSimple && actuel !== null && seuilsEv().includes(Number(actuel)) && !segmentee)) {
+    pop.appendChild(el('div', 'menu-note', `Réglage actuel : ${texte}`));
+  }
+  pop.appendChild(itemMenu('Toute EV', !texte, toute));
+  seuilsEv().forEach((v) => pop.appendChild(
+    itemMenu(`≥ ${num(v)} %`, globalSimple && actuel !== null && Number(actuel) === v, seuil(v))));
+  if (segmentee) {
+    pop.appendChild(el('div', 'menu-note',
+      'Des règles d\'EV par sport ou par cote s\'appliquent aussi et priment pour leurs sports. « Toute EV » les retire.'));
+  }
   pop.appendChild(el('div', 'menu-sep'));
   pop.appendChild(itemMenu('Tranches, bornes, par sport…', false, () => {
     fermerMenus();
@@ -2309,10 +2644,17 @@ function menuEv(pop) {
 function ouvrirTiroir(section) {
   fermerMenus();
   const t = $('tiroir');
+  if (!t.classList.contains('ouvert')) {
+    const actif = document.activeElement;
+    OUVREUR = actif && actif !== document.body && $('app').contains(actif) ? actif : $('ouvrir-filtres');
+  }
   t.classList.add('ouvert');
   t.setAttribute('aria-hidden', 'false');
   $('voile-filtres').hidden = false;
   document.body.classList.add('fige');
+  // Tant que le tiroir est ouvert, le reste de l'application sort du
+  // parcours clavier et des lecteurs d'écran : c'est un dialogue modal.
+  $('app').inert = true;
   if (section && $(section)) {
     const s = $(section);
     s.classList.add('ouvert');
@@ -2330,7 +2672,11 @@ function fermerTiroir() {
   t.setAttribute('aria-hidden', 'true');
   $('voile-filtres').hidden = true;
   document.body.classList.remove('fige');
-  $('ouvrir-filtres').focus();
+  $('app').inert = false;
+  const cible = OUVREUR && document.contains(OUVREUR) && !OUVREUR.closest('[hidden]')
+    ? OUVREUR : $('ouvrir-filtres');
+  OUVREUR = null;
+  cible.focus();
 }
 
 /* ── Analyses rapides ──────────────────────────────────────────────
@@ -2464,7 +2810,9 @@ function fermerNavMobile() {
 let LARGEUR_FENETRE = window.innerWidth;
 function redessiner() {
   if (!ANALYSE) return;
-  RENDUES.delete(PAGE_ACTIVE);
+  // Les pages déjà rendues mais cachées ont été dessinées à l'ancienne
+  // largeur : elles seront redessinées quand on y reviendra.
+  RENDUES.forEach((p) => { if (p !== PAGE_ACTIVE) A_REDESSINER.add(p); });
   rendrePage(PAGE_ACTIVE, true);
 }
 
@@ -2611,7 +2959,10 @@ function toast(message, reste) {
   t.textContent = message;
   t.hidden = false;
   clearTimeout(toast.minuteur);
-  if (!reste) toast.minuteur = setTimeout(() => { t.hidden = true; }, 3800);
+  // reste : true = jusqu'au prochain message ; un nombre = sa durée en ms.
+  if (reste !== true) {
+    toast.minuteur = setTimeout(() => { t.hidden = true; }, typeof reste === 'number' ? reste : 3800);
+  }
 }
 
 function csvCellule(v) {
@@ -2640,12 +2991,63 @@ function nomFichier(quoi) {
   const f = (ANALYSE && ANALYSE.filters) || {};
   return `valuebet-${quoi}-${f.date_from || REFS.date_min}_${f.date_to || REFS.date_max}.csv`;
 }
-/* Un export décrit l'analyse AFFICHÉE. Des filtres modifiés depuis
- * produiraient un fichier que rien à l'écran ne permet de vérifier. */
+/* Un export décrit l'analyse AFFICHÉE : il repart de ses paramètres
+ * (PARAMS_ANALYSE), jamais du formulaire. Des filtres retouchés depuis ne
+ * bloquent donc rien — on le signale simplement, le fichier reste vérifiable
+ * contre l'écran. */
 function exportPossible() {
   if (!ANALYSE) { toast('Lancez d\'abord une analyse.'); return false; }
-  if (SALE) { toast('Filtres modifiés : relancez « Analyser » avant d\'exporter.'); return false; }
   return true;
+}
+const noteSale = () => (SALE ? ' Filtres modifiés depuis : le fichier décrit l\'analyse affichée.' : '');
+
+/* Le PDF de la page courante : l'impression telle quelle. */
+function imprimerPage() {
+  fermerMenus();
+  if (!exportPossible()) return;
+  if (!PAGES[PAGE_ACTIVE].analyse) { imprimerRapport(); return; }
+  if (SALE) toast('Filtres modifiés depuis : le PDF décrit l\'analyse affichée.', 5000);
+  window.print();
+}
+
+/* ⚠️ LE RAPPORT COMPLET IMPRIME DES PAGES RENDUES, PAS DES PAGES VIDES.
+ * Les pages sont dessinées à la demande : avant d'imprimer, chacune est
+ * rendue, visible, et ses requêtes (dernières opportunités, détail) sont
+ * ATTENDUES — sans quoi le papier montrerait des squelettes. */
+async function imprimerRapport() {
+  fermerMenus();
+  if (!exportPossible()) return;
+  if (!ANALYSE.summary.opportunities) { toast('Aucune opportunité dans l\'analyse affichée.'); return; }
+  const pages = Object.keys(PAGES).filter((p) => PAGES[p].analyse
+    && (p !== 'avancee' || (AXE_AA && AXE_AA !== 'segments')));
+  toast('Préparation du rapport…', true);
+  document.body.classList.add('impression-rapport');
+  // Les avertissements (couverture, période) partent sur le papier même si
+  // le rapport est lancé depuis une page outil, où ils sont masqués.
+  $('avertissements').hidden = false;
+  pages.forEach((p) => { $('page-' + p).hidden = false; });
+  try {
+    await Promise.all(pages.map((p) => {
+      RENDUES.delete(p);
+      A_REDESSINER.delete(p);
+      return Promise.resolve(rendrePage(p)).catch(() => null);
+    }));
+  } finally {
+    $('toast').hidden = true;
+  }
+  const fin = () => {
+    window.removeEventListener('afterprint', fin);
+    if (!document.body.classList.contains('impression-rapport')) return;
+    document.body.classList.remove('impression-rapport');
+    document.querySelectorAll('.page').forEach((x) => { x.hidden = x.dataset.page !== PAGE_ACTIVE; });
+    $('avertissements').hidden = !PAGES[PAGE_ACTIVE].analyse;
+  };
+  window.addEventListener('afterprint', fin);
+  if (SALE) toast('Filtres modifiés depuis : le PDF décrit l\'analyse affichée.', 5000);
+  window.print();
+  // `print()` rend la main une fois la boîte fermée ; `afterprint` couvre
+  // les navigateurs qui ne bloquent pas.
+  setTimeout(fin, 500);
 }
 
 const CHAMPS_CSV = [['opportunities', 'opportunites'], ['matches', 'matchs'],
@@ -2669,7 +3071,7 @@ function exporterCsvDecoupes() {
   }));
   telecharger(nomFichier('decoupes'),
     csvTexte(['decoupe', 'cle', 'libelle'].concat(CHAMPS_CSV.map(([, n]) => n)), lignes));
-  toast(`${ent(lignes.length)} lignes exportées.`);
+  toast(`${ent(lignes.length)} lignes exportées.` + noteSale(), 5000);
 }
 
 const COLONNES_CSV = [['detected_at', 'detecte_le'], ['start_time', 'coup_envoi'],
@@ -2687,7 +3089,7 @@ async function exporterCsvOpportunites() {
   toast('Export en cours…', true);
   try {
     for (let page = 1; ; page += 1) {
-      const r = await appel(API_DETAIL, parametres({ page, per_page: 500,
+      const r = await appel(API_DETAIL, parametresAnalyse({ page, per_page: 500,
         sort: 'detected_at', order: 'desc' }));
       total = r.total;
       items.push(...r.items);
@@ -2701,9 +3103,9 @@ async function exporterCsvOpportunites() {
   const lot = items.slice(0, MAX_CSV);
   telecharger(nomFichier('opportunites'), csvTexte(COLONNES_CSV.map(([, n]) => n),
     lot.map((i) => COLONNES_CSV.map(([k]) => i[k]))));
-  toast(lot.length < total
+  toast((lot.length < total
     ? `CSV limité aux ${ent(MAX_CSV)} opportunités les plus récentes sur ${ent(total)}.`
-    : `${ent(lot.length)} opportunités exportées.`);
+    : `${ent(lot.length)} opportunités exportées.`) + noteSale(), 5000);
 }
 
 /* ── Paramètres ────────────────────────────────────────────────────── */
@@ -2771,6 +3173,7 @@ function brancherInterface() {
   $('pr-sidebar').addEventListener('change', () => replierSidebar($('pr-sidebar').checked));
   $('pr-lignes').addEventListener('change', () => {
     PAR_PAGE = Number($('pr-lignes').value) || 25;
+    PAGE = 1;
     stock.ecrire('vb-lignes', String(PAR_PAGE));
     RENDUES.delete('paris');
   });
@@ -2779,10 +3182,12 @@ function brancherInterface() {
   document.addEventListener('click', fermerMenus);
   document.addEventListener('keydown', (e) => {
     if (e.key !== 'Escape') return;
-    fermerMenus();
-    fermerTiroir();
-    fermerNavMobile();
+    // Une couche à la fois : le menu ouvert d'abord, puis le tiroir.
+    if (document.querySelector('.menu.ouvert')) { fermerMenus(true); return; }
+    if ($('tiroir').classList.contains('ouvert')) { fermerTiroir(); return; }
+    if ($('app').classList.contains('nav-ouverte')) { fermerNavMobile(); $('menu-mobile').focus(); }
   });
+  document.querySelectorAll('.sb-lien').forEach((a) => a.addEventListener('click', fermerNavMobile));
   window.addEventListener('resize', () => {
     clearTimeout(redessiner.minuteur);
     redessiner.minuteur = setTimeout(() => {
@@ -2793,22 +3198,42 @@ function brancherInterface() {
   });
 }
 
+/* ⚠️ UNE API INDISPONIBLE AU DÉMARRAGE N'EST PAS UNE PANNE DÉFINITIVE.
+ * Le serveur redémarre, la base se reconstruit : on réessaie seul, à
+ * intervalles croissants, et un bouton permet de le faire tout de suite. */
+async function chargerRefs(essai) {
+  clearTimeout(chargerRefs.minuteur);
+  try {
+    return await appel(API_FILTERS);
+  } catch (e) {
+    const attente = Math.min(30, 2 ** Math.min(essai + 1, 5));
+    $('sb-point').className = 'point ko';
+    $('sb-statut').textContent = 'API indisponible';
+    $('contexte').textContent = 'Filtres indisponibles.';
+    $('kpis').innerHTML = '';
+    avertissements([`Impossible de lire les filtres : ${e.message} — nouvel essai dans ${attente} s.`]);
+    const av = $('avertissements').lastElementChild;
+    if (av) {
+      const b = el('button', 'avert-plus', 'Réessayer maintenant');
+      b.type = 'button';
+      b.addEventListener('click', (ev) => { ev.stopPropagation(); chargerRefs.relancer(0); });
+      av.appendChild(b);
+    }
+    return new Promise((ok) => {
+      chargerRefs.relancer = (n) => { clearTimeout(chargerRefs.minuteur); ok(chargerRefs(n)); };
+      chargerRefs.minuteur = setTimeout(() => chargerRefs.relancer(essai + 1), attente * 1000);
+    });
+  }
+}
+
 async function demarrer() {
   PAR_PAGE = Number(stock.lire('vb-lignes', '25')) || 25;
   brancherInterface();
   afficherPage(pageDuLien());
   squelettesKpi('kpis', 4);
 
-  try {
-    REFS = await appel(API_FILTERS);
-  } catch (e) {
-    $('sb-point').className = 'point ko';
-    $('sb-statut').textContent = 'API indisponible';
-    $('contexte').textContent = 'Filtres indisponibles.';
-    $('kpis').innerHTML = '';
-    avertissements(['Impossible de lire les filtres : ' + e.message]);
-    return;
-  }
+  REFS = await chargerRefs(0);
+  avertissements([]);
   $('sb-point').className = 'point ok';
   $('sb-statut').textContent = 'API connectée';
   $('sb-donnees').textContent = `Données jusqu'au ${dateLongue(REFS.date_max, true)}`;
@@ -2867,6 +3292,11 @@ async function demarrer() {
 
   if (REFS.date_min) $('f-date-from').value = REFS.date_min;
   if (REFS.date_max) $('f-date-to').value = REFS.date_max;
+  // Le calendrier ne propose que les jours où il y a des données.
+  ['f-date-from', 'f-date-to'].forEach((id) => {
+    if (REFS.date_min) $(id).min = REFS.date_min;
+    if (REFS.date_max) $(id).max = REFS.date_max;
+  });
 
   // Tout changement de filtre, où qu'il ait lieu, passe par le même chemin.
   ['form', 'periode'].forEach((id) => {
@@ -2914,23 +3344,22 @@ async function demarrer() {
     analyser();
   }));
   document.querySelectorAll('#pj-filtre button').forEach((b) => b.addEventListener('click', () => {
-    $('f-played').value = b.dataset.played;
-    signalerChangement();
-    analyser();
+    if (b.disabled || PJ_MODE === b.dataset.played) return;
+    choisirLentille(b.dataset.played);
+    rendrePage('paris');
   }));
+  $('dernieres-tout').addEventListener('click', () => choisirLentille('tous'));
   $('cmp-recherche').addEventListener('input', () => { LIMITE_CMP = 50; tableCompetitions(); });
   $('aa-recherche').addEventListener('input', () => { if (ANALYSE) rendreAvancee(ANALYSE); });
 
   /* ⚠️ AUCUNE BIBLIOTHÈQUE. L'impression du navigateur produit déjà un PDF
    * fidèle, hors ligne, avec les polices et les graphiques rendus tels qu'ils
    * s'affichent. La mise en page papier vit dans `@media print`. */
-  $('pdf').addEventListener('click', () => {
-    fermerMenus();
-    if (exportPossible()) window.print();
-  });
+  $('pdf').addEventListener('click', imprimerPage);
+  $('pdf-rapport').addEventListener('click', imprimerRapport);
   $('csv-opps').addEventListener('click', exporterCsvOpportunites);
   $('csv-decoupes').addEventListener('click', exporterCsvDecoupes);
-  $('ex-pdf').addEventListener('click', () => $('pdf').click());
+  $('ex-pdf').addEventListener('click', imprimerRapport);
   $('ex-csv-opps').addEventListener('click', exporterCsvOpportunites);
   $('ex-csv-decoupes').addEventListener('click', exporterCsvDecoupes);
 
@@ -2973,7 +3402,6 @@ async function demarrer() {
   presets();
   majResumes();
   contexte();
-  INIT = false;
   if (PAGE_ACTIVE === 'parametres') rendreParametres();
   if (PAGE_ACTIVE === 'mes-analyses') rendreMesAnalyses();
   analyser();

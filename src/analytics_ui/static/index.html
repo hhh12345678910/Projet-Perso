@@ -170,8 +170,11 @@
             </button>
             <div class="menu-pop menu-pop-droite" id="pp-export" hidden>
               <button class="menu-item" id="pdf" type="button"
-                      title="Ouvre l'impression du navigateur — choisis « Enregistrer au format PDF »">
-                <b>PDF</b><span>Page courante et filtres appliqués</span></button>
+                      title="Ouvre l'impression du navigateur — choisissez « Enregistrer au format PDF »">
+                <b>PDF — page courante</b><span>Cette page et les filtres appliqués</span></button>
+              <button class="menu-item" id="pdf-rapport" type="button"
+                      title="Ouvre l'impression du navigateur — choisissez « Enregistrer au format PDF »">
+                <b>PDF — rapport complet</b><span>Toutes les pages d'analyse en un document</span></button>
               <button class="menu-item" id="csv-opps" type="button">
                 <b>CSV — opportunités</b><span>Une ligne par opportunité de l'analyse</span></button>
               <button class="menu-item" id="csv-decoupes" type="button">
@@ -209,12 +212,7 @@
         </section>
 
         <!-- ═══ VUE D'ENSEMBLE ═══════════════════════════════════════════ -->
-        <section class="page" id="page-vue-ensemble" data-page="vue-ensemble">
-
-          <div class="presets">
-            <span class="presets-titre">Analyses rapides</span>
-            <div class="puces" id="presets"></div>
-          </div>
+        <section class="page" id="page-vue-ensemble" data-page="vue-ensemble" data-titre="Vue d'ensemble">
 
           <div class="si-donnees">
             <div class="kpis kpis-principaux" id="kpis"></div>
@@ -223,11 +221,16 @@
               <span id="note-ev"></span>
             </p>
 
+            <div class="presets">
+              <span class="presets-titre">Analyses rapides</span>
+              <div class="puces" id="presets"></div>
+            </div>
+
             <div class="grille-2">
               <article class="carte carte-graphe">
                 <header class="carte-tete">
                   <div>
-                    <h2>Évolution de la CLV</h2>
+                    <h2 id="evol-titre">Évolution de la CLV</h2>
                     <p class="carte-sous" id="evol-sous">CLV moyenne par période — en %</p>
                   </div>
                   <div class="carte-outils">
@@ -245,6 +248,7 @@
                 </header>
                 <div class="graphe" id="g-clv-temps"></div>
                 <div class="legende" id="evol-legende"></div>
+                <p class="couv-ligne" id="evol-couv"></p>
               </article>
 
               <!-- ⚠️ JAMAIS UN DOUBLE AXE CLV / ROI. La CLV vaut quelques
@@ -273,7 +277,7 @@
               <header class="carte-tete">
                 <div>
                   <h2>CLV par tranche d'EV</h2>
-                  <p class="carte-sous">Barres : CLV moyenne de la tranche · à droite : nombre d'opportunités. C'est ici que se lit l'edge.</p>
+                  <p class="carte-sous">Barres : CLV moyenne de la tranche · à droite : sa couverture et son nombre d'opportunités. C'est ici que se lit l'edge.</p>
                 </div>
               </header>
               <div class="graphe" id="g-clv-ev"></div>
@@ -302,7 +306,7 @@
               <header class="carte-tete">
                 <div><h2>Dernières opportunités détectées</h2>
                   <p class="carte-sous">Les plus récentes de la population analysée.</p></div>
-                <a class="lien-voir" href="#/paris">Tout voir →</a>
+                <a class="lien-voir" href="#/paris" id="dernieres-tout">Tout voir →</a>
               </header>
               <div class="enrob"><table class="tableau tableau-dense" id="t-dernieres"></table></div>
             </article>
@@ -310,7 +314,7 @@
         </section>
 
         <!-- ═══ PERFORMANCE ═════════════════════════════════════════════ -->
-        <section class="page" id="page-performance" data-page="performance" hidden>
+        <section class="page" id="page-performance" data-page="performance" data-titre="Performance" hidden>
           <div class="si-donnees">
             <div class="kpis kpis-secondaires" id="kpis-perf"></div>
             <div class="grille-2">
@@ -347,7 +351,7 @@
         </section>
 
         <!-- ═══ CLV ═════════════════════════════════════════════════════ -->
-        <section class="page" id="page-clv" data-page="clv" hidden>
+        <section class="page" id="page-clv" data-page="clv" data-titre="CLV" hidden>
           <div class="si-donnees">
             <div class="kpis kpis-secondaires" id="kpis-clv"></div>
             <div class="grille-2">
@@ -372,7 +376,7 @@
             <article class="carte" id="bloc-matrice">
               <header class="carte-tete">
                 <div><h2>Matrice cote × EV</h2>
-                  <p class="carte-sous">Clique une cellule pour ouvrir le détail de ses opportunités.</p></div>
+                  <p class="carte-sous">Cliquez sur une cellule pour ouvrir le détail de ses opportunités.</p></div>
                 <div class="carte-outils">
                   <select id="m-mesure" class="select-mini" aria-label="Mesure de la matrice">
                     <option value="clv">CLV</option>
@@ -386,11 +390,11 @@
         </section>
 
         <!-- ═══ BOOKMAKERS ══════════════════════════════════════════════ -->
-        <section class="page" id="page-bookmakers" data-page="bookmakers" hidden>
+        <section class="page" id="page-bookmakers" data-page="bookmakers" data-titre="Bookmakers" hidden>
           <div class="si-donnees">
             <article class="carte carte-table">
               <header class="carte-tete"><div><h2>Tous les bookmakers</h2>
-                <p class="carte-sous">Clique un en-tête pour trier. Les jumeaux Kambi comptent pour un seul book.</p></div></header>
+                <p class="carte-sous">Cliquez sur un en-tête pour trier. Les jumeaux Kambi comptent pour un seul book.</p></div></header>
               <div class="enrob"><table class="tableau" id="t-book-complet"></table></div>
             </article>
             <div class="grille-2">
@@ -407,7 +411,7 @@
         </section>
 
         <!-- ═══ MARCHÉS ═════════════════════════════════════════════════ -->
-        <section class="page" id="page-marches" data-page="marches" hidden>
+        <section class="page" id="page-marches" data-page="marches" data-titre="Marchés" hidden>
           <div class="si-donnees">
             <article class="carte carte-table">
               <header class="carte-tete"><div><h2>Par marché</h2></div></header>
@@ -442,7 +446,7 @@
         </section>
 
         <!-- ═══ COMPÉTITIONS ════════════════════════════════════════════ -->
-        <section class="page" id="page-competitions" data-page="competitions" hidden>
+        <section class="page" id="page-competitions" data-page="competitions" data-titre="Compétitions" hidden>
           <div class="si-donnees">
             <div class="grille-2">
               <article class="carte carte-graphe">
@@ -471,14 +475,14 @@
         </section>
 
         <!-- ═══ PARIS JOUÉS ═════════════════════════════════════════════ -->
-        <section class="page" id="page-paris" data-page="paris" hidden>
+        <section class="page" id="page-paris" data-page="paris" data-titre="Paris joués" hidden>
           <div class="barre-page">
             <div class="segmente" id="pj-filtre" role="group" aria-label="Paris affichés">
-              <button type="button" data-played="tous">Toutes les opportunités</button>
-              <button type="button" data-played="oui">Paris joués</button>
+              <button type="button" data-played="oui">Joués</button>
               <button type="button" data-played="non">Non joués</button>
+              <button type="button" data-played="tous">Toutes les opportunités</button>
             </div>
-            <p class="aide" id="pj-aide">Le choix est un filtre de l'analyse : KPI, graphiques et détail décrivent le même lot.</p>
+            <p class="aide" id="pj-aide"></p>
           </div>
           <div class="si-donnees">
             <div class="kpis kpis-secondaires" id="kpis-paris"></div>
@@ -494,7 +498,7 @@
         </section>
 
         <!-- ═══ ANALYSE AVANCÉE ═════════════════════════════════════════ -->
-        <section class="page" id="page-avancee" data-page="avancee" hidden>
+        <section class="page" id="page-avancee" data-page="avancee" data-titre="Analyse avancée" hidden>
           <div class="si-donnees">
             <article class="carte">
               <header class="carte-tete"><div><h2>Analyser par :</h2>
@@ -503,6 +507,11 @@
             </article>
 
             <div id="aa-panneau" hidden>
+              <div class="aa-param" id="aa-param">
+                <span class="aa-param-texte"><span class="aide">Filtre appliqué sur cet axe :</span>
+                  <b id="aa-param-valeur"></b></span>
+                <button class="btn btn-secondaire btn-petit" id="aa-param-regler" type="button">Régler ce filtre</button>
+              </div>
               <div class="grille-2">
                 <article class="carte carte-graphe">
                   <header class="carte-tete"><div><h2 id="aa-titre-clv">CLV</h2>
@@ -547,7 +556,7 @@
               <div class="enrob"><table class="tableau segments" id="segments"></table></div>
             </article>
 
-            <article class="carte">
+            <article class="carte" id="aa-bloc-regles" hidden>
               <header class="carte-tete"><div><h2>Règles d'EV segmentées</h2>
                 <p class="carte-sous">EV différent par sport, ou par tranche de cote : ce sont des filtres, réglés dans les Filtres avancés.</p></div>
                 <button class="btn btn-secondaire btn-petit" id="aa-ouvrir-segmentation" type="button">Régler la segmentation</button></header>
@@ -557,7 +566,7 @@
         </section>
 
         <!-- ═══ MES ANALYSES ════════════════════════════════════════════ -->
-        <section class="page" id="page-mes-analyses" data-page="mes-analyses" hidden>
+        <section class="page page-outil" id="page-mes-analyses" data-page="mes-analyses" hidden>
           <article class="carte">
             <header class="carte-tete"><div><h2>Sauvegarder l'analyse courante</h2>
               <p class="carte-sous">Période et tous les filtres, y compris avancés. Enregistré dans ce navigateur uniquement.</p></div></header>
@@ -571,12 +580,12 @@
         </section>
 
         <!-- ═══ EXPORTER ════════════════════════════════════════════════ -->
-        <section class="page" id="page-exporter" data-page="exporter" hidden>
+        <section class="page page-outil" id="page-exporter" data-page="exporter" hidden>
           <div class="grille-3">
             <article class="carte carte-action">
-              <h2>PDF</h2>
-              <p>L'impression du navigateur : la page courante, avec en tête <b>tous les filtres appliqués par le serveur</b>. Choisissez « Enregistrer au format PDF ».</p>
-              <button class="btn btn-secondaire" id="ex-pdf" type="button">Exporter en PDF</button>
+              <h2>PDF — rapport complet</h2>
+              <p>Toutes les pages d'analyse en un document, avec en tête <b>tous les filtres appliqués par le serveur</b>. L'impression du navigateur s'ouvre : choisissez « Enregistrer au format PDF ».</p>
+              <button class="btn btn-secondaire" id="ex-pdf" type="button">Exporter le rapport PDF</button>
             </article>
             <article class="carte carte-action">
               <h2>CSV — opportunités</h2>
@@ -589,11 +598,11 @@
               <button class="btn btn-secondaire" id="ex-csv-decoupes" type="button">Télécharger le CSV</button>
             </article>
           </div>
-          <p class="aide">Les exports décrivent la <b>dernière analyse lancée</b>. Si des filtres ont été modifiés depuis, relancez « Analyser » d'abord.</p>
+          <p class="aide">Les exports décrivent la <b>dernière analyse affichée</b> — pas des filtres modifiés depuis sans relancer « Analyser ». Le PDF d'une seule page se lance depuis le menu « Exporter » de cette page.</p>
         </section>
 
         <!-- ═══ PARAMÈTRES ══════════════════════════════════════════════ -->
-        <section class="page" id="page-parametres" data-page="parametres" hidden>
+        <section class="page page-outil" id="page-parametres" data-page="parametres" hidden>
           <div class="grille-2">
             <article class="carte">
               <header class="carte-tete"><div><h2>Apparence</h2></div></header>
@@ -810,8 +819,8 @@
       <div class="champ-corps">
         <select id="f-played" aria-label="Joué">
           <option value="tous">Tous</option>
-          <option value="oui">Cliqués sur « Jouer »</option>
-          <option value="non">Alertés, non cliqués</option>
+          <option value="oui">Joués (cliqués sur « Jouer »)</option>
+          <option value="non">Non joués</option>
         </select>
       </div>
     </div>
