@@ -322,7 +322,12 @@ class VivatbetScraper:
         reraise=True,
     )
     def _get(self, route: str, params: dict) -> list:
-        r = self._client.get(f"{BASE}/{route}", params={**PARAMS_SITE, **params})
+        # ⚠️ L'ORDRE DES PARAMÈTRES COMPTE : le flux exige l'ordre ALPHABÉTIQUE,
+        # celui de toutes les URL du HAR. Les mêmes valeurs dans un autre ordre
+        # répondent `400 InvalidQueryParametersException` — vérifié depuis la
+        # VM le 28/09 : `curl` trié → 200, scraper non trié → 400.
+        tries = dict(sorted({**PARAMS_SITE, **params}.items()))
+        r = self._client.get(f"{BASE}/{route}", params=tries)
         r.raise_for_status()
         return r.json()
 

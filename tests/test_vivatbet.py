@@ -171,6 +171,24 @@ def test_les_vedettes_demandent_le_plafond_de_50_et_le_bon_sport():
     assert p["gr"] == "704" and p["fcountry"] == "24"
 
 
+@pytest.mark.parametrize("appel", ["fetch_top", "fetch_leagues", "fetch_league"])
+def test_les_parametres_partent_dans_lordre_ALPHABETIQUE(appel):
+    """Le flux refuse (400) les mêmes paramètres dans un autre ordre — c'est
+    ce qui a fait échouer la première sonde sur la VM."""
+    sc, vus = _scraper_espion([])
+    getattr(sc, appel)(*(("soccer", 88637) if appel == "fetch_league" else ("soccer",)))
+    cles = [k for k, _ in vus[0].url.params.multi_items()]
+    assert cles == sorted(cles), cles
+
+
+def test_lurl_des_vedettes_est_celle_du_curl_qui_a_marche():
+    """L'URL exacte que la VM a reçue en 200 (`count=50`, football)."""
+    sc, vus = _scraper_espion([])
+    sc.fetch_top("soccer")
+    assert str(vus[0].url).split("?", 1)[1] == (
+        "cfView=3&count=50&fcountry=24&gr=704&grMode=4&lng=fr&ref=282&selectedMs=2.1")
+
+
 def test_une_competition_se_demande_par_son_identifiant():
     sc, vus = _scraper_espion([])
     sc.fetch_league("soccer", 88637)
