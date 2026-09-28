@@ -98,9 +98,9 @@ def test_format_includes_euro_stake_on_default_bankroll():
     # The stake is shown rounded to the euro: a 15.37€ recommendation implies a
     # precision the model doesn't have, and nobody places a bet to the cent.
     msg = format_value_bet(_bet())
-    assert "1.50%" in msg
-    assert "15€" in msg
-    assert "de 1000€" in msg
+    # Le montant seul : « (1.50% de 1000€) » retiré le 28/09.
+    assert "Mise conseillée : 15€" in msg
+    assert "1.50%" not in msg and "de 1000€" not in msg
 
 
 def test_format_includes_line_when_present():
@@ -751,8 +751,14 @@ def test_sent_value_bet_text_uses_configured_bankroll():
     )
     with TelegramAlerter(cfg, client=FakeClient()) as a:
         assert a.send_value_bet(_bet(ev_pct=7.0)) is True
-    assert texts and "de 1250€" in texts[0]
-    assert "de 1000€" not in texts[0]
+    # La bankroll ne s'affiche plus : c'est le MONTANT qui prouve le câblage —
+    # 1,5 % de 1 250 € = 19 €, contre 15 € sur la bankroll par défaut.
+    from src.alerter import _advised_stake_line
+    sur_1250 = _advised_stake_line(7.0, _bet(ev_pct=7.0).kelly_stake_pct, 1250.0)
+    sur_1000 = _advised_stake_line(7.0, _bet(ev_pct=7.0).kelly_stake_pct, 1000.0)
+    assert sur_1250 != sur_1000
+    assert texts and sur_1250 in texts[0]
+    assert sur_1000 not in texts[0]
 
 
 def test_premium_channel_not_called_without_config():
@@ -1004,3 +1010,19 @@ def test_extreme_ev_carries_a_warning_band():
 
 def test_normal_ev_has_no_band():
     assert "vérifier avant de miser" not in format_value_bet(_extreme_bet(12.0), "soccer")
+
+
+def test_la_ligue_de_PINNACLE_prend_le_relais_quand_le_book_nen_donne_pas():
+    """Remarque du 28/09 : la ligne « 🏆 » manquait sur les alertes des books
+    qui ne fournissent pas de compétition — la plupart."""
+    bet = _bet()
+    bet.league = None
+    msg = format_value_bet(bet, ligue_ref="Belgium - Jupiler Pro League")
+    assert "🏆 Belgium - Jupiler Pro League" in msg
+    # Celle du book passe d'abord : c'est elle qu'on retrouve sur son site.
+    bet.league = "Belgique. Jupiler Pro League"
+    msg = format_value_bet(bet, ligue_ref="Belgium - Jupiler Pro League")
+    assert "🏆 Belgique. Jupiler Pro League" in msg and "Belgium - Jupiler" not in msg
+    # Aucune des deux : pas de ligne vide.
+    bet.league = None
+    assert "🏆" not in format_value_bet(bet)

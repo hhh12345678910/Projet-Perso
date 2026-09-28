@@ -87,17 +87,18 @@ def _advised_stake_eur(ev_pct: float | None, kelly_stake_pct: float | None,
 
 def _advised_stake_line(ev_pct: float | None, kelly_stake_pct: float | None,
                         bankroll: float) -> str:
-    """The 'Mise conseillée : …' text (without leading newline), or '' if none."""
+    """The 'Mise conseillée : …' text (without leading newline), or '' if none.
+
+    Le montant seul, en euros : le « (1.47% de 1000€) » qui le suivait a été
+    retiré à la demande du 28/09. La bankroll reste celle de la configuration
+    — c'est elle qui fixe le montant."""
     stake = _advised_stake_eur(ev_pct, kelly_stake_pct, bankroll)
     if stake is None:
         return ""
     if _STAKE_MODE == "flat":
         boost = "  ⚡" if (ev_pct is not None and ev_pct >= _STAKE_EV_TIER) else ""
-        if _STAKE_PCT > 0 and bankroll > 0:
-            return f"Mise conseillée : {stake:.0f}€ ({stake / bankroll * 100:.1f}% de {bankroll:.0f}€){boost}"
         return f"Mise conseillée : {stake:.0f}€{boost}"
-    pct = min(kelly_stake_pct, _MAX_STAKE_PCT)
-    return f"Mise conseillée : {stake:.0f}€ ({pct:.2f}% de {bankroll:.0f}€)"
+    return f"Mise conseillée : {stake:.0f}€"
 
 
 # Belgium-friendly display: dates relative to today, kickoff in local time.
@@ -827,9 +828,12 @@ def format_value_bet(bet: ValueBet, sport: str | None = None,
         when_line = ""
 
     line_suffix = f" {bet.outcome.line}" if bet.outcome.line is not None else ""
-    # Only some sources carry a competition name, so this line is conditional
-    # rather than showing an empty placeholder.
-    league_line = f"🏆 {_ht(bet.league)}\n" if bet.league else ""
+    # La compétition du BOOK d'abord (celle qu'on retrouve sur son site), à
+    # défaut celle de PINNACLE : la plupart des books n'en fournissent pas, et
+    # la ligne « 🏆 » manquait sur leurs alertes (remarque du 28/09 — le même
+    # format pour tous les books). Sans aucune des deux, pas de ligne vide.
+    ligue = bet.league or ligue_ref
+    league_line = f"🏆 {_ht(ligue)}\n" if ligue else ""
     # Only flagged when it isn't Pinnacle. A fallback reference is thinner, so
     # the same EV% deserves less confidence — and silently presenting the two
     # as equivalent is how a shaky number gets treated as a sure thing.
