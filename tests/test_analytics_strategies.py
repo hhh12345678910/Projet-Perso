@@ -115,7 +115,11 @@ def test_les_chiffres_sont_CEUX_DE_LANALYTICS_pour_les_memes_filtres(base):
     res = client.get("/api/strategies", params={"sport": "soccer", "min_n": 100}).json()
     for strat in res["strategies"]:
         f = strat["analytics_filters"]
-        params = [("sports", "soccer"), ("population", "settled")]
+        # Le sport, la population et la période viennent de la réponse elle-même :
+        # oubliés, l'Analytics rouvrait tous les sports (564 paris au lieu de 310).
+        assert f["sports"] == ["soccer"] and f["population"] == "settled"
+        params = [("sports", s) for s in f["sports"]] + [("population", f["population"])]
+        params += [(k, f[k]) for k in ("date_from", "date_to") if f[k]]
         params += [("bookmakers", b) for b in f["bookmakers"]]
         params += [("markets", m) for m in f["markets"]]
         params += [("outcomes", o) for o in f["outcomes"]]
@@ -302,3 +306,22 @@ def test_la_recherche_reste_rapide_sur_un_gros_lot(tmp_path):
     res = sf.trouver(str(base), sport="soccer", min_n=100)
     assert time.perf_counter() - t0 < 15
     assert res["counts"]["tested"] > 500 and res["strategies"]
+
+
+def test_les_cartes_ne_sont_pas_des_VARIANTES_les_unes_des_autres(tmp_path):
+    """Un bookmaker dont presque tous les paris sont des « totals » : « Betano »
+    et « Betano · Totals » décrivent presque le même lot. Les deux ne peuvent
+    pas occuper deux cartes ; la seconde est marquée comme variante."""
+    opps = _serie(1, "betano_be", 400, cloture=1.8, taux=0.6, market="totals")
+    for o in opps:
+        o.outcome, o.line, o.gagnant, o.score_dom, o.score_ext = "over 2.5", 2.5, "home", 3, 1
+    opps += _serie(401, "betano_be", 40, cloture=1.8, taux=0.6)          # quelques h2h
+    res = _trouver(monter(tmp_path, opps), min_n=50)
+    cartes = [s for s in res["strategies"] if not s["variant_of"]][:5]
+    ens = {s["id"] for s in cartes}
+    assert not ({"bookmaker=betano_be", "bookmaker=betano_be|market=totals"} <= ens)
+    variantes = [s for s in res["strategies"] if s["variant_of"]]
+    assert variantes and all(v["rank"] > 1 for v in variantes)
+    # Les variantes passent APRÈS les pistes distinctes, et ne sont pas comptées.
+    assert res["counts"]["shown"] == len(cartes)
+    assert [s["rank"] for s in cartes] == list(range(1, len(cartes) + 1))

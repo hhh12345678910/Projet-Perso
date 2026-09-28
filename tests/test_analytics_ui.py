@@ -187,10 +187,12 @@ def _urls_appelees(js: str) -> set:
 
 
 def test_le_js_ne_connait_que_les_trois_endpoints():
-    # PHASE 4 — `/api/segments` rejoint la liste. La propriété testée est
-    # inchangée : le JS n'appelle QUE des endpoints connus de l'API Analytics.
+    # PHASE 4 — `/api/segments` rejoint la liste ; le Strategy Finder y ajoute
+    # `/api/strategies`. La propriété testée est inchangée : le JS n'appelle
+    # QUE des endpoints connus de l'API Analytics.
     assert _urls_appelees(JS) == {"/api/filters", "/api/analyse",
-                                  "/api/detail", "/api/segments"}
+                                  "/api/detail", "/api/segments",
+                                  "/api/strategies"}
 
 
 def test_le_js_n_appelle_fetch_que_par_ces_constantes():
@@ -992,8 +994,8 @@ def test_aucun_identifiant_HTML_nest_EN_DOUBLE():
 
 
 PAGES_NAV = ["vue-ensemble", "performance", "clv", "bookmakers", "marches",
-             "competitions", "paris", "avancee", "mes-analyses", "exporter",
-             "parametres"]
+             "competitions", "paris", "strategies", "avancee", "mes-analyses",
+             "exporter", "parametres"]
 
 
 @pytest.mark.parametrize("page", PAGES_NAV)
@@ -1203,3 +1205,232 @@ def test_le_bouton_principal_garde_un_contraste_AA_dans_les_deux_themes():
         hi, lo = sorted((lum(muet), lum(carte)), reverse=True)
         assert (hi + 0.05) / (lo + 0.05) >= 4.5, (muet, carte)
     assert "background: var(--marque-bouton)" in CSS
+
+
+# ══ STRATEGY FINDER ═══════════════════════════════════════════════════
+#
+# Une page outil qui MONTRE un classement calculé par le serveur
+# (`/api/strategies`). Ce qui est protégé ici : elle ne recalcule rien, elle
+# ne promet rien, elle dit quand elle a moins de cinq résultats ou aucun, et
+# ses modales se comportent comme le tiroir (inertes derrière, Échap, focus).
+
+
+def _bloc_strategy_finder():
+    """Le code du Strategy Finder, de son bandeau à la section suivante."""
+    debut = JS.index("/* ── Strategy Finder ──")
+    return JS[debut:JS.index("/* ── Paramètres ──", debut)]
+
+
+def test_strategy_finder_est_une_page_outil_entre_paris_et_analyse_avancee():
+    assert 'class="page page-outil" id="page-strategies" data-page="strategies"' in HTML
+    assert re.search(r"strategies:\s*\{\s*titre:\s*'Strategy Finder',[^}]*analyse:\s*false", JS)
+    nav = HTML[HTML.index('id="sb-nav"'):HTML.index("</nav>")]
+    assert (nav.index('href="#/paris"') < nav.index('href="#/strategies"')
+            < nav.index('href="#/avancee"')), "le lien n'est pas entre Paris joués et Analyse avancée"
+    lien = nav[nav.index('href="#/strategies"'):]
+    lien = lien[:lien.index("</a>")]
+    assert "<svg" in lien, "le lien de navigation n'a pas son icône SVG en ligne"
+
+
+@pytest.mark.parametrize("ident", [
+    "sf-sport", "sf-date-from", "sf-date-to", "sf-population", "sf-min-presets",
+    "sf-min", "sf-objectif", "sf-rapides", "sf-lancer", "sf-methode-btn",
+    "sf-resultats", "sf-cartes", "sf-table", "sf-par-book", "sf-par-marche",
+    "sf-csv", "sf-pdf", "sf-entete-pdf", "sf-vide", "sf-nombre"])
+def test_strategy_finder_a_ses_elements(ident):
+    assert f'id="{ident}"' in HTML, ident
+
+
+def test_strategy_finder_propose_les_objectifs_et_les_minimums_demandes():
+    obj = HTML[HTML.index('id="sf-objectif"'):]
+    obj = obj[:obj.index("</div>")]
+    for valeur, libelle in (("balanced", "Équilibre"), ("clv", "CLV"), ("roi", "ROI")):
+        assert f'data-objectif="{valeur}"' in obj and f">{libelle}<" in obj, valeur
+    assert 'data-objectif="balanced" class="actif"' in obj, "Équilibre n'est pas le défaut"
+    mins = HTML[HTML.index('id="sf-min-presets"'):]
+    mins = mins[:mins.index("</div>")]
+    assert re.findall(r'data-min="(\d+)"', mins) == ["50", "100", "250", "500", "1000"]
+    assert 'data-min="100" class="actif"' in mins
+    assert 'id="sf-min" min="1" step="1" value="100"' in HTML
+    assert "Le ROI ne porte jamais que sur les paris réglés." in HTML
+
+
+def test_strategy_finder_appelle_SON_endpoint_par_appel():
+    assert "const API_STRATEGIES = '/api/strategies';" in JS
+    corps = _corps("async function sfLancer")
+    assert "appel(API_STRATEGIES, sfParametres())" in corps
+    # Une réponse périmée ne remplace jamais la plus récente, et le bouton
+    # est inactif pendant la recherche.
+    assert "JETON_SF = jeton" in corps and "if (JETON_SF !== jeton) return;" in corps
+    assert "b.disabled = true" in corps
+    params = _corps("function sfParametres")
+    for nom in ("'sport'", "'date_from'", "'date_to'", "'population'", "'min_n'", "'objective'"):
+        assert nom in params, nom
+    assert "if (sport) p.set('sport', sport)" in params, "« Tous les sports » doit omettre `sport`"
+
+
+def test_strategy_finder_ne_recalcule_AUCUNE_metrique():
+    """⚠️ Le classement, les parts et les écarts viennent du serveur. Compter
+    les sous-périodes à CLV positive, ou soustraire l'entraînement de la
+    validation, ferait une seconde définition sous la même étiquette."""
+    bloc = _bloc_strategy_finder()
+    code = "\n".join(l for l in bloc.splitlines()
+                     if not l.strip().startswith(("*", "//", "/*")))
+    assert not re.search(r"blocks\s*\)?\.filter\(", code), "des sous-périodes sont recomptées"
+    assert not re.search(r"\.clv\s*-\s*\w+\.clv|\.roi\s*-\s*\w+\.roi", code), "un écart est recalculé"
+    assert not re.search(r"\breduce\(|\bsum\s*\(", code)
+    assert "st.clv_positive_share" in code and "st.measured_blocks" in code
+    assert "pts(delta.clv)" in code and "pts(delta.roi)" in code
+
+
+def test_strategy_finder_lit_la_reponse_du_serveur():
+    bloc = _bloc_strategy_finder()
+    for lecture in ("s.summary", "sm.settled", "s.validation", "v.sufficient", "s.robustness",
+                    "r.level", "r.label", "s.sample", "d.counts", "d.split",
+                    "d.warnings", "d.by_bookmaker", "d.by_market", "s.why",
+                    "s.analytics_filters", "p.sport_label", "p.population_label",
+                    "p.objective_label", "p.min_n", "p.stake"):
+        assert lecture in bloc, lecture
+    # Les cinq premières pistes DISTINCTES font les cartes ; toutes font le
+    # tableau, variantes comprises (marquées « variante de #n »).
+    assert "sfCartes(cartes)" in bloc and "s.variant_of" in bloc
+
+
+def test_strategy_finder_cartes_criteres_dans_un_ordre_fixe():
+    """Les critères autres que bookmaker et marché, dans l'ordre EV, Cote,
+    Pari, Délai, et seulement ceux que la configuration restreint."""
+    carte = _corps("function sfCarte(s)")
+    assert "['ev', 'odds', 'outcome', 'delay']" in carte
+    code = "\n".join(l for l in carte.splitlines() if not l.strip().startswith("//"))
+    assert "Toutes" not in code, "un critère absent ne s'écrit pas « Toutes »"
+
+
+def test_les_infobulles_de_courbe_n_ecrivent_pas_un_champ_ABSENT():
+    """Une semaine du Strategy Finder ne porte ni taux de règlement ni
+    couverture : l'infobulle commune ne doit pas y écrire « (—) »."""
+    corps = _corps("function lignesTranche")
+    assert "t[k] === undefined ? '' : txt" in corps
+    for champ in ("'settlement_rate'", "'clv_coverage'", "'sample'", "'sample_settled'"):
+        assert f"si({champ}" in corps, champ
+
+
+def test_strategy_finder_etat_vide_et_moins_de_cinq_resultats():
+    assert "Aucune configuration suffisamment documentée." in HTML
+    assert "Essayez d'augmenter la période ou de réduire le nombre minimum de paris." in HTML
+    corps = _corps("function sfRendre")
+    assert "$('sf-vide').hidden = !vide" in corps
+    # Des pistes DISTINCTES : une variante (`variant_of`) n'occupe pas de carte.
+    assert "liste.filter((s) => !s.variant_of).slice(0, 5)" in corps
+    assert "cartes.length >= 5" in corps
+    assert "configurations distinctes répondent aux critères." in corps
+    assert "configuration distincte répond aux critères." in corps
+
+
+def test_strategy_finder_chargement_et_erreur():
+    corps = _corps("function sfAfficherEtat")
+    assert "Analyse des configurations…" in corps
+    assert "blocAvert(" in corps and ", true)" in corps, "l'erreur n'est pas un avertissement grave"
+    # Pas de fausse progression : aucun pourcentage d'avancement inventé.
+    assert "progress" not in corps.lower()
+
+
+def test_strategy_finder_les_modales_sont_des_dialogues():
+    for ident in ("sf-methode", "sf-detail"):
+        assert re.search(rf'id="{ident}" role="dialog" aria-modal="true" aria-labelledby="[^"]+"', HTML), ident
+    assert 'id="sf-voile"' in HTML
+    ouvrir, fermer = _corps("function sfOuvrirModale"), _corps("function sfFermerModale")
+    assert "$('app').inert = true" in ouvrir and "SF_OUVREUR" in ouvrir
+    assert "$('app').inert = false" in fermer and "cible.focus()" in fermer
+    # Échap ferme la modale, une couche à la fois, avant le tiroir.
+    echap = JS[JS.index("if (e.key !== 'Escape') return;"):]
+    echap = echap[:echap.index("});")]
+    assert echap.index("sfFermerModale()") < echap.index("fermerTiroir()")
+
+
+def test_strategy_finder_la_methode_vient_du_serveur_sinon_du_texte_fixe():
+    assert "(SF && SF.method) || SF_METHODE" in _corps("function sfOuvrirMethode")
+    for phrase in ("Valuebet analyse différentes combinaisons de bookmaker, marché, type de pari, EV, cote et délai.",
+                   "Une partie de la période est conservée pour valider les configurations hors-échantillon."):
+        assert phrase in JS, phrase
+
+
+def test_strategy_finder_detail_graphes_et_intervalles():
+    corps = _corps("function sfGraphes")
+    assert "courbe(a, s.series || [], 'clv', 'CLV dans le temps')" in corps
+    assert "'pnl_cumul', 'P&L cumulé', (v) => eur(v, 0)" in corps, "le P&L cumulé doit être en euros"
+    detail = _corps("function sfRemplirDetail")
+    for jeton in ("sfIntervalle(ci, ci.clv)", "sfIntervalle(ci, ci.roi)", "st.blocks",
+                  "Pourquoi cette configuration ?", "Entraînement / Validation",
+                  "Variation CLV", "Variation ROI", "Stabilité", "clv_coverage"):
+        assert jeton in detail, jeton
+    assert "IC ${num(ci.level)} % : [" in _corps("function sfIntervalle")
+
+
+def test_strategy_finder_ouvre_la_configuration_dans_le_TIROIR():
+    corps = _corps("function sfOuvrirAnalytics")
+    for geste in ("$('reinit').click()", "poser('f-sports', f.sports)",
+                  "poser('f-books', f.bookmakers)", "poser('f-markets', f.markets)",
+                  "poser('f-outcomes', f.outcomes)", "appliquerModeEv('tranches', false)",
+                  "poser('f-ev-bands', f.ev_bands)", "appliquerModeCote('tranches', false)",
+                  "poser('f-odds-bands', f.odds_bands)", "$('f-delay-unite').value = 'h'",
+                  "$('f-population').value = f.population", "signalerChangement()",
+                  "allerA('vue-ensemble')", "analyser()"):
+        assert geste in corps, geste
+    assert "cocher(groupe, v)" in corps
+
+
+def test_strategy_finder_export_csv_et_pdf():
+    csv = _corps("function sfExporterCsv")
+    assert "csvTexte(entetes, lignes)" in csv and "telecharger(" in csv
+    assert "valuebet-strategies-${p.sport || 'tous'}-${de}_${a}.csv" in csv
+    for colonne in ("'rank'", "'settled'", "'clv'", "'clv_n'", "'roi'", "'pnl'", "'stake_total'",
+                    "'validation_clv'", "'validation_roi'", "'validation_settled'",
+                    "'robustesse'", "'echantillon'"):
+        assert colonne in csv, colonne
+    assert "window.print()" in _corps("function sfImprimer")
+    entete = _corps("function sfEntetePdf")
+    for ligne in ("'Sport'", "'Période'", "'Population'", "'Minimum'", "'Mode'", "'Exporté le'"):
+        assert ligne in entete, ligne
+    assert 'class="carte impression-seule sf-entete-pdf" id="sf-entete-pdf"' in HTML
+
+
+def test_strategy_finder_imprime_sans_formulaire_ni_entete_de_lanalyse():
+    bloc = CSS[CSS.rindex("@media print"):]
+    assert "#sf-formulaire" in bloc and ".sf-modale" in bloc
+    assert 'body[data-page="strategies"]:not(.impression-rapport) #entete-pdf' in bloc
+    assert "document.body.dataset.page = p" in _corps("function afficherPage")
+
+
+def test_strategy_finder_la_robustesse_suit_les_JETONS_du_theme():
+    for niveau, jeton in (("strong", "--bon"), ("medium", "--alerte"), ("weak", "--grave")):
+        assert re.search(rf"\.sf-robustesse\.{niveau} \.sf-point \{{ background: var\({jeton}\); \}}", CSS), niveau
+    # Le niveau devient une classe : il est borné aux trois valeurs du contrat.
+    assert "['strong', 'medium', 'weak'].includes(r.level)" in JS
+
+
+def test_strategy_finder_les_cartes_sont_accessibles_et_neutres():
+    carte = _corps("function sfCarte(s)")
+    assert "c.tabIndex = 0" in carte and "setAttribute('role', 'button')" in carte
+    assert "e.key === 'Enter'" in carte
+    assert ".sf-carte:focus-visible" in CSS
+    regle = CSS[CSS.index(".sf-carte {"):]
+    regle = regle[:regle.index("}")]
+    assert "--bon" not in regle and "--grave" not in regle, "la carte elle-même ne doit pas être colorée"
+
+
+def test_strategy_finder_le_tableau_se_trie_au_clavier_et_garde_les_absents_en_bas():
+    corps = _corps("function sfTableau")
+    assert "aria-sort" in corps and "th.tabIndex = 0" in corps
+    assert "if (absA || absB) return absA === absB ? a.rank - b.rank : absA ? 1 : -1;" in corps
+    assert '<div class="enrob"><table class="tableau sf-table" id="sf-table">' in HTML
+
+
+def test_strategy_finder_vocabulaire_prudent_et_vouvoiement():
+    """Une configuration « a présenté » une CLV passée : l'interface ne
+    promet pas de gains et ne tutoie personne."""
+    code = sans_namespace_svg(_bloc_strategy_finder())
+    page = HTML[HTML.index('id="page-strategies"'):HTML.index("<!-- ═══ MES ANALYSES")]
+    for source in (code, page):
+        bas = source.lower()
+        for interdit in ("va gagner", "meilleure stratégie", "garanti", "clique ", "essaie "):
+            assert interdit not in bas, interdit

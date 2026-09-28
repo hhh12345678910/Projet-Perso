@@ -52,9 +52,15 @@ bruité, ce que la borne basse absorbe.
 
 LIMITES ÉNONCÉES
 ----------------
-  - le filtre de délai de l'Analytics est inclusif aux deux bornes, la bande
-    de délai exclut sa borne haute : un pari détecté pile à 3,000 h peut
-    changer de côté entre les deux vues (cas de bord, aucun effet mesurable) ;
+  - ⚠️ INCOHÉRENCE PRÉEXISTANTE DE L'ANALYTICS, SIGNALÉE ET NON CORRIGÉE : le
+    filtre de délai (`requete.construire`) inclut ses DEUX bornes, alors que la
+    bande de délai (`perimetre.bande_delai`, celle de `by_delay` et d'ici)
+    exclut sa borne haute. Un pari détecté pile à 12,0 h est dans la bande
+    « 12-24 h » mais passe AUSSI le filtre « 6 → 12 h ». Mesuré le 28/09 sur une
+    base de test aux heures rondes : 62 paris sur 372 ; rare avec de vraies
+    heures de détection, à la seconde. Le Strategy Finder suit la BANDE ;
+    « Ouvrir dans l'Analytics » le signale. La correction (filtre semi-ouvert)
+    change une règle de l'Analytics : elle attend une décision ;
   - la mise est notionnelle et FIXE (25 € par défaut) : le ROI n'en dépend
     pas, le P&L si.
 """
@@ -266,7 +272,7 @@ def _parts_positives(blocs) -> tuple:
 # ── Le moteur ─────────────────────────────────────────────────────────
 
 def chercher(rows, stake, bande_cote, bande_ev, *, min_n: int = 100,
-             objectif: str = "balanced") -> dict:
+             objectif: str = "balanced", contexte: "dict | None" = None) -> dict:
     """Le cœur, sans base ni HTTP : testable sur n'importe quel lot."""
     if objectif not in OBJECTIFS:
         raise FiltreInvalide(
@@ -350,15 +356,20 @@ def chercher(rows, stake, bande_cote, bande_ev, *, min_n: int = 100,
                  score=0.5 * c["base_t"] + 0.5 * base_v + c["volume"]
                  - c["complexite"] + stabilite)
     retenues.sort(key=lambda c: -c["score"])
+    retenues = _diversifier(retenues)
 
     strategies = [_rendre(c, rang, dims, stake, min_n, decoupe, objectif,
-                          bootstrap=rang <= AFFICHEES)
+                          bootstrap=rang <= AFFICHEES, contexte=contexte)
                   for rang, c in enumerate(retenues, start=1)]
     return {
         "split": _split_public(lignes, decoupe),
         "counts": {"tested": testees, "eligible": len(par_ensemble),
                    "below_minimum": ecartees, "redundant": redondantes,
-                   "validated": len(retenues), "shown": min(AFFICHEES, len(retenues))},
+                   "validated": len(retenues),
+                   # Les CARTES : des pistes distinctes seulement, jamais une
+                   # variante d'une carte mieux classée (`_diversifier`).
+                   "shown": sum(1 for c in retenues[:AFFICHEES]
+                                if c.get("variante_de") is None)},
         "strategies": strategies,
         "by_bookmaker": _comparer(candidates, retenues, lambda c: c["cle"][0],
                                   libelle_groupe_book, dims),
@@ -367,6 +378,34 @@ def chercher(rows, stake, bande_cote, bande_ev, *, min_n: int = 100,
             lambda c: c["cle"][1 + c["indices"].index(0)], libelle_marche, dims),
         "warnings": _avertissements(testees, len(par_ensemble), len(retenues), min_n),
     }
+
+
+#: Part des paris d'une configuration déjà couverte par une carte mieux
+#: classée au-delà de laquelle elle n'est plus qu'une VARIANTE de celle-ci.
+RECOUVREMENT_MAX = 0.6
+
+
+def _diversifier(retenues) -> list:
+    """Les cartes doivent montrer des pistes DIFFÉRENTES.
+
+    Observé au premier essai : « Ladbrokes · délai 6-12 h », puis la même
+    restreinte aux totaux, puis à l'EV 15-35 % occupaient trois des cinq
+    cartes — trois descriptions emboîtées d'un seul constat, qui donnent
+    l'illusion de trois confirmations. Une configuration dont plus de 60 % des
+    paris sont déjà dans une carte mieux classée passe APRÈS les cartes (elle
+    reste dans le tableau, marquée comme variante). Le classement relatif des
+    autres ne change pas."""
+    cartes, reportees = [], []
+    for c in retenues:
+        ens = {id(m) for m in c["membres"]}
+        c["_ens"] = ens
+        c["variante_de"] = next(
+            (a for a in cartes if len(ens & a["_ens"]) > RECOUVREMENT_MAX * len(ens)), None)
+        if c["variante_de"] is None and len(cartes) < AFFICHEES:
+            cartes.append(c)
+        else:
+            reportees.append(c)
+    return cartes + reportees
 
 
 # ── Rendu d'une configuration ─────────────────────────────────────────
@@ -378,6 +417,10 @@ def _criteres(c, dims) -> list:
         cle, lib, _x, affiche = dims[i]
         out.append({"dimension": cle, "label": lib, "value": v, "display": affiche(v)})
     return out
+
+
+def _ident(c, dims) -> str:
+    return "|".join(f"{x['dimension']}={x['value']}" for x in _criteres(c, dims))
 
 
 def _titre(criteres) -> str:
@@ -521,10 +564,17 @@ def _pourquoi(s, tr, val, suffisante, part_clv, mesures, cutoff, echantillon) ->
     return out
 
 
-def _filtres_analytics(criteres) -> dict:
+def _filtres_analytics(criteres, contexte) -> dict:
     """De quoi rejouer la configuration dans l'Analytics — mêmes filtres, donc
-    mêmes chiffres. Le groupe Kambi est rendu DÉPLIÉ (ses quatre books)."""
-    f = {"bookmakers": [], "markets": [], "outcomes": [], "ev_bands": [],
+    mêmes chiffres. Le groupe Kambi est rendu DÉPLIÉ (ses quatre books).
+
+    ⚠️ LE SPORT, LA PÉRIODE ET LA POPULATION EN FONT PARTIE. Oubliés au premier
+    essai de bout en bout : l'Analytics rouvrait la configuration sur tous les
+    sports et toutes les détections — 564 paris au lieu de 310."""
+    f = {"sports": list(contexte.get("sports") or []),
+         "date_from": contexte.get("date_from"), "date_to": contexte.get("date_to"),
+         "population": contexte.get("population"),
+         "bookmakers": [], "markets": [], "outcomes": [], "ev_bands": [],
          "odds_bands": [], "delay_min": None, "delay_max": None}
     for c in criteres:
         d, v = c["dimension"], c["value"]
@@ -545,7 +595,8 @@ def _filtres_analytics(criteres) -> dict:
     return f
 
 
-def _rendre(c, rang, dims, stake, min_n, decoupe, objectif, *, bootstrap) -> dict:
+def _rendre(c, rang, dims, stake, min_n, decoupe, objectif, *, bootstrap,
+            contexte=None) -> dict:
     from .service import _bande_temps, _cumuler, _decouper
 
     membres = c["membres"]
@@ -604,10 +655,14 @@ def _rendre(c, rang, dims, stake, min_n, decoupe, objectif, *, bootstrap) -> dic
                                   c["blocs_mesures"], ic_clv, min_n, objectif),
         "sample": echantillon,
         "score": round(c["score"], 3),
+        # Carte mieux classée dont celle-ci n'est qu'une variante (> 60 % de
+        # paris communs) — None sinon.
+        "variant_of": (_ident(c["variante_de"], dims)
+                       if c.get("variante_de") is not None else None),
         "why": _pourquoi(s, tr, val, c["suffisante"], c["part_clv"],
                          c["blocs_mesures"], decoupe.get("cutoff"), echantillon),
         "series": [{k: t.get(k) for k in garder} for t in serie],
-        "analytics_filters": _filtres_analytics(criteres),
+        "analytics_filters": _filtres_analytics(criteres, contexte or {}),
     }
 
 
@@ -723,7 +778,11 @@ def trouver(db_path, *, sport=None, date_from=None, date_to=None,
 
     lignes, _info = _charger(db_path, filtres)
     res = chercher(lignes, filtres.mise(), _bande_cote, _bande_ev,
-                   min_n=min_n, objectif=objectif)
+                   min_n=min_n, objectif=objectif,
+                   contexte={"sports": [sport] if sport else [],
+                             "date_from": filtres.date_from,
+                             "date_to": filtres.date_to,
+                             "population": filtres.population.value})
     pop = filtres.population
     sortie = {
         "params": {

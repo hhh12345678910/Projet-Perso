@@ -1008,6 +1008,250 @@ td.num { text-align: right; }
   animation: pop .15s ease-out;
 }
 
+/* ══ STRATEGY FINDER ══════════════════════════════════════════════════
+ * Une page outil : un formulaire, des cartes, un tableau, une modale de
+ * détail. Uniquement des jetons : les deux thèmes suivent sans règle de
+ * plus. Comme partout, la carte reste neutre — seuls les chiffres portent
+ * le signe. */
+
+.sf-formulaire .carte-tete { margin-bottom: 18px; }
+.sf-formulaire .carte-tete h2 { font-size: 17px; }
+#sf-methode-btn { color: var(--encre-2); }
+
+.sf-champs { display: flex; flex-wrap: wrap; gap: 18px 22px; align-items: flex-start; }
+.sf-champ { display: flex; flex-direction: column; gap: 6px; min-width: 0; flex: 1 1 190px; }
+.sf-champ-periode { flex: 1.4 1 280px; }
+.sf-champ-min { flex: 2 1 350px; }
+.sf-champ-objectif { flex: 1 1 210px; }
+.sf-lib { font-size: 12px; font-weight: 600; color: var(--encre-2); letter-spacing: .01em; }
+.sf-periode { width: 100%; }
+.sf-periode input[type="date"] { flex: 1 1 0; min-width: 0; }
+.sf-min-ligne { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
+.sf-min-ligne input[type="number"] { width: 100px; flex: 0 0 auto; }
+.sf-champ .segmente { align-self: flex-start; }
+
+.sf-bas {
+  display: flex; align-items: center; justify-content: space-between; gap: 14px 18px;
+  flex-wrap: wrap; margin-top: 20px; padding-top: 16px; border-top: 1px dashed var(--bordure);
+}
+.sf-rapides-bloc { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; }
+#sf-lancer { height: 42px; padding: 0 20px; font-weight: 600; }
+#sf-lancer .roue {
+  width: 14px; height: 14px; border-radius: 50%;
+  border: 2px solid rgba(255, 255, 255, .35); border-top-color: #fff;
+  display: none; animation: tourne .7s linear infinite;
+}
+#sf-lancer.charge .roue { display: inline-block; }
+#sf-lancer.charge .sf-ic-lancer { display: none; }
+
+/* Chargement : une roue et une phrase. Pas de pourcentage d'avancement :
+   le serveur n'en rend pas, et un chiffre inventé serait un mensonge. */
+.sf-chargement {
+  display: flex; align-items: center; justify-content: center; gap: 12px;
+  padding: 40px 22px; color: var(--encre-2); font-size: 14px; font-weight: 550;
+}
+.sf-roue {
+  width: 20px; height: 20px; border-radius: 50%; flex: 0 0 auto;
+  border: 2.5px solid var(--bordure-forte); border-top-color: var(--marque);
+  animation: tourne .8s linear infinite;
+}
+
+/* ── Résultats ─────────────────────────────────────────────────────── */
+
+.sf-resultats { display: flex; flex-direction: column; gap: 18px; }
+.sf-resultats > .etat-vide { margin-bottom: 0; }
+.sf-compteurs { display: grid; gap: 10px; grid-template-columns: repeat(4, minmax(0, 1fr)); }
+.sf-compteur {
+  display: flex; flex-direction: column; gap: 2px; min-width: 0;
+  padding: 12px 14px; border-radius: var(--r-s);
+  background: var(--fond-sous); border: 1px solid var(--bordure);
+}
+.sf-compteur b { font-size: 21px; font-weight: 650; letter-spacing: -.02em; line-height: 1.2; }
+.sf-compteur span { font-size: 12px; color: var(--encre-muet); line-height: 1.35; }
+.sf-split {
+  margin: 12px 0 0; font-size: 12.5px; color: var(--encre-2);
+  display: flex; flex-wrap: wrap; align-items: baseline; row-gap: 2px;
+}
+.sf-split b { font-weight: 600; color: var(--encre); }
+.sf-split .sep { color: var(--encre-muet); margin: 0 7px; opacity: .6; }
+/* Sans configuration, il n'y a rien à exporter : le bouton le montre. */
+#sf-csv:disabled { opacity: .5; }
+.sf-avert { display: flex; flex-direction: column; gap: 8px; }
+.sf-avert:not(:empty) { margin-top: 12px; }
+.avert:focus-visible { outline: 2px solid var(--marque); outline-offset: 2px; }
+
+.sf-bloc-top { display: flex; flex-direction: column; gap: 12px; }
+.sf-nombre { margin: 0; font-size: 13px; font-weight: 550; color: var(--encre-2); }
+.sf-prudence { margin: 0; font-size: 12px; color: var(--encre-muet); line-height: 1.5; }
+
+/* ── Cartes du top 5 ───────────────────────────────────────────────── */
+
+.sf-cartes { display: grid; gap: 14px; grid-template-columns: repeat(5, minmax(0, 1fr)); }
+.sf-carte {
+  display: flex; flex-direction: column; gap: 10px; padding: 16px 16px 14px;
+  cursor: pointer; transition: box-shadow .15s, border-color .15s, transform .06s;
+}
+.sf-carte:hover { box-shadow: var(--ombre-survol); border-color: var(--bordure-forte); }
+.sf-carte:focus-visible { outline: 2px solid var(--marque); outline-offset: 2px; }
+.sf-carte:active { transform: translateY(1px); }
+.sf-carte-tete { display: flex; align-items: center; justify-content: space-between; gap: 8px; flex-wrap: wrap; }
+.sf-rang {
+  display: inline-flex; align-items: center; height: 22px; padding: 0 8px; border-radius: 20px;
+  font-size: 12px; font-weight: 650; color: var(--encre-2);
+  background: var(--fond-sous); border: 1px solid var(--bordure);
+}
+.sf-carte-titre { margin: 0; font-size: 15px; font-weight: 640; letter-spacing: -.01em; line-height: 1.3; overflow-wrap: anywhere; }
+.sf-crit { display: grid; grid-template-columns: max-content minmax(0, 1fr); gap: 3px 10px; margin: 0; font-size: 12.5px; }
+.sf-crit dt { color: var(--encre-muet); }
+.sf-crit dd { margin: 0; font-weight: 550; overflow-wrap: anywhere; }
+.sf-carte-pied { margin-top: auto; display: flex; flex-direction: column; gap: 8px; }
+.sf-mesures {
+  display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 10px 12px;
+  padding-top: 10px; border-top: 1px solid var(--bordure);
+}
+.sf-mesure { min-width: 0; }
+.sf-mesure span { display: block; font-size: 11.5px; color: var(--encre-muet); }
+.sf-mesure b { display: block; font-size: 17px; font-weight: 650; letter-spacing: -.02em; white-space: nowrap; }
+.sf-carte-ligne {
+  display: flex; align-items: baseline; justify-content: space-between; gap: 4px 8px; flex-wrap: wrap;
+  font-size: 12px; padding-top: 8px; border-top: 1px solid var(--bordure);
+}
+.sf-carte-lib { color: var(--encre-muet); font-weight: 550; }
+.sf-valid-val { color: var(--encre-2); white-space: nowrap; }
+.sf-valid-val b { font-weight: 650; }
+.sf-valid-insuf { color: var(--alerte); font-weight: 600; font-size: 12px; }
+
+/* ⚠️ LA ROBUSTESSE SE LIT PAR LE MOT, LA COULEUR NE FAIT QUE L'APPUYER.
+   Un point coloré seul serait illisible pour un daltonien ; « Forte »,
+   « Moyenne », « Faible » sont toujours écrits à côté. */
+.sf-robustesse {
+  display: inline-flex; align-items: center; gap: 6px;
+  font-size: 12px; font-weight: 600; color: var(--encre-2); white-space: nowrap;
+}
+.sf-point { width: 8px; height: 8px; border-radius: 50%; flex: 0 0 auto; background: var(--encre-muet); }
+.sf-robustesse.strong .sf-point { background: var(--bon); }
+.sf-robustesse.medium .sf-point { background: var(--alerte); }
+.sf-robustesse.weak .sf-point { background: var(--grave); }
+
+/* ── Tableau et comparaisons ───────────────────────────────────────── */
+
+.sf-ligne { cursor: pointer; }
+.sf-ligne-hors { cursor: default; }
+.sf-rang-btn {
+  font: inherit; font-size: 12.5px; font-weight: 650; white-space: nowrap; cursor: pointer;
+  color: var(--marque-fort); background: var(--marque-doux);
+  border: 1px solid transparent; border-radius: 20px; padding: 2px 9px;
+}
+.sf-rang-btn:hover { border-color: var(--marque-bord); }
+.sf-absent { color: var(--encre-muet); }
+.sf-crit-cell { white-space: nowrap; }
+.sf-valid-cell .sf-v { display: block; white-space: nowrap; color: var(--encre-2); }
+.sf-valid-cell .sf-v2 { font-size: 11.5px; color: var(--encre-muet); }
+.sf-valid-cell b { font-weight: 600; }
+.sf-comp-config { min-width: 190px; }
+.sf-comp-config .sf-rang-btn, .sf-comp-config .sf-hors { margin-right: 8px; }
+.sf-hors {
+  display: inline-block; font-size: 11px; color: var(--encre-muet); white-space: nowrap;
+  border: 1px dashed var(--bordure-forte); border-radius: 20px; padding: 1px 7px;
+}
+.sf-comp-titre { font-weight: 550; }
+.sf-comparaisons.sf-une { grid-template-columns: minmax(0, 1fr); }
+/* Sept colonnes ne tiennent pas dans une demi-largeur : côte à côte
+   seulement sur très grand écran, l'une sous l'autre ailleurs. */
+@media (max-width: 1600px) {
+  .sf-comparaisons { grid-template-columns: minmax(0, 1fr); }
+}
+
+/* ── Modales ───────────────────────────────────────────────────────── */
+
+.sf-modale {
+  position: fixed; inset: 0; z-index: 80; overflow-y: auto; overscroll-behavior: contain;
+  display: flex; align-items: flex-start; justify-content: center; padding: 6vh 20px;
+}
+.sf-modale-boite {
+  width: min(1080px, 100%); margin: auto 0;
+  background: var(--fond-carte); color: var(--encre);
+  border: 1px solid var(--bordure); border-radius: var(--r); box-shadow: var(--ombre-pop);
+  display: flex; flex-direction: column; animation: pop .15s ease-out;
+}
+.sf-modale-etroite { width: min(560px, 100%); }
+.sf-modale-tete {
+  display: flex; align-items: flex-start; justify-content: space-between; gap: 14px;
+  padding: 18px 22px 14px; border-bottom: 1px solid var(--bordure);
+}
+.sf-modale-tete h2 { margin: 0; font-size: 18px; font-weight: 650; letter-spacing: -.015em; overflow-wrap: anywhere; }
+.sf-detail-entete { min-width: 0; display: flex; flex-direction: column; align-items: flex-start; gap: 4px; }
+#sf-detail-sous { display: flex; flex-wrap: wrap; align-items: center; row-gap: 4px; }
+#sf-detail-sous .sep { margin: 0 7px; opacity: .6; }
+.sf-modale-corps { padding: 18px 22px 22px; display: flex; flex-direction: column; gap: 14px; }
+.sf-methode-texte { margin: 0; font-size: 14px; line-height: 1.6; color: var(--encre-2); white-space: pre-line; }
+.sf-modale-pied {
+  display: flex; align-items: center; justify-content: space-between; gap: 12px; flex-wrap: wrap;
+  padding: 14px 22px; border-top: 1px solid var(--bordure); background: var(--fond-sous);
+  border-radius: 0 0 var(--r) var(--r);
+}
+.sf-modale-pied .aide { margin: 0; flex: 1 1 240px; }
+
+.sf-detail-grille { display: grid; gap: 14px; }
+.sf-grille-3 { grid-template-columns: repeat(3, minmax(0, 1fr)); }
+.sf-grille-2 { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+.sf-section {
+  min-width: 0; padding: 14px 16px; border: 1px solid var(--bordure);
+  border-radius: var(--r-s); background: var(--fond-carte);
+}
+.sf-section h3 { margin: 0 0 10px; font-size: 13.5px; font-weight: 650; color: var(--encre); }
+.sf-section h4 {
+  margin: 0; font-size: 11.5px; font-weight: 650; text-transform: uppercase;
+  letter-spacing: .04em; color: var(--encre-2);
+}
+.sf-section .enrob { margin: 0 -16px; padding: 0 16px; }
+.sf-section .graphe { min-height: 150px; }
+.sf-section-graphe .carte-sous { margin: -6px 0 8px; }
+.sf-dl {
+  display: grid; grid-template-columns: minmax(0, max-content) minmax(0, 1fr);
+  gap: 6px 14px; margin: 0; font-size: 13px;
+}
+.sf-dl dt { color: var(--encre-muet); }
+.sf-dl dd { margin: 0; min-width: 0; }
+.sf-dd-val { font-weight: 600; overflow-wrap: anywhere; }
+.sf-dd-sous { display: block; font-size: 11.5px; color: var(--encre-muet); line-height: 1.4; }
+.sf-dd-sous.fragile { color: var(--alerte); font-weight: 600; }
+.sf-tv { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 10px; margin-bottom: 12px; }
+.sf-tv-bloc {
+  display: flex; flex-direction: column; gap: 6px; min-width: 0; padding: 10px 12px;
+  border-radius: var(--r-s); background: var(--fond-sous); border: 1px solid var(--bordure);
+}
+.sf-tv-per { margin: 0; font-size: 11.5px; color: var(--encre-muet); }
+.sf-part { margin: 10px 0 0; font-size: 12.5px; color: var(--encre-2); }
+.sf-liste {
+  margin: 0; padding-left: 18px; font-size: 13px; line-height: 1.55; color: var(--encre-2);
+  display: flex; flex-direction: column; gap: 4px;
+}
+.sf-rob-tete { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; margin: 0 0 8px; }
+
+@media (max-width: 1360px) {
+  .sf-cartes { grid-template-columns: repeat(3, minmax(0, 1fr)); }
+}
+@media (max-width: 900px) {
+  .sf-cartes { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+  .sf-grille-3, .sf-grille-2 { grid-template-columns: minmax(0, 1fr); }
+  .sf-compteurs { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+}
+@media (max-width: 720px) {
+  .sf-cartes { grid-template-columns: minmax(0, 1fr); }
+  .sf-champ, .sf-champ-periode, .sf-champ-min, .sf-champ-objectif { flex-basis: 100%; }
+  .sf-bas { flex-direction: column; align-items: stretch; }
+  #sf-lancer { width: 100%; height: auto; min-height: 44px; padding: 8px 16px; white-space: normal; text-align: center; }
+  #sf-methode-btn { height: auto; min-height: 32px; padding: 6px 12px; white-space: normal; text-align: left; }
+  .sf-modale { padding: 0; }
+  .sf-modale-boite { min-height: 100%; margin: 0; border: 0; border-radius: 0; }
+  .sf-modale-tete, .sf-modale-corps, .sf-modale-pied { padding-left: 16px; padding-right: 16px; }
+  .sf-modale-pied { border-radius: 0; }
+  .sf-section { padding: 12px; }
+  .sf-section .enrob { margin: 0 -12px; padding: 0 12px; }
+  .sf-tv { grid-template-columns: minmax(0, 1fr); }
+}
+
 /* ══ RESPONSIVE ═══════════════════════════════════════════════════════ */
 
 @media (max-width: 1360px) {
@@ -1188,3 +1432,24 @@ td.num { text-align: right; }
 
 /* Le fond ne défile pas sous le tiroir ouvert. */
 body.fige { overflow: hidden; }
+
+/* ══ STRATEGY FINDER SUR PAPIER ══════════════════════════════════════
+ * Après le bloc d'impression général, pour primer sur les règles d'écran
+ * de la page. Le papier porte l'en-tête des PARAMÈTRES DE LA RECHERCHE ;
+ * celui des filtres de l'analyse, qui ne l'ont pas produite, s'efface. */
+@media print {
+  #sf-formulaire, #sf-etat, #sf-voile, .sf-modale { display: none !important; }
+  body[data-page="strategies"]:not(.impression-rapport) #entete-pdf { display: none !important; }
+  .sf-entete-pdf { break-after: avoid; page-break-after: avoid; }
+  .sf-entete-pdf h2 { margin: 0 0 4pt; font-size: 14pt; }
+  .sf-cartes { grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 8pt; }
+  .sf-carte { padding: 8pt; gap: 5pt; margin: 0; outline: none !important; }
+  .sf-mesure b { font-size: 12pt; }
+  .sf-compteurs { grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 6pt; }
+  .sf-compteur { padding: 5pt 7pt; }
+  .sf-compteur b { font-size: 13pt; }
+  .sf-comparaisons { grid-template-columns: minmax(0, 1fr); }
+  .sf-table, .sf-comp { font-size: 8pt; }
+  .sf-table th, .sf-table td, .sf-comp th, .sf-comp td { padding: 3pt 4pt; }
+  .sf-rang-btn { background: none; border: 0; padding: 0; color: #111; }
+}

@@ -2,7 +2,8 @@
  *
  * ⚠️ CE FICHIER NE CALCULE AUCUNE MÉTRIQUE. Pas de CLV, pas de ROI, pas de
  * P&L, pas de déduplication. Il appelle `/api/filters`, `/api/analyse`,
- * `/api/detail` et `/api/segments`, et il met en forme ce qu'on lui rend. Une
+ * `/api/detail`, `/api/segments` et `/api/strategies`, et il met en forme ce
+ * qu'on lui rend. Une
  * formule qui apparaîtrait ici serait une SECONDE définition — c'est le
  * §17.7, et ce projet l'a payé trois fois. Un test vérifie qu'aucune autre URL
  * n'est appelée.
@@ -108,6 +109,7 @@ const API_FILTERS = '/api/filters';
 const API_ANALYSE = '/api/analyse';
 const API_DETAIL = '/api/detail';
 const API_SEGMENTS = '/api/segments';
+const API_STRATEGIES = '/api/strategies';
 
 async function appel(chemin, params) {
   const url = params ? chemin + '?' + params.toString() : chemin;
@@ -547,11 +549,16 @@ function badge(ech) {
 
 /* Les lignes d'infobulle communes à toute tranche rendue par l'API. */
 function lignesTranche(t) {
+  // Un champ ABSENT de la tranche (une semaine du Strategy Finder ne porte ni
+  // taux de règlement, ni couverture, ni badge de volume) n'est pas écrit :
+  // « (—) » y ferait croire à une mesure manquante. Un champ rendu à `null`
+  // garde son « — », comme avant.
+  const si = (k, txt) => (t[k] === undefined ? '' : txt);
   return [
-    ['opportunités', `${ent(t.opportunities)} · ${(t.sample || {}).libelle || ''}`],
-    ['réglées', `${ent(t.settled)} (${pctNu(t.settlement_rate)})`],
-    ['CLV', `${pct(t.clv)} sur ${ent(t.clv_n)} (${pctNu(t.clv_coverage, 0)})`],
-    ['ROI', `${pct(t.roi)} · ${(t.sample_settled || {}).libelle || ''}`],
+    ['opportunités', ent(t.opportunities) + si('sample', ` · ${(t.sample || {}).libelle || ''}`)],
+    ['réglées', ent(t.settled) + si('settlement_rate', ` (${pctNu(t.settlement_rate)})`)],
+    ['CLV', `${pct(t.clv)} sur ${ent(t.clv_n)}` + si('clv_coverage', ` (${pctNu(t.clv_coverage, 0)})`)],
+    ['ROI', pct(t.roi) + si('sample_settled', ` · ${(t.sample_settled || {}).libelle || ''}`)],
     ['P&L', eur(t.pnl, 0)],
   ];
 }
@@ -1197,21 +1204,37 @@ function noteEv(regles) {
 
 /* ── Avertissements ────────────────────────────────────────────────── */
 
+/* Un bandeau d'avertissement. Un avertissement long se lit en entier d'un
+ * clic — ou d'Entrée au clavier ; il n'est jamais retiré de la page, donc
+ * jamais absent du PDF. Partagé par l'analyse et le Strategy Finder. */
+function blocAvert(m, grave) {
+  const d = el('div', 'avert' + (grave ? ' grave' : ''));
+  d.innerHTML = '<svg class="ic-av" viewBox="0 0 24 24" aria-hidden="true">'
+    + '<path d="M12 3l10 18H2z"/><path d="M12 10v4M12 17.5v.5"/></svg>';
+  d.appendChild(el('span', 'avert-texte', m));
+  d.title = 'Cliquer pour lire en entier';
+  d.tabIndex = 0;
+  d.setAttribute('aria-expanded', 'false');
+  const basculer = () => {
+    d.setAttribute('aria-expanded', String(d.classList.toggle('deplie')));
+  };
+  d.addEventListener('click', basculer);
+  d.addEventListener('keydown', (e) => {
+    // Seulement sur le bandeau lui-même : un bouton qu'il contient
+    // (« Réessayer maintenant ») garde son propre Entrée.
+    if (e.target !== d || (e.key !== 'Enter' && e.key !== ' ')) return;
+    e.preventDefault();
+    basculer();
+  });
+  return d;
+}
+
 function avertissements(liste) {
   const h = $('avertissements');
   h.innerHTML = '';
   (liste || []).forEach((m) => {
     const grave = /^(Erreur|Filtre refusé|Impossible)/.test(m);
-    const d = el('div', 'avert' + (grave ? ' grave' : ''));
-    d.innerHTML = '<svg class="ic-av" viewBox="0 0 24 24" aria-hidden="true">'
-      + '<path d="M12 3l10 18H2z"/><path d="M12 10v4M12 17.5v.5"/></svg>';
-    const t = el('span', 'avert-texte', m);
-    d.appendChild(t);
-    // Un avertissement long se lit en entier d'un clic ; il n'est jamais
-    // retiré de la page, donc jamais absent du PDF.
-    d.title = 'Cliquer pour lire en entier';
-    d.addEventListener('click', () => d.classList.toggle('deplie'));
-    h.appendChild(d);
+    h.appendChild(blocAvert(m, grave));
   });
 }
 
@@ -2802,6 +2825,7 @@ const PAGES = {
   competitions: { titre: 'Compétitions', sous: 'Opportunités, CLV et ROI par compétition', analyse: true },
   paris: { titre: 'Paris joués', sous: 'Le détail des opportunités, pari par pari', analyse: true },
   avancee: { titre: 'Analyse avancée', sous: 'Découpez la population selon l\'axe de votre choix', analyse: true },
+  strategies: { titre: 'Strategy Finder', sous: 'Découvrez automatiquement les configurations de paris les plus performantes.', analyse: false },
   'mes-analyses': { titre: 'Mes analyses', sous: 'Vos configurations d\'analyse sauvegardées', analyse: false },
   exporter: { titre: 'Exporter', sous: 'PDF et CSV de l\'analyse courante', analyse: false },
   parametres: { titre: 'Paramètres', sous: 'Apparence, préférences et données', analyse: false },
@@ -2820,6 +2844,12 @@ function allerA(p) {
 function afficherPage(p) {
   PAGE_ACTIVE = p;
   const meta = PAGES[p];
+  // Le retour arrière du navigateur peut quitter la page sous une modale
+  // ouverte : elle ne doit pas rester posée sur une autre page.
+  if (SF_MODALE && p !== 'strategies') sfFermerModale(false);
+  // Lu par la feuille d'impression : le papier du Strategy Finder ne porte
+  // pas l'en-tête des filtres de l'analyse, qui ne l'ont pas produit.
+  document.body.dataset.page = p;
   document.querySelectorAll('.page').forEach((s) => { s.hidden = s.dataset.page !== p; });
   document.querySelectorAll('.sb-lien').forEach((a) => {
     const on = a.dataset.page === p;
@@ -2839,6 +2869,7 @@ function afficherPage(p) {
   if (meta.analyse) rendrePage(p);
   if (p === 'mes-analyses') rendreMesAnalyses();
   if (p === 'parametres') rendreParametres();
+  if (p === 'strategies') sfPreparer();
 }
 
 /* ── Navigation : barre latérale et téléphone ─────────────────────── */
@@ -2863,6 +2894,8 @@ function fermerNavMobile() {
 
 let LARGEUR_FENETRE = window.innerWidth;
 function redessiner() {
+  // Les courbes du détail d'une configuration suivent la largeur, elles aussi.
+  if (SF_DETAIL && SF_MODALE === 'sf-detail') sfGraphes(SF_DETAIL);
   if (!ANALYSE) return;
   // Les pages déjà rendues mais cachées ont été dessinées à l'ancienne
   // largeur : elles seront redessinées quand on y reviendra.
@@ -3163,6 +3196,951 @@ async function exporterCsvOpportunites() {
     : `${ent(lot.length)} opportunités exportées.`) + noteSale(), 5000);
 }
 
+/* ── Strategy Finder ───────────────────────────────────────────────
+ *
+ * ⚠️ UNE PAGE QUI MONTRE UN CLASSEMENT, PAS UNE PAGE QUI LE FAIT. Le serveur
+ * explore les combinaisons, écarte les configurations trop peu fournies, les
+ * valide hors échantillon et les ordonne ; ici, on met en forme sa réponse.
+ * Trier le tableau est un choix d'affichage sur des valeurs rendues. Aucune
+ * part, aucun écart, aucun compte de sous-périodes n'est refait dans le
+ * navigateur : ce serait une seconde définition, sous une étiquette qui la
+ * dirait identique à celle du serveur.
+ *
+ * ⚠️ LE VOCABULAIRE RESTE HISTORIQUE. Une configuration « a présenté » une
+ * CLV sur une période passée ; le texte ne promet rien de plus que la mesure.
+ */
+
+/* Le texte de la modale « Comment ça marche », tant que le serveur n'a pas
+ * rendu le sien (`method`) — c'est lui qui fait foi dès qu'il est là. */
+const SF_METHODE = [
+  'Valuebet analyse différentes combinaisons de bookmaker, marché, type de pari, EV, cote et délai.',
+  'Les configurations sont filtrées par volume minimum puis comparées sur leur CLV, ROI et stabilité.',
+  'Une partie de la période est conservée pour valider les configurations hors-échantillon.',
+].join(' ');
+
+/* Les dimensions du moteur, dans l'ordre des colonnes, avec leur en-tête de
+ * tableau et leur nom de colonne CSV. Les libellés des CRITÈRES eux-mêmes
+ * viennent de la réponse (`criteria[].label`, `criteria[].display`). */
+const SF_DIMS = [['bookmaker', 'Bookmaker', 'bookmaker'], ['market', 'Marché', 'marche'],
+  ['outcome', 'Pari', 'pari'], ['ev', 'EV', 'ev'], ['odds', 'Cote', 'cote'],
+  ['delay', 'Délai', 'delai']];
+/* Un ORDRE de tri pour la robustesse, pas une mesure : rien ne s'affiche. */
+const SF_RANG_ROBUSTESSE = { strong: 3, medium: 2, weak: 1 };
+
+let SF = null;            // la dernière réponse de /api/strategies affichée
+let JETON_SF = null;      // la dernière recherche lancée — une plus ancienne est ignorée
+let SF_PRET = false;      // formulaire rempli depuis /api/filters
+let SF_TRI = { cle: 'rank', sens: 1 };
+let SF_MODALE = null;     // l'id de la modale ouverte, ou null
+let SF_OUVREUR = null;    // l'élément qui l'a ouverte, pour lui rendre le focus
+let SF_DETAIL = null;     // la configuration affichée dans le détail
+
+/* Un écart en POINTS : « −1,2 pts » entre deux CLV n'est pas « −1,2 % ». */
+const pts = (v) => (v === null || v === undefined ? '—'
+  : (v > 0 ? '+' : '') + nb(v, 1) + FINE + 'pts');
+/* Une part rendue entre 0 et 1 par le serveur. Le format « pourcentage » de
+ * la locale fait la conversion d'AFFICHAGE ; la valeur n'est pas touchée. */
+const partPct = (v) => (v === null || v === undefined ? '—'
+  : v.toLocaleString('fr-FR', { style: 'percent', maximumFractionDigits: 0 })
+    .replace(/\s/g, FINE));
+
+/** Le libellé affiché d'un critère de la configuration, ou null s'il est absent. */
+function sfCritere(s, dim) {
+  const c = (s.criteria || []).find((x) => x.dimension === dim);
+  return c ? (c.display || c.value || null) : null;
+}
+/* Le niveau de robustesse, borné aux trois valeurs du contrat : il devient
+ * une classe CSS, rien d'autre n'y entre. */
+const sfNiveau = (r) => (r && ['strong', 'medium', 'weak'].includes(r.level) ? r.level : 'inconnu');
+
+function sfRobustesse(r) {
+  const s = el('span', 'sf-robustesse ' + sfNiveau(r));
+  s.appendChild(el('span', 'sf-point'));
+  s.appendChild(el('span', null, (r && r.label) || '—'));
+  return s;
+}
+
+/* Le badge de volume n'apparaît qu'aux extrêmes (limité, large) : « standard »
+ * n'apprend rien sur une carte. Comme partout, il dit une TAILLE. */
+function sfEchantillon(sample) {
+  if (!sample || !['limited', 'large'].includes(sample.level)) return null;
+  const b = el('span', 'ech ' + (sample.level === 'limited' ? 'petit' : 'tres_bon'), sample.label || '');
+  b.title = 'Indication de volume, pas de significativité statistique.';
+  return b;
+}
+
+/* ── Formulaire ─────────────────────────────────────────────────── */
+
+/* Rempli une seule fois, à la première ouverture après /api/filters : les
+ * libellés viennent du serveur, la période des filtres globaux ; ensuite le
+ * formulaire vit sa vie et garde ce que l'utilisateur y a réglé. */
+function sfPreparer() {
+  if (!REFS || SF_PRET) return;
+  SF_PRET = true;
+  const s = $('sf-sport');
+  s.innerHTML = '';
+  const tous = el('option', null, 'Tous les sports');
+  tous.value = '';
+  s.appendChild(tous);
+  const sports = REFS.sports || [];
+  sports.forEach((sp) => {
+    const o = el('option', null, nomSport(sp));
+    o.value = sp;
+    s.appendChild(o);
+  });
+  // Un sport réel par défaut — le football s'il est là, sinon le premier.
+  s.value = sports.includes('soccer') ? 'soccer' : (sports[0] || '');
+
+  const pop = $('sf-population');
+  pop.innerHTML = '';
+  (REFS.populations || []).forEach((p) => {
+    const o = el('option', null, p.libelle || p.value);
+    o.value = p.value;
+    if (p.explication) o.title = p.explication;
+    pop.appendChild(o);
+  });
+  if ((REFS.populations || []).some((p) => p.value === 'settled')) pop.value = 'settled';
+
+  ['sf-date-from', 'sf-date-to'].forEach((id) => {
+    if (REFS.date_min) $(id).min = REFS.date_min;
+    if (REFS.date_max) $(id).max = REFS.date_max;
+  });
+  $('sf-date-from').value = $('f-date-from').value || REFS.date_min || '';
+  $('sf-date-to').value = $('f-date-to').value || REFS.date_max || '';
+  sfPoserMin($('sf-min').value, false);
+}
+
+/* Préréglage cliqué : il ÉCRIT le champ. Saisie libre : le préréglage égal à
+ * la valeur tapée reste allumé, les autres s'éteignent. */
+function sfPoserMin(v, ecrire) {
+  const val = String(v === null || v === undefined ? '' : v).trim();
+  if (ecrire) $('sf-min').value = val;
+  segActif('sf-min-presets', 'min', val);
+  document.querySelectorAll('#sf-min-presets button')
+    .forEach((b) => b.setAttribute('aria-pressed', String(b.dataset.min === val)));
+  document.querySelectorAll('#sf-rapides .puce')
+    .forEach((b) => b.classList.toggle('actif', b.dataset.min === val));
+}
+
+function sfChoisirObjectif(v) {
+  segActif('sf-objectif', 'objectif', v);
+  document.querySelectorAll('#sf-objectif button')
+    .forEach((b) => b.setAttribute('aria-pressed', String(b.dataset.objectif === v)));
+}
+
+function sfObjectif() {
+  const b = document.querySelector('#sf-objectif button.actif');
+  return b ? b.dataset.objectif : 'balanced';
+}
+
+/* Ce qui part au serveur. Un champ vide n'est pas envoyé : le serveur
+ * applique alors SON défaut, et l'en-tête des résultats le relit. */
+function sfParametres() {
+  const p = new URLSearchParams();
+  const sport = $('sf-sport').value;
+  if (sport) p.set('sport', sport);
+  [['date_from', 'sf-date-from'], ['date_to', 'sf-date-to'],
+   ['population', 'sf-population'], ['min_n', 'sf-min']].forEach(([nom, id]) => {
+    const v = $(id).value.trim();
+    if (v) p.set(nom, v);
+  });
+  p.set('objective', sfObjectif());
+  return p;
+}
+
+/* ── Recherche ──────────────────────────────────────────────────── */
+
+async function sfLancer() {
+  if (!REFS) { toast('Les filtres ne sont pas encore chargés — réessayez dans un instant.'); return; }
+  const b = $('sf-lancer');
+  if (b.disabled) return;
+  const jeton = {};
+  JETON_SF = jeton;
+  b.disabled = true;
+  b.classList.add('charge');
+  b.setAttribute('aria-busy', 'true');
+  sfAfficherEtat('chargement');
+  try {
+    const d = await appel(API_STRATEGIES, sfParametres());
+    // Une réponse plus ancienne que la dernière recherche ne doit JAMAIS
+    // écraser la plus récente : l'écran décrirait d'autres paramètres.
+    if (JETON_SF !== jeton) return;
+    SF = d;
+    SF_TRI = { cle: 'rank', sens: 1 };
+    sfRendre(d);
+  } catch (e) {
+    if (JETON_SF !== jeton) return;
+    SF = null;
+    sfAfficherEtat('erreur', e);
+  } finally {
+    if (JETON_SF === jeton) {
+      b.disabled = false;
+      b.classList.remove('charge');
+      b.removeAttribute('aria-busy');
+    }
+  }
+}
+
+/* Chargement ou erreur : un seul emplacement, et les résultats précédents
+ * disparaissent — ils décriraient une autre recherche que celle en cours. */
+function sfAfficherEtat(etat, erreur) {
+  const h = $('sf-etat');
+  h.innerHTML = '';
+  h.hidden = !etat;
+  if (!etat) return;
+  $('sf-resultats').hidden = true;
+  if (etat === 'chargement') {
+    const c = el('div', 'carte sf-chargement');
+    c.setAttribute('role', 'status');
+    const roue = el('span', 'sf-roue');
+    roue.setAttribute('aria-hidden', 'true');
+    c.appendChild(roue);
+    c.appendChild(el('span', null, 'Analyse des configurations…'));
+    h.appendChild(c);
+  } else {
+    const refus = erreur && (erreur.statut === 400 || erreur.statut === 422);
+    h.appendChild(blocAvert((refus ? 'Paramètres refusés : ' : 'Recherche impossible : ')
+      + ((erreur && erreur.message) || 'erreur inconnue'), true));
+  }
+}
+
+function sfRendre(d) {
+  sfAfficherEtat(null);
+  $('sf-resultats').hidden = false;
+  const liste = d.strategies || [];
+  const vide = !liste.length;
+  sfSynthese(d);
+  $('sf-vide').hidden = !vide;
+  $('sf-bloc-top').hidden = vide;
+  $('sf-bloc-table').hidden = vide;
+  $('sf-csv').disabled = vide;
+  // Moins de cinq : on montre celles-là, et on le DIT — jamais de carte
+  // inventée pour remplir la rangée.
+  // Les cartes montrent des pistes DISTINCTES : une variante d'une carte
+  // mieux classée (`variant_of`, décidé par le serveur) reste au tableau.
+  const cartes = liste.filter((s) => !s.variant_of).slice(0, 5);
+  const variantes = liste.length - cartes.length;
+  const n = $('sf-nombre');
+  n.hidden = vide || cartes.length >= 5;
+  n.textContent = (cartes.length > 1
+    ? `${ent(cartes.length)} configurations distinctes répondent aux critères.`
+    : `${ent(cartes.length)} configuration distincte répond aux critères.`)
+    + (variantes > 0 ? ` Les autres lignes du tableau en sont des variantes ou des configurations moins bien classées.` : '');
+  sfCartes(cartes);
+  sfTableau();
+  sfComparaisons(d);
+  sfEntetePdf(d);
+}
+
+/* ── En-tête des résultats ──────────────────────────────────────── */
+
+const sfNomSport = (p) => p.sport_label || (p.sport ? nomSport(p.sport) : 'Tous les sports');
+
+function sfPeriodeTexte(p) {
+  if (p.date_from && p.date_to) return `du ${dateLongue(p.date_from, true)} au ${dateLongue(p.date_to, true)}`;
+  if (p.date_from) return `depuis le ${dateLongue(p.date_from, true)}`;
+  if (p.date_to) return `jusqu'au ${dateLongue(p.date_to, true)}`;
+  return 'sur toute la période disponible';
+}
+
+/* ⚠️ L'EN-TÊTE RELIT LES PARAMÈTRES DU SERVEUR (`params`), pas le
+ * formulaire : c'est ce qu'il a réellement appliqué — défauts compris. */
+function sfSynthese(d) {
+  const p = d.params || {};
+  $('sf-titre').textContent = `Top configurations — ${sfNomSport(p)}`;
+  // Le libellé de population est un NOM (« Résultat connu et réglable ») :
+  // cité tel quel, pas fondu dans la phrase en minuscules.
+  const pop = p.population_label || nomPopulation(p.population);
+  $('sf-sous').textContent = `Population « ${pop} », ${sfPeriodeTexte(p)}`
+    + ` · minimum ${ent(p.min_n)} paris réglés · mode ${p.objective_label || p.objective || '—'}`;
+
+  const c = d.counts || {};
+  const h = $('sf-compteurs');
+  h.innerHTML = '';
+  [[c.tested, 'configurations analysées'], [c.eligible, 'ont atteint le minimum de volume'],
+   [c.validated, 'retenues pour validation'], [c.shown, 'affichées']].forEach(([v, lib], i) => {
+    const k = el('div', 'sf-compteur');
+    k.appendChild(el('b', null, ent(v)));
+    k.appendChild(el('span', null, lib));
+    if (i === 1 && c.redundant) k.title = `${ent(c.redundant)} configurations redondantes écartées`;
+    h.appendChild(k);
+  });
+
+  const sp = d.split || {};
+  const ligne = $('sf-split');
+  ligne.innerHTML = '';
+  const morceau = (titre, texte) => {
+    const m = el('span', 'sf-split-part');
+    if (titre) m.appendChild(el('b', null, titre + ' : '));
+    m.appendChild(document.createTextNode(texte));
+    if (ligne.childNodes.length) ligne.appendChild(el('span', 'sep', '·'));
+    ligne.appendChild(m);
+  };
+  if (sp.cutoff) {
+    morceau('Entraînement', periodeTexte((sp.train || {}).from, (sp.train || {}).to));
+    morceau('Validation', periodeTexte((sp.validation || {}).from, (sp.validation || {}).to));
+  } else {
+    morceau('Validation', 'aucune — trop peu de données pour réserver une période');
+  }
+  if (p.stake !== null && p.stake !== undefined) morceau(null, `mise notionnelle ${num(p.stake)} € par pari`);
+  const lot = d.lot || {};
+  if (lot.opportunities !== null && lot.opportunities !== undefined) {
+    morceau('Lot', `${ent(lot.opportunities)} opportunités, ${ent(lot.settled)} paris réglés`);
+  }
+  if (d.cached) morceau(null, 'résultat servi depuis le cache du serveur');
+
+  const av = $('sf-avert');
+  av.innerHTML = '';
+  (d.warnings || []).forEach((m) => av.appendChild(blocAvert(m, false)));
+}
+
+/* ── Cartes du top 5 ────────────────────────────────────────────── */
+
+/* La validation d'une configuration, en une ligne : CLV et ROI de la
+ * période réservée — ou l'aveu qu'elle n'en dit rien. */
+function sfValidation(v, court) {
+  const l = el('span', 'sf-valid-val');
+  if (!v || !v.sufficient) {
+    l.appendChild(el('span', 'sf-valid-insuf', court ? 'insuffisante' : 'validation insuffisante'));
+    return l;
+  }
+  l.appendChild(document.createTextNode('CLV '));
+  l.appendChild(el('b', signe(v.clv), pct(v.clv, 1)));
+  l.appendChild(document.createTextNode(' · ROI '));
+  l.appendChild(el('b', signe(v.roi), pct(v.roi, 1)));
+  return l;
+}
+
+function sfCartes(liste) {
+  const h = $('sf-cartes');
+  h.innerHTML = '';
+  liste.forEach((s) => h.appendChild(sfCarte(s)));
+}
+
+/* ⚠️ LA CARTE RESTE NEUTRE. Seuls les CHIFFRES portent le signe (vert,
+ * rouge) : une carte entière en vert se lirait comme une recommandation. */
+function sfCarte(s) {
+  const sm = s.summary || {};
+  const c = el('article', 'carte sf-carte');
+  c.tabIndex = 0;
+  c.setAttribute('role', 'button');
+  c.setAttribute('aria-label', `Configuration n° ${s.rank} — ${s.title || ''} : ouvrir le détail`);
+
+  const tete = el('div', 'sf-carte-tete');
+  tete.appendChild(el('span', 'sf-rang', `#${s.rank}`));
+  const ech = sfEchantillon(s.sample);
+  if (ech) tete.appendChild(ech);
+  c.appendChild(tete);
+  c.appendChild(el('h3', 'sf-carte-titre', s.title || '—'));
+
+  // Le titre porte le bookmaker et le marché ; les autres critères, s'ils
+  // existent, sur une ligne chacun. Un critère absent n'est pas écrit
+  // « Toutes » : il n'est simplement pas restreint. Ordre de lecture fixe
+  // d'une carte à l'autre : EV, Cote, Pari, Délai.
+  const ordre = ['ev', 'odds', 'outcome', 'delay'];
+  const crit = (s.criteria || []).filter((x) => ordre.includes(x.dimension))
+    .sort((a, b) => ordre.indexOf(a.dimension) - ordre.indexOf(b.dimension));
+  if (crit.length) {
+    const dl = el('dl', 'sf-crit');
+    crit.forEach((x) => {
+      dl.appendChild(el('dt', null, x.label || x.dimension));
+      dl.appendChild(el('dd', null, x.display || x.value || '—'));
+    });
+    c.appendChild(dl);
+  }
+
+  const pied = el('div', 'sf-carte-pied');
+  const m = el('div', 'sf-mesures');
+  [['CLV', pct(sm.clv, 1), signe(sm.clv), 'CLV moyenne face à la clôture'],
+   ['ROI', pct(sm.roi, 1), signe(sm.roi), 'Sur les paris réglés, mise notionnelle'],
+   ['Paris', ent(sm.settled), '', 'Paris réglés'],
+   ['P&L', eur(sm.pnl, 0), signe(sm.pnl), 'P&L notionnel']].forEach(([k, val, cls, titre]) => {
+    const b = el('div', 'sf-mesure');
+    b.title = titre;
+    b.appendChild(el('span', null, k));
+    b.appendChild(el('b', cls, val));
+    m.appendChild(b);
+  });
+  pied.appendChild(m);
+
+  const valid = el('div', 'sf-carte-ligne');
+  valid.appendChild(el('span', 'sf-carte-lib', 'Validation'));
+  valid.appendChild(sfValidation(s.validation, false));
+  pied.appendChild(valid);
+  const rob = el('div', 'sf-carte-ligne');
+  rob.appendChild(el('span', 'sf-carte-lib', 'Robustesse'));
+  rob.appendChild(sfRobustesse(s.robustness));
+  pied.appendChild(rob);
+  c.appendChild(pied);
+
+  const ouvrir = () => sfOuvrirDetail(s.id);
+  c.addEventListener('click', ouvrir);
+  c.addEventListener('keydown', (e) => {
+    if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); ouvrir(); }
+  });
+  return c;
+}
+
+/* ── Tableau détaillé ───────────────────────────────────────────── */
+
+/* `val` lit une valeur RENDUE par le serveur, pour le tri seulement. */
+const SF_COLONNES = [
+  { cle: 'rank', titre: 'Rang', num: true, sens: 1, val: (s) => s.rank },
+].concat(SF_DIMS.map(([dim, titre]) => ({ cle: dim, titre, sens: 1, val: (s) => sfCritere(s, dim) })))
+  .concat([
+    { cle: 'settled', titre: 'Paris', num: true, sens: -1, val: (s) => (s.summary || {}).settled },
+    { cle: 'clv', titre: 'CLV', num: true, sens: -1, val: (s) => (s.summary || {}).clv },
+    { cle: 'roi', titre: 'ROI', num: true, sens: -1, val: (s) => (s.summary || {}).roi },
+    { cle: 'validation', titre: 'Validation', num: true, sens: -1,
+      aide: 'CLV puis ROI de la période de validation — tri sur la CLV',
+      val: (s) => (s.validation && s.validation.sufficient ? s.validation.clv : null) },
+    { cle: 'robustness', titre: 'Robustesse', sens: -1,
+      val: (s) => SF_RANG_ROBUSTESSE[sfNiveau(s.robustness)] || null },
+  ]);
+
+function sfTableau() {
+  const t = $('sf-table');
+  t.innerHTML = '';
+  if (!SF) return;
+  const col = SF_COLONNES.find((c) => c.cle === SF_TRI.cle) || SF_COLONNES[0];
+  const lignes = (SF.strategies || []).slice().sort((a, b) => {
+    const va = col.val(a), vb = col.val(b);
+    const absA = va === null || va === undefined, absB = vb === null || vb === undefined;
+    // Une valeur absente reste EN BAS dans les deux sens : un « — » en tête
+    // de colonne se lirait comme le meilleur ou le pire, il n'est ni l'un
+    // ni l'autre.
+    if (absA || absB) return absA === absB ? a.rank - b.rank : absA ? 1 : -1;
+    const r = typeof va === 'string' ? va.localeCompare(vb, 'fr', { numeric: true }) : va - vb;
+    return r ? r * SF_TRI.sens : a.rank - b.rank;
+  });
+
+  const thead = el('thead'), tr = el('tr');
+  SF_COLONNES.forEach((c) => {
+    const actif = c.cle === SF_TRI.cle;
+    const th = el('th', [c.num ? 'num' : '', 'triable', actif ? 'actif' : ''].filter(Boolean).join(' '),
+      c.titre + (actif ? (SF_TRI.sens < 0 ? ' ▾' : ' ▴') : ''));
+    th.scope = 'col';
+    th.tabIndex = 0;
+    th.dataset.cle = c.cle;
+    if (c.aide) th.title = c.aide;
+    th.setAttribute('aria-sort', actif ? (SF_TRI.sens < 0 ? 'descending' : 'ascending') : 'none');
+    const trier = () => {
+      if (SF_TRI.cle === c.cle) SF_TRI.sens = -SF_TRI.sens;
+      else SF_TRI = { cle: c.cle, sens: c.sens };
+      sfTableau();
+      const th2 = $('sf-table').querySelector(`th[data-cle="${c.cle}"]`);
+      if (th2) th2.focus();
+    };
+    th.addEventListener('click', trier);
+    th.addEventListener('keydown', (e) => {
+      if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); trier(); }
+    });
+    tr.appendChild(th);
+  });
+  thead.appendChild(tr);
+  t.appendChild(thead);
+
+  const tb = el('tbody');
+  lignes.forEach((s) => {
+    const sm = s.summary || {};
+    const r = el('tr', 'sf-ligne');
+    const td0 = el('td', 'num');
+    const bt = el('button', 'sf-rang-btn', `#${s.rank}`);
+    bt.type = 'button';
+    bt.setAttribute('aria-label', `Ouvrir le détail de la configuration n° ${s.rank}, ${s.title || ''}`);
+    td0.appendChild(bt);
+    // Variante d'une carte mieux classée (plus de 60 % de paris communs) :
+    // dit par le serveur, jamais recalculé ici.
+    const parent = s.variant_of && (SF.strategies || []).find((x) => x.id === s.variant_of);
+    if (parent) {
+      const v = el('span', 'sub', `variante de #${parent.rank}`);
+      v.title = 'La majorité de ses paris sont déjà dans cette configuration mieux classée.';
+      td0.appendChild(v);
+    }
+    r.appendChild(td0);
+    SF_DIMS.forEach(([dim]) => {
+      const x = sfCritere(s, dim);
+      const td = el('td', x ? 'sf-crit-cell' : 'sf-absent', x || '—');
+      if (!x) td.title = 'Critère non restreint';
+      r.appendChild(td);
+    });
+    r.appendChild(el('td', 'num', ent(sm.settled)));
+    r.appendChild(el('td', 'num ' + signe(sm.clv), pct(sm.clv, 1)));
+    r.appendChild(el('td', 'num ' + signe(sm.roi), pct(sm.roi, 1)));
+    r.appendChild(sfCelluleValidation(s.validation));
+    const tdR = el('td');
+    tdR.appendChild(sfRobustesse(s.robustness));
+    r.appendChild(tdR);
+    // Le bouton du rang porte le clavier ; son clic remonte à la ligne.
+    r.addEventListener('click', () => sfOuvrirDetail(s.id));
+    tb.appendChild(r);
+  });
+  t.appendChild(tb);
+}
+
+/* Deux lignes, CLV puis ROI de la validation ; seuls les nombres sont colorés. */
+function sfCelluleValidation(v, brut) {
+  const td = el('td', 'num sf-valid-cell');
+  const clv = brut ? brut.clv : v && v.clv;
+  const roi = brut ? brut.roi : v && v.roi;
+  if (!brut && (!v || !v.sufficient)) {
+    td.appendChild(el('span', 'sf-valid-insuf', 'insuffisante'));
+    return td;
+  }
+  [['CLV ', clv], ['ROI ', roi]].forEach(([k, x], i) => {
+    const l = el('span', i ? 'sf-v sf-v2' : 'sf-v');
+    l.appendChild(document.createTextNode(k));
+    l.appendChild(el('b', signe(x), pct(x, 1)));
+    td.appendChild(l);
+  });
+  return td;
+}
+
+/* ── Comparaisons par bookmaker et par marché ───────────────────── */
+
+function sfComparaisons(d) {
+  const book = d.by_bookmaker || [], marche = d.by_market || [];
+  $('sf-comparaisons').hidden = !book.length && !marche.length;
+  $('sf-comparaisons').classList.toggle('sf-une', !book.length || !marche.length);
+  $('sf-bloc-par-book').hidden = !book.length;
+  $('sf-bloc-par-marche').hidden = !marche.length;
+  sfTableComparaison($('sf-par-book'), book, 'Bookmaker');
+  sfTableComparaison($('sf-par-marche'), marche, 'Marché');
+}
+
+function sfTableComparaison(t, lignes, nom) {
+  t.innerHTML = '';
+  const cols = [[nom, ''], ['Configuration', ''], ['Paris', 'num'], ['CLV', 'num'], ['ROI', 'num'],
+    ['Validation', 'num'], ['Robustesse', '']];
+  const thead = el('thead'), tr = el('tr');
+  cols.forEach(([titre, cls]) => {
+    const th = el('th', cls, titre);
+    th.scope = 'col';
+    tr.appendChild(th);
+  });
+  thead.appendChild(tr);
+  t.appendChild(thead);
+  const ids = new Set(((SF && SF.strategies) || []).map((s) => s.id));
+  const tb = el('tbody');
+  lignes.forEach((x) => {
+    // Le détail n'existe que pour une configuration du classement final.
+    const dispo = !!x.strategy_id && ids.has(x.strategy_id);
+    const r = el('tr', dispo ? 'sf-ligne' : 'sf-ligne-hors');
+    r.appendChild(el('td', 'nom', x.display || x.key || '—'));
+    const tdC = el('td', 'sf-comp-config');
+    if (dispo) {
+      const bt = el('button', 'sf-rang-btn', x.rank !== null && x.rank !== undefined ? `#${x.rank}` : 'Détail');
+      bt.type = 'button';
+      bt.setAttribute('aria-label', `Ouvrir le détail de ${x.title || 'cette configuration'}`);
+      tdC.appendChild(bt);
+    } else {
+      tdC.appendChild(el('span', 'sf-hors', 'hors classement'));
+      r.title = 'Hors du classement final : détail non disponible.';
+    }
+    tdC.appendChild(el('span', 'sf-comp-titre', x.title || '—'));
+    r.appendChild(tdC);
+    r.appendChild(el('td', 'num', ent(x.settled)));
+    r.appendChild(el('td', 'num ' + signe(x.clv), pct(x.clv, 1)));
+    r.appendChild(el('td', 'num ' + signe(x.roi), pct(x.roi, 1)));
+    r.appendChild(sfCelluleValidation(null, { clv: x.validation_clv, roi: x.validation_roi }));
+    const tdR = el('td');
+    tdR.appendChild(sfRobustesse(x.robustness));
+    r.appendChild(tdR);
+    if (dispo) r.addEventListener('click', () => sfOuvrirDetail(x.strategy_id));
+    tb.appendChild(r);
+  });
+  t.appendChild(tb);
+}
+
+/* ── Modales ────────────────────────────────────────────────────── */
+
+/* Même contrat que le tiroir : le reste de l'application sort du parcours
+ * clavier et des lecteurs d'écran, Échap ferme, le focus revient à qui a
+ * ouvert. */
+function sfOuvrirModale(id) {
+  if (SF_MODALE) sfFermerModale(false);
+  const actif = document.activeElement;
+  SF_OUVREUR = actif && actif !== document.body && $('app').contains(actif) ? actif : null;
+  SF_MODALE = id;
+  cacher();
+  $('sf-voile').hidden = false;
+  $(id).hidden = false;
+  $(id).scrollTop = 0;
+  document.body.classList.add('fige');
+  $('app').inert = true;
+  const fermer = $(id).querySelector('.sf-modale-fermer');
+  setTimeout(() => { if (SF_MODALE === id && fermer) fermer.focus(); }, 30);
+}
+
+function sfFermerModale(rendreFocus) {
+  if (!SF_MODALE) return;
+  $(SF_MODALE).hidden = true;
+  $('sf-voile').hidden = true;
+  SF_MODALE = null;
+  SF_DETAIL = null;
+  cacher();
+  document.body.classList.remove('fige');
+  $('app').inert = false;
+  const cible = SF_OUVREUR;
+  SF_OUVREUR = null;
+  if (rendreFocus !== false && cible && document.contains(cible) && !cible.closest('[hidden]')) {
+    cible.focus();
+  }
+}
+
+/* Le focus tourne dans la modale : Tab depuis le dernier élément revient au
+ * premier, et inversement. */
+function sfPiegeFocus(e) {
+  if (e.key !== 'Tab' || !SF_MODALE) return;
+  const f = [...$(SF_MODALE).querySelectorAll(
+    'button, [href], input, select, textarea, [tabindex]:not([tabindex="-1"])')]
+    .filter((n) => !n.disabled && n.getClientRects().length);
+  if (!f.length) return;
+  const premier = f[0], dernier = f[f.length - 1];
+  if (e.shiftKey && document.activeElement === premier) { e.preventDefault(); dernier.focus(); }
+  else if (!e.shiftKey && document.activeElement === dernier) { e.preventDefault(); premier.focus(); }
+}
+
+function sfOuvrirMethode() {
+  $('sf-methode-texte').textContent = (SF && SF.method) || SF_METHODE;
+  sfOuvrirModale('sf-methode');
+}
+
+/* ── Détail d'une configuration ─────────────────────────────────── */
+
+function sfSection(titre, contenu, cls) {
+  const s = el('section', 'sf-section' + (cls ? ' ' + cls : ''));
+  s.appendChild(el('h3', null, titre));
+  if (contenu) s.appendChild(contenu);
+  return s;
+}
+
+/* Une liste « libellé → valeur ». `sous` : lignes d'appoint sous la valeur,
+ * `{ t, fragile }` pour une mise en garde. */
+function sfDl(lignes) {
+  const dl = el('dl', 'sf-dl');
+  lignes.forEach(([k, v, cls, sous]) => {
+    dl.appendChild(el('dt', null, k));
+    const dd = el('dd');
+    dd.appendChild(el('span', 'sf-dd-val' + (cls ? ' ' + cls : ''), v));
+    (sous || []).filter(Boolean).forEach((x) => {
+      const o = typeof x === 'string' ? { t: x } : x;
+      dd.appendChild(el('span', 'sf-dd-sous' + (o.fragile ? ' fragile' : ''), o.t));
+    });
+    dl.appendChild(dd);
+  });
+  return dl;
+}
+
+/* « IC 90 % : [+9,8 % ; +13,7 %] » — seulement si le serveur a rendu une borne. */
+function sfIntervalle(ci, bornesIc) {
+  if (!Array.isArray(bornesIc) || !bornesIc.some((x) => x !== null && x !== undefined)) return null;
+  return `IC ${num(ci.level)} % : [${pct(bornesIc[0], 1)} ; ${pct(bornesIc[1], 1)}]`;
+}
+
+function sfOuvrirDetail(id) {
+  if (!SF) return;
+  const s = (SF.strategies || []).find((x) => x.id === id);
+  if (!s) return;
+  sfRemplirDetail(s);
+  sfOuvrirModale('sf-detail');
+  SF_DETAIL = s;
+  // Dessinées une fois la modale visible : une courbe prend la largeur
+  // réelle de son conteneur.
+  sfGraphes(s);
+}
+
+function sfGraphes(s) {
+  const a = $('sf-g-clv'), b = $('sf-g-pnl');
+  if (!a || !b) return;
+  courbe(a, s.series || [], 'clv', 'CLV dans le temps');
+  courbe(b, s.series || [], 'pnl_cumul', 'P&L cumulé', (v) => eur(v, 0));
+}
+
+function sfRemplirDetail(s) {
+  const p = (SF && SF.params) || {};
+  const sp = (SF && SF.split) || {};
+  const sm = s.summary || {}, tr = s.train || {}, va = s.validation || {};
+  const ci = s.ci || {}, delta = s.delta || {}, st = s.stability || {};
+
+  $('sf-detail-rang').textContent = `#${s.rank}`;
+  $('sf-detail-titre').textContent = s.title || 'Configuration';
+  const sous = $('sf-detail-sous');
+  sous.innerHTML = '';
+  sous.appendChild(el('span', null, sfNomSport(p)));
+  sous.appendChild(el('span', 'sep', '·'));
+  const rob = el('span');
+  rob.appendChild(document.createTextNode('Robustesse '));
+  rob.appendChild(sfRobustesse(s.robustness));
+  sous.appendChild(rob);
+  if (s.sample && s.sample.label) {
+    sous.appendChild(el('span', 'sep', '·'));
+    sous.appendChild(el('span', null, s.sample.label));
+  }
+
+  const corps = $('sf-detail-corps');
+  corps.innerHTML = '';
+  corps.appendChild(el('p', 'sf-prudence', 'Ce que cette configuration a présenté sur la période '
+    + 'analysée. Des résultats historiques ne préjugent pas des résultats futurs.'));
+
+  const g1 = el('div', 'sf-detail-grille sf-grille-3');
+  g1.appendChild(sfSection('Configuration', sfDl(
+    [['Sport', sfNomSport(p)]].concat((s.criteria || [])
+      .map((c) => [c.label || c.dimension, c.display || c.value || '—'])))));
+  g1.appendChild(sfSection('Échantillon', sfDl([
+    ['Paris réglés', ent(sm.settled)],
+    ['Opportunités', ent(sm.opportunities)],
+    ['Mise totale', eur(sm.stake_total, 0).replace('+', '')],
+    ['P&L', eur(sm.pnl, 0), signe(sm.pnl)],
+    ['Gagnés · perdus · annulés', `${ent(sm.won)} · ${ent(sm.lost)} · ${ent(sm.void)}`],
+    ['EV moyenne', pct(sm.ev_mean, 1), '', ['à la détection']],
+    ['Cote moyenne', cote(sm.odds_mean)],
+  ])));
+  // ⚠️ La CLV ne sort jamais sans sa couverture, ici non plus.
+  const couvFaible = sm.clv_coverage !== null && sm.clv_coverage !== undefined
+    && sm.clv_coverage < SEUIL_COUVERTURE;
+  g1.appendChild(sfSection('Performance', sfDl([
+    ['CLV moyenne', pct(sm.clv, 2), signe(sm.clv), [
+      { t: `sur ${ent(sm.clv_n)} paris mesurés · couverture ${pctNu(sm.clv_coverage, 0)}`, fragile: couvFaible },
+      sfIntervalle(ci, ci.clv)]],
+    ['CLV médiane', pct(sm.clv_median, 1), signe(sm.clv_median)],
+    ['CLV positives', pctNu(sm.clv_positive_rate, 0), '', ['des paris mesurés ont battu la clôture']],
+    ['ROI', pct(sm.roi, 2), signe(sm.roi), [`sur ${ent(sm.settled)} paris réglés`, sfIntervalle(ci, ci.roi)]],
+  ])));
+  corps.appendChild(g1);
+
+  const g2 = el('div', 'sf-detail-grille sf-grille-2');
+  const tv = el('div', 'sf-tv');
+  [['Entraînement', tr, sp.train], ['Validation', va, sp.validation]].forEach(([nom, m, per]) => {
+    const b = el('div', 'sf-tv-bloc');
+    b.appendChild(el('h4', null, nom));
+    if (per && (per.from || per.to)) b.appendChild(el('p', 'sf-tv-per', periodeTexte(per.from, per.to)));
+    b.appendChild(sfDl([
+      ['CLV', pct(m.clv, 1), signe(m.clv), [`sur ${ent(m.clv_n)} mesurés`]],
+      ['ROI', pct(m.roi, 1), signe(m.roi)],
+      ['Paris', ent(m.settled), '', ['réglés']],
+    ]));
+    if (m === va && !va.sufficient) {
+      b.appendChild(el('p', 'sf-valid-insuf', 'Validation insuffisante : trop peu de paris réglés '
+        + 'sur cette période pour la lire.'));
+    }
+    tv.appendChild(b);
+  });
+  const secTv = sfSection('Entraînement / Validation', tv);
+  secTv.appendChild(sfDl([
+    ['Variation CLV', pts(delta.clv), '', ['validation − entraînement']],
+    ['Variation ROI', pts(delta.roi)],
+  ]));
+  g2.appendChild(secTv);
+
+  const secSt = sfSection('Stabilité');
+  const blocs = st.blocks || [];
+  if (blocs.length) {
+    const enrob = el('div', 'enrob');
+    const t = el('table', 'tableau tableau-dense sf-blocs');
+    const th = el('thead'), trh = el('tr');
+    [['Période', ''], ['Paris', 'num'], ['CLV', 'num'], ['ROI', 'num']].forEach(([x, cls]) => {
+      const c = el('th', cls, x);
+      c.scope = 'col';
+      trh.appendChild(c);
+    });
+    th.appendChild(trh);
+    t.appendChild(th);
+    const tb = el('tbody');
+    blocs.forEach((b) => {
+      const r = el('tr');
+      r.appendChild(el('td', null, periodeTexte(b.from, b.to)));
+      r.appendChild(el('td', 'num', ent(b.settled)));
+      r.appendChild(el('td', 'num ' + signe(b.clv), pct(b.clv, 1)));
+      r.appendChild(el('td', 'num ' + signe(b.roi), pct(b.roi, 1)));
+      tb.appendChild(r);
+    });
+    t.appendChild(tb);
+    enrob.appendChild(t);
+    secSt.appendChild(enrob);
+  } else {
+    secSt.appendChild(el('p', 'aide', 'Aucune sous-période mesurable.'));
+  }
+  // Les parts viennent du serveur (0 à 1) : rien n'est recompté ici.
+  secSt.appendChild(el('p', 'sf-part',
+    `${partPct(st.clv_positive_share)} des sous-périodes à CLV positive · `
+    + `${partPct(st.roi_positive_share)} à ROI positif — sur ${ent(st.measured_blocks)} `
+    + (st.measured_blocks > 1 ? 'sous-périodes mesurées' : 'sous-période mesurée')));
+  g2.appendChild(secSt);
+  corps.appendChild(g2);
+
+  const g3 = el('div', 'sf-detail-grille sf-grille-2');
+  [['CLV dans le temps', 'sf-g-clv', 'CLV moyenne par période, en %.'],
+   ['P&L cumulé', 'sf-g-pnl', `En €, mise notionnelle de ${num(p.stake)} € par pari.`]]
+    .forEach(([titre, id, legende]) => {
+      const sec = sfSection(titre, null, 'sf-section-graphe');
+      sec.appendChild(el('p', 'carte-sous', legende));
+      const g = el('div', 'graphe');
+      g.id = id;
+      sec.appendChild(g);
+      g3.appendChild(sec);
+    });
+  corps.appendChild(g3);
+
+  const g4 = el('div', 'sf-detail-grille sf-grille-2');
+  const pourquoi = sfSection('Pourquoi cette configuration ?');
+  if ((s.why || []).length) {
+    const ul = el('ul', 'sf-liste');
+    s.why.forEach((w) => ul.appendChild(el('li', null, w)));
+    pourquoi.appendChild(ul);
+  } else {
+    pourquoi.appendChild(el('p', 'aide', 'Aucune explication rendue par le serveur.'));
+  }
+  g4.appendChild(pourquoi);
+  const secRob = sfSection('Robustesse');
+  const tete = el('p', 'sf-rob-tete');
+  tete.appendChild(sfRobustesse(s.robustness));
+  if (s.sample && s.sample.label) tete.appendChild(el('span', 'aide', s.sample.label));
+  secRob.appendChild(tete);
+  const raisons = (s.robustness && s.robustness.reasons) || [];
+  if (raisons.length) {
+    const ul = el('ul', 'sf-liste');
+    raisons.forEach((w) => ul.appendChild(el('li', null, w)));
+    secRob.appendChild(ul);
+  }
+  g4.appendChild(secRob);
+  corps.appendChild(g4);
+}
+
+/* ⚠️ « OUVRIR DANS L'ANALYTICS » ÉCRIT DANS LE TIROIR, la seule source de
+ * vérité des filtres — exactement comme une analyse sauvegardée qu'on
+ * recharge. Les valeurs sont celles que le serveur a rendues
+ * (`analytics_filters`), jamais reconstruites depuis les libellés. */
+function sfOuvrirAnalytics(s) {
+  const f = s.analytics_filters || {};
+  const p = (SF && SF.params) || {};
+  $('reinit').click();
+  if (f.date_from) $('f-date-from').value = f.date_from;
+  if (f.date_to) $('f-date-to').value = f.date_to;
+  const manques = [];
+  const poser = (groupe, valeurs) => {
+    const v = valeurs || [];
+    cocher(groupe, v);
+    if (coches(groupe).length !== new Set(v).size) manques.push(groupe);
+  };
+  poser('f-sports', f.sports);
+  poser('f-books', f.bookmakers);
+  poser('f-markets', f.markets);
+  poser('f-outcomes', f.outcomes);
+  if ((f.ev_bands || []).length) {
+    appliquerModeEv('tranches', false);
+    poser('f-ev-bands', f.ev_bands);
+  }
+  if ((f.odds_bands || []).length) {
+    appliquerModeCote('tranches', false);
+    poser('f-odds-bands', f.odds_bands);
+  }
+  // Le serveur parle en HEURES : l'unité du tiroir est remise sur « heures ».
+  $('f-delay-unite').value = 'h';
+  $('f-delay-min').value = f.delay_min === null || f.delay_min === undefined ? '' : String(f.delay_min);
+  $('f-delay-max').value = f.delay_max === null || f.delay_max === undefined ? '' : String(f.delay_max);
+  majAideDelai();
+  if (f.population && [...$('f-population').options].some((o) => o.value === f.population)) {
+    $('f-population').value = f.population;
+  }
+  majAidePopulation();
+  // La même mise notionnelle que la recherche : sans elle, le P&L affiché
+  // par l'Analytics ne se comparerait pas à celui de la configuration.
+  if (p.stake !== null && p.stake !== undefined) $('f-stake').value = String(p.stake);
+  signalerChangement();
+  sfFermerModale(false);
+  allerA('vue-ensemble');
+  analyser();
+  // ⚠️ ÉCART DE BORD CONNU, DIT PLUTÔT QUE CORRIGÉ EN SILENCE : la tranche de
+  // délai exclut sa borne haute (« 6-12 h » = [6 ; 12[), le filtre de délai de
+  // l'Analytics l'inclut. Un pari détecté PILE à 12 h compte dans l'Analytics
+  // et pas dans la configuration (relevé le 28/09 sur une base de test aux
+  // heures rondes ; rare avec de vraies heures de détection).
+  const bordDelai = f.delay_max !== null && f.delay_max !== undefined
+    ? ` Le filtre de délai inclut sa borne haute (${num(f.delay_max)} h), la configuration non : un pari détecté pile à cette borne peut s'ajouter.`
+    : '';
+  toast((manques.length
+    ? 'Une partie de la configuration n\'existe pas dans les filtres : l\'analyse peut être plus large.'
+    : `Configuration « ${s.title || ''} » reportée dans les filtres de l'Analytics.`) + bordDelai, 8000);
+}
+
+/* ── Exports ────────────────────────────────────────────────────── */
+
+/* Une ligne par configuration, valeurs BRUTES du serveur (pleine précision,
+ * virgule décimale posée par `csvTexte`) ; les critères sous leur libellé. */
+function sfExporterCsv() {
+  if (!SF || !(SF.strategies || []).length) { toast('Aucune configuration à exporter.'); return; }
+  const p = SF.params || {};
+  const entetes = ['rank'].concat(SF_DIMS.map(([, , csv]) => csv), ['settled', 'clv', 'clv_n',
+    'roi', 'pnl', 'stake_total', 'validation_clv', 'validation_roi', 'validation_settled',
+    'robustesse', 'echantillon']);
+  const lignes = SF.strategies.map((s) => {
+    const sm = s.summary || {}, v = s.validation || {};
+    return [s.rank].concat(SF_DIMS.map(([dim]) => sfCritere(s, dim)), [sm.settled, sm.clv,
+      sm.clv_n, sm.roi, sm.pnl, sm.stake_total, v.clv, v.roi, v.settled,
+      (s.robustness || {}).label, (s.sample || {}).label]);
+  });
+  const de = p.date_from || (REFS && REFS.date_min) || '';
+  const a = p.date_to || (REFS && REFS.date_max) || '';
+  telecharger(`valuebet-strategies-${p.sport || 'tous'}-${de}_${a}.csv`, csvTexte(entetes, lignes));
+  toast(`${ent(lignes.length)} configurations exportées.`);
+}
+
+/* L'en-tête du papier : les paramètres que le SERVEUR a appliqués. */
+function sfEntetePdf(d) {
+  const p = d.params || {};
+  const sp = d.split || {};
+  const h = $('sf-entete-pdf');
+  h.innerHTML = '';
+  h.hidden = false;
+  h.appendChild(el('h2', null, 'Valuebet Analytics — Strategy Finder'));
+  const dl = el('dl', 'export-filtres');
+  [['Sport', sfNomSport(p)],
+   ['Période', p.date_from || p.date_to
+     ? `${dateLongue(p.date_from, true)} → ${dateLongue(p.date_to, true)}` : 'toute la période disponible'],
+   ['Population', p.population_label || nomPopulation(p.population)],
+   ['Minimum', `${ent(p.min_n)} paris réglés par configuration`],
+   ['Mode', p.objective_label || p.objective || '—'],
+   ['Mise', `${num(p.stake)} € par pari (notionnelle)`],
+   ['Validation', sp.cutoff
+     ? `${periodeTexte((sp.validation || {}).from, (sp.validation || {}).to)} (hors échantillon)`
+     : 'aucune période réservée'],
+   ['Exporté le', new Date().toLocaleString('fr-BE')],
+  ].forEach(([k, v]) => {
+    dl.appendChild(el('dt', null, k));
+    dl.appendChild(el('dd', null, String(v)));
+  });
+  h.appendChild(dl);
+}
+
+function sfImprimer() {
+  if (!SF) { toast('Lancez d\'abord une recherche.'); return; }
+  sfEntetePdf(SF);
+  window.print();
+}
+
+function brancherStrategies() {
+  $('sf-lancer').addEventListener('click', sfLancer);
+  $('sf-methode-btn').addEventListener('click', sfOuvrirMethode);
+  document.querySelectorAll('#sf-min-presets button, #sf-rapides .puce').forEach((b) =>
+    b.addEventListener('click', () => sfPoserMin(b.dataset.min, true)));
+  $('sf-min').addEventListener('input', () => sfPoserMin($('sf-min').value, false));
+  $('sf-min').addEventListener('keydown', (e) => { if (e.key === 'Enter') sfLancer(); });
+  document.querySelectorAll('#sf-objectif button').forEach((b) =>
+    b.addEventListener('click', () => sfChoisirObjectif(b.dataset.objectif)));
+  $('sf-csv').addEventListener('click', sfExporterCsv);
+  $('sf-pdf').addEventListener('click', sfImprimer);
+  $('sf-ouvrir-analytics').addEventListener('click', () => { if (SF_DETAIL) sfOuvrirAnalytics(SF_DETAIL); });
+  ['sf-methode', 'sf-detail'].forEach((id) => {
+    const m = $(id);
+    m.addEventListener('keydown', sfPiegeFocus);
+    // Un clic sur le fond, HORS de la boîte, ferme la modale.
+    m.addEventListener('click', (e) => { if (e.target === m) sfFermerModale(); });
+    m.querySelector('.sf-modale-fermer').addEventListener('click', () => sfFermerModale());
+  });
+  $('sf-voile').addEventListener('click', () => sfFermerModale());
+}
+
 /* ── Paramètres ────────────────────────────────────────────────────── */
 
 function majAidePopulation() {
@@ -3237,12 +4215,15 @@ function brancherInterface() {
   document.addEventListener('click', fermerMenus);
   document.addEventListener('keydown', (e) => {
     if (e.key !== 'Escape') return;
-    // Une couche à la fois : le menu ouvert d'abord, puis le tiroir.
+    // Une couche à la fois : le menu ouvert d'abord, puis une modale du
+    // Strategy Finder, puis le tiroir.
     if (document.querySelector('.menu.ouvert')) { fermerMenus(true); return; }
+    if (SF_MODALE) { sfFermerModale(); return; }
     if ($('tiroir').classList.contains('ouvert')) { fermerTiroir(); return; }
     if ($('app').classList.contains('nav-ouverte')) { fermerNavMobile(); $('menu-mobile').focus(); }
   });
   document.querySelectorAll('.sb-lien').forEach((a) => a.addEventListener('click', fermerNavMobile));
+  brancherStrategies();
   window.addEventListener('resize', () => {
     clearTimeout(redessiner.minuteur);
     redessiner.minuteur = setTimeout(() => {
@@ -3462,6 +4443,7 @@ async function demarrer() {
   contexte();
   if (PAGE_ACTIVE === 'parametres') rendreParametres();
   if (PAGE_ACTIVE === 'mes-analyses') rendreMesAnalyses();
+  if (PAGE_ACTIVE === 'strategies') sfPreparer();
   analyser();
 }
 

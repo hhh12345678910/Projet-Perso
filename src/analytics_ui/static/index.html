@@ -69,6 +69,9 @@
       <a class="sb-lien" href="#/paris" data-page="paris" title="Paris joués">
         <svg viewBox="0 0 24 24"><rect x="3" y="4" width="18" height="16" rx="2"/><path d="M8 12l3 3 5-6"/></svg>
         <span>Paris joués</span></a>
+      <a class="sb-lien" href="#/strategies" data-page="strategies" title="Strategy Finder">
+        <svg viewBox="0 0 24 24"><path d="M10 3.5l1.6 4.4 4.4 1.6-4.4 1.6L10 15.5l-1.6-4.4L4 9.5l4.4-1.6z"/><path d="M18 14l.9 2.1 2.1.9-2.1.9L18 20l-.9-2.1-2.1-.9 2.1-.9z"/><path d="M18 3v3M16.5 4.5h3"/></svg>
+        <span>Strategy Finder</span></a>
       <a class="sb-lien" href="#/avancee" data-page="avancee" title="Analyse avancée">
         <svg viewBox="0 0 24 24"><path d="M4 6h9M17 6h3M4 12h3M11 12h9M4 18h11M19 18h1"/><circle cx="15" cy="6" r="2"/><circle cx="9" cy="12" r="2"/><circle cx="17" cy="18" r="2"/></svg>
         <span>Analyse avancée</span></a>
@@ -565,6 +568,158 @@
           </div>
         </section>
 
+        <!-- ═══ STRATEGY FINDER ═════════════════════════════════════════
+             ⚠️ UNE PAGE OUTIL, AVEC SA PROPRE REQUÊTE. Elle n'utilise ni la
+             barre de filtres ni l'analyse globale : le moteur explore les
+             dimensions lui-même, et tout ce qui s'affiche ici vient de
+             `/api/strategies` — aucun classement, aucun chiffre n'est
+             recalculé dans le navigateur. -->
+        <section class="page page-outil" id="page-strategies" data-page="strategies" hidden>
+
+          <!-- Sur papier seulement : les paramètres QUE LE SERVEUR A
+               APPLIQUÉS à la recherche imprimée. Un classement relu sans
+               sa période ni son minimum de volume ne se vérifie plus. -->
+          <section class="carte impression-seule sf-entete-pdf" id="sf-entete-pdf" hidden></section>
+
+          <article class="carte sf-formulaire" id="sf-formulaire">
+            <header class="carte-tete">
+              <div>
+                <h2>Strategy Finder</h2>
+                <p class="carte-sous">Découvrez les configurations les plus performantes pour votre marché.</p>
+              </div>
+              <button class="btn btn-fantome btn-petit" id="sf-methode-btn" type="button" aria-haspopup="dialog">
+                <svg viewBox="0 0 24 24" aria-hidden="true"><circle cx="12" cy="12" r="9"/><path d="M12 11v5M12 7.5v.5"/></svg>
+                Comment fonctionne le Strategy Finder ?
+              </button>
+            </header>
+
+            <div class="sf-champs">
+              <label class="sf-champ sf-champ-sport">
+                <span class="sf-lib">Sport</span>
+                <select id="sf-sport"><option value="">Tous les sports</option></select>
+              </label>
+
+              <div class="sf-champ sf-champ-periode">
+                <span class="sf-lib" id="sf-lib-periode">Période</span>
+                <div class="periode sf-periode" role="group" aria-labelledby="sf-lib-periode">
+                  <svg viewBox="0 0 24 24" aria-hidden="true"><rect x="3" y="4" width="18" height="17" rx="2"/><path d="M16 2v4M8 2v4M3 10h18"/></svg>
+                  <input type="date" id="sf-date-from" aria-label="Date de début de la recherche">
+                  <span class="fleche" aria-hidden="true">→</span>
+                  <input type="date" id="sf-date-to" aria-label="Date de fin de la recherche">
+                </div>
+              </div>
+
+              <label class="sf-champ sf-champ-population">
+                <span class="sf-lib">Population</span>
+                <select id="sf-population"></select>
+                <span class="aide">Le ROI ne porte jamais que sur les paris réglés.</span>
+              </label>
+
+              <div class="sf-champ sf-champ-min">
+                <span class="sf-lib" id="sf-lib-min">Minimum de paris</span>
+                <div class="sf-min-ligne">
+                  <div class="segmente" id="sf-min-presets" role="group" aria-labelledby="sf-lib-min">
+                    <button type="button" data-min="50">50</button>
+                    <button type="button" data-min="100" class="actif">100</button>
+                    <button type="button" data-min="250">250</button>
+                    <button type="button" data-min="500">500</button>
+                    <button type="button" data-min="1000">1000</button>
+                  </div>
+                  <input type="number" id="sf-min" min="1" step="1" value="100" inputmode="numeric"
+                         aria-label="Minimum de paris réglés par configuration">
+                </div>
+                <span class="aide">Paris réglés par configuration, sur toute la période.</span>
+              </div>
+
+              <div class="sf-champ sf-champ-objectif">
+                <span class="sf-lib" id="sf-lib-objectif">Objectif</span>
+                <div class="segmente" id="sf-objectif" role="group" aria-labelledby="sf-lib-objectif">
+                  <button type="button" data-objectif="balanced" class="actif" aria-pressed="true">Équilibre</button>
+                  <button type="button" data-objectif="clv" aria-pressed="false">CLV</button>
+                  <button type="button" data-objectif="roi" aria-pressed="false">ROI</button>
+                </div>
+              </div>
+            </div>
+
+            <div class="sf-bas">
+              <div class="sf-rapides-bloc">
+                <span class="presets-titre">Préréglages</span>
+                <div class="puces" id="sf-rapides" role="group" aria-label="Préréglages du minimum de paris">
+                  <button class="puce" type="button" data-min="500">Prudent — 500 paris</button>
+                  <button class="puce" type="button" data-min="250">Équilibré — 250 paris</button>
+                  <button class="puce actif" type="button" data-min="100">Exploratoire — 100 paris</button>
+                </div>
+              </div>
+              <button class="btn btn-primaire" id="sf-lancer" type="button">
+                <span class="roue" aria-hidden="true"></span>
+                <svg class="sf-ic-lancer" viewBox="0 0 24 24" aria-hidden="true"><path d="M10 3.5l1.6 4.4 4.4 1.6-4.4 1.6L10 15.5l-1.6-4.4L4 9.5l4.4-1.6z"/><path d="M18 14l.9 2.1 2.1.9-2.1.9L18 20l-.9-2.1-2.1-.9 2.1-.9z"/></svg>
+                <span class="btn-lib">Trouver les meilleures configurations</span>
+              </button>
+            </div>
+          </article>
+
+          <!-- Chargement, erreur : un seul emplacement, sous le formulaire. -->
+          <div id="sf-etat" aria-live="polite" hidden></div>
+
+          <div class="sf-resultats" id="sf-resultats" hidden>
+            <article class="carte" id="sf-synthese">
+              <header class="carte-tete">
+                <div>
+                  <h2 id="sf-titre">Top configurations</h2>
+                  <p class="carte-sous" id="sf-sous"></p>
+                </div>
+                <div class="carte-outils">
+                  <button class="btn btn-secondaire btn-petit" id="sf-csv" type="button">
+                    <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 3v12M7 10l5 5 5-5M4 21h16"/></svg>
+                    Exporter CSV</button>
+                  <button class="btn btn-secondaire btn-petit" id="sf-pdf" type="button"
+                          title="Ouvre l'impression du navigateur — choisissez « Enregistrer au format PDF »">
+                    <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M6 9V3h12v6M6 18H4v-7h16v7h-2M6 14h12v7H6z"/></svg>
+                    Exporter PDF</button>
+                </div>
+              </header>
+              <div class="sf-compteurs" id="sf-compteurs"></div>
+              <p class="sf-split" id="sf-split"></p>
+              <div class="sf-avert" id="sf-avert"></div>
+            </article>
+
+            <section class="etat-vide" id="sf-vide" hidden>
+              <div class="etat-vide-icone" aria-hidden="true">
+                <svg viewBox="0 0 24 24"><circle cx="11" cy="11" r="7"/><path d="M21 21l-4.3-4.3M8 11h6"/></svg>
+              </div>
+              <h2>Aucune configuration suffisamment documentée.</h2>
+              <p>Essayez d'augmenter la période ou de réduire le nombre minimum de paris.</p>
+            </section>
+
+            <div class="sf-bloc-top" id="sf-bloc-top">
+              <p class="sf-nombre" id="sf-nombre" hidden></p>
+              <div class="sf-cartes" id="sf-cartes"></div>
+              <p class="aide sf-prudence">Performances historiques, mesurées sur la période analysée : elles décrivent ce que chaque configuration a présenté, sans préjuger de la suite. Cliquez sur une configuration pour en lire le détail.</p>
+            </div>
+
+            <article class="carte carte-table" id="sf-bloc-table">
+              <header class="carte-tete">
+                <div><h2>Toutes les configurations retenues</h2>
+                  <p class="carte-sous">Cliquez sur un en-tête pour trier, sur une ligne pour ouvrir le détail. Validation : période conservée hors de la recherche.</p></div>
+              </header>
+              <div class="enrob"><table class="tableau sf-table" id="sf-table"></table></div>
+            </article>
+
+            <div class="grille-2 sf-comparaisons" id="sf-comparaisons">
+              <article class="carte carte-table" id="sf-bloc-par-book">
+                <header class="carte-tete"><div><h2>Meilleure configuration par bookmaker</h2>
+                  <p class="carte-sous">La configuration la mieux placée de chaque bookmaker.</p></div></header>
+                <div class="enrob"><table class="tableau tableau-dense sf-comp" id="sf-par-book"></table></div>
+              </article>
+              <article class="carte carte-table" id="sf-bloc-par-marche">
+                <header class="carte-tete"><div><h2>Meilleure configuration par marché</h2>
+                  <p class="carte-sous">La configuration la mieux placée de chaque marché.</p></div></header>
+                <div class="enrob"><table class="tableau tableau-dense sf-comp" id="sf-par-marche"></table></div>
+              </article>
+            </div>
+          </div>
+        </section>
+
         <!-- ═══ MES ANALYSES ════════════════════════════════════════════ -->
         <section class="page page-outil" id="page-mes-analyses" data-page="mes-analyses" hidden>
           <article class="carte">
@@ -885,6 +1040,48 @@
     <button class="btn btn-primaire" id="appliquer" type="button">Appliquer et analyser</button>
   </footer>
 </aside>
+
+<!-- ═══ STRATEGY FINDER : MODALES ══════════════════════════════════════
+     Même contrat que le tiroir : dialogue modal, le reste de l'application
+     rendu inerte tant qu'il est ouvert, Échap le ferme, le focus revient à
+     l'élément qui l'a ouvert. Une seule modale à la fois. -->
+<div class="voile" id="sf-voile" hidden></div>
+
+<div class="sf-modale" id="sf-methode" role="dialog" aria-modal="true" aria-labelledby="sf-methode-titre" hidden>
+  <div class="sf-modale-boite sf-modale-etroite">
+    <header class="sf-modale-tete">
+      <h2 id="sf-methode-titre">Comment fonctionne le Strategy Finder ?</h2>
+      <button class="icone-btn sf-modale-fermer" id="sf-methode-fermer" type="button" aria-label="Fermer">
+        <svg viewBox="0 0 24 24"><path d="M18 6L6 18M6 6l12 12"/></svg>
+      </button>
+    </header>
+    <div class="sf-modale-corps">
+      <p class="sf-methode-texte" id="sf-methode-texte"></p>
+    </div>
+  </div>
+</div>
+
+<div class="sf-modale" id="sf-detail" role="dialog" aria-modal="true" aria-labelledby="sf-detail-titre" hidden>
+  <div class="sf-modale-boite">
+    <header class="sf-modale-tete">
+      <div class="sf-detail-entete">
+        <span class="sf-rang" id="sf-detail-rang"></span>
+        <h2 id="sf-detail-titre">Détail de la configuration</h2>
+        <p class="carte-sous" id="sf-detail-sous"></p>
+      </div>
+      <button class="icone-btn sf-modale-fermer" id="sf-detail-fermer" type="button" aria-label="Fermer">
+        <svg viewBox="0 0 24 24"><path d="M18 6L6 18M6 6l12 12"/></svg>
+      </button>
+    </header>
+    <div class="sf-modale-corps" id="sf-detail-corps"></div>
+    <footer class="sf-modale-pied">
+      <p class="aide">Ses critères et sa période sont reportés dans les filtres de l'Analytics, et l'analyse est relancée.</p>
+      <button class="btn btn-primaire" id="sf-ouvrir-analytics" type="button">
+        <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M3 17l6-6 4 4 8-8"/><path d="M15 7h6v6"/></svg>
+        Ouvrir dans l'Analytics</button>
+    </footer>
+  </div>
+</div>
 
 <div class="toast" id="toast" role="status" aria-live="polite" hidden></div>
 <div id="bulle" role="tooltip" aria-hidden="true"></div>
