@@ -1144,6 +1144,50 @@ compte, leur CLV est inconnue. Les jeter ferait lire « le ROI par tranche de
 CLV » sur la sous-population dont on a réussi à mesurer la CLV — une sélection,
 pas un échantillon. Elle est donc imprimée avec les autres.
 
+## Hockey — collecte pour mesurer la CLV, sans alerte (29/09)
+
+**Le piège** (`src/hockey.py`) : Pinnacle price le hockey prolongation et tirs
+au but INCLUS ; les books belges publient aussi un 1X2 sur le temps
+RÉGLEMENTAIRE. Les comparer fabrique une EV et une CLV fictives, invisibles
+après coup (la base ne garde pas l'identifiant du marché d'origine).
+
+**Les trois verrous :**
+- **Sourdine** : `SPORTS_ALERT_OFF=hockey` est le DÉFAUT. Aucune alerte hockey
+  (value bets, CLV confirmé, surebets, middles, marchés en retard, live,
+  `/scan`). La détection a lieu, la clôture est capturée, la CLV mesurée.
+- **Marchés vérifiés seulement** : Pinnacle, Ladbrokes (vainqueur 478),
+  Golden Palace et StarCasino (406 vainqueur, 412 total, prol. + TAB incl.).
+  Tout le reste est écarté et compté dans le journal :
+  `[hockey] non vérifiés, écartés : unibet_be 1234, …`.
+- L'alerte « CLV confirmé » ne croise plus deux sports (un CSKA–Spartak de
+  KHL et un de football le même jour).
+
+**Activer :**
+```bash
+cd ~/Projet-Perso && git pull
+grep SPORT_LIST .env                 # ex. SPORT_LIST=soccer,tennis
+sed -i 's/^SPORT_LIST=.*/SPORT_LIST=soccer,tennis,hockey/' .env
+sudo systemctl restart valuebet-daemon valuebet-listener
+tail -f valuebet.log | grep --line-buffered "\[hockey\]"
+```
+
+**Débloquer les autres books** — sonde en lecture seule, qui liste chaque
+marché hockey de chaque book (identifiant, nom, issues) :
+```bash
+.venv/bin/python -m scripts.sonde_hockey
+.venv/bin/python -m scripts.sonde_hockey --books unibet,vivatbet
+```
+
+**Mesurer** (l'Analytics exclut le hockey de son périmètre) :
+```bash
+.venv/bin/python -m scripts.clv_split --by sport,book,market --since 2026-09-29 --min 1
+.venv/bin/python -m scripts.clv_roi_matrix --depuis 2026-09-29 --axe ev
+```
+Signature de panne à surveiller : une CLV nettement positive sur les Over 4.5
+et 6.5 mais pas sur les 5.5 = un total réglementaire est entré. Lever la
+sourdine (`SPORTS_ALERT_OFF=` dans `.env`) seulement après ~200 paris clôturés
+propres, la règle déjà posée pour les mi-temps.
+
 ## Strategy Finder (Analytics) — ajouté le 28/09
 
 Page « Strategy Finder » de l'Analytics (https://analytics.equodds.com/#/strategies) :

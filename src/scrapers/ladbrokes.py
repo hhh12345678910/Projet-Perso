@@ -186,8 +186,19 @@ _MARKET_BY_ALT_DESC = {
 }
 
 
-def _market_type(odd_group: dict) -> MarketType | None:
+#: Hockey : SEULS ces betId sont lus, sans repli sur `alternativeDescription`
+#: — un « 1X2 » ou un « Totals » réglementaire y passerait sinon pour un marché
+#: prolongation incluse (voir `src/hockey.py`). 478 « VAINQUEUR » est à deux
+#: issues, donc prolongation et tirs au but inclus. 19388 (« incl. OT ») n'y
+#: est PAS encore : rien ne dit si le tir au but y compte pour un but, comme
+#: chez Pinnacle — à confirmer par `scripts/sonde_hockey.py`.
+HOCKEY_BET_IDS = {478: MarketType.H2H}
+
+
+def _market_type(odd_group: dict, sport: str | None = None) -> MarketType | None:
     bet_id = odd_group.get("betId")
+    if sport == "hockey":
+        return HOCKEY_BET_IDS.get(bet_id)
     if bet_id in _MARKET_BY_BET_ID:
         return _MARKET_BY_BET_ID[bet_id]
     return _MARKET_BY_ALT_DESC.get(str(odd_group.get("alternativeDescription") or ""))
@@ -263,7 +274,8 @@ def _home_away(event_info: dict) -> tuple[str | None, str | None]:
 
 
 def parse_prematch(
-    payload: dict, *, sport_description: str | None = None
+    payload: dict, *, sport_description: str | None = None,
+    sport: str | None = None,
 ) -> Iterator[OddQuote]:
     """Walk a Ladbrokes prematch-homepage payload and yield OddQuote objects.
 
@@ -299,7 +311,7 @@ def parse_prematch(
 
         for bg in ev.get("betGroupList") or []:
             for og in bg.get("oddGroupList") or []:
-                market = _market_type(og)
+                market = _market_type(og, sport)
                 if market is None:
                     continue
                 line = _extract_line(og, market)

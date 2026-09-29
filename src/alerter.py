@@ -989,6 +989,34 @@ def _market_key(dedup_key: str) -> str | None:
     return f"{event}|{market}|{line}"
 
 
+#: Sports COLLECTÉS mais jamais ALERTÉS, tant que leur CLV n'a pas été
+#: mesurée. Le hockey y est PAR DÉFAUT : ses marchés mêlent le temps
+#: réglementaire (1X2 à trois issues, totaux sans prolongation) et le
+#: « prolongation incluse » de Pinnacle, et une erreur de correspondance
+#: fabrique une EV fictive de +15 à +30 % — qui partirait en premium avec le
+#: bouton « Jouer » dès le premier cycle. Même principe que les mi-temps
+#: (§21.14) et que /book : la détection a lieu, elle est écrite, sa clôture
+#: est capturée et sa CLV mesurée ; seul l'ENVOI est supprimé.
+#:
+#: Réglage : `SPORTS_ALERT_OFF=hockey` (défaut), `SPORTS_ALERT_OFF=` (vide)
+#: pour tout alerter. Relu à chaque appel, comme /book.
+SPORTS_ALERT_OFF_DEFAUT = "hockey"
+
+
+def sports_alert_off() -> set[str]:
+    """Les sports dont AUCUNE alerte ne part (value bets, CLV confirmé,
+    surebets, middles, marchés en retard, live, /scan)."""
+    brut = os.getenv("SPORTS_ALERT_OFF", SPORTS_ALERT_OFF_DEFAUT)
+    return {s.strip().lower() for s in brut.split(",") if s.strip()}
+
+
+def sport_muet(sport: "str | None") -> bool:
+    """Vrai si ce sport est en sourdine. Un sport inconnu (None) ne l'est pas :
+    les appelants historiques qui ne passent pas de sport gardent leur
+    comportement."""
+    return bool(sport) and str(sport).strip().lower() in sports_alert_off()
+
+
 def _load_books_alert_off() -> set[str]:
     """Books dont l'utilisateur a coupé les alertes via /book.
 
@@ -1163,6 +1191,9 @@ class TelegramAlerter:
         # Book mis en sourdine via /book. La détection a bien eu lieu et reste
         # en base ; seul l'envoi est supprimé.
         if bet.book.value in self._books_off:
+            return False
+        # Sport en sourdine (SPORTS_ALERT_OFF) : même principe que /book.
+        if sport_muet(sport):
             return False
         # Mi-temps : AUCUN canal, ni principal, ni premium, ni critique.
         #
@@ -1581,6 +1612,8 @@ def send_live_observation(opportunites, config: "TelegramConfig | None",
     Aucun `reply_markup` n'est passe : pas de bouton, donc aucune action
     bookmaker possible depuis le message.
     """
+    if sport_muet(sport):
+        return 0
     if config is None or not config.bot_token:
         log("[live] Telegram non configuré — aucune alerte")
         return 0
@@ -1684,7 +1717,7 @@ def send_late_market_alerts(
     match. Les deux derniers champs sont optionnels : un appelant qui n'a pas de
     score envoie un quadruplet et le message le dit. Renvoie les éléments
     réellement envoyés, pour que l'appelant ne marque que ceux-là."""
-    if config is None or not items:
+    if config is None or not items or sport_muet(sport):
         return []
     chat = config.effective_critical_chat_id
     if not chat:
@@ -1711,8 +1744,8 @@ def send_alerts(bets: list[ValueBet], config: TelegramConfig | None,
     """Fire a Telegram message for each bet that clears the EV threshold.
     Returns the bets actually delivered (so the caller marks only those as
     notified — a rate-limited/failed send stays unmarked and is retried).
-    No-op if config is None (env not set)."""
-    if config is None or not bets:
+    No-op if config is None (env not set), or for a sport in SPORTS_ALERT_OFF."""
+    if config is None or not bets or sport_muet(sport):
         return []
     sent: list[ValueBet] = []
     with TelegramAlerter(config, print_fn=print_fn, chrono=chrono) as alerter:
@@ -1730,7 +1763,7 @@ def send_surebet_alerts(
     prematch or live Telegram channel based on whether the event's kickoff time
     has already passed. Suspicious surebets and sub-threshold margins are
     silently skipped. Returns the surebets actually delivered."""
-    if config is None or not surebets:
+    if config is None or not surebets or sport_muet(sport):
         return []
     now = datetime.now(timezone.utc)
     sent: list[Surebet] = []
@@ -1758,7 +1791,7 @@ def send_middle_alerts(
     min_minutes_to_kickoff are dropped — in-play/last-minute totals are the
     stale-line/data-error zone, same rule as surebets. Returns the middles
     actually delivered (so only those get marked notified)."""
-    if config is None or not middles:
+    if config is None or not middles or sport_muet(sport):
         return []
     now = datetime.now(timezone.utc)
     sent: list[Middle] = []
@@ -1785,8 +1818,9 @@ def send_clv_alerts(
     sport: str | None = None,
 ) -> list[tuple]:
     """Send one CLV confirmation alert per near-kickoff value bet. Returns the
-    clv_items actually delivered. No-op if config is None or the list is empty."""
-    if config is None or not clv_items:
+    clv_items actually delivered. No-op if config is None or the list is empty,
+    or for a sport in SPORTS_ALERT_OFF."""
+    if config is None or not clv_items or sport_muet(sport):
         return []
     sent: list[tuple] = []
     with TelegramAlerter(config, print_fn=print_fn) as alerter:

@@ -1226,7 +1226,16 @@ def _daemon_scan_sport(
                         pin_idx[(_d, _t, _mkt.value, _label, _ln)] = 1.0 / _prob
 
             clv_pending: list[tuple] = []
-            for _bet in storage.open_value_bets():
+            _ouverts = storage.open_value_bets()
+            # ⚠️ `pin_idx` est la ligne juste de CE sport, indexée par date et
+            # noms d'équipes, sans heure : un CSKA–Spartak de KHL le même jour
+            # qu'un CSKA–Spartak de football y trouverait la cote de l'autre.
+            # Un pari n'est donc confronté qu'aux lignes de son propre sport.
+            _sport_de = storage.sports_of(b["event_key"] for b in _ouverts)
+            for _bet in _ouverts:
+                _s = _sport_de.get(_bet["event_key"])
+                if _s is not None and _s != current_sport:
+                    continue
                 _parsed = parse_event_key(_bet["event_key"])
                 if _parsed is None:
                     continue

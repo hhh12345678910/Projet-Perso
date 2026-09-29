@@ -163,7 +163,18 @@ def _parse_event_time(raw: Any) -> datetime | None:
         return None
 
 
-def parse_get_events(payload: dict, book: Book = Book.GOLDEN_PALACE) -> Iterator[OddQuote]:
+#: Hockey : SEULS ces typeId sont lus. Le 1X2 réglementaire (typeId 1, trois
+#: issues) et le total 18 porteraient sinon la même clé que le vainqueur et
+#: le total prolongation incluse — et un nul suspendu suffirait à comparer un
+#: prix réglementaire à la ligne juste de Pinnacle (voir `src/hockey.py`).
+HOCKEY_TYPE_IDS = {
+    406: MarketType.H2H,       # « Vainqueur (prol. + TAB incl.) »
+    412: MarketType.TOTALS,    # « Total de buts (prol. + TAB incl.) »
+}
+
+
+def parse_get_events(payload: dict, book: Book = Book.GOLDEN_PALACE,
+                     sport: str | None = None) -> Iterator[OddQuote]:
     """Walk a GetEvents payload and yield OddQuote objects.
 
     Shape: payload has flat lists events/markets/odds/competitors. Events join
@@ -199,7 +210,8 @@ def parse_get_events(payload: dict, book: Book = Book.GOLDEN_PALACE) -> Iterator
             market = markets.get(mid)
             if market is None:
                 continue
-            market_type = _market_type(market)
+            market_type = (HOCKEY_TYPE_IDS.get(market.get("typeId")) if sport == "hockey"
+                           else _market_type(market))
             if market_type is None:
                 continue
 

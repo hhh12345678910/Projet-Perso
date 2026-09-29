@@ -406,8 +406,11 @@ def fetch_playable(cfg, *, now: datetime | None = None) -> list[dict]:
         ).fetchall()
     finally:
         con.close()
-    from src.alerter import _load_books_alert_off, _load_played_keys
+    from src.alerter import _load_books_alert_off, _load_played_keys, sport_muet
     _, played_markets = _load_played_keys()
+    # Un sport en sourdine (SPORTS_ALERT_OFF, le hockey par défaut) ne sort
+    # pas davantage par /scan que par les canaux.
+    rows = [r for r in rows if not sport_muet(r["sport"])]
     # Relu à chaque scan, comme l'alerter le relit à chaque cycle : une
     # bascule dans /book prend effet tout de suite, sans redémarrage.
     return select_playable(rows, played_markets, cfg, now,

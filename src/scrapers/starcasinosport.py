@@ -13,5 +13,5 @@ class StarCasinoSportScraper(GoldenPalaceScraper):
     origin = "https://starsport.be"
 
 
-def parse_get_events(payload: dict):
-    return _parse_get_events(payload, book=Book.STARCASINO_SPORT)
+def parse_get_events(payload: dict, sport: str | None = None):
+    return _parse_get_events(payload, book=Book.STARCASINO_SPORT, sport=sport)

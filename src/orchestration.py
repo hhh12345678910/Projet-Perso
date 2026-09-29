@@ -64,6 +64,7 @@ from .scrapers.bingoal import BingoalScraper, parse_listview as bingoal_parse_li
 from .scrapers.circus import load_pushed_quotes as circus_load_pushed
 from .scrapers.elitesports import EliteSportsScraper
 from .scrapers.elitesports import parse_prematch as elitesports_parse_prematch
+from . import hockey
 from .scrapers.goldenpalace import GoldenPalaceScraper, parse_get_events as goldenpalace_parse_get_events
 from .scrapers.ladbrokes import LadbrokesScraper, parse_prematch as ladbrokes_parse_prematch
 from .scrapers.magicbetting import load_pushed_quotes as magic_load_pushed
@@ -430,7 +431,7 @@ def fetch_ladbrokes_quotes(sport: str) -> list[OddQuote]:
     try:
         with LadbrokesScraper() as lb:
             data = lb.fetch_all_meetings(sport, max_meetings=80)
-        return list(ladbrokes_parse_prematch(data))
+        return list(ladbrokes_parse_prematch(data, sport=sport))
     except httpx.HTTPError as e:
         console.print(f"[yellow]Ladbrokes skipped:[/yellow] {e}")
         return []
@@ -442,7 +443,7 @@ def fetch_goldenpalace_quotes(sport: str) -> list[OddQuote]:
     try:
         with GoldenPalaceScraper() as gp:
             data = gp.fetch_events(sport)
-        return list(goldenpalace_parse_get_events(data))
+        return list(goldenpalace_parse_get_events(data, sport=sport))
     except httpx.HTTPError as e:
         console.print(f"[yellow]Golden Palace skipped:[/yellow] {e}")
         return []
@@ -705,7 +706,7 @@ def fetch_starcasinosport_quotes(sport: str) -> list[OddQuote]:
     try:
         with StarCasinoSportScraper() as ss:
             data = ss.fetch_events(sport)
-        return list(starcasinosport_parse_get_events(data))
+        return list(starcasinosport_parse_get_events(data, sport=sport))
     except httpx.HTTPError as e:
         console.print(f"[yellow]StarCasino Sport skipped:[/yellow] {e}")
         return []
@@ -1330,6 +1331,18 @@ def fetch_all_parallel(
         # ici plutôt que de refaire la collecte ailleurs — une sonde qui
         # recalcule autre chose que la production ment (§17.7).
         return all_quotes
-    return [q for q in all_quotes if q.market != MarketType.HANDICAP]
+    all_quotes = [q for q in all_quotes if q.market != MarketType.HANDICAP]
+    if sport == hockey.SPORT:
+        # Le hockey ne garde que les marchés « prolongation incluse » VÉRIFIÉS
+        # (voir `src/hockey.py`) : un prix réglementaire comparé à la ligne
+        # de Pinnacle fabrique une EV et une CLV fictives. L'écarté est dit,
+        # book par book — « non vérifié » n'est pas « sans hockey ».
+        all_quotes, ecartees = hockey.filtrer(all_quotes)
+        if ecartees:
+            console.print(
+                f"[dim]\\[{sport}]   non vérifiés, écartés : "
+                + ", ".join(f"{b} {n}" for b, n in ecartees.most_common())
+                + "[/dim]")
+    return all_quotes
 
 

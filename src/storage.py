@@ -1632,6 +1632,19 @@ class Storage:
             ).fetchall()
         return list(canaux), list(regles), list(valeurs)
 
+    def sports_of(self, event_keys) -> dict[str, str]:
+        """Le sport de chaque événement connu (`events.sport`), par event_key.
+        Une clé absente de `events` n'est pas dans le résultat."""
+        keys = list({k for k in event_keys if k})
+        out: dict[str, str] = {}
+        with self._conn() as c:
+            for i in range(0, len(keys), 500):
+                lot = keys[i:i + 500]
+                out.update(c.execute(
+                    f"SELECT event_key, sport FROM events WHERE event_key IN "
+                    f"({','.join('?' * len(lot))})", lot).fetchall())
+        return out
+
     def sports_seen(self, *, days: float = 30.0) -> list[str]:
         """Sports ayant produit une detection recemment.
 
