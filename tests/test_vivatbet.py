@@ -312,3 +312,28 @@ def test_lalerte_montre_les_noms_FRANCAIS_du_site():
     msg = format_value_bet(bet)
     assert "Belgique vs France" in msg and "Belgium" not in msg
     assert "Pari : <b>Home</b> - 3.98 (fair 3.33)" in msg
+
+
+def test_la_sonde_d_appariement_signale_un_faux_appariement(tmp_path, capsys):
+    """Le cas Féroé : rapprochement flou, EV +424 %. Une fausse EV donne une
+    fausse CLV du même montant — seule la ligne, pas la moyenne, le montre."""
+    import sqlite3
+
+    from scripts.appariement_book import main
+    from src.storage import Storage
+    db = tmp_path / "t.db"
+    Storage(str(db))
+    c = sqlite3.connect(db)
+    c.execute("INSERT INTO events VALUES ('ek1','soccer','L','Faroe Islands','England',"
+              "'2026-09-30T18:00:00')")
+    c.execute("INSERT INTO value_bets(event_key,book,market,outcome_label,line,odd_taken,"
+              "fair_prob,fair_odd,ev_pct,kelly_pct,detected_at) VALUES "
+              "('ek1','vivatbet','h2h','home',NULL,6.44,0.81,1.23,424,3,'2026-09-29T10:00:00')")
+    c.execute("INSERT INTO bet_features(value_bet_id,detected_at,event_key,book,market,"
+              "outcome_label,odd_taken,fair_odd,ev_pct,match_score,time_shift_min) VALUES "
+              "(1,'2026-09-29T10:00:00','ek1','vivatbet','h2h','home',6.44,1.23,424,85.7,0)")
+    c.commit()
+    main(["--db", str(db)])
+    out = capsys.readouterr().out
+    assert "appariement flou  (score < 100):     1" in out
+    assert "Faroe Islands - England" in out and "appariement flou 86" in out and "EV +424.0 %" in out
