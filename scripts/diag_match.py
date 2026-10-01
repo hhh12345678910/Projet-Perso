@@ -22,7 +22,13 @@ from __future__ import annotations
 
 import argparse
 import sqlite3
+import sys
+from pathlib import Path
 from datetime import datetime, timezone
+
+# Lancé comme fichier (`python scripts/diag_match.py`), `src` n'est pas sur
+# le chemin : le flux live tombait sur « No module named 'src' ».
+sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
 BOOKS_TEMOINS = ("pinnacle", "golden_palace", "unibet_be", "magicbetting",
                  "ladbrokes_be", "starcasino_sport")
