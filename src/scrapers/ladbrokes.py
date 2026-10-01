@@ -189,10 +189,10 @@ _MARKET_BY_ALT_DESC = {
 #: Hockey : SEULS ces betId sont lus, sans repli sur `alternativeDescription`
 #: — un « 1X2 » ou un « Totals » réglementaire y passerait sinon pour un marché
 #: prolongation incluse (voir `src/hockey.py`). 478 « VAINQUEUR » est à deux
-#: issues, donc prolongation et tirs au but inclus. 19388 (« incl. OT ») n'y
-#: est PAS encore : rien ne dit si le tir au but y compte pour un but, comme
-#: chez Pinnacle — à confirmer par `scripts/sonde_hockey.py`.
-HOCKEY_BET_IDS = {478: MarketType.H2H}
+#: issues, donc prolongation et tirs au but inclus. 19388 « PLUS/MOINS DE
+#: (PROL. ET TAB INCL.) » : confirmé par `scripts/sonde_hockey.py` le 01/10,
+#: le tir au but y compte, comme chez Pinnacle.
+HOCKEY_BET_IDS = {478: MarketType.H2H, 19388: MarketType.TOTALS}
 
 
 def _market_type(odd_group: dict, sport: str | None = None) -> MarketType | None:

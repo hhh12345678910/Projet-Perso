@@ -38,12 +38,21 @@ SPORT_IDS = {
 # invent value that does not exist.
 _MARKET_BY_SPORT: dict[str, tuple[int, dict[str, str]]] = {
     "soccer": (547, {"1": "home", "0": "draw", "2": "away"}),
-    "hockey": (547, {"1": "home", "0": "draw", "2": "away"}),
+    # Hockey : 640 « Full Time », trois issues — relevé par
+    # `scripts/sonde_hockey.py` le 01/10 (le 547 n'existe pas pour le hockey).
+    # Un 1X2 à nul est du TEMPS RÉGLEMENTAIRE : émis en `h2h_reg`, voir
+    # `_MARCHE_EMIS` et `src/hockey.py`.
+    "hockey": (640, {"1": "home", "0": "draw", "2": "away"}),
     "tennis": (521, {"1": "home", "2": "away"}),
     "basketball": (521, {"1": "home", "2": "away"}),
     "volleyball": (521, {"1": "home", "2": "away"}),
 }
 _DEFAULT_MARKET = _MARKET_BY_SPORT["soccer"]
+
+#: Le type émis, quand ce n'est pas `h2h`. Le hockey de Napoleon n'a que le
+#: 1X2 réglementaire : l'émettre en `h2h` le comparerait au vainqueur
+#: prolongation incluse de Pinnacle — une EV fictive.
+_MARCHE_EMIS = {"hockey": MarketType.H2H_REG}
 
 
 def _is_retryable(exc: BaseException) -> bool:
@@ -128,6 +137,7 @@ def parse_by_date(payload: dict, sport: str = "soccer") -> Iterator[OddQuote]:
     _MARKET_BY_SPORT. An unknown sport falls back to the three-way market
     rather than guessing, so it yields nothing instead of yielding wrong."""
     market_id, labels = _MARKET_BY_SPORT.get(sport, _DEFAULT_MARKET)
+    marche = _MARCHE_EMIS.get(sport, MarketType.H2H)
     now = datetime.now(timezone.utc)
     for ev in payload.get("data") or []:
         name = ev.get("matchName") or ""
@@ -162,7 +172,7 @@ def parse_by_date(payload: dict, sport: str = "soccer") -> Iterator[OddQuote]:
             yield OddQuote(
                 event_key=ek,
                 book=Book.NAPOLEON_BE,
-                market=MarketType.H2H,
+                market=marche,
                 outcome=Outcome(label=label, line=None),
                 decimal_odd=decimal_odd,
                 fetched_at=now,

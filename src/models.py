@@ -26,6 +26,14 @@ class MarketType(str, Enum):
     # confusion jeux/sets du §19.2.
     H2H_H1 = "h2h_h1"         # 1X2 / moneyline, première mi-temps
     TOTALS_H1 = "totals_h1"   # over/under, première mi-temps
+    # Hockey, TEMPS RÉGLEMENTAIRE (60 minutes, sans prolongation ni tirs au
+    # but). Même logique que les mi-temps : des types DISTINCTS, pour qu'un 1X2
+    # réglementaire ne tombe jamais dans le groupe de devig du vainqueur
+    # prolongation incluse (`h2h`), ni un total réglementaire dans celui du
+    # total prolongation incluse (`totals`). Comparés à la période 6 de
+    # Pinnacle, qui est le temps réglementaire. Voir `src/hockey.py`.
+    H2H_REG = "h2h_reg"       # 1X2 temps réglementaire (hockey)
+    TOTALS_REG = "totals_reg" # over/under temps réglementaire (hockey)
 
 
 class Book(str, Enum):
@@ -82,7 +90,12 @@ HALF_TIME_MARKETS = frozenset({MarketType.H2H_H1, MarketType.TOTALS_H1})
 #: Les marchés de type over/under, toutes périodes confondues. À utiliser
 #: partout où un test portait sur `MarketType.TOTALS` pour une raison de
 #: SÉMANTIQUE (labels over/under symétriques), et non de périmètre.
-TOTALS_LIKE = frozenset({MarketType.TOTALS, MarketType.TOTALS_H1})
+TOTALS_LIKE = frozenset({MarketType.TOTALS, MarketType.TOTALS_H1, MarketType.TOTALS_REG})
+
+#: Les marchés hockey « temps réglementaire ». `clv.settle` ne les règle pas
+#: (il ne connaît que `h2h` et `totals`) : un score final peut contenir la
+#: prolongation, et régler dessus écrirait un résultat faux.
+REGULATION_MARKETS = frozenset({MarketType.H2H_REG, MarketType.TOTALS_REG})
 
 #: Le marché de match plein correspondant. Sert à l'affichage et aux
 #: regroupements, jamais à l'appariement — apparier une mi-temps à un match
@@ -90,6 +103,8 @@ TOTALS_LIKE = frozenset({MarketType.TOTALS, MarketType.TOTALS_H1})
 _BASE_MARKET = {
     MarketType.H2H_H1: MarketType.H2H,
     MarketType.TOTALS_H1: MarketType.TOTALS,
+    MarketType.H2H_REG: MarketType.H2H,
+    MarketType.TOTALS_REG: MarketType.TOTALS,
 }
 
 

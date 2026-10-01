@@ -228,8 +228,22 @@ _MARKET_BY_TEMPLATE = {
 }
 
 
-def _market_type(market: dict) -> MarketType | None:
-    return _MARKET_BY_TEMPLATE.get(str(market.get("marketTemplateId") or "").upper())
+#: Hockey : SEULS ces modèles sont lus (relevés par `scripts/sonde_hockey.py`
+#: le 01/10). MW2W, vainqueur à deux issues, inclut forcément la prolongation
+#: et les tirs au but ; MW3W, à trois issues, est le temps réglementaire. Les
+#: totaux (GOU, TGOUOT) restent dehors : rien ne dit encore s'ils comptent la
+#: prolongation et le tir au but comme Pinnacle (voir `src/hockey.py`).
+HOCKEY_TEMPLATES = {
+    "MW2W": MarketType.H2H,
+    "MW3W": MarketType.H2H_REG,
+}
+
+
+def _market_type(market: dict, sport: str | None = None) -> MarketType | None:
+    modele = str(market.get("marketTemplateId") or "").upper()
+    if sport == "hockey":
+        return HOCKEY_TEMPLATES.get(modele)
+    return _MARKET_BY_TEMPLATE.get(modele)
 
 
 # selectionTemplateId is BetFirst's stable, language-independent outcome code.
@@ -293,7 +307,7 @@ def _extract_home_away(participants: list) -> tuple[str | None, str | None]:
     return None, None
 
 
-def parse_events_table(payload: dict) -> Iterator[OddQuote]:
+def parse_events_table(payload: dict, sport: str | None = None) -> Iterator[OddQuote]:
     """Walk a BetFirst events-table/v2 payload and yield OddQuote objects.
 
     Shape: payload["data"]["events"|"markets"|"selections"] are flat lists.
@@ -336,7 +350,7 @@ def parse_events_table(payload: dict) -> Iterator[OddQuote]:
         ev_data = event_index.get(eid)
         if ev_data is None:
             continue
-        mt = _market_type(m)
+        mt = _market_type(m, sport)
         if mt is None:
             continue
         if m.get("status") != "Open":

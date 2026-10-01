@@ -1144,49 +1144,61 @@ compte, leur CLV est inconnue. Les jeter ferait lire « le ROI par tranche de
 CLV » sur la sous-population dont on a réussi à mesurer la CLV — une sélection,
 pas un échantillon. Elle est donc imprimée avec les autres.
 
-## Hockey — collecte pour mesurer la CLV, sans alerte (29/09)
+## Hockey — collecte pour mesurer la CLV, sans alerte (01/10)
 
-**Le piège** (`src/hockey.py`) : Pinnacle price le hockey prolongation et tirs
-au but INCLUS ; les books belges publient aussi un 1X2 sur le temps
-RÉGLEMENTAIRE. Les comparer fabrique une EV et une CLV fictives, invisibles
-après coup (la base ne garde pas l'identifiant du marché d'origine).
+**Le piège** (`src/hockey.py`) : un match de hockey a deux familles de
+marchés — prolongation et tirs au but INCLUS, et TEMPS RÉGLEMENTAIRE (1X2 à
+trois issues). Comparer l'une à l'autre fabrique une EV et une CLV fictives,
+invisibles après coup. Pinnacle cote les deux : période 0 (prolongation
+incluse) et période 6 (réglementaire). Chaque famille a son propre type de
+marché (`h2h`/`totals` et `h2h_reg`/`totals_reg`) et n'est comparée qu'à SA
+période Pinnacle.
 
-**Les trois verrous :**
-- **Sourdine** : `SPORTS_ALERT_OFF=hockey` est le DÉFAUT. Aucune alerte hockey
-  (value bets, CLV confirmé, surebets, middles, marchés en retard, live,
-  `/scan`). La détection a lieu, la clôture est capturée, la CLV mesurée.
-- **Marchés vérifiés seulement** : Pinnacle, Ladbrokes (vainqueur 478),
-  Golden Palace et StarCasino (406 vainqueur, 412 total, prol. + TAB incl.).
-  Tout le reste est écarté et compté dans le journal :
-  `[hockey] non vérifiés, écartés : unibet_be 1234, …`.
-- L'alerte « CLV confirmé » ne croise plus deux sports (un CSKA–Spartak de
-  KHL et un de football le même jour).
+**Books collectés** (relevés par la sonde du 01/10) :
+
+| Book | Prolongation incluse | Temps réglementaire |
+|---|---|---|
+| Ladbrokes | vainqueur 478, total 19388 | — |
+| Golden Palace / StarCasino | vainqueur 406, total 412 | 1X2 (typeId 1) |
+| BetFirst | vainqueur MW2W | 1X2 MW3W |
+| Unibet | — | 1X2 + total « Regular Time » |
+| Napoleon | — | 1X2 (marché 640) |
+| Vivatbet | — | 1X2 (groupe 1) |
+
+Tout le reste est écarté et compté dans le journal (`non vérifiés, écartés`).
+
+**Les verrous :**
+- **Sourdine** : `SPORTS_ALERT_OFF=hockey` par défaut. Aucune alerte hockey ;
+  la détection, la clôture et la CLV continuent.
+- **Rythme** : le hockey tourne EN FOND, détaché du cycle, au plus une fois
+  toutes les `HOCKEY_INTERVAL_SEC` (120 s par défaut). Il ne rallonge pas le
+  cycle et ne charge Pinnacle que d'un appel toutes les 2 minutes.
+- **Pas de référence de secours** (Smarkets) pour le hockey.
+- **Les marchés réglementaires ne sont jamais réglés** (pas de ROI) : le
+  score final peut contenir la prolongation. Leur CLV, elle, est mesurée.
 
 **Activer :**
 ```bash
 cd ~/Projet-Perso && git pull
-grep SPORT_LIST .env                 # ex. SPORT_LIST=soccer,tennis
+grep -E "SPORT_LIST|BOOKS_DISABLED" .env
 sed -i 's/^SPORT_LIST=.*/SPORT_LIST=soccer,tennis,hockey/' .env
 sudo systemctl restart valuebet-daemon valuebet-listener
-tail -f valuebet.log | grep --line-buffered "\[hockey\]"
+tail -f valuebet.log | grep --line-buffered -E "\[hockey\]|done in"
 ```
 
-**Débloquer les autres books** — sonde en lecture seule, qui liste chaque
-marché hockey de chaque book (identifiant, nom, issues) :
+**Sonde** (lecture seule, liste les marchés hockey de chaque book) :
 ```bash
 .venv/bin/python -m scripts.sonde_hockey
-.venv/bin/python -m scripts.sonde_hockey --books unibet,vivatbet
 ```
 
-**Mesurer** (l'Analytics exclut le hockey de son périmètre) :
+**Mesurer** (l'Analytics exclut le hockey) :
 ```bash
-.venv/bin/python -m scripts.clv_split --by sport,book,market --since 2026-09-29 --min 1
-.venv/bin/python -m scripts.clv_roi_matrix --depuis 2026-09-29 --axe ev
+.venv/bin/python -m scripts.clv_split --by sport,book,market --since 2026-10-01 --min 1 | grep -E "^sport|hockey"
 ```
-Signature de panne à surveiller : une CLV nettement positive sur les Over 4.5
-et 6.5 mais pas sur les 5.5 = un total réglementaire est entré. Lever la
-sourdine (`SPORTS_ALERT_OFF=` dans `.env`) seulement après ~200 paris clôturés
-propres, la règle déjà posée pour les mi-temps.
+Signature de panne : une CLV très positive sur un seul book ou une seule
+famille (`h2h` contre `h2h_reg`) quand les autres sont proches de zéro.
+Lever la sourdine (`SPORTS_ALERT_OFF=` dans `.env`) seulement après ~200
+paris clôturés propres.
 
 ## Strategy Finder (Analytics) — ajouté le 28/09
 

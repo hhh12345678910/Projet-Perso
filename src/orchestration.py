@@ -186,7 +186,7 @@ def fetch_unibet_quotes(sport: str) -> list[OddQuote]:
     try:
         with UnibetScraper() as uni:
             data = uni.fetch_all_events(sport)
-        return list(unibet_parse_listview(data))
+        return list(unibet_parse_listview(data, sport=sport))
     except httpx.HTTPError as e:
         console.print(f"[yellow]Unibet skipped:[/yellow] {e}")
         return []
@@ -282,7 +282,7 @@ def _betfirst_refresh(sport: str) -> None:
     try:
         with BetFirstScraper() as bf:
             data = bf.fetch_all_events(sport, days_ahead=3, max_market_count=10)
-        quotes = list(betfirst_parse_events_table(data))
+        quotes = list(betfirst_parse_events_table(data, sport=sport))
         with _BETFIRST_LOCK:
             _BETFIRST_CACHE[sport] = (time.monotonic(), quotes)
         console.print(f"\\[{sport}]   BetFirst rafraîchi : {len(quotes)} cotes")
@@ -629,7 +629,7 @@ def _vivatbet_deep_refresh(sport: str) -> None:
             ligues = vb.fetch_leagues(sport)
 
             def une(ligue: tuple[int, str, int]) -> list[OddQuote]:
-                return list(vivatbet_parse_games(vb.fetch_league(sport, ligue[0])))
+                return list(vivatbet_parse_games(vb.fetch_league(sport, ligue[0]), sport=sport))
 
             with ThreadPoolExecutor(max_workers=_VIVAT_DEEP_WORKERS) as pool:
                 futures = [pool.submit(une, lg) for lg in ligues]
@@ -684,7 +684,7 @@ def fetch_vivatbet_quotes(sport: str) -> list[OddQuote]:
     quotes: list[OddQuote] = []
     try:
         with VivatbetScraper() as vb:
-            quotes = list(vivatbet_parse_games(vb.fetch_top(sport)))
+            quotes = list(vivatbet_parse_games(vb.fetch_top(sport), sport=sport))
     except httpx.HTTPError as e:
         console.print(f"[yellow]Vivatbet skipped:[/yellow] {e}")
 
@@ -1229,8 +1229,8 @@ def fetch_all_parallel(
     if sport in MAGIC_SPORTS:
         tasks["MagicBetting"] = lambda: fetch_magicbetting_quotes(sport)
     # Vivatbet (marque blanche 1xBet) : API JSON publique, ni jeton ni cookie,
-    # IP de la VM acceptée — vérifié le 28/09. Football et tennis seulement
-    # (voir `scrapers/vivatbet.SPORT_IDS` pour le hockey).
+    # IP de la VM acceptée — vérifié le 28/09. Football, tennis, et le 1X2
+    # réglementaire du hockey (voir `scrapers/vivatbet.SPORT_IDS`).
     # Coupe-circuit : BOOKS_DISABLED=vivatbet.
     if sport in VIVATBET_SPORTS:
         tasks["Vivatbet"] = lambda: fetch_vivatbet_quotes(sport)

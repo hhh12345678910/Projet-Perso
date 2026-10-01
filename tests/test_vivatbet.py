@@ -211,7 +211,7 @@ def test_le_plafond_de_50_nest_pas_depasse():
 def test_un_sport_inconnu_leve_au_lieu_de_demander_nimporte_quoi():
     sc, _ = _scraper_espion([])
     with pytest.raises(ValueError):
-        sc.fetch_top("hockey")
+        sc.fetch_top("basketball")
 
 
 # ── Le cache de fond (orchestration) ──────────────────────────────────
@@ -259,15 +259,17 @@ def test_les_vedettes_FRAICHES_gagnent_sur_le_cache(cache_vierge, monkeypatch):
         def fetch_top(self, sport): return []
 
     monkeypatch.setattr(orch, "VivatbetScraper", Faux)
-    monkeypatch.setattr(orch, "vivatbet_parse_games", lambda payload: iter([frais]))
+    monkeypatch.setattr(orch, "vivatbet_parse_games", lambda payload, sport=None: iter([frais]))
     quotes = orch.fetch_vivatbet_quotes("soccer")
     prix = {(q.event_key, q.outcome.label): q.decimal_odd for q in quotes}
     assert prix[("k", "home")] == 2.10, "une cote de fond a écrasé la cote fraîche"
     assert ("autre", "home") in prix, "le cache n'a rien ajouté"
 
 
-def test_vivatbet_ne_couvre_que_le_football_et_le_tennis():
-    assert set(orch.VIVATBET_SPORTS) == {"soccer", "tennis"}
+def test_vivatbet_couvre_football_tennis_et_le_1x2_reglementaire_du_hockey():
+    """Le hockey est entré le 01/10, en temps réglementaire seulement (voir
+    `test_hockey.py`) — pas un sport de plus « par défaut »."""
+    assert set(orch.VIVATBET_SPORTS) == {"soccer", "tennis", "hockey"}
 
 
 # ── Le faux rapprochement du 28/09 et les noms de l'alerte ────────────

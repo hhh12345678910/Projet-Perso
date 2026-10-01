@@ -31,6 +31,16 @@ _HALF_TIME_EQUIVALENT = {
     MarketType.TOTALS: MarketType.TOTALS_H1,
 }
 
+#: Hockey : la période 6 de Pinnacle est le TEMPS RÉGLEMENTAIRE (1X2 à trois
+#: issues, totaux sans prolongation) — relevé par `scripts/sonde_hockey.py` le
+#: 01/10 : 192 moneylines « away, draw, home » en période 6, contre des
+#: moneylines à deux issues en période 0. Les `spread` restent dehors.
+_REGULATION_EQUIVALENT = {
+    MarketType.H2H: MarketType.H2H_REG,
+    MarketType.TOTALS: MarketType.TOTALS_REG,
+}
+PERIODE_REGLEMENTAIRE = 6
+
 SPORT_IDS = {
     "soccer": 29,
     "tennis": 33,
@@ -394,9 +404,13 @@ class PinnacleScraper:
             # donc au match plein tant qu'une capture n'aura pas établi ses
             # propres types.
             periode = market.get("period")
-            if periode not in (0, 1):
+            if periode not in (0, 1, PERIODE_REGLEMENTAIRE):
                 continue
             if periode == 1 and sport != "soccer":
+                continue
+            # La période 6 (temps réglementaire) au hockey SEULEMENT : ailleurs
+            # elle ne désigne rien qu'on sache comparer.
+            if periode == PERIODE_REGLEMENTAIRE and sport != "hockey":
                 continue
             if market.get("status") not in (None, "open"):
                 continue
@@ -438,6 +452,10 @@ class PinnacleScraper:
                 # Les `spread` restent dehors, période 1 comprise : leur
                 # convention de signe n'est pas résolue (§21.13).
                 market_type = _HALF_TIME_EQUIVALENT.get(market_type)
+                if market_type is None:
+                    continue
+            elif periode == PERIODE_REGLEMENTAIRE:
+                market_type = _REGULATION_EQUIVALENT.get(market_type)
                 if market_type is None:
                     continue
             # D'un matchup qui compte en JEUX on ne prend que les totaux : son

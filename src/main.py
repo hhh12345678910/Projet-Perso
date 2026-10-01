@@ -22,6 +22,7 @@ from .ev import ev_pct, fair_odd, kelly_fraction, kelly_stake
 from .leagues import categorize as _league_category
 from .matcher import (parse_event_key, reconcile_event_keys, tolerance_for,
                       wide_tolerance_for)
+from . import hockey
 from .models import (Book, FairLine, HALF_TIME_MARKETS, MarketType, OddQuote,
                      Outcome, TOTALS_LIKE, ValueBet, is_half_time)
 from .scrapers.betano import (
@@ -980,6 +981,11 @@ def _daemon_scan_sport(
     so all sports execute concurrently every cycle. SQLite WAL mode lets multiple
     threads read simultaneously; concurrent writes serialise via the 10 s timeout
     built into Storage._conn(), so no external locking is needed."""
+    # Le hockey ne passe qu'une fois toutes les HOCKEY_INTERVAL_SEC (2 min par
+    # défaut) : il mesure une CLV, il ne doit pas coûter de temps de cycle ni
+    # de quota Pinnacle au football. Voir `src/hockey.py`.
+    if current_sport == hockey.SPORT and not hockey.doit_passer():
+        return
     # Les 13,6 s « hors fetch » du 03/09 étaient un bloc opaque : analyse,
     # écritures et alertes confondues. Le chrono les nomme, et sa valeur
     # « reste » dit s'il vaut mieux nommer une phase de plus ou optimiser
@@ -1068,7 +1074,11 @@ def _daemon_scan_sport(
         # Seconde référence sharp, servie par le cache de fond — le cycle ne
         # l'attend jamais. Repli STRICT : elle ne sert que là où Pinnacle ne
         # price rien, et n'est jamais moyennée avec lui.
-        secondary = fetch_smarkets_quotes(current_sport)
+        # Hockey : pas de référence de secours. Smarkets y range son 1X2
+        # réglementaire sous `h2h` (voir `scrapers/smarkets.py`), soit
+        # exactement la confusion de périodes que `src/hockey.py` interdit.
+        secondary = ([] if current_sport == hockey.SPORT
+                     else fetch_smarkets_quotes(current_sport))
         if secondary:
             # AVANT de construire les lignes justes : une cote Smarkets sur un
             # match que Pinnacle price doit porter la clé de Pinnacle, sinon
@@ -1557,14 +1567,25 @@ def daemon(
         console.print(f"\n[bold green]══ CYCLE {cycle} — {t0.strftime('%H:%M:%S')} UTC ══[/bold green]")
         tg_cfg = TelegramConfig.from_env()
 
+        # Le hockey tourne EN FOND, détaché du cycle : le cycle attend tous ses
+        # sports (`as_completed`), donc un passage hockey plus lent que le
+        # football rallongerait le cycle. Un seul passage à la fois, et au plus
+        # un par HOCKEY_INTERVAL_SEC (voir `src/hockey.py`).
+        premier_plan = [sp for sp in sports_list if sp != hockey.SPORT]
+        if hockey.SPORT in sports_list:
+            hockey.lancer_en_fond(
+                _daemon_scan_sport, hockey.SPORT, storage, tg_cfg, min_ev,
+                bankroll, betano_file,
+                on_error=lambda e: console.print(f"[red]Sport thread hockey crashed: {e}[/red]"))
+
         # Run every sport concurrently — cycle time = max(sport_time) not sum.
-        with ThreadPoolExecutor(max_workers=len(sports_list)) as executor:
+        with ThreadPoolExecutor(max_workers=max(1, len(premier_plan))) as executor:
             futs = {
                 executor.submit(
                     _daemon_scan_sport,
                     sp, storage, tg_cfg, min_ev, bankroll, betano_file,
                 ): sp
-                for sp in sports_list
+                for sp in premier_plan
             }
             for f in as_completed(futs):
                 try:

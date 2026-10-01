@@ -79,6 +79,12 @@ SECTION_MENU = 2
 SPORT_IDS = {
     "soccer": 1,
     "tennis": 4,
+    # Hockey sur glace : id 2, relevé dans `leftMenuSports` par
+    # `scripts/sonde_hockey.py` le 01/10. Seul le `groupId 1` y est lu, et en
+    # TEMPS RÉGLEMENTAIRE (`h2h_reg`) : 1 / X / 2 (types 1, 2, 3) sur 48 matchs.
+    # Aucun vainqueur prolongation incluse dans ce flux ; le total (groupe
+    # 17) reste dehors tant qu'on ne sait pas s'il compte la prolongation.
+    "hockey": 2,
 }
 
 # `groupId` → marché, et `type` → issue. Nomenclature 1xBet, relevée sur les
@@ -190,7 +196,8 @@ def compte_rejets(payload: list) -> dict[str, int]:
     return c
 
 
-def parse_games(payload: list, book: Book = Book.VIVATBET) -> Iterator[OddQuote]:
+def parse_games(payload: list, book: Book = Book.VIVATBET,
+                sport: str | None = None) -> Iterator[OddQuote]:
     """Une réponse `games1x2` → des `OddQuote` (vainqueur et totaux).
 
     Forme : une LISTE de matchs ; chacun porte `eventGroups`, une liste de
@@ -200,6 +207,7 @@ def parse_games(payload: list, book: Book = Book.VIVATBET) -> Iterator[OddQuote]
     les servirait toutes, et n'est pas utilisé.
     """
     now = datetime.now(timezone.utc)
+    hockey = sport == "hockey"
     for jeu in payload or []:
         if est_pari_special(jeu):
             continue
@@ -222,6 +230,9 @@ def parse_games(payload: list, book: Book = Book.VIVATBET) -> Iterator[OddQuote]
             gid = groupe.get("groupId")
             if gid not in (GROUPE_VAINQUEUR, GROUPE_TOTAL):
                 continue
+            # Hockey : le 1X2 réglementaire seulement (voir SPORT_IDS).
+            if hockey and gid != GROUPE_VAINQUEUR:
+                continue
             for colonne in groupe.get("events") or []:
                 for ev in colonne or []:
                     cote = _cote(ev)
@@ -231,7 +242,8 @@ def parse_games(payload: list, book: Book = Book.VIVATBET) -> Iterator[OddQuote]
                         label = TYPES_VAINQUEUR.get(ev.get("type"))
                         if label is None:
                             continue
-                        marche, ligne = MarketType.H2H, None
+                        marche = MarketType.H2H_REG if hockey else MarketType.H2H
+                        ligne = None
                     else:
                         label = TYPES_TOTAL.get(ev.get("type"))
                         ligne = ev.get("parameter")

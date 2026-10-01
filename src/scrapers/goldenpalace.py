@@ -164,12 +164,16 @@ def _parse_event_time(raw: Any) -> datetime | None:
 
 
 #: Hockey : SEULS ces typeId sont lus. Le 1X2 réglementaire (typeId 1, trois
-#: issues) et le total 18 porteraient sinon la même clé que le vainqueur et
-#: le total prolongation incluse — et un nul suspendu suffirait à comparer un
+#: issues) et le total 18, lus comme au football, porteraient la même clé que
+#: le vainqueur et le total prolongation incluse — et un nul suspendu suffirait à comparer un
 #: prix réglementaire à la ligne juste de Pinnacle (voir `src/hockey.py`).
 HOCKEY_TYPE_IDS = {
     406: MarketType.H2H,       # « Vainqueur (prol. + TAB incl.) »
     412: MarketType.TOTALS,    # « Total de buts (prol. + TAB incl.) »
+    # Le 1X2 réglementaire, sous son PROPRE type (`h2h_reg`), comparé à la
+    # période 6 de Pinnacle — jamais au vainqueur ci-dessus. Relevé par
+    # `scripts/sonde_hockey.py` le 01/10 (Golden Palace : 203 matchs).
+    1: MarketType.H2H_REG,
 }
 
 

@@ -254,6 +254,16 @@ _MARKET_BY_TYPE_ID = {
     12: MarketType.HANDICAP,
 }
 
+#: Hockey : par identifiant de CRITÈRE, jamais par `betOfferType` — le type 2
+#: « Match » couvre aussi bien un 1X2 réglementaire qu'un vainqueur
+#: prolongation incluse. Relevé par `scripts/sonde_hockey.py` le 01/10 : Unibet
+#: ne publie AUCUN marché prolongation incluse, seulement du temps
+#: réglementaire (voir `src/hockey.py`).
+HOCKEY_CRITERIA = {
+    1001105802: MarketType.H2H_REG,      # « Match Odds - Regular Time »
+    1001105863: MarketType.TOTALS_REG,   # « Total Goals - Regular Time »
+}
+
 # Kambi outcome type -> normalised outcome label.
 _OUTCOME_LABELS = {
     "OT_ONE": "home",
@@ -264,7 +274,7 @@ _OUTCOME_LABELS = {
 }
 
 
-def parse_listview(data: dict) -> Iterator[OddQuote]:
+def parse_listview(data: dict, sport: str | None = None) -> Iterator[OddQuote]:
     """Walk a Kambi listView payload and yield OddQuote objects.
 
     Shape: data["events"] is a list of {"event": {...}, "betOffers": [...]}.
@@ -285,7 +295,14 @@ def parse_listview(data: dict) -> Iterator[OddQuote]:
 
         for bo in entry.get("betOffers") or []:
             type_id = (bo.get("betOfferType") or {}).get("id")
-            market = _MARKET_BY_TYPE_ID.get(type_id)
+            if sport == "hockey":
+                try:
+                    critere = int((bo.get("criterion") or {}).get("id"))
+                except (TypeError, ValueError):
+                    critere = None
+                market = HOCKEY_CRITERIA.get(critere)
+            else:
+                market = _MARKET_BY_TYPE_ID.get(type_id)
             if market is None:
                 continue
             for o in bo.get("outcomes") or []:
