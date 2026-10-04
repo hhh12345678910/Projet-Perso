@@ -1452,3 +1452,14 @@ def test_strategy_finder_la_configuration_affiche_SES_criteres_et_ses_regles():
     assert "['EV moyenne', pct(sm.ev_mean, 1)" in detail
     # Aucune tranche déduite d'une moyenne, aucune tranche écrite en dur.
     assert "8-15" not in js and "8–15" not in js
+
+
+def test_strategy_finder_le_seuil_de_detection_s_affiche():
+    """Le seuil d'EV imposé par le système apparaît avec les critères (en
+    retrait), au lieu d'un « EV : sans filtre » trompeur."""
+    from src.analytics_ui.app import STATIQUES
+    js = (STATIQUES / "app.js").read_text(encoding="utf-8")
+    css = (STATIQUES / "style.css").read_text(encoding="utf-8")
+    assert "function sfTousCriteres(s)" in js and "s.implicit_criteria" in js
+    assert js.count("sfTousCriteres(s)") >= 4, "détail, cartes, tableau et export"
+    assert "x.implicit ? 'sf-implicite'" in js and ".sf-implicite" in css

@@ -358,10 +358,13 @@ def chercher(rows, stake, bande_cote, bande_ev, *, min_n: int = 100,
     retenues.sort(key=lambda c: -c["score"])
     retenues = _diversifier(retenues)
 
+    plancher = _plancher_ev(rows)
     strategies = [_rendre(c, rang, dims, stake, min_n, decoupe, objectif,
-                          bootstrap=rang <= AFFICHEES, contexte=contexte)
+                          bootstrap=rang <= AFFICHEES, contexte=contexte,
+                          plancher_ev=plancher)
                   for rang, c in enumerate(retenues, start=1)]
     return {
+        "ev_floor": plancher,
         "split": _split_public(lignes, decoupe),
         "counts": {"tested": testees, "eligible": len(par_ensemble),
                    "below_minimum": ecartees, "redundant": redondantes,
@@ -474,6 +477,32 @@ def _criteres(c, dims) -> list:
                             max_inclusive=False, rule=_regle(nom, lo, hi, unite))
         out.append(crit)
     return out
+
+
+def _plancher_ev(rows) -> "float | None":
+    """L'EV la plus basse du lot, arrondie AU DIXIÈME INFÉRIEUR — jamais
+    au-dessus, pour que « EV ≥ x » reste vrai de chaque pari.
+
+    ⚠️ C'EST UNE RÈGLE DU SYSTÈME, PAS DE LA CONFIGURATION. Aucune détection
+    n'est enregistrée sous le seuil d'EV du daemon (`MIN_EV`) : une
+    configuration « sans critère d'EV » ne contient donc jamais « tous les
+    paris quelle que soit l'EV », mais tous ceux qui ont passé ce seuil.
+    L'écrire « sans filtre » portait à confusion (04/10). Le plancher est LU
+    dans les données et non recopié de la configuration : le seuil a changé
+    au fil des mois, et la base garde des détections de chaque époque."""
+    evs = [float(r["ev_pct"]) for r in rows if r["ev_pct"] is not None]
+    if not evs:
+        return None
+    return math.floor(min(evs) * 10 + 1e-9) / 10
+
+
+def _ev_implicite(plancher) -> dict:
+    return {"dimension": "ev", "label": "EV", "value": f">={plancher:g}",
+            "display": f"≥ {_nombre(plancher)} %", "min": plancher, "max": None,
+            "unit": "%", "min_inclusive": True, "max_inclusive": False,
+            "implicit": True,
+            "rule": (f"EV ≥ {_nombre(plancher)} % à la détection — seuil du "
+                     f"système, commun à tous les paris de la base")}
 
 
 def _sans_filtre(c, dims) -> list:
@@ -662,12 +691,26 @@ def _filtres_analytics(criteres, contexte) -> dict:
 
 
 def _rendre(c, rang, dims, stake, min_n, decoupe, objectif, *, bootstrap,
-            contexte=None) -> dict:
+            contexte=None, plancher_ev=None) -> dict:
     from .service import _bande_temps, _cumuler, _decouper
 
     membres = c["membres"]
     rows = [m.row for m in membres]
     criteres = _criteres(c, dims)
+    sans_filtre = _sans_filtre(c, dims)
+    implicites = []
+    if plancher_ev is not None:
+        ev = next((x for x in criteres if x["dimension"] == "ev"), None)
+        if ev is None:
+            # Pas de critère d'EV : le seuil de détection en tient lieu, et
+            # l'EV n'est plus « sans filtre ».
+            implicites.append(_ev_implicite(plancher_ev))
+            sans_filtre = [x for x in sans_filtre if x["dimension"] != "ev"]
+        elif ev.get("min") is None and ev.get("max") is not None \
+                and plancher_ev < ev["max"]:
+            # Bande ouverte vers le bas (« <5% ») : le seuil de détection
+            # en est la vraie borne basse.
+            ev.update(min=plancher_ev, rule=_regle("EV", plancher_ev, ev["max"], "%"))
     s = resume(rows, stake)
     tr = _sous_resume([m.row for m in membres if m.train], stake)
     val = _sous_resume([m.row for m in membres if not m.train], stake)
@@ -706,7 +749,8 @@ def _rendre(c, rang, dims, stake, min_n, decoupe, objectif, *, bootstrap,
         "depth": c["profondeur"],
         "title": _titre(criteres),
         "criteria": criteres,
-        "unconstrained": _sans_filtre(c, dims),
+        "implicit_criteria": implicites,
+        "unconstrained": sans_filtre,
         "summary": {k: s[k] for k in (
             "opportunities", "settled", "stake_total", "pnl", "roi", "clv", "clv_n",
             "clv_coverage", "clv_median", "clv_positive_rate", "ev_mean", "odds_mean",

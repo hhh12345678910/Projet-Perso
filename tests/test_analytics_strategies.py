@@ -367,8 +367,38 @@ def test_sans_critere_EV_aucune_tranche_n_est_inventee(base):
     s = _par_id(_trouver(base))["bookmaker=betano_be"]
     assert [c["dimension"] for c in s["criteria"]] == ["bookmaker"]
     assert all("rule" not in c for c in s["criteria"])
-    assert [u["dimension"] for u in s["unconstrained"]] == ["market", "outcome", "ev", "odds", "delay"]
+    assert [u["dimension"] for u in s["unconstrained"]] == ["market", "outcome", "odds", "delay"]
     assert s["analytics_filters"]["ev_bands"] == []
+
+
+def test_sans_critere_EV_le_SEUIL_DE_DETECTION_est_dit(base):
+    """Pas de tranche inventée, mais pas « sans filtre » non plus : chaque
+    pari de la base a passé le seuil d'EV de détection (04/10). Le seuil est
+    LU dans les données (ici toutes les détections sont à 10 %)."""
+    res = _trouver(base)
+    assert res["ev_floor"] == 10.0
+    s = _par_id(res)["bookmaker=betano_be"]
+    (ev,) = s["implicit_criteria"]
+    assert (ev["dimension"], ev["display"], ev["min"], ev["implicit"]) == ("ev", "≥ 10 %", 10.0, True)
+    assert "seuil du système" in ev["rule"]
+    # Une règle du système, pas un filtre de la configuration : rien à rejouer.
+    assert s["analytics_filters"]["ev_bands"] == [] and s["analytics_filters"].get("ev_min") is None
+
+
+def test_le_seuil_est_arrondi_VERS_LE_BAS(tmp_path):
+    """« EV ≥ x » doit rester vrai de chaque pari : 5,07 s'écrit 5, pas 5,1."""
+    assert sf._plancher_ev([{"ev_pct": 5.07}, {"ev_pct": 9.0}, {"ev_pct": None}]) == 5.0
+    assert sf._plancher_ev([{"ev_pct": 2.34}]) == 2.3
+    assert sf._plancher_ev([{"ev_pct": None}]) is None
+
+
+def test_une_bande_ouverte_vers_le_bas_recoit_le_seuil(tmp_path):
+    base = monter(tmp_path, _serie(1, "betano_be", 200, cloture=1.8, taux=0.6, ev=3.0)
+                  + _serie(1001, "betano_be", 200, cloture=2.1, taux=0.4, ev=10.0))
+    s = _par_id(_trouver(base))["bookmaker=betano_be|ev=<5%"]
+    ev = next(c for c in s["criteria"] if c["dimension"] == "ev")
+    assert (ev["min"], ev["max"], ev["rule"]) == (3.0, 5.0, "3 % ≤ EV < 5 %")
+    assert s["implicit_criteria"] == []
 
 
 def test_les_criteres_sont_dans_l_ORDRE_des_dimensions(base_ev):
@@ -376,8 +406,9 @@ def test_les_criteres_sont_dans_l_ORDRE_des_dimensions(base_ev):
     for s in _trouver(base_ev)["strategies"]:
         dims = [c["dimension"] for c in s["criteria"]]
         assert dims == sorted(dims, key=ordre.index)
-        assert not set(dims) & {u["dimension"] for u in s["unconstrained"]}
-        assert len(dims) + len(s["unconstrained"]) == len(ordre)
+        implicites = [c["dimension"] for c in s["implicit_criteria"]]
+        assert not set(dims + implicites) & {u["dimension"] for u in s["unconstrained"]}
+        assert len(dims) + len(implicites) + len(s["unconstrained"]) == len(ordre)
 
 
 def test_les_bornes_rendent_LA_MEME_bande_que_l_Analytics():

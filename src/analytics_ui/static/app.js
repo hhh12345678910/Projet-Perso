@@ -3246,14 +3246,21 @@ const partPct = (v) => (v === null || v === undefined ? '—'
 
 /** Le libellé affiché d'un critère de la configuration, ou null s'il est absent. */
 function sfCritere(s, dim) {
-  const c = (s.criteria || []).find((x) => x.dimension === dim);
+  const c = sfTousCriteres(s).find((x) => x.dimension === dim);
   return c ? (c.display || c.value || null) : null;
+}
+/** Les critères de la configuration ET ceux que le système impose à toute la
+ * base (`implicit_criteria` : le seuil d'EV de détection, marqué
+ * `implicit`). Une configuration sans critère d'EV ne contient jamais « tous
+ * les paris quelle que soit l'EV » : seulement ceux qui ont passé ce seuil. */
+function sfTousCriteres(s) {
+  return (s.criteria || []).concat(s.implicit_criteria || []);
 }
 /** Les critères de la configuration, dans l'ordre fixe des dimensions
  * (bookmaker, marché, pari, EV, cote, délai) — rendus par le serveur. */
 function sfCriteresOrdonnes(s) {
   const ordre = SF_DIMS.map(([d]) => d);
-  return (s.criteria || []).slice()
+  return sfTousCriteres(s)
     .sort((a, b) => ordre.indexOf(a.dimension) - ordre.indexOf(b.dimension));
 }
 /** « Sans filtre : marché, EV, cote » — les dimensions que la configuration
@@ -3556,7 +3563,7 @@ function sfCarte(s) {
     const dl = el('dl', 'sf-crit');
     crit.forEach((x) => {
       dl.appendChild(el('dt', null, x.label || x.dimension));
-      const dd = el('dd', null, x.display || x.value || '—');
+      const dd = el('dd', x.implicit ? 'sf-implicite' : null, x.display || x.value || '—');
       if (x.rule) dd.title = x.rule;
       dl.appendChild(dd);
     });
@@ -3676,8 +3683,8 @@ function sfTableau() {
     r.appendChild(td0);
     SF_DIMS.forEach(([dim]) => {
       const x = sfCritere(s, dim);
-      const td = el('td', x ? 'sf-crit-cell' : 'sf-absent', x || '—');
-      const cr = (s.criteria || []).find((y) => y.dimension === dim);
+      const cr = sfTousCriteres(s).find((y) => y.dimension === dim);
+      const td = el('td', !x ? 'sf-absent' : (cr && cr.implicit ? 'sf-crit-cell sf-implicite' : 'sf-crit-cell'), x || '—');
       td.title = !x ? 'Sans filtre : tous les paris, quelle que soit la valeur' : (cr && cr.rule) || '';
       r.appendChild(td);
     });
@@ -3908,8 +3915,8 @@ function sfRemplirDetail(s) {
   const libreD = sfSansFiltre(s);
   g1.appendChild(sfSection('Configuration', sfDl(
     [['Sport', sfNomSport(p)]].concat(sfCriteresOrdonnes(s)
-      .map((c) => [c.label || c.dimension, c.display || c.value || '—', '',
-        c.rule ? [c.rule] : null]))
+      .map((c) => [c.label || c.dimension, c.display || c.value || '—',
+        c.implicit ? 'sf-implicite' : '', c.rule ? [c.rule] : null]))
       .concat(libreD ? [['Sans filtre', libreD, 'sf-libre', ['tous les paris, quelle que soit la valeur']]] : []))));
   g1.appendChild(sfSection('Échantillon', sfDl([
     ['Paris réglés', ent(sm.settled)],
