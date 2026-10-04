@@ -311,6 +311,35 @@ def _pari(label: str, ligne) -> str:
     return f"{texte} {ligne}" if ligne is not None else texte
 
 
+def precision_marche(market, sport: "str | None" = None) -> str:
+    """La ligne qui dit DE QUEL MARCHÉ il s'agit, quand « Pari : Home » ne
+    suffit pas — vide sinon.
+
+    Au hockey, « Home » existe dans deux marchés différents chez le même book :
+    le 1X2 du TEMPS RÉGLEMENTAIRE (60 min, le nul est une issue) et le
+    vainqueur PROLONGATION ET TIRS AU BUT INCLUS. Ce sont deux paris
+    distincts, mesurés contre deux lignes Pinnacle distinctes (périodes 6 et
+    0) : jouer l'un à la place de l'autre, c'est jouer un pari dont la valeur
+    n'a jamais été mesurée. L'alerte le dit donc en toutes lettres."""
+    try:
+        m = market if isinstance(market, MarketType) else MarketType(str(market))
+    except ValueError:
+        return ""
+    if m == MarketType.H2H_REG:
+        return ("⏱ <b>1X2 TEMPS RÉGLEMENTAIRE (60 min)</b> — prolongation et "
+                "tirs au but NON comptés\n")
+    if m == MarketType.TOTALS_REG:
+        return ("⏱ <b>Total TEMPS RÉGLEMENTAIRE (60 min)</b> — prolongation et "
+                "tirs au but NON comptés\n")
+    if (sport or "").lower() in ("hockey", "ice_hockey"):
+        if m == MarketType.H2H:
+            return ("⏱ <b>Vainqueur PROLONGATION ET TIRS AU BUT INCLUS</b> — "
+                    "pas le 1X2 (60 min)\n")
+        if m == MarketType.TOTALS:
+            return "⏱ <b>Total PROLONGATION ET TIRS AU BUT INCLUS</b>\n"
+    return ""
+
+
 def _equipe_du_pari(label: str, market, home: str, away: str) -> str:
     """« — RSC Anderlecht » : l'équipe sur laquelle porte un pari h2h, nommée.
 
@@ -779,6 +808,9 @@ def format_clv_alert(
     )
     line_suffix = f" {bet['line']}" if bet["line"] is not None else ""
 
+    # Lu comme `ev_pct` juste dessous : un pari relu sans la colonne ne doit
+    # pas faire tomber l'alerte, il perd seulement la précision de marché.
+    precision = precision_marche(bet["market"], sport) if "market" in bet.keys() else ""
     ev_pct = bet["ev_pct"] if "ev_pct" in bet.keys() else None
     _s = _advised_stake_line(ev_pct, _clv_bet_kelly_pct(bet), bankroll)
     stake_line = ("\n" + _s) if _s else ""
@@ -787,6 +819,7 @@ def format_clv_alert(
         f"{header}\n"
         f"{_sport_prefix(sport)}{matchup}\n"
         f"{when_line}"
+        f"{precision}"
         f"Pari : <b>{_ht(_pari(bet['outcome_label'], bet['line']))}</b> - "
         f"{float(bet['odd_taken']):.2f}\n"
         f"Ligne juste actuelle : {current_pin_odd:.2f}"
@@ -884,6 +917,7 @@ def format_value_bet(bet: ValueBet, sport: str | None = None,
         f"{_sport_prefix(sport)}{matchup}\n"
         f"{league_line}"
         f"{when_line}"
+        f"{precision_marche(bet.market, sport)}"
         f"Pari : <b>{_ht(_pari(label, bet.outcome.line))}</b> - {bet.odd_taken:.2f} "
         f"(fair {bet.fair_odd:.2f}{ref_suffix})\n"
         f"{ref_line}"

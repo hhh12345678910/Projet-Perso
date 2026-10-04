@@ -28,6 +28,7 @@ import requests
 from openpyxl import Workbook, load_workbook
 from openpyxl.worksheet.datavalidation import DataValidation
 
+from src.alerter import precision_marche
 from src.matcher import parse_event_key
 
 ROOT = Path(__file__).resolve().parent
@@ -456,6 +457,7 @@ def format_scan(bets: list[dict], *, now: datetime | None = None,
             f"\n🎯 <b>+{b['ev']:.2f}% EV</b> — {_esc(_book_label(b['book']))}\n"
             f"{emoji} {_esc(b['home'])} vs {_esc(b['away'])}\n"
             f"📅 {_esc(_kickoff(b['start'], now))}\n"
+            f"{precision_marche(b.get('market'), b.get('sport'))}"
             f"Pari : <b>{_esc(b['selection'])}</b> @ {b['odd']:.2f}{fair}\n"
             f"{stake}\n"
         )

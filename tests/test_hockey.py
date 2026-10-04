@@ -423,3 +423,57 @@ def test_le_cycle_ne_met_pas_le_hockey_au_premier_plan():
     src = inspect.getsource(main)
     assert "premier_plan = [sp for sp in sports_list if sp != hockey.SPORT]" in src
     assert "for sp in premier_plan" in src and "hockey.lancer_en_fond(" in src
+
+
+# ── L'alerte dit DE QUEL MARCHÉ il s'agit ─────────────────────────────
+
+def _vb(marche, label="home", ligne=None):
+    from src.models import ValueBet
+    return ValueBet(event_key="209906010000::rangers__vs__bruins", book=Book.UNIBET_BE,
+                    market=marche, outcome=Outcome(label=label, line=ligne), odd_taken=3.6,
+                    fair_prob=0.31, fair_odd=3.2, ev_pct=12.4, kelly_stake_pct=1.0,
+                    detected_at=DEBUT, league="NHL")
+
+
+def test_l_alerte_hockey_nomme_le_1x2_REGLEMENTAIRE():
+    from src.alerter import format_value_bet
+    msg = format_value_bet(_vb(MarketType.H2H_REG, "draw"), sport="hockey")
+    assert "1X2 TEMPS RÉGLEMENTAIRE (60 min)" in msg and "NON comptés" in msg
+    # La précision vient JUSTE avant la ligne « Pari », qu'elle qualifie.
+    assert msg.index("TEMPS RÉGLEMENTAIRE") < msg.index("Pari :")
+    assert "Pari : <b>Draw</b> - 3.60" in msg
+
+
+def test_l_alerte_hockey_nomme_le_vainqueur_PROLONGATION_INCLUSE():
+    from src.alerter import format_value_bet
+    msg = format_value_bet(_vb(MarketType.H2H), sport="hockey")
+    assert "Vainqueur PROLONGATION ET TIRS AU BUT INCLUS" in msg
+    assert "TEMPS RÉGLEMENTAIRE" not in msg
+    tot = format_value_bet(_vb(MarketType.TOTALS_REG, "over", 5.5), sport="hockey")
+    assert "Total TEMPS RÉGLEMENTAIRE (60 min)" in tot and "Pari : <b>Over 5.5</b>" in tot
+
+
+def test_les_alertes_football_et_tennis_ne_changent_pas():
+    from src.alerter import format_value_bet, precision_marche
+    for sport in ("soccer", "tennis", None):
+        assert "⏱" not in format_value_bet(_vb(MarketType.H2H), sport=sport)
+    assert precision_marche("h2h_h1", "soccer") == "" and precision_marche("???", "hockey") == ""
+
+
+def test_la_clv_confirmee_et_le_scan_le_disent_aussi():
+    import sqlite3
+
+    import bot_listener
+    from src.alerter import format_clv_alert
+    con = sqlite3.connect(":memory:")
+    con.row_factory = sqlite3.Row
+    row = con.execute(
+        "SELECT '209906010000::rangers__vs__bruins' AS event_key, 'unibet_be' AS book, "
+        "'h2h_reg' AS market, 'away' AS outcome_label, NULL AS line, 3.6 AS odd_taken, "
+        "12.4 AS ev_pct, 1.0 AS kelly_pct").fetchone()
+    assert "1X2 TEMPS RÉGLEMENTAIRE" in format_clv_alert(row, 8.0, 3.3, 30, sport="hockey")
+    b = {"ev": 12.4, "book": "unibet_be", "sport": "hockey", "home": "Rangers",
+         "away": "Bruins", "start": DEBUT, "selection": "Bruins", "odd": 3.6,
+         "fair": 3.2, "kelly": 1.0, "market": "h2h_reg"}
+    texte = bot_listener.format_scan([b])[0][0]
+    assert "1X2 TEMPS RÉGLEMENTAIRE" in texte
