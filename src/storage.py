@@ -1966,16 +1966,38 @@ class Storage:
     # ------------------------------------------------------------ played ----
     def latest_value_bet_for(
         self, event_key: str, market: str, outcome_label: str, line: Optional[float],
+        books: "Iterable[str] | None" = None,
     ) -> Optional[sqlite3.Row]:
         """The most recent detection of one selection. A tap on Jouer carries
         only the dedup_key, which is exactly (event, market, outcome, line) —
         this resolves it back to the value_bet row so the click inherits the
-        bet's EV, fair line and, later, its closing line."""
+        bet's EV, fair line and, later, its closing line.
+
+        ⚠️ `books` : le(s) book(s) de l'alerte cliquée. La clé ne porte PAS de
+        book, et la même sélection est détectée chez plusieurs books : sans ce
+        filtre, le clic se rattachait à la détection la PLUS RÉCENTE, quel que
+        soit son book. Vivatbet, qui détecte en continu les mêmes sélections
+        qu'Unibet ou Ladbrokes, raflait ainsi des clics joués ailleurs, et
+        l'Analytics filtré sur Vivatbet comptait des paris jamais joués chez
+        lui (04/10). Le repli sur tous les books ne sert que si le book cliqué
+        n'a aucune détection de la sélection : la ligne juste et la clôture
+        sont celles de la sélection, le clic garde donc sa CLV."""
+        line_clause = "line IS NULL" if line is None else "line = ?"
+        params: list = [event_key, market, outcome_label]
+        if line is not None:
+            params.append(line)
+        voulus = [b for b in (books or []) if b]
         with self._conn() as c:
-            line_clause = "line IS NULL" if line is None else "line = ?"
-            params: list = [event_key, market, outcome_label]
-            if line is not None:
-                params.append(line)
+            if voulus:
+                row = c.execute(
+                    f"SELECT * FROM value_bets WHERE event_key = ? AND market = ? "
+                    f"  AND outcome_label = ? AND {line_clause} "
+                    f"  AND book IN ({','.join('?' * len(voulus))}) "
+                    f"ORDER BY detected_at DESC LIMIT 1",
+                    params + voulus,
+                ).fetchone()
+                if row is not None:
+                    return row
             return c.execute(
                 f"SELECT * FROM value_bets WHERE event_key = ? AND market = ? "
                 f"  AND outcome_label = ? AND {line_clause} "
@@ -2092,6 +2114,24 @@ class Storage:
                  value_bet["odd_taken"], value_bet["fair_odd"], value_bet["ev_pct"],
                  stake, dedup_key),
             )
+
+    def played_bets_linked(self) -> list[sqlite3.Row]:
+        """Les clics rattachés, avec le book de LEUR détection (`vb_book`) et
+        le libellé du book cliqué (`pb.book`, tel que l'alerte l'affichait)."""
+        with self._conn() as c:
+            return list(c.execute(
+                "SELECT pb.dedup_key, pb.played_at, pb.book AS libelle, "
+                "       pb.value_bet_id, vb.book AS vb_book "
+                "FROM played_bets pb JOIN value_bets vb ON vb.id = pb.value_bet_id"
+            ))
+
+    def relink_played_bet(self, dedup_key: str, value_bet_id: int) -> None:
+        """Change SEULEMENT la détection à laquelle un clic est rattaché. La
+        cote prise, la mise, l'EV et le libellé du book cliqué restent ceux du
+        clic : ils décrivent ce qui a été joué."""
+        with self._conn() as c:
+            c.execute("UPDATE played_bets SET value_bet_id = ? WHERE dedup_key = ?",
+                      (int(value_bet_id), dedup_key))
 
     def played_bet(self, dedup_key: str) -> Optional[sqlite3.Row]:
         with self._conn() as c:

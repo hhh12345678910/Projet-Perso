@@ -177,6 +177,25 @@ def _ht(x) -> str:
     return escape(str(x), quote=False)
 
 
+def books_du_libelle(libelle: "str | None") -> list[str]:
+    """Les books (valeurs d'énumération) d'un libellé d'alerte : « Ladbrokes »,
+    « Unibet / 711 / Bingoal / Scooore », ou plusieurs books jumeaux joints par
+    « / ». C'est ce libellé — pas une valeur d'énumération — que le bouton
+    « Jouer » enregistre ; une valeur d'énumération est acceptée aussi.
+    Un fragment inconnu est ignoré, jamais deviné."""
+    par_nom: dict[str, str] = {}
+    for b in Book:
+        par_nom[b.value.lower()] = b.value
+        for morceau in _BOOK_NAMES.get(b, b.value).split("/"):
+            par_nom.setdefault(morceau.strip().lower(), b.value)
+    out: list[str] = []
+    for morceau in str(libelle or "").split("/"):
+        v = par_nom.get(morceau.strip().lower())
+        if v and v not in out:
+            out.append(v)
+    return out
+
+
 def _nom_book(b) -> str:
     """Le nom lisible d'un book, échappé. Passe par `_ht` comme tout le
     reste : `_BOOK_NAMES` est écrit à la main aujourd'hui, mais le repli

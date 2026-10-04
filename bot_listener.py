@@ -28,7 +28,7 @@ import requests
 from openpyxl import Workbook, load_workbook
 from openpyxl.worksheet.datavalidation import DataValidation
 
-from src.alerter import precision_marche
+from src.alerter import books_du_libelle, precision_marche
 from src.matcher import parse_event_key
 
 ROOT = Path(__file__).resolve().parent
@@ -215,7 +215,10 @@ def _track_played(bet: dict, dedup_key: str, now: datetime) -> None:
     vb = None
     if len(parts) == 4:
         line = None if parts[3] in ("None", "") else float(parts[3])
-        vb = storage.latest_value_bet_for(parts[0], parts[1], parts[2], line)
+        # Le book de l'alerte cliquee : sans lui, le clic se rattachait a la
+        # derniere detection de la selection, chez n'importe quel book.
+        vb = storage.latest_value_bet_for(parts[0], parts[1], parts[2], line,
+                                          books=books_du_libelle(bet.get("book")))
 
     # La ligne existe forcement : la suppression d'alerte vient de l'inserer.
     # Ce qui distingue un re-clic, c'est qu'elle porte deja une mise.

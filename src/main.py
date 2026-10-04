@@ -3039,6 +3039,64 @@ def backfill_played_bets():
         console.print("[dim]Relance `track-update` puis `clv-report`.[/dim]")
 
 
+@app.command(name="relink-played-books")
+def relink_played_books(
+    appliquer: bool = typer.Option(
+        False, "--appliquer",
+        help="Écrire les corrections. Sans cette option, la commande ne fait "
+             "que les montrer."),
+):
+    """Rattacher chaque clic « Jouer » à la détection du book CLIQUÉ.
+
+    Jusqu'au 04/10, un clic se rattachait à la dernière détection de la
+    sélection, chez n'importe quel book : Vivatbet, qui détecte en continu les
+    mêmes sélections, raflait des clics joués chez Unibet ou Ladbrokes, et
+    l'Analytics filtré sur Vivatbet comptait des paris jamais joués chez lui.
+    Le book cliqué est connu (le libellé de l'alerte, gardé dans
+    `played_bets.book`) : chaque clic mal rattaché est reporté sur la dernière
+    détection de CE book. Rien d'autre ne change — cote prise, mise, EV.
+    Un clic dont le book n'a aucune détection de la sélection reste tel quel."""
+    from collections import Counter
+
+    from .alerter import books_du_libelle
+    storage = Storage(ScanConfig().db_path)
+    deplaces: Counter = Counter()
+    a_corriger, sans_detection = [], 0
+    for r in storage.played_bets_linked():
+        voulus = books_du_libelle(r["libelle"])
+        if not voulus or r["vb_book"] in voulus:
+            continue
+        parts = (r["dedup_key"] or "").split("|")
+        if len(parts) != 4:
+            continue
+        line = None if parts[3] in ("None", "") else float(parts[3])
+        vb = storage.latest_value_bet_for(parts[0], parts[1], parts[2], line, books=voulus)
+        if vb is None or vb["book"] not in voulus:
+            sans_detection += 1
+            continue
+        a_corriger.append((r["dedup_key"], int(vb["id"])))
+        deplaces[(r["vb_book"], vb["book"])] += 1
+
+    if not a_corriger:
+        console.print("[bold]Tous les clics sont rattachés au book cliqué.[/bold]"
+                      + (f" ({sans_detection} sans détection chez leur book, laissés tels quels.)"
+                         if sans_detection else ""))
+        return
+    console.print(f"[bold]{len(a_corriger)} clic(s) rattaché(s) au mauvais book :[/bold]")
+    for (avant, apres), n in deplaces.most_common():
+        console.print(f"  {avant:>18} → {apres:<18} {n}")
+    if sans_detection:
+        console.print(f"[dim]{sans_detection} clic(s) sans détection chez le book cliqué : "
+                      "laissés tels quels.[/dim]")
+    if not appliquer:
+        console.print("\n[yellow]Rien n'est écrit.[/yellow] Relancer avec --appliquer.")
+        return
+    for dedup_key, vb_id in a_corriger:
+        storage.relink_played_bet(dedup_key, vb_id)
+    console.print(f"[green]✓[/green] {len(a_corriger)} clic(s) corrigé(s). "
+                  "Relance `track-update`, puis recharge la page de l'Analytics.")
+
+
 @app.command(name="track-update")
 def track_update(
     out: str = typer.Option(TRACK_PATH, "--out", help="Fichier de suivi à régénérer."),
