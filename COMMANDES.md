@@ -337,6 +337,19 @@ et ta vraie bankroll :
 .venv/bin/python -m scripts.staking_curves --joues --depuis 2026-08-01 --out courbes.csv
 ```
 
+**Paliers d'EV** — une mise ronde par bande d'EV, sans la cote (Kelly sans sa
+signature). « auto » est calculé sur les EV seules ; `--paliers` teste des
+montants précis, au format de `STAKE_EV_PALIERS` :
+
+```bash
+.venv/bin/python -m scripts.staking_curves --joues --fractions 1/4 --bankroll 2100 \
+    --paliers 0:25,8:35,15:50,35:60
+```
+
+Pour l'appliquer aux alertes : `STAKE_MODE=flat` et
+`STAKE_EV_PALIERS=0:25,8:35,15:50,35:60` dans `.env`, puis redémarrer le daemon
+et le listener. Non défini = la règle base + boost d'avant, inchangée.
+
 Deux tableaux : ce que chaque schéma engage et rapporte, puis ses creux — creux
 maximal en €, en % de bankroll, **en mises moyennes**, le ratio **P&L/creux**,
 et la plus longue période passée sous un sommet. Les lignes « Kelly … à 35 € moy. »

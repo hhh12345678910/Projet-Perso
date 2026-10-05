@@ -1559,6 +1559,9 @@ def daemon(
     sports_list = [s.strip() for s in sport.split(",") if s.strip()]
     storage = Storage(ScanConfig().db_path)
     teams.init(storage)
+    from .alerter import _STAKE_EV_PALIERS_ERREUR
+    if _STAKE_EV_PALIERS_ERREUR:
+        console.print(f"[red]{_STAKE_EV_PALIERS_ERREUR} — règle de mise historique appliquée[/red]")
 
     cycle = 0
     while True:

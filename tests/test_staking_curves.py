@@ -104,3 +104,61 @@ def test_sans_joues_toute_la_population_est_lue(tmp_path, capsys):
     texte = capsys.readouterr().out
     assert "5 paris réglés" in texte
     assert "Kelly 1/4" in texte and "Kelly 1/2" in texte and "fixe 35 €" in texte
+
+
+# ── Les paliers d'EV : la mise ronde qui ne dépend que de l'EV ────────
+
+def test_lire_et_appliquer_des_paliers():
+    from src.alerter import lire_paliers, mise_palier
+    p = lire_paliers("15:50, 0:25,8:35")
+    assert p == [(0.0, 25.0), (8.0, 35.0), (15.0, 50.0)]
+    assert [mise_palier(e, p) for e in (None, 3, 7.99, 8, 14.9, 15, 80)] == \
+        [25, 25, 25, 35, 35, 50, 50]
+    assert lire_paliers("") == [] and mise_palier(10, []) is None
+    for faux in ("8:35,8:40", "8:0", "x:35", "8"):
+        with pytest.raises(ValueError):
+            lire_paliers(faux)
+
+
+def test_les_alertes_suivent_les_paliers_seulement_s_ils_sont_definis(monkeypatch):
+    import src.alerter as al
+    monkeypatch.setattr(al, "_STAKE_MODE", "flat")
+    monkeypatch.setattr(al, "_STAKE_PCT", 0.0)
+    monkeypatch.setattr(al, "_STAKE_BASE_EUR", 35.0)
+    monkeypatch.setattr(al, "_STAKE_EV_PALIERS", [])
+    assert al._advised_stake_eur(9.0, None, 1000) == 35          # règle historique
+    monkeypatch.setattr(al, "_STAKE_EV_PALIERS", [(0, 25.0), (8, 35.0), (15, 50.0)])
+    assert al._advised_stake_eur(6.0, None, 1000) == 25
+    assert al._advised_stake_eur(20.0, None, 1000) == 50
+    assert al._advised_stake_line(20.0, None, 1000) == "Mise conseillée : 50€  ⚡"
+    assert al._advised_stake_line(6.0, None, 1000) == "Mise conseillée : 25€"
+
+
+def test_les_paliers_auto_ne_lisent_que_l_EV():
+    """Proportionnels à l'EV médiane de chaque bande, bornés à ½–2× la mise,
+    moyenne ≈ la mise, croissants — et ronds."""
+    from src.alerter import _round_stake
+    evs = [5.5] * 40 + [10.0] * 40 + [20.0] * 15 + [60.0] * 5
+    p = sc.paliers_auto(evs, 35.0, _round_stake)
+    assert [s for s, _m in p] == [5.0, 8.0, 15.0, 35.0]
+    mises = [m for _s, m in p]
+    assert mises == sorted(mises) and all(m % 5 == 0 for m in mises)
+    assert all(17.5 <= m <= 70 for m in mises)
+    from src.alerter import mise_palier
+    moy = sum(mise_palier(e, p) for e in evs) / len(evs)
+    assert moy == pytest.approx(35.0, abs=3.0)
+
+
+def test_la_comparaison_montre_les_paliers_et_la_ligne_env(tmp_path, capsys):
+    db = _base(tmp_path)
+    assert sc.main(["--db", str(db), "--fractions", "1/4", "--bankroll", "2100",
+                    "--paliers", "0:25,8:35,15:50"]) == 0
+    texte = capsys.readouterr().out
+    assert "paliers EV auto" in texte and "paliers EV testés" in texte
+    assert "STAKE_EV_PALIERS=0:25,8:35,15:50" in texte
+    assert "montants" in texte
+
+
+def test_des_paliers_mal_ecrits_sont_refuses(tmp_path):
+    with pytest.raises(SystemExit):
+        sc.main(["--db", str(_base(tmp_path)), "--paliers", "8:35,8:40"])

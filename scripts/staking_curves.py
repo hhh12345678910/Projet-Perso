@@ -19,6 +19,14 @@ LES SCHÉMAS, tous reconstruits depuis le CODE DE PRODUCTION :
                         le capital engagé : c'est la comparaison à armes
                         égales qui répond à « mes creux seraient-ils plus
                         faibles ? ».
+* **paliers EV**      — une mise RONDE par bande d'EV (celles du projet :
+                        <5, 5-8, 8-15, 15-35, 35+), jamais influencée par la
+                        cote. « auto » : proportionnelle à l'EV médiane de la
+                        bande, bornée entre ½ et 2 fois `--mise`, moyenne
+                        ramenée à `--mise` — calculée sur les EV seules, JAMAIS
+                        sur les résultats, donc pas ajustée au passé.
+                        `--paliers 0:25,8:35,15:50` teste des montants précis ;
+                        c'est le format de `STAKE_EV_PALIERS` dans `.env`.
 * **actuel**          — `alerter._advised_stake_eur` appelée telle quelle, donc
                         exactement ce que ton `.env` conseille aujourd'hui.
 
@@ -161,6 +169,62 @@ def _jours(a: str, b: str) -> int:
         return 0
 
 
+def _bandes_ev() -> list[tuple[float, float | None]]:
+    """Les bandes d'EV du projet (`main._EV_BUCKET_ORDER`), en bornes :
+    (bas inclus, haut exclu). Relues, jamais recopiées."""
+    from src.main import _EV_BUCKET_ORDER
+    out = []
+    for lab in _EV_BUCKET_ORDER:
+        t = lab.replace("%", "").strip()
+        if t.startswith("<"):
+            out.append((0.0, float(t[1:])))
+        elif t.endswith("+"):
+            out.append((float(t[:-1]), None))
+        else:
+            lo, hi = t.split("-")
+            out.append((float(lo), float(hi)))
+    return out
+
+
+def paliers_auto(evs, mise: float, arrondi) -> list[tuple[float, float]]:
+    """Une mise par bande d'EV, PROPORTIONNELLE à l'EV médiane de la bande
+    (c'est le numérateur de Kelly, sans son terme de cote), bornée entre ½ et
+    2 fois `mise`, puis ramenée pour que la MOYENNE sur ces paris soit `mise`,
+    enfin arrondie comme en production.
+
+    ⚠️ Ne lit que les EV, JAMAIS les résultats : rien n'est ajusté à ce qui a
+    gagné. Le plafond à 2× protège la bande 35 %+, où l'EV extrême est plus
+    souvent une erreur de référence qu'un cadeau du book."""
+    bandes = []
+    for lo, hi in _bandes_ev():
+        dedans = [e for e in evs if e >= lo and (hi is None or e < hi)]
+        if dedans:
+            bandes.append((lo, st.median(dedans), len(dedans)))
+    if not bandes:
+        return []
+    n = sum(k for _lo, _med, k in bandes)
+    bas, haut = 0.5 * mise, 2.0 * mise
+    echelle = mise / (sum(med * k for _lo, med, k in bandes) / n)
+    for _ in range(50):       # bornes + moyenne : quelques itérations suffisent
+        brutes = [min(haut, max(bas, med * echelle)) for _lo, med, _k in bandes]
+        moy = sum(b * k for b, (_lo, _m, k) in zip(brutes, bandes)) / n
+        if abs(moy - mise) < 1e-6:
+            break
+        echelle *= mise / moy
+    return [(lo, arrondi(b)) for (lo, _m, _k), b in zip(bandes, brutes)]
+
+
+def decrire_paliers(paliers) -> str:
+    morceaux = []
+    for i, (seuil, m) in enumerate(paliers):
+        suivant = paliers[i + 1][0] if i + 1 < len(paliers) else None
+        borne = (f"{seuil:g}-{suivant:g} %" if suivant is not None else f"≥ {seuil:g} %")
+        if i == 0:
+            borne = f"< {suivant:g} %" if suivant is not None else "toute EV"
+        morceaux.append(f"{borne} → {m:g} €")
+    return " · ".join(morceaux)
+
+
 def mesures(courbe, dates, mises, gains, bankroll) -> dict:
     """Les chiffres d'un schéma. Fonction pure : testée sans base."""
     total = sum(mises)
@@ -233,6 +297,9 @@ def main(argv: "list[str] | None" = None) -> int:
     ap.add_argument("--fractions", default="0.25", metavar="LISTE",
                     help="Fractions de Kelly, ex. « 0.25,0.5 » ou « 1/4,1/2 » "
                          "(défaut 0.25).")
+    ap.add_argument("--paliers", default=None, metavar="LISTE",
+                    help="Paliers d'EV à tester, « seuil:mise », ex. "
+                         "« 0:25,8:35,15:50,35:60 » (format de STAKE_EV_PALIERS).")
     ap.add_argument("--bankroll", type=float, default=None, metavar="EUR",
                     help="Capital pour le Kelly. Défaut : TELEGRAM_BANKROLL "
                          "de ton .env.")
@@ -245,8 +312,13 @@ def main(argv: "list[str] | None" = None) -> int:
     load_env_file()   # AVANT d'importer alerter : ses réglages sont lus à l'import
 
     from src.alerter import (_MAX_STAKE_PCT, _STAKE_BASE_EUR, _STAKE_EV_MULT,
-                             _STAKE_EV_TIER, _STAKE_MODE, _STAKE_PCT,
-                             _advised_stake_eur, _round_stake)
+                             _STAKE_EV_PALIERS, _STAKE_EV_TIER, _STAKE_MODE,
+                             _STAKE_PCT, _advised_stake_eur, _round_stake,
+                             lire_paliers, mise_palier)
+    try:
+        paliers_testes = lire_paliers(a.paliers) if a.paliers else []
+    except ValueError as e:
+        raise SystemExit(f"--paliers : {e}")
 
     bankroll = a.bankroll if a.bankroll is not None else float(
         os.getenv("TELEGRAM_BANKROLL", "1000"))
@@ -321,6 +393,14 @@ def main(argv: "list[str] | None" = None) -> int:
             echelle = a.mise / moy
             schemas.append((f"{nom} à {a.mise:g} € moy.", f"{slug}_egal",
                             [round(m * echelle, 2) for m in brutes]))
+    evs = [float(r["ev_pct"]) for r, _s in regles]
+    auto = paliers_auto(evs, a.mise, _round_stake)
+    if auto:
+        schemas.append(("paliers EV auto", "paliers_auto",
+                        [mise_palier(ev, auto) for ev in evs]))
+    if paliers_testes:
+        schemas.append(("paliers EV testés", "paliers_testes",
+                        [mise_palier(ev, paliers_testes) for ev in evs]))
     schemas.append(("actuel (.env)", "actuel",
                     [_advised_stake_eur(float(r["ev_pct"]), r["kelly_pct"], bankroll) or 0.0
                      for r, _s in regles]))
@@ -356,13 +436,13 @@ def main(argv: "list[str] | None" = None) -> int:
     largeur = max(len(lib) for lib, _s, _m in schemas) + 2
     print("CE QUE ÇA ENGAGE ET RAPPORTE")
     e = (f"{'schéma':{largeur}}{'mise moy':>10}{'mise max':>10}{'total misé':>13}"
-         f"{'P&L':>11}{'ROI':>9}")
+         f"{'P&L':>11}{'ROI':>9}{'montants':>10}")
     print(e)
     print("-" * len(e))
     for slug, (lib, m, _c, _mi) in resultats.items():
         print(f"{lib:{largeur}}{m['mise_moy']:9.1f}€{_e(m['mise_max']):>9}€"
               f"{_e(m['total']):>12}€{('+' if m['pnl'] >= 0 else '-') + _e(abs(m['pnl'])):>10}€"
-              f"{m['roi']:+8.2f}%")
+              f"{m['roi']:+8.2f}%{len(set(round(x, 2) for x in _mi)):>10}")
 
     print("\nCE QU'IL FAUT ENCAISSER — les creux")
     e = (f"{'schéma':{largeur}}{'creux max':>11}{'% bankroll':>12}{'en mises':>10}"
@@ -376,6 +456,14 @@ def main(argv: "list[str] | None" = None) -> int:
         print(f"{lib:{largeur}}{'-' + _e(m['dd']):>10}€{m['dd_pct']:11.1f}%"
               f"{m['dd_mises']:10.1f}{ratio:>11}   {duree}")
 
+    print("\n« montants » : nombre de mises différentes. Peu de montants ronds = des mises "
+          "qui ressemblent\n   à celles d'un parieur ordinaire ; Kelly en produit des "
+          "dizaines, corrélées à l'EV.")
+    for titre, pal in (("auto", auto), ("testés", paliers_testes),
+                       ("actuels (.env)", _STAKE_EV_PALIERS if _STAKE_MODE == "flat" else [])):
+        if pal:
+            print(f"\nPaliers {titre} : {decrire_paliers(pal)}")
+            print(f"   dans .env : STAKE_EV_PALIERS={','.join(f'{x:g}:{y:g}' for x, y in pal)}")
     fixe = resultats["fixe"][1]
     print()
     for f in fractions:
@@ -393,6 +481,15 @@ def main(argv: "list[str] | None" = None) -> int:
             print(f"→ À mise moyenne égale ({a.mise:g} €), le pire creux de "
                   f"{_nom_fraction(f)} {verdict} de la mise fixe "
                   f"(-{_e(m['dd'])} € contre -{_e(fixe['dd'])} €).")
+    for slug, nom in (("paliers_auto", "les paliers EV auto"),
+                      ("paliers_testes", "les paliers EV testés")):
+        if slug not in resultats or not fixe["dd"]:
+            continue
+        m = resultats[slug][1]
+        print(f"→ Avec {nom} (mise moyenne {m['mise_moy']:.1f} €) : P&L/creux "
+              f"{'—' if m['pnl_par_creux'] is None else format(m['pnl_par_creux'], '.2f')} "
+              f"contre {fixe['pnl_par_creux']:.2f} en fixe, pire creux "
+              f"{m['dd_mises']:.1f} mises contre {fixe['dd_mises']:.1f}.")
     print("\n⚠️ Comparer les P&L ou les creux en euros entre schémas qui ne misent pas "
           "autant\n   ne dit rien : Kelly à 3 % d'une grosse bankroll mise 4 à 5 fois 35 €, "
           "il gagne\n   ET creuse 4 à 5 fois plus. Ce qui compare : « P&L/creux », "

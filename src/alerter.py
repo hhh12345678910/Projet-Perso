@@ -71,11 +71,61 @@ _STAKE_EV_TIER = float(os.getenv("STAKE_EV_TIER", "15"))     # EV% à partir duq
 _STAKE_EV_MULT = float(os.getenv("STAKE_EV_MULT", "1.25"))   # boost DOUX (1.0 = pas d'influence EV)
 
 
+def lire_paliers(brut: "str | None") -> list[tuple[float, float]]:
+    """« 0:25,8:35,15:50,35:60 » → [(0, 25), (8, 35), (15, 50), (35, 60)] :
+    à partir de x % d'EV, y € de mise. Trié par seuil. Vide si non défini.
+
+    Lève ValueError sur un format faux : un palier mal écrit ne doit JAMAIS
+    devenir silencieusement une autre mise."""
+    out: list[tuple[float, float]] = []
+    for morceau in str(brut or "").split(","):
+        morceau = morceau.strip()
+        if not morceau:
+            continue
+        seuil, _, mise = morceau.partition(":")
+        s_, m_ = float(seuil), float(mise)
+        if m_ <= 0:
+            raise ValueError(f"mise de palier ≤ 0 : {morceau}")
+        out.append((s_, m_))
+    out.sort()
+    if len({s_ for s_, _m in out}) != len(out):
+        raise ValueError("deux paliers au même seuil d'EV")
+    return out
+
+
+def mise_palier(ev_pct: "float | None", paliers: list[tuple[float, float]]) -> "float | None":
+    """La mise du palier dont le seuil est le plus haut sous l'EV. Sous le
+    premier seuil, le premier palier : rien n'est détecté sous le seuil du
+    daemon, et un pari alerté reçoit toujours une mise."""
+    if not paliers:
+        return None
+    if ev_pct is None:
+        return paliers[0][1]
+    mise = paliers[0][1]
+    for seuil, m in paliers:
+        if ev_pct >= seuil:
+            mise = m
+    return mise
+
+
+# Mode « flat » PAR PALIERS D'EV (04/10, `scripts/staking_curves.py`) : la mise
+# ne dépend que de l'EV, jamais de la cote, et reste un montant rond — Kelly
+# sans sa signature. Non défini = la règle historique base × boost ci-dessus,
+# inchangée. Un format faux est SIGNALÉ et ignoré, jamais deviné.
+try:
+    _STAKE_EV_PALIERS = lire_paliers(os.getenv("STAKE_EV_PALIERS", ""))
+    _STAKE_EV_PALIERS_ERREUR = ""
+except ValueError as _e:
+    _STAKE_EV_PALIERS, _STAKE_EV_PALIERS_ERREUR = [], f"STAKE_EV_PALIERS ignoré : {_e}"
+
+
 def _advised_stake_eur(ev_pct: float | None, kelly_stake_pct: float | None,
                        bankroll: float) -> float | None:
     """€ stake advised for a value bet, per _STAKE_MODE. Returns None when no
     stake can be computed (kelly mode without a stored Kelly%)."""
     if _STAKE_MODE == "flat":
+        if _STAKE_EV_PALIERS:
+            return mise_palier(ev_pct, _STAKE_EV_PALIERS)
         base = (_STAKE_PCT / 100.0 * bankroll) if _STAKE_PCT > 0 else _STAKE_BASE_EUR
         mult = _STAKE_EV_MULT if (ev_pct is not None and ev_pct >= _STAKE_EV_TIER) else 1.0
         return _round_stake(base * mult)
@@ -96,6 +146,10 @@ def _advised_stake_line(ev_pct: float | None, kelly_stake_pct: float | None,
     if stake is None:
         return ""
     if _STAKE_MODE == "flat":
+        if _STAKE_EV_PALIERS:
+            # ⚡ au-dessus du premier palier : la mise a été relevée par l'EV.
+            boost = "  ⚡" if stake > _STAKE_EV_PALIERS[0][1] else ""
+            return f"Mise conseillée : {stake:.0f}€{boost}"
         boost = "  ⚡" if (ev_pct is not None and ev_pct >= _STAKE_EV_TIER) else ""
         return f"Mise conseillée : {stake:.0f}€{boost}"
     return f"Mise conseillée : {stake:.0f}€"
