@@ -180,3 +180,12 @@ def test_la_sortie_dit_si_c_est_prouve(tmp_path, capsys):
     assert sc.main(["--db", str(_base(tmp_path)), "--paliers", "5:20,8:30,15:60"]) == 0
     texte = capsys.readouterr().out
     assert "EST-CE PROUVÉ ?" in texte and "LE FONDEMENT" in texte
+
+
+def test_par_periode_coupe_aux_dates_de_debut():
+    gains = [10.0, -20.0, 5.0, 30.0]
+    mises = [35.0] * 4
+    dates = ["2026-07-01", "2026-07-30", "2026-08-02", "2026-08-30"]
+    p = sc.par_periode(gains, mises, dates, ["2026-06-27", "2026-07-27", "2026-08-27"])
+    assert [(x["n"], x["pnl"]) for x in p] == [(1, 10.0), (2, -15.0), (1, 30.0)]
+    assert p[1]["creux"] == 20.0 and p[1]["roi"] == pytest.approx(-15 / 70 * 100)

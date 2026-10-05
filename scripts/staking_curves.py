@@ -303,6 +303,48 @@ def _requete(joues: bool) -> str:
     """
 
 
+def par_periode(gains, mises, dates, debuts) -> list[dict]:
+    """P&L, ROI et creux de chaque période [début ; début suivant[. Le creux
+    est mesuré DANS la période, à partir de 0 € à son début."""
+    bornes = sorted(debuts)
+    out = []
+    for i, d0 in enumerate(bornes):
+        d1 = bornes[i + 1] if i + 1 < len(bornes) else None
+        idx = [j for j, d in enumerate(dates) if d >= d0 and (d1 is None or d < d1)]
+        g = [gains[j] for j in idx]
+        m = [mises[j] for j in idx]
+        courbe, cumul = [], 0.0
+        for x in g:
+            cumul += x
+            courbe.append(cumul)
+        out.append({"debut": d0, "fin": d1, "n": len(idx), "pnl": sum(g),
+                    "roi": 100 * sum(g) / sum(m) if sum(m) else None,
+                    "creux": _drawdown(courbe)[0] if courbe else 0.0})
+    return out
+
+
+def _afficher_periodes(resultats, gains_par_slug, dates, brut) -> None:
+    debuts = [x.strip() for x in brut.split(",") if x.strip()]
+    print("\nPAR PÉRIODE — P&L · ROI · pire creux DANS la période")
+    tranches = None
+    for slug, (lib, _m, _c, mises) in resultats.items():
+        lignes = par_periode(gains_par_slug[slug], mises, dates, debuts)
+        if tranches is None:
+            tranches = lignes
+            tete = "".join(f"{(l['debut'][5:] + ' → ' + (l['fin'][5:] if l['fin'] else 'fin')):>27}"
+                           for l in lignes)
+            print(f"{'méthode':24}{tete}")
+            print(f"{'(paris)':24}" + "".join(f"{l['n']:>27}" for l in lignes))
+        cases = []
+        for l in lignes:
+            if not l["n"]:
+                cases.append(f"{'—':>27}")
+                continue
+            pl = ("+" if l["pnl"] >= 0 else "-") + _e(abs(l["pnl"])) + "€"
+            cases.append(f"{pl:>9} {l['roi']:+6.1f}% {'-' + _e(l['creux']) + '€':>9}")
+        print(f"{lib:24}" + "".join(f"{c:>27}" for c in cases))
+
+
 def _afficher_validation(regles, mise, arrondi, k, paliers_testes) -> None:
     from scripts.valider_mises import SEUILS, valider
     paris = [{"ev": float(r["ev_pct"]), "cote": float(r["odd_taken"]), "statut": s_,
@@ -367,6 +409,9 @@ def main(argv: "list[str] | None" = None) -> int:
     ap.add_argument("--bankroll", type=float, default=None, metavar="EUR",
                     help="Capital pour le Kelly. Défaut : TELEGRAM_BANKROLL "
                          "de ton .env.")
+    ap.add_argument("--periodes", default=None, metavar="DATES",
+                    help="Découper le résultat par période : dates de DÉBUT séparées "
+                         "par des virgules, ex. 2026-06-27,2026-07-27,2026-08-27,2026-09-27.")
     ap.add_argument("--valider", type=int, nargs="?", const=4, default=None, metavar="K",
                     help="Validation HORS ÉCHANTILLON : choisir chaque méthode sur le "
                          "passé, la juger sur la période suivante (K blocs, défaut 4).")
@@ -605,6 +650,9 @@ def main(argv: "list[str] | None" = None) -> int:
         print("⚠️ Paris joués : la cote est celle du CLIC, la cote juste celle de la "
               "détection.\n   Les paris sans résultat exploitable (match non réglé, "
               "marché non réglable)\n   sont hors du calcul.")
+
+    if a.periodes:
+        _afficher_periodes(resultats, gains_par_slug, dates, a.periodes)
 
     if a.valider:
         _afficher_validation(regles, a.mise, _round_stake, a.valider, paliers_testes)
