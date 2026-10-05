@@ -303,6 +303,42 @@ def _requete(joues: bool) -> str:
     """
 
 
+def _afficher_validation(regles, mise, arrondi, k, paliers_testes) -> None:
+    from scripts.valider_mises import SEUILS, valider
+    paris = [{"ev": float(r["ev_pct"]), "cote": float(r["odd_taken"]), "statut": s_,
+              "clv": (100.0 * (float(r["odd_taken"]) / float(r["cloture"]) - 1)
+                      if r["cloture"] else None)} for r, s_ in regles]
+    fixes = {}
+    if paliers_testes:
+        from src.alerter import mise_palier
+        fixes["paliers testés"] = tuple(mise_palier(s_ + 1e-9, paliers_testes) for s_ in SEUILS)
+    res = valider(paris, mise, arrondi, k=k, regles_fixes=fixes)
+    n_test = len(res["fixe"]["gains"])
+    print(f"\nVALIDATION HORS ÉCHANTILLON — {k} blocs chronologiques ; chaque méthode est "
+          f"choisie sur les\n   blocs PASSÉS et jugée sur le suivant ({n_test} paris jugés, "
+          "jamais vus au moment du choix),\n   à capital égal à la mise fixe.")
+    largeur = max(len(n) for n in res) + 2
+    print(f"{'méthode':{largeur}}{'P&L':>10}{'ROI':>9}{'creux':>10}{'P&L/creux':>11}"
+          f"{'t vs fixe':>11}   règle par bloc (<8 · 8-15 · 15-35 · ≥35 %)")
+    gf, mf = res["fixe"]["gains"], res["fixe"]["mises"]
+    for nom, r in res.items():
+        courbe, cumul = [], 0.0
+        for g in r["gains"]:
+            cumul += g
+            courbe.append(cumul)
+        dd = _drawdown(courbe)[0]
+        pl = sum(r["gains"])
+        roi = 100 * pl / sum(r["mises"]) if sum(r["mises"]) else 0.0
+        t = "—" if nom == "fixe" else (
+            lambda x: "—" if x["t"] is None else f"{x['t']:.2f}")(
+            test_apparie(r["gains"], r["mises"], gf, mf))
+        regles_txt = "  |  ".join("/".join(f"{x:g}" for x in g) for g in r["regles"])
+        print(f"{nom:{largeur}}{('+' if pl >= 0 else '-') + _e(abs(pl)):>9}€{roi:+8.2f}%"
+              f"{'-' + _e(dd):>9}€{(pl / dd if dd else 0):11.2f}{t:>11}   {regles_txt}")
+    print("   Seule la courbe HORS ÉCHANTILLON juge une méthode. Une méthode « optimisée » "
+          "qui brille\n   sur tout l'historique mais pas ici a appris le bruit.")
+
+
 def main(argv: "list[str] | None" = None) -> int:
     ap = argparse.ArgumentParser(
         description=__doc__,
@@ -331,6 +367,9 @@ def main(argv: "list[str] | None" = None) -> int:
     ap.add_argument("--bankroll", type=float, default=None, metavar="EUR",
                     help="Capital pour le Kelly. Défaut : TELEGRAM_BANKROLL "
                          "de ton .env.")
+    ap.add_argument("--valider", type=int, nargs="?", const=4, default=None, metavar="K",
+                    help="Validation HORS ÉCHANTILLON : choisir chaque méthode sur le "
+                         "passé, la juger sur la période suivante (K blocs, défaut 4).")
     ap.add_argument("--out", default=None, metavar="CSV",
                     help="Écrire la courbe (un point par pari réglé).")
     a = ap.parse_args(argv)
@@ -566,6 +605,9 @@ def main(argv: "list[str] | None" = None) -> int:
         print("⚠️ Paris joués : la cote est celle du CLIC, la cote juste celle de la "
               "détection.\n   Les paris sans résultat exploitable (match non réglé, "
               "marché non réglable)\n   sont hors du calcul.")
+
+    if a.valider:
+        _afficher_validation(regles, a.mise, _round_stake, a.valider, paliers_testes)
 
     if a.out:
         champs = list(points[0].keys())

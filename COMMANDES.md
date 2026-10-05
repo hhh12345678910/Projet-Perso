@@ -346,6 +346,15 @@ montants précis, au format de `STAKE_EV_PALIERS` :
     --paliers 0:25,8:35,15:50,35:60
 ```
 
+**Quelle méthode est vraiment la meilleure ?** `--valider` choisit chaque
+méthode sur les blocs PASSÉS et la juge sur le suivant, jamais vu (4 blocs
+chronologiques). Seule cette courbe juge une méthode ; « optimisé ROI » y est
+le candidat le plus exposé à l'apprentissage du bruit :
+
+```bash
+.venv/bin/python -m scripts.staking_curves --joues --valider --paliers 0:30,15:60
+```
+
 Pour l'appliquer aux alertes : `STAKE_MODE=flat` et
 `STAKE_EV_PALIERS=0:25,8:35,15:50,35:60` dans `.env`, puis redémarrer le daemon
 et le listener. Non défini = la règle base + boost d'avant, inchangée.
