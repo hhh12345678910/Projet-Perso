@@ -162,3 +162,21 @@ def test_la_comparaison_montre_les_paliers_et_la_ligne_env(tmp_path, capsys):
 def test_des_paliers_mal_ecrits_sont_refuses(tmp_path):
     with pytest.raises(SystemExit):
         sc.main(["--db", str(_base(tmp_path)), "--paliers", "8:35,8:40"])
+
+
+def test_le_test_apparie_ramene_au_meme_capital():
+    """Un schéma qui mise deux fois plus sur les mêmes paris, à résultats
+    proportionnels, n'a AUCUN avantage une fois ramené au même capital."""
+    gf = [35.0, -35.0, 35.0, -35.0, 70.0]
+    t = sc.test_apparie([2 * g for g in gf], [70.0] * 5, gf, [35.0] * 5)
+    assert t["ecart"] == pytest.approx(0.0) and t["erreur"] == pytest.approx(0.0)
+    # Miser plus sur les paris gagnants : écart positif, à capital égal.
+    t = sc.test_apparie([50.0, -20.0, 50.0, -20.0, 100.0], [50, 20, 50, 20, 35],
+                        gf, [35.0] * 5)
+    assert t["ecart"] > 0 and t["t"] > 0
+
+
+def test_la_sortie_dit_si_c_est_prouve(tmp_path, capsys):
+    assert sc.main(["--db", str(_base(tmp_path)), "--paliers", "5:20,8:30,15:60"]) == 0
+    texte = capsys.readouterr().out
+    assert "EST-CE PROUVÉ ?" in texte and "LE FONDEMENT" in texte

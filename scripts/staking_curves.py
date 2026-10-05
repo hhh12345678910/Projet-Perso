@@ -225,6 +225,28 @@ def decrire_paliers(paliers) -> str:
     return " · ".join(morceaux)
 
 
+def test_apparie(gains_schema, mises_schema, gains_fixe, mises_fixe) -> dict:
+    """Le schéma bat-il VRAIMENT la mise fixe, ou est-ce la chance ?
+
+    Test APPARIÉ : les deux schémas portent sur les MÊMES paris, donc la
+    chance des résultats est commune ; seule compte la différence pari par
+    pari. Le schéma est d'abord ramené au même capital total que la mise
+    fixe — sinon il « gagnerait » juste en misant plus.
+
+    Rend l'écart de P&L à capital égal, son erreur-type et t = écart/erreur.
+    |t| ≥ 2 : environ 5 % de chances que l'écart soit du hasard ; sous 2, la
+    période ne suffit pas à le prouver."""
+    tf, ts = sum(mises_fixe), sum(mises_schema)
+    if not tf or not ts or len(gains_fixe) < 2:
+        return {"ecart": None, "erreur": None, "t": None}
+    k = tf / ts
+    d = [gs * k - gf for gs, gf in zip(gains_schema, gains_fixe)]
+    n = len(d)
+    erreur = st.stdev(d) * n ** 0.5
+    ecart = sum(d)
+    return {"ecart": ecart, "erreur": erreur, "t": (ecart / erreur) if erreur else None}
+
+
 def mesures(courbe, dates, mises, gains, bankroll) -> dict:
     """Les chiffres d'un schéma. Fonction pure : testée sans base."""
     total = sum(mises)
@@ -257,7 +279,10 @@ def _requete(joues: bool) -> str:
                vb.fair_odd, vb.ev_pct, vb.kelly_pct, vb.detected_at,
                e.sport AS sport, e.league AS league,
                e.home AS home, e.away AS away, e.start_time AS start_time,
-               r.winner, r.home_score, r.away_score
+               r.winner, r.home_score, r.away_score,
+               (SELECT cs.fair_odd FROM clv_snapshots cs WHERE cs.value_bet_id = vb.id
+                 AND cs.closing = 1 AND cs.fair_odd > 0 ORDER BY cs.id DESC LIMIT 1)
+                 AS cloture
         FROM played_bets pb
         JOIN value_bets vb  ON vb.id = pb.value_bet_id
         JOIN results r      ON r.event_key = vb.event_key
@@ -268,7 +293,10 @@ def _requete(joues: bool) -> str:
                vb.odd_taken, vb.fair_odd, vb.ev_pct, vb.kelly_pct, vb.detected_at,
                e.sport AS sport, e.league AS league,
                e.home AS home, e.away AS away, e.start_time AS start_time,
-               r.winner, r.home_score, r.away_score
+               r.winner, r.home_score, r.away_score,
+               (SELECT cs.fair_odd FROM clv_snapshots cs WHERE cs.value_bet_id = vb.id
+                 AND cs.closing = 1 AND cs.fair_odd > 0 ORDER BY cs.id DESC LIMIT 1)
+                 AS cloture
         FROM value_bets vb
         JOIN results r      ON r.event_key = vb.event_key
         LEFT JOIN events e  ON e.event_key = vb.event_key
@@ -406,7 +434,7 @@ def main(argv: "list[str] | None" = None) -> int:
                      for r, _s in regles]))
 
     dates = [(r["start_time"] or "")[:10] for r, _s in regles]
-    resultats, points = {}, []
+    resultats, points, gains_par_slug = {}, [], {}
     for lib, slug, mises in schemas:
         cumul, courbe, gains = 0.0, [], []
         for (r, statut), m in zip(regles, mises):
@@ -415,6 +443,7 @@ def main(argv: "list[str] | None" = None) -> int:
             gains.append(g)
             courbe.append(cumul)
         resultats[slug] = (lib, mesures(courbe, dates, mises, gains, bankroll), courbe, mises)
+        gains_par_slug[slug] = gains
     for i, (r, statut) in enumerate(regles):
         pt = {"n": i + 1, "date": dates[i], "sport": r["sport"] or "?",
               "book": r["book"], "cote": float(r["odd_taken"]),
@@ -490,6 +519,43 @@ def main(argv: "list[str] | None" = None) -> int:
               f"{'—' if m['pnl_par_creux'] is None else format(m['pnl_par_creux'], '.2f')} "
               f"contre {fixe['pnl_par_creux']:.2f} en fixe, pire creux "
               f"{m['dd_mises']:.1f} mises contre {fixe['dd_mises']:.1f}.")
+    print("\nEST-CE PROUVÉ ? — test apparié contre la mise fixe, à capital égal")
+    print(f"{'schéma':{largeur}}{'écart P&L':>12}{'± (1 σ)':>11}{'t':>7}   verdict")
+    gf, mf = gains_par_slug["fixe"], resultats["fixe"][3]
+    for slug, (lib, _m, _c, mises) in resultats.items():
+        if slug == "fixe":
+            continue
+        t = test_apparie(gains_par_slug[slug], mises, gf, mf)
+        if t["t"] is None:
+            continue
+        verdict = ("prouvé (|t| ≥ 3)" if abs(t["t"]) >= 3 else
+                   "probable (2 ≤ |t| < 3)" if abs(t["t"]) >= 2 else
+                   "pas prouvé sur cette période")
+        print(f"{lib:{largeur}}{('+' if t['ecart'] >= 0 else '-') + _e(abs(t['ecart'])):>11}€"
+              f"{_e(t['erreur']):>10}€{t['t']:7.2f}   {verdict}")
+    print("   ⚠️ Plusieurs schémas sont comparés : le meilleur d'entre eux profite d'un peu de "
+          "chance\n   par sélection. Exiger |t| ≥ 2, et de préférence ≥ 3.")
+
+    print("\nLE FONDEMENT — CLV et ROI par tranche d'EV (mise fixe)")
+    print("Si la CLV MONTE avec l'EV, miser plus sur les grosses EV est justifié même quand "
+          "le ROI,\n   bien plus bruité, ne suffit pas encore à le prouver.")
+    print(f"{'EV':>10}{'paris':>8}{'ROI':>9}{'± (1 σ)':>10}{'n CLV':>8}{'CLV moy':>10}{'± (1 σ)':>9}")
+    for lo, hi in _bandes_ev():
+        lot = [(r, s_) for r, s_ in regles
+               if float(r["ev_pct"]) >= lo and (hi is None or float(r["ev_pct"]) < hi)]
+        if not lot:
+            continue
+        rend = [clv_pnl(s_, float(r["odd_taken"]), 1.0) for r, s_ in lot]
+        clvs = [100.0 * (float(r["odd_taken"]) / float(r["cloture"]) - 1)
+                for r, _s in lot if r["cloture"]]
+        nom = f"{lo:g}-{hi:g} %" if hi is not None else f"≥ {lo:g} %"
+        roi = 100 * st.mean(rend)
+        roi_e = 100 * st.stdev(rend) / len(rend) ** 0.5 if len(rend) > 1 else 0.0
+        clv_txt = (f"{len(clvs):8d}{st.mean(clvs):+9.2f}%"
+                   f"{(st.stdev(clvs) / len(clvs) ** 0.5 if len(clvs) > 1 else 0.0):8.2f}%"
+                   if clvs else f"{0:8d}{'—':>10}{'—':>9}")
+        print(f"{nom:>10}{len(lot):8d}{roi:+8.2f}%{roi_e:9.2f}%{clv_txt}")
+
     print("\n⚠️ Comparer les P&L ou les creux en euros entre schémas qui ne misent pas "
           "autant\n   ne dit rien : Kelly à 3 % d'une grosse bankroll mise 4 à 5 fois 35 €, "
           "il gagne\n   ET creuse 4 à 5 fois plus. Ce qui compare : « P&L/creux », "
