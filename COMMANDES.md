@@ -329,6 +329,20 @@ par point.
     --out courbes.csv
 ```
 
+**Sur tes paris JOUÉS**, à la cote du clic, avec plusieurs fractions de Kelly
+et ta vraie bankroll :
+
+```bash
+.venv/bin/python -m scripts.staking_curves --joues --fractions 1/4,1/2 --bankroll 10000
+.venv/bin/python -m scripts.staking_curves --joues --depuis 2026-08-01 --out courbes.csv
+```
+
+Deux tableaux : ce que chaque schéma engage et rapporte, puis ses creux — creux
+maximal en €, en % de bankroll, **en mises moyennes**, le ratio **P&L/creux**,
+et la plus longue période passée sous un sommet. Les lignes « Kelly … à 35 € moy. »
+répartissent les mêmes euros que la mise fixe selon Kelly : c'est la comparaison
+à armes égales (« mes creux seraient-ils plus faibles ? »).
+
 ⚠️ **Le plus gros P&L n'est pas le meilleur schéma.** Le quart de Kelly ne mise
 pas forcément plus que la mise fixe : à la bankroll du `.env` (1 250 €) il
 engage environ un tiers de MOINS, et le classement des P&L s'inverse
