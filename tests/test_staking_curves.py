@@ -189,3 +189,17 @@ def test_par_periode_coupe_aux_dates_de_debut():
     p = sc.par_periode(gains, mises, dates, ["2026-06-27", "2026-07-27", "2026-08-27"])
     assert [(x["n"], x["pnl"]) for x in p] == [(1, 10.0), (2, -15.0), (1, 30.0)]
     assert p[1]["creux"] == 20.0 and p[1]["roi"] == pytest.approx(-15 / 70 * 100)
+
+
+def test_fin_de_journee_garde_le_dernier_point_du_jour():
+    assert sc.fin_de_journee(["2026-07-01", "2026-07-01", "2026-07-02"],
+                             [10, 5, 30], [20, 0, 40]) == [
+        ("2026-07-01", 5, 0), ("2026-07-02", 30, 40)]
+
+
+def test_par_jour_n_imprime_que_les_lignes(tmp_path, capsys):
+    assert sc.main(["--db", str(_base(tmp_path)), "--paliers", "5:20,8:30,15:60,35:70",
+                    "--par-jour"]) == 0
+    lignes = capsys.readouterr().out.strip().splitlines()
+    assert lignes[0].startswith("# fixe = fixe 35 €")
+    assert all(l.count(";") == 2 for l in lignes[1:]) and len(lignes) == 6

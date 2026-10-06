@@ -303,6 +303,14 @@ def _requete(joues: bool) -> str:
     """
 
 
+def fin_de_journee(dates, courbe_a, courbe_b) -> list[tuple[str, float, float]]:
+    """Le P&L cumulé des deux courbes au DERNIER pari de chaque jour."""
+    out: dict = {}
+    for d, x, y in zip(dates, courbe_a, courbe_b):
+        out[d] = (x, y)
+    return [(d, x, y) for d, (x, y) in out.items()]
+
+
 def par_periode(gains, mises, dates, debuts) -> list[dict]:
     """P&L, ROI et creux de chaque période [début ; début suivant[. Le creux
     est mesuré DANS la période, à partir de 0 € à son début."""
@@ -409,6 +417,10 @@ def main(argv: "list[str] | None" = None) -> int:
     ap.add_argument("--bankroll", type=float, default=None, metavar="EUR",
                     help="Capital pour le Kelly. Défaut : TELEGRAM_BANKROLL "
                          "de ton .env.")
+    ap.add_argument("--par-jour", action="store_true", dest="par_jour",
+                    help="N'imprimer QUE le P&L cumulé en fin de journée, fixe contre "
+                         "paliers : « date;fixe;paliers », une ligne par jour (à "
+                         "coller pour un graphique).")
     ap.add_argument("--periodes", default=None, metavar="DATES",
                     help="Découper le résultat par période : dates de DÉBUT séparées "
                          "par des virgules, ex. 2026-06-27,2026-07-27,2026-08-27,2026-09-27.")
@@ -536,6 +548,14 @@ def main(argv: "list[str] | None" = None) -> int:
             pt[f"mise_{slug}"] = round(mises[i], 2)
             pt[f"cumul_{slug}"] = round(courbe[i], 2)
         points.append(pt)
+
+    if a.par_jour:
+        cle = ("paliers_testes" if "paliers_testes" in resultats else "paliers_auto")
+        print(f"# fixe = {resultats['fixe'][0]} ; paliers = {resultats[cle][0]}"
+              + (f" ({decrire_paliers(paliers_testes)})" if cle == "paliers_testes" else ""))
+        for d, f_, p_ in fin_de_journee(dates, resultats["fixe"][2], resultats[cle][2]):
+            print(f"{d};{f_:.0f};{p_:.0f}")
+        return 0
 
     print(f"\nSCHÉMAS DE MISE — population : {porte_desc}")
     print(f"Books : {', '.join(sorted(books)) if books else 'tous'}"
