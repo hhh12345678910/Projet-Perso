@@ -1,7 +1,26 @@
 # Valuebet — état du projet
 
 Document de reprise. À lire en premier pour reprendre le travail sans
-redécouvrir le contexte. Dernière mise à jour : 22/09/2026.
+redécouvrir le contexte. Dernière mise à jour : 06/10/2026.
+
+**Nouveau (06/10) — voir §28, qui couvre tout le 24/09 au 06/10 :**
+- ⚠️ **La VM suit `refactor/prepare-live`** (`~/Projet-Perso`), c'est la
+  branche de travail. Les mentions de `claude/resume-clarification-1541xa`
+  plus bas sont historiques.
+- §28.1 : **un `git pull` ne change jamais les mises.** Elles vivent dans
+  `.env` ; toute méthode nouvelle est livrée désactivée.
+- §28.2 : **plus aucun score stocké à l'envers** — 11 941 résultats de foot
+  rejoués, 0 inversé ; un double de tennis ne prend plus le score d'un simple.
+- §28.3 : 129 résultats retrouvés sur le web (deux sources chacun), import
+  sans écrasement. **Import sur la VM non confirmé ici.**
+- §28.5 : **Vivatbet en production**, CLV premium +10,56 % (n = 97, t = 7,2).
+  Les clics « Jouer » se rattachent désormais au book cliqué.
+- §28.6 : **le hockey est collecté sur 7 books, sans alerte**, chaque marché
+  comparé à SA période Pinnacle. CLV premium +7,19 % (n = 57), trop jeune.
+- §28.8 : **méthode de mise étudiée** : 4 paliers d'EV +10 675 € contre
+  +8 055 € en fixe, meilleure aussi hors échantillon. **L'utilisateur reste en
+  mise fixe 35 €** ; re-mesure vers le 02/11.
+- §28.10 : ce qui reste ouvert.
 
 **Nouveau (22/09) — voir §27, qui couvre tout le 12 au 22/09 :**
 - §27.3 : **le dashboard d'analyse est EN LIGNE en permanence** —
@@ -8039,3 +8058,300 @@ bande 8-15 % — où le choix manuel n'ajoute rien de mesurable. **Déplacer
 l'attention de la seconde vers la première est le levier le plus rentable qui
 reste identifié.** Vérifiable dans le dashboard : `ev_min=5`, `ev_max=8`, puis
 comparer les populations « Cliqué » et « Parié ».
+
+---
+
+## 28. Sessions du 24/09 au 06/10 — résultats remis d'aplomb, Vivatbet, hockey mesuré, Strategy Finder, méthode de mise
+
+> Ce document s'arrêtait au 22/09 (§27). 89 commits ont suivi, tous sur
+> `refactor/prepare-live`. Cette section les résume par sujet ; le détail de
+> chaque décision est dans le message du commit cité.
+
+### 28.1 État au 06/10
+
+| | État |
+|---|---|
+| **Branche** | `refactor/prepare-live`, celle que la VM suit (`~/Projet-Perso`) |
+| **Books** | Vivatbet ajouté le 28/09 (marque blanche 1xBet, seule de cette plateforme) |
+| **Sports collectés** | football, tennis, **hockey (depuis le 29/09, sans alerte)** |
+| **Sondes** | 70 fichiers dans `scripts/` |
+| **Suite de tests** | **3 168 tests** : 3 161 passés, 4 ignorés, **3 échecs antérieurs** (§28.10) |
+| **Mises** | **inchangées : mise fixe 35 €**, choix confirmé par l'utilisateur le 06/10 (§28.8) |
+
+⚠️ **Règle posée par l'utilisateur le 05/10 : un `git pull` ne doit jamais
+changer ses mises.** Les mises vivent dans `.env`, que git ne suit pas. Toute
+nouvelle méthode de mise est livrée DÉSACTIVÉE et ne s'active que par une ligne
+que l'utilisateur ajoute lui-même à `.env`.
+
+### 28.2 Résultats : plus jamais un score à l'envers (24-27/09)
+
+**Le défaut de production trouvé.** `bind_results` orientait un résultat avec
+le score d'appariement, qui juge un nom sur son meilleur FRAGMENT : « Dundee »
+vaut 100 contre « Dundee United ». Entre clubs aux noms emboîtés, la mauvaise
+orientation pouvait l'emporter, et un 1X2 réglé à l'envers ne lève rien : le
+vainqueur devient le perdant dans tous les ROI, en silence.
+
+| Commit | Ce qu'il fait |
+|---|---|
+| `03a2478` | Orientation par une règle dédiée (`_orientation`) |
+| `e1bd15c` | **Ne trancher qu'avec une marge.** Mesuré sur 1,85 million de cas : ancienne règle 271 erreurs en football et 162 au tennis, nouvelle 0 et 0, pour 0,40 % et 0,07 % de matchs laissés sans résultat |
+| `b7ae8dc` | **Un double de tennis ne reçoit plus le score d'un simple** (la source tennis ne sert aucun double ; « Park / Tang » valait 100 contre « Park ») |
+| `5a39a78` | `_nom_canonique` : « Utd » = « United », « Wed » = « Wednesday ». Le derby de Dundee du 22/08, stocké 2-0, est classé INVERSÉ (vrai : 0-2) |
+
+`verif_resultats` sur la VM (27/09) : **11 941 résultats de football rejoués,
+0 inversé, 4 indécidables**, dont le derby de Dundee ci-dessus.
+
+**Le banc d'essai** (`scripts/banc_rapprochement.py`, `a30dd1e` et quatre
+revues) mesure à l'aveugle les règles de rapprochement assouplies : il cache le
+vrai match et regarde si la règle trouve un sosie. **Décision de
+l'utilisateur : aucune règle assouplie n'est activée** (« Non on ne le fait
+pas »).
+
+**La sonde `resultats_manquants`** (`ce3e079` à `7bca9aa`) dit, pour chaque
+match fini sans résultat, laquelle des causes le bloque (journée jamais
+récupérée, refusée, barrière de classe, horaire hors tolérance, absent de la
+source…) et la commande qui le règle. Leçon de sa revue : `results-update`
+rapproche dans UN lot toutes les journées en attente, veille et lendemain
+compris, pas le seul fichier du jour.
+
+### 28.3 Résultats retrouvés sur le web (27-28/09)
+
+À la demande de l'utilisateur, les paris joués sans résultat ont été cherchés
+un par un sur le web. Protocole : **deux sources indépendantes et
+concordantes**, score à 90 minutes en football, vainqueur au tennis (jamais
+déduit des jeux), URL gardées dans le fichier.
+
+| Fichier | Lignes | Sort |
+|---|---|---|
+| `scripts/resultats_web.csv` | 129 | importables |
+| `scripts/resultats_web_decales.csv` | 8 | match joué à une autre date : **à l'utilisateur de décider** |
+| `scripts/resultats_web_a_revoir.csv` | 9 | retirés par l'audit indépendant (`5fecda8`), **jamais importés** |
+
+L'import (`scripts/import_resultats_web.py`) simule par défaut, n'écrit
+qu'avec `--ecrire`, sous la source `manuel-web`, **sans jamais écraser** un
+résultat existant, et refuse une ligne qui désigne zéro ou plusieurs matchs.
+Les commandes ont été données le 28/09 ; **ce document ne confirme pas
+qu'elles ont été lancées sur la VM.** La simulation le dira (elle ne réécrit
+rien de ce qui est déjà en base).
+
+### 28.4 Alertes (27-28/09)
+
+- **Noms du book alerté, dans son ordre** (`f9135f7`, `d118f72`) : une alerte
+  Ladbrokes montre les équipes comme Ladbrokes les écrit. Registre PAR MATCH,
+  en mémoire, purgé après 36 h — un registre par équipe confondait « Club
+  Olimpia » et « CD Olimpia ». Le label home/away est retourné avec l'ordre.
+- **« (f) » après chaque nom d'un match féminin** (`dff5b4a`) : ligues sans
+  « Women » reconnues (Damallsvenskan, Liga F, NWSL…), « W Connection » n'est
+  plus pris pour une équipe féminine, au tennis le « W » final est une
+  initiale.
+- **Marché en retard à l'envers corrigé** (`645d376`, bloquant) : un book à
+  l'envers affichait le score dans le mauvais ordre, et polluait le consensus
+  live (alerte à +109 % sur l'équipe menée).
+- **Format** (`6e2b3d7`, `9712bf0`) : « Mise conseillée : 15€ » sans le
+  pourcentage ; ligne « 🏆 » toujours présente (compétition de Pinnacle en
+  secours) ; « Pari : Home - 3.98 (fair 3.33) ».
+- **Rapprochement** (`9712bf0`) : « Faroe Islands vs Slovakia » était apparié
+  à « England vs Slovakia » (Slovakia à 100, moyenne 85,7) et donnait +424 %
+  d'EV. **Chaque équipe doit désormais atteindre 80.**
+
+### 28.5 Vivatbet (28/09 → 04/10)
+
+API JSON publique, sans jeton ni cookie, IP de la VM acceptée (`3e04001`).
+`games1x2` est plafonné à 50 matchs : le cycle lit les 50 vedettes, un
+balayage de fond par compétition fait le reste. **Les paramètres de requête
+doivent être triés** (`f756ce1`) : dans un autre ordre, le flux rend 400.
+
+**Mesure de la porte premium :** CLV **+10,56 %** (n = 97, t = 7,2).
+Appariement vérifié par `scripts/appariement_book.py` (`622226b`, lecture
+seule : CLV exacte contre floue, et liste des détections suspectes) : rien
+d'anormal. Le double « Al Jazeera » vient de Pinnacle ; le groupe de matchs
+japonais était un vrai mouvement de marché.
+
+**Bogue corrigé le 04/10 (`ee5fb53`).** Le clic « Jouer » n'a pas de book
+dans sa clé : il se rattachait à la dernière détection de la sélection, chez
+n'importe quel book. Vivatbet, qui détecte en continu, raflait les clics
+joués chez Unibet ou Ladbrokes (22 « joués » chez lui dans l'Analytics). Le
+clic va désormais au book nommé dans l'alerte (`books_du_libelle`). Pour les
+anciens clics : `src.main relink-played-books` (à blanc), puis
+`--appliquer` ; ni la cote prise, ni la mise, ni l'EV ne bougent.
+
+### 28.6 Hockey : collecté pour mesurer, toujours muet (29/09 → 04/10)
+
+Le §27.10 pt 4 (« le hockey ne produit aucune ligne ») est **résolu**.
+
+**Le piège, documenté en tête de `src/hockey.py`.** Pinnacle price le hockey
+prolongation et tirs au but INCLUS. Les books belges publient aussi un 1X2 en
+temps réglementaire. Les comparer fabrique une EV ET une CLV fictives du même
+montant, et la base ne garde pas l'identifiant du marché d'origine : on ne
+peut pas trier après coup.
+
+**La règle.** Une cote de hockey n'entre que si son book et son marché sont
+dans `MARCHES_VERIFIES` (relevé par `scripts/sonde_hockey.py` le 01/10). Deux
+familles jamais mélangées :
+
+- prolongation incluse (`h2h`, `totals`) contre la période 0 de Pinnacle ;
+- **temps réglementaire (`h2h_reg`, `totals_reg`, types créés le 01/10)**
+  contre sa **période 6**.
+
+| Book | Marchés admis |
+|---|---|
+| Ladbrokes | vainqueur 478, total 19388 (prol. incl.) |
+| Golden Palace, StarCasino | 406, 412 (prol. incl.) + 1X2 réglementaire (1) |
+| BetFirst | MW2W (prol. incl.) + MW3W (réglementaire) |
+| Unibet | « Regular Time » seulement |
+| Napoleon | 640, réglementaire |
+| Vivatbet | groupe 1, réglementaire |
+
+MeridianBet n'y est pas (périodes indistinctes, et coupé par `BOOKS_DISABLED`).
+
+**Sans coût pour les cycles.** Le hockey tourne dans un fil de fond, au plus
+toutes les `HOCKEY_INTERVAL_SEC` (120 s). Mesuré sur la VM : 16 s par cycle
+avant et après.
+
+**Muet.** `SPORTS_ALERT_OFF=hockey` (défaut) coupe toutes les voies d'envoi :
+value bets, CLV confirmé, surebets, middles, marchés en retard, live, `/scan`.
+L'alerte CLV confirmé ne compare plus un pari qu'aux lignes de son sport.
+Quand les alertes seront rouvertes, une ligne « ⏱ » nommera le marché
+(« 1X2 TEMPS RÉGLEMENTAIRE (60 min) » ou « Vainqueur PROLONGATION ET TIRS AU
+BUT INCLUS ») — `d976137`.
+
+**Premières mesures (04/10), trop jeunes pour décider :** CLV ≈ +3,8 % sur
+toutes les détections ; **+7,19 % sur la porte premium (n = 57, t = 5,7)**.
+
+⚠️ **Les marchés `*_reg` ne sont JAMAIS réglés** (`clv.settle` rend None) :
+aucune source de résultats ne donne le score à 60 minutes. Pas de ROI hockey
+réglementaire tant qu'il n'y en a pas, mais la CLV se mesure.
+
+### 28.7 Analytics : refonte et Strategy Finder (28/09 → 04/10)
+
+- **Refonte** (`cbb5341`, `5235d70`) : tableau de bord à pages (Vue
+  d'ensemble, Performance, CLV, Bookmakers, Marchés, Compétitions, Paris
+  joués, Analyse avancée, Mes analyses, Exporter, Paramètres), tiroir
+  « Filtres avancés », thèmes clair et sombre, export PDF et CSV. Côté
+  serveur, présentation seulement. **Toujours aucune écriture en base.**
+- **Mise Kelly fractionnée** (`d3d98a0`) : 1/1 à 1/10, bankroll fixe,
+  plafond 3 %, même formule que les alertes (`src.ev.kelly_stake`).
+- **Strategy Finder** (`0e82263`, `bf5b5d4`, `016ec4c`, `9104608`) : cherche
+  les configurations (book + jusqu'à trois critères parmi marché, pari, EV,
+  cote, délai) qui ont le mieux tenu. Sélection sur les 70 % les plus
+  anciens, validation sur les 30 % récents, classement sur des bornes basses,
+  stabilité sur 4 sous-périodes, avertissement de tests multiples. Chaque
+  critère porte sa règle en clair (« 8 % ≤ EV < 15 % »). Une configuration
+  sans critère d'EV affiche le **seuil réel de détection** (`ev_floor`), pas
+  « sans filtre ».
+
+> ⚠️ **Incohérence documentée, NON corrigée, en attente de décision :** le
+> filtre de délai de l'Analytics inclut sa borne haute, la bande de délai du
+> Strategy Finder non.
+
+### 28.8 Méthode de mise : étudiée, et l'utilisateur reste en fixe (05-06/10)
+
+Question de l'utilisateur : mise fixe 35 €, Kelly ou paliers d'EV ? Outils
+(lecture seule, sur les paris **cliqués « joué » et réglés**) :
+
+- `scripts/staking_curves.py` : `--joues`, `--fractions`, `--paliers`,
+  `--valider K`, `--periodes`, `--par-jour` ;
+- `scripts/valider_mises.py` : validation hors échantillon (walk-forward, à
+  capital égal).
+
+**Sur les 2 786 paris joués et réglés :**
+
+| Méthode | P&L | ROI | Creux (pari par pari) |
+|---|---|---|---|
+| Fixe 35 € | +8 055 € | 8,26 % | −2 001 € |
+| Kelly 1/4 (mise moyenne 35 €) | +9 690 € | — | −1 393 € |
+| **4 paliers 20/30/60/70 €** | **+10 675 €** | **10,79 %** | **−1 696 €** |
+
+Les paliers misent 20 € sous 8 % d'EV, 30 € de 8 à 15 %, 60 € de 15 à 35 %
+et 70 € au-delà. **La mise dépend de l'EV seule, pas de la cote.**
+
+**CLV par tranche d'EV** (pourquoi les paliers marchent) : 5-8 % → 6,31 % ;
+8-15 % → 6,14 % ; 15-35 % → 14,59 % ; ≥ 35 % → 39,75 %.
+
+**Hors échantillon** (`--valider`) : « paliers auto » est la meilleure
+méthode, ROI 11,61 %, t = 2,65, règle stable à 20/30/60/70.
+
+**Par période**, P&L fixe contre paliers :
+
+| Période | Fixe 35 € | Paliers |
+|---|---|---|
+| Juin-juillet | +1 471 € | +1 455 € |
+| Juillet-août | +5 871 € | +7 753 € |
+| Août-septembre | +798 € | +1 504 € |
+| Septembre-octobre | −86 € | −38 € |
+
+**Jour par jour** (`--par-jour`, 97 journées du 27/06 au 04/10), graphique :
+https://claude.ai/artifact/RVT6Fo9uw8ZBvuSxvUeDff
+
+- jusqu'au 10/08 les deux courbes se suivent, la mise fixe un peu devant
+  (jusqu'à 647 € d'avance le 01/08) ;
+- l'écart se fait du 10 au 27/08 (de −107 € à +2 038 €), puis monte à
+  +2 833 € fin septembre ; les paliers ne sont plus repassés derrière ;
+- pire creux en fin de journée : fixe −1 415 €, paliers −1 290 € ; pire
+  journée : fixe −420 €, paliers −589 € ;
+- capital misé presque identique (~97 500 € contre ~98 900 €) : l'écart
+  vient de la répartition, pas du volume.
+
+**Décision de l'utilisateur (06/10) : rester en mise fixe.** Raison donnée :
+une série de gros EV perdants coûterait environ deux fois plus en paliers
+(10 × 60-70 € contre 10 × 35 €), et les paris à plus de 15 % d'EV sont encore
+peu nombreux. C'est une crainte fondée : la bonne tenue des gros EV repose sur
+un petit échantillon.
+
+`STAKE_EV_PALIERS` existe dans les alertes (mode flat), **non défini par
+défaut**, donc sans effet. S'il est mal écrit, il est signalé au démarrage et
+ignoré.
+
+**À refaire vers le 02/11 :** `--valider` et `--par-jour` sur un échantillon
+plus large. Si les gros EV tiennent, proposer des paliers plus doux (par
+exemple 30/35/45/50 €) avant 20/30/60/70.
+
+### 28.9 Commandes ajoutées
+
+```bash
+# Mises — rien n'est modifié, tout est simulé sur les paris joués
+.venv/bin/python -m scripts.staking_curves --joues --paliers 5:20,8:30,15:60,35:70
+.venv/bin/python -m scripts.staking_curves --joues --paliers 5:20,8:30,15:60,35:70 --valider 4
+.venv/bin/python -m scripts.staking_curves --joues --paliers 5:20,8:30,15:60,35:70 --periodes 2026-07-15,2026-08-15,2026-09-15
+.venv/bin/python -m scripts.staking_curves --joues --paliers 5:20,8:30,15:60,35:70 --par-jour
+
+# Appariement d'un book (lecture seule)
+.venv/bin/python -m scripts.appariement_book --book vivatbet
+
+# Hockey : marchés publiés par chaque book (lecture seule)
+.venv/bin/python -m scripts.sonde_hockey --books unibet,vivatbet
+
+# Clics « Jouer » rattachés au mauvais book : à blanc, puis écriture
+.venv/bin/python -m src.main relink-played-books
+.venv/bin/python -m src.main relink-played-books --appliquer
+
+# Résultats retrouvés sur le web : simulation, écriture, puis tracking
+.venv/bin/python -m scripts.import_resultats_web
+.venv/bin/python -m scripts.import_resultats_web --ecrire
+.venv/bin/python -m src.main track-update
+```
+
+Toutes les options sont dans `COMMANDES.md` ; les variables dans
+`.env.example`.
+
+### 28.10 Ce qui reste ouvert au 06/10
+
+1. **Hockey**, dans l'ordre :
+   - vers le 11/10, re-mesurer la CLV premium, NHL comprise ;
+   - trouver une source de résultats à 60 minutes pour régler les `*_reg` ;
+   - ne lever la sourdine qu'après ~200 clôtures propres.
+2. **Mises** : re-mesure vers le 02/11 (§28.8). Rien ne change sans une ligne
+   ajoutée par l'utilisateur dans `.env`.
+3. **Strategy Finder** : la borne de délai incluse ou exclue (§28.7), en
+   attente de décision.
+4. **Règles de rattrapage des résultats** : le banc a mesuré, l'utilisateur a
+   refusé de les activer. Ne pas rouvrir sans lui.
+5. **Résultats web** : vérifier sur la VM que l'import a été fait (§28.3), et
+   trancher les 8 matchs décalés.
+6. **Toujours ouverts depuis le §27.10** : le « 1 sur 5 » de Ladbrokes, le
+   prédicat de retry de quatre scrapers, Ladbrokes chemin critique du fetch.
+7. **Les trois tests en échec**, tous antérieurs à cette période :
+   `test_corrections::test_the_curve_runs_to_kickoff_not_to_alignment`,
+   `test_handover_pdf::test_le_handover_reel_se_construit` (module
+   `markdown` absent de l'environnement),
+   `test_sondes_help[ev_outliers]`. `test_routage_branche` passe à nouveau.
