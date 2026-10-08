@@ -539,6 +539,18 @@ sudo systemctl restart betano-ingest
 .venv/bin/python -m src.main track-update
 ```
 
+**Exporte TOUS les matchs détectés sans résultat** — joués ou non, tous
+sports, un match par ligne : date et heure UTC, sport, ligue, équipes, nombre
+de détections, nombre de paris joués et clés en base. Seuls les matchs
+commencés depuis plus de 3 h sont listés. Un match présent sous plusieurs clés
+n'apparaît qu'une fois, et pas du tout si l'une d'elles a un résultat. Lecture
+seule : seul le CSV est écrit.
+
+```bash
+.venv/bin/python -m scripts.export_sans_resultat                       # → ~/matchs_sans_resultat.csv
+.venv/bin/python -m scripts.export_sans_resultat --depuis 2026-08-01 --sortie ~/aout.csv
+```
+
 ---
 
 ## 7 bis. Surebets et middles — coupés, et comment les remettre
